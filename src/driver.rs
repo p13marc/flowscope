@@ -8,11 +8,12 @@ use std::collections::HashMap;
 
 use ahash::RandomState;
 
-use crate::event::{EndReason, FlowEvent, FlowSide};
+use crate::event::{AnomalyKind, EndReason, FlowEvent, FlowSide, OverflowPolicy};
 use crate::extractor::FlowExtractor;
 use crate::reassembler::{Reassembler, ReassemblerFactory};
 use crate::tracker::{FlowEvents, FlowTracker, FlowTrackerConfig};
 use crate::view::PacketView;
+use crate::Timestamp;
 
 /// Sync flow driver: tracker + per-(flow, side) reassembler dispatch.
 ///
@@ -21,6 +22,29 @@ use crate::view::PacketView;
 /// non-tokio CLI tools).
 ///
 /// For tokio integration, see `netring::FlowStream::with_async_reassembler`.
+/// Snapshot of per-reassembler diagnostic counters + tracker
+/// eviction total at the start of a tick. Compared against the
+/// post-tick state to coalesce anomaly events.
+struct AnomalySnapshot<K>
+where
+    K: Eq + std::hash::Hash + Clone,
+{
+    per_side: HashMap<(K, FlowSide), (u64, u64), RandomState>,
+    evicted_total: u64,
+}
+
+impl<K> Default for AnomalySnapshot<K>
+where
+    K: Eq + std::hash::Hash + Clone,
+{
+    fn default() -> Self {
+        Self {
+            per_side: HashMap::with_hasher(RandomState::new()),
+            evicted_total: 0,
+        }
+    }
+}
+
 pub struct FlowDriver<E, F, S = ()>
 where
     E: FlowExtractor,
@@ -30,6 +54,7 @@ where
     tracker: FlowTracker<E, S>,
     factory: F,
     reassemblers: HashMap<(E::Key, FlowSide), F::Reassembler, RandomState>,
+    emit_anomalies: bool,
 }
 
 impl<E, F, S> FlowDriver<E, F, S>
@@ -49,6 +74,7 @@ where
             tracker: FlowTracker::with_config(extractor, config),
             factory,
             reassemblers: HashMap::with_hasher(RandomState::new()),
+            emit_anomalies: false,
         }
     }
 }
@@ -59,10 +85,24 @@ where
     F: ReassemblerFactory<E::Key>,
     S: Send + 'static,
 {
+    /// Opt in to emitting [`FlowEvent::Anomaly`] for buffer overflows,
+    /// out-of-order drops, and tracker eviction pressure. Default:
+    /// `false` — no anomaly events emitted; counters still accumulate
+    /// in [`crate::FlowStats`].
+    ///
+    /// Anomalies are coalesced per (flow, side, kind) per tick so a
+    /// pathological flow doesn't swamp the stream.
+    pub fn with_emit_anomalies(mut self, enable: bool) -> Self {
+        self.emit_anomalies = enable;
+        self
+    }
+
     /// Process one packet. Drives the tracker and dispatches TCP
     /// payloads to the factory's reassemblers. Reassemblers are
     /// created on demand and cleaned up on `Ended`.
     pub fn track(&mut self, view: PacketView<'_>) -> FlowEvents<E::Key> {
+        let ts = view.timestamp;
+        let snapshot = self.snapshot_anomaly_state();
         let factory = &mut self.factory;
         let reassemblers = &mut self.reassemblers;
         let mut events = self
@@ -73,6 +113,16 @@ where
                     .or_insert_with(|| factory.new_reassembler(key, side));
                 r.segment(seq, payload);
             });
+
+        // Emit anomaly events (per-tick coalesced) before synthesising
+        // BufferOverflow ends — the overflow that caused the
+        // BufferOverflow anomaly should appear before the Ended event.
+        if self.emit_anomalies {
+            let anomalies = Self::diff_anomaly_state(snapshot, reassemblers, &self.tracker, ts);
+            for a in anomalies {
+                events.push(a);
+            }
+        }
 
         // Synthesise `Ended { reason: BufferOverflow }` for any
         // reassembler that just poisoned and isn't already ending.
@@ -90,8 +140,14 @@ where
 
     /// Run the idle-timeout sweep and clean up reassemblers for
     /// ended flows.
-    pub fn sweep(&mut self, now: crate::Timestamp) -> Vec<FlowEvent<E::Key>> {
+    pub fn sweep(&mut self, now: Timestamp) -> Vec<FlowEvent<E::Key>> {
+        let snapshot = self.snapshot_anomaly_state();
         let mut events = self.tracker.sweep(now);
+        if self.emit_anomalies {
+            let anomalies =
+                Self::diff_anomaly_state(snapshot, &self.reassemblers, &self.tracker, now);
+            events.extend(anomalies);
+        }
         let synthesised = Self::synthesise_buffer_overflow_ends(
             &events,
             &mut self.reassemblers,
@@ -100,6 +156,92 @@ where
         events.extend(synthesised);
         Self::finalize_ended_flows(events.as_mut_slice(), &mut self.reassemblers);
         events
+    }
+
+    /// Snapshot the per-reassembler diagnostic counters and the
+    /// tracker's eviction total ahead of a `track`/`sweep` call so
+    /// the post-call diff can be coalesced into anomaly events.
+    fn snapshot_anomaly_state(&self) -> AnomalySnapshot<E::Key> {
+        if !self.emit_anomalies {
+            return AnomalySnapshot::default();
+        }
+        let mut per_side: HashMap<(E::Key, FlowSide), (u64, u64), RandomState> =
+            HashMap::with_hasher(RandomState::new());
+        for ((key, side), r) in &self.reassemblers {
+            per_side.insert(
+                (key.clone(), *side),
+                (r.dropped_segments(), r.bytes_dropped_oversize()),
+            );
+        }
+        AnomalySnapshot {
+            per_side,
+            evicted_total: self.tracker.stats().flows_evicted,
+        }
+    }
+
+    /// Diff the snapshot against current state and synthesise one
+    /// anomaly event per (flow, side, kind) with non-zero delta plus
+    /// at most one `FlowTableEvictionPressure` event for the tick.
+    fn diff_anomaly_state(
+        snapshot: AnomalySnapshot<E::Key>,
+        reassemblers: &HashMap<(E::Key, FlowSide), F::Reassembler, RandomState>,
+        tracker: &FlowTracker<E, S>,
+        ts: Timestamp,
+    ) -> Vec<FlowEvent<E::Key>> {
+        let mut out = Vec::new();
+        // Per-flow / per-side counter deltas.
+        for ((key, side), r) in reassemblers {
+            let prev = snapshot
+                .per_side
+                .get(&(key.clone(), *side))
+                .copied()
+                .unwrap_or((0, 0));
+            let cur = (r.dropped_segments(), r.bytes_dropped_oversize());
+            let dropped_delta = cur.0.saturating_sub(prev.0);
+            let oversize_delta = cur.1.saturating_sub(prev.1);
+            if oversize_delta > 0 {
+                // Look up the policy via the tracker config; falls
+                // back to the default (SlidingWindow) when unset.
+                let policy = if r.is_poisoned() {
+                    OverflowPolicy::DropFlow
+                } else {
+                    OverflowPolicy::SlidingWindow
+                };
+                out.push(FlowEvent::Anomaly {
+                    key: Some(key.clone()),
+                    kind: AnomalyKind::BufferOverflow {
+                        side: *side,
+                        bytes: oversize_delta,
+                        policy,
+                    },
+                    ts,
+                });
+            }
+            if dropped_delta > 0 {
+                out.push(FlowEvent::Anomaly {
+                    key: Some(key.clone()),
+                    kind: AnomalyKind::OutOfOrderSegment {
+                        side: *side,
+                        count: dropped_delta,
+                    },
+                    ts,
+                });
+            }
+        }
+        // Tracker-global eviction pressure.
+        let evicted_total = tracker.stats().flows_evicted;
+        let evicted_delta = evicted_total.saturating_sub(snapshot.evicted_total);
+        if evicted_delta > 0 {
+            out.push(FlowEvent::Anomaly {
+                key: None,
+                kind: AnomalyKind::FlowTableEvictionPressure {
+                    evicted_in_tick: evicted_delta,
+                    evicted_total,
+                },
+                ts,
+            });
+        }
+        out
     }
 
     /// Build a list of `Ended { reason: BufferOverflow }` events for
@@ -449,6 +591,139 @@ mod tests {
             "expected oversize bytes recorded, got {}",
             ended.1.reassembly_bytes_dropped_oversize_initiator
         );
+    }
+
+    #[test]
+    fn anomaly_event_emitted_for_buffer_overflow_sliding_window() {
+        let factory = BufferedReassemblerFactory::default().with_max_buffer(64);
+        let mut d = FlowDriver::<_, _>::new(FiveTuple::bidirectional(), factory)
+            .with_emit_anomalies(true);
+        let events = drive_simple_tcp_with_data(&mut d);
+        let anomalies: Vec<_> = events
+            .iter()
+            .filter(|e| {
+                matches!(
+                    e,
+                    FlowEvent::Anomaly {
+                        kind: AnomalyKind::BufferOverflow { .. },
+                        ..
+                    }
+                )
+            })
+            .collect();
+        assert_eq!(anomalies.len(), 1, "expected exactly one BufferOverflow anomaly");
+        match anomalies[0] {
+            FlowEvent::Anomaly {
+                kind: AnomalyKind::BufferOverflow { side, bytes, policy },
+                ..
+            } => {
+                assert_eq!(*side, FlowSide::Initiator);
+                assert_eq!(*bytes, 136);
+                assert_eq!(*policy, OverflowPolicy::SlidingWindow);
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    #[test]
+    fn no_anomaly_events_when_flag_off() {
+        let factory = BufferedReassemblerFactory::default().with_max_buffer(64);
+        let mut d = FlowDriver::<_, _>::new(FiveTuple::bidirectional(), factory);
+        let events = drive_simple_tcp_with_data(&mut d);
+        assert!(
+            !events
+                .iter()
+                .any(|e| matches!(e, FlowEvent::Anomaly { .. })),
+            "expected no anomaly events when emit_anomalies is off"
+        );
+    }
+
+    #[test]
+    fn anomaly_event_for_buffer_overflow_drop_flow_carries_policy() {
+        let factory = BufferedReassemblerFactory::default()
+            .with_max_buffer(64)
+            .with_overflow_policy(OverflowPolicy::DropFlow);
+        let mut d = FlowDriver::<_, _>::new(FiveTuple::bidirectional(), factory)
+            .with_emit_anomalies(true);
+        let events = drive_simple_tcp_with_data(&mut d);
+        let anomaly = events
+            .iter()
+            .find(|e| matches!(
+                e,
+                FlowEvent::Anomaly {
+                    kind: AnomalyKind::BufferOverflow { .. },
+                    ..
+                }
+            ))
+            .expect("expected a BufferOverflow anomaly");
+        match anomaly {
+            FlowEvent::Anomaly {
+                kind: AnomalyKind::BufferOverflow { policy, .. },
+                ..
+            } => {
+                assert_eq!(*policy, OverflowPolicy::DropFlow);
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    #[test]
+    fn anomaly_event_emitted_for_table_eviction() {
+        // max_flows = 2; create three distinct flows in-order.
+        let config = FlowTrackerConfig {
+            max_flows: 2,
+            ..FlowTrackerConfig::default()
+        };
+        let mut d = FlowDriver::<_, _>::with_config(
+            FiveTuple::bidirectional(),
+            BufferedReassemblerFactory::default(),
+            config,
+        )
+        .with_emit_anomalies(true);
+        let mut events = Vec::new();
+        for src_port in [1234u16, 1235, 1236] {
+            let frame = ipv4_tcp(
+                [0; 6],
+                [0; 6],
+                [10, 0, 0, 1],
+                [10, 0, 0, 2],
+                src_port,
+                80,
+                0,
+                0,
+                0x02,
+                b"",
+            );
+            events.extend(d.track(view(&frame, 0)).into_iter());
+        }
+        let pressure: Vec<_> = events
+            .iter()
+            .filter(|e| {
+                matches!(
+                    e,
+                    FlowEvent::Anomaly {
+                        kind: AnomalyKind::FlowTableEvictionPressure { .. },
+                        ..
+                    }
+                )
+            })
+            .collect();
+        assert_eq!(pressure.len(), 1, "expected one eviction-pressure anomaly");
+        match pressure[0] {
+            FlowEvent::Anomaly {
+                kind: AnomalyKind::FlowTableEvictionPressure {
+                    evicted_in_tick,
+                    evicted_total,
+                },
+                key,
+                ..
+            } => {
+                assert_eq!(*evicted_in_tick, 1);
+                assert_eq!(*evicted_total, 1);
+                assert!(key.is_none());
+            }
+            _ => unreachable!(),
+        }
     }
 
     #[test]

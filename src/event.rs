@@ -121,6 +121,43 @@ impl FlowState {
     }
 }
 
+/// Live, in-flight anomaly classifications. Carried by
+/// [`FlowEvent::Anomaly`].
+///
+/// `#[non_exhaustive]` so future kinds are unconditionally additive.
+/// Custom protocol parsers should not emit anomalies here — pipe
+/// protocol-specific signals through their own `Message` type
+/// instead.
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub enum AnomalyKind {
+    /// Reassembler dropped bytes from its buffer because the per-side
+    /// cap was hit. `bytes` is the count dropped during this tick
+    /// only; running totals live in [`FlowStats`]. `policy` records
+    /// which overflow policy was active (sliding-window or drop-flow)
+    /// so the consumer can decide how to react.
+    BufferOverflow {
+        side: FlowSide,
+        bytes: u64,
+        policy: OverflowPolicy,
+    },
+    /// Reassembler dropped one or more out-of-order segments during
+    /// this tick. Coalesced — at most one anomaly per (flow, side)
+    /// per tick, with `count` summing the drops in that tick.
+    OutOfOrderSegment { side: FlowSide, count: u64 },
+    /// Tracker hit `max_flows` and evicted at least one LRU flow
+    /// during this tick. The evicted flow's own
+    /// `Ended { reason: Evicted }` is still emitted; this anomaly is
+    /// the system-level signal that capacity is the bottleneck.
+    /// `evicted_in_tick` is the delta for this tick; `evicted_total`
+    /// is the running total since the tracker started, useful for
+    /// recovering after dropped events.
+    FlowTableEvictionPressure {
+        evicted_in_tick: u64,
+        evicted_total: u64,
+    },
+}
+
 /// Events emitted by the tracker.
 ///
 /// One packet typically produces one or two events. The `Started`
@@ -166,17 +203,34 @@ pub enum FlowEvent<K> {
         stats: FlowStats,
         history: HistoryString,
     },
+
+    /// Live, in-flight anomaly. The flow is still alive (use
+    /// `Ended` for end-of-life events). Opt-in: emitted only when
+    /// [`crate::FlowDriver::with_emit_anomalies`] is `true`.
+    ///
+    /// `key` is `None` for tracker-global anomalies (e.g.
+    /// [`AnomalyKind::FlowTableEvictionPressure`]); `Some(key)` for
+    /// per-flow anomalies.
+    Anomaly {
+        key: Option<K>,
+        kind: AnomalyKind,
+        ts: Timestamp,
+    },
 }
 
 impl<K> FlowEvent<K> {
     /// Borrow the key without moving it. Useful for filter combinators.
-    pub fn key(&self) -> &K {
+    ///
+    /// Returns `None` for tracker-global [`FlowEvent::Anomaly`] events
+    /// that don't belong to a single flow.
+    pub fn key(&self) -> Option<&K> {
         match self {
             FlowEvent::Started { key, .. }
             | FlowEvent::Packet { key, .. }
             | FlowEvent::Established { key, .. }
             | FlowEvent::StateChange { key, .. }
-            | FlowEvent::Ended { key, .. } => key,
+            | FlowEvent::Ended { key, .. } => Some(key),
+            FlowEvent::Anomaly { key, .. } => key.as_ref(),
         }
     }
 }
@@ -203,6 +257,32 @@ mod tests {
             len: 100,
             ts: Timestamp::default(),
         };
-        assert_eq!(*evt.key(), 7);
+        assert_eq!(evt.key().copied(), Some(7));
+    }
+
+    #[test]
+    fn flow_event_key_returns_none_for_global_anomaly() {
+        let evt: FlowEvent<u32> = FlowEvent::Anomaly {
+            key: None,
+            kind: AnomalyKind::FlowTableEvictionPressure {
+                evicted_in_tick: 1,
+                evicted_total: 42,
+            },
+            ts: Timestamp::default(),
+        };
+        assert!(evt.key().is_none());
+    }
+
+    #[test]
+    fn flow_event_key_returns_some_for_per_flow_anomaly() {
+        let evt: FlowEvent<u32> = FlowEvent::Anomaly {
+            key: Some(7),
+            kind: AnomalyKind::OutOfOrderSegment {
+                side: FlowSide::Initiator,
+                count: 3,
+            },
+            ts: Timestamp::default(),
+        };
+        assert_eq!(evt.key().copied(), Some(7));
     }
 }
