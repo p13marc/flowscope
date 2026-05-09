@@ -111,6 +111,11 @@ pub struct FlowTracker<E: FlowExtractor, S = ()> {
     config: FlowTrackerConfig,
     stats: FlowTrackerStats,
     init: StateInit<E::Key, S>,
+    /// Most recently accessed key. When the next packet's key
+    /// matches, `track_with_payload` skips the `flows.contains`
+    /// lookup. Cleared on `Ended`/`Evicted`/`forget` (and on every
+    /// `set_config` for safety).
+    hot: Option<E::Key>,
 }
 
 impl<E: FlowExtractor, S: Send + 'static> FlowTracker<E, S> {
@@ -135,6 +140,7 @@ impl<E: FlowExtractor, S: Send + 'static> FlowTracker<E, S> {
             config,
             stats: FlowTrackerStats::default(),
             init: Box::new(init),
+            hot: None,
         }
     }
 
@@ -181,7 +187,11 @@ impl<E: FlowExtractor, S: Send + 'static> FlowTracker<E, S> {
         let ts = view.timestamp;
 
         // ── lookup / insert ──────────────────────────────────────
-        let is_new = !self.flows.contains(&key);
+        // Hot-cache fast path: when the same key reappears
+        // immediately we know the entry exists and can skip the
+        // `contains` lookup entirely.
+        let hot_hit = self.hot.as_ref() == Some(&key);
+        let is_new = !hot_hit && !self.flows.contains(&key);
 
         if is_new {
             let user = (self.init)(&key);
@@ -207,6 +217,9 @@ impl<E: FlowExtractor, S: Send + 'static> FlowTracker<E, S> {
                 // a no-op replacement (key existed) — push only evicts
                 // when the new key is genuinely new and capacity full.
                 if evicted_key != key {
+                    if self.hot.as_ref() == Some(&evicted_key) {
+                        self.hot = None;
+                    }
                     events.push(FlowEvent::Ended {
                         key: evicted_key,
                         reason: EndReason::Evicted,
@@ -313,6 +326,9 @@ impl<E: FlowExtractor, S: Send + 'static> FlowTracker<E, S> {
                 _ => EndReason::Fin, // Aborted by idle, but only set by sweep — defensive
             };
             if let Some(removed) = self.flows.pop(&key) {
+                if self.hot.as_ref() == Some(&key) {
+                    self.hot = None;
+                }
                 events.push(FlowEvent::Ended {
                     key,
                     reason,
@@ -321,6 +337,10 @@ impl<E: FlowExtractor, S: Send + 'static> FlowTracker<E, S> {
                 });
                 self.stats.flows_ended += 1;
             }
+        } else {
+            // Surviving flow — refresh `hot` so the next packet of
+            // this same flow takes the fast path.
+            self.hot = Some(key);
         }
 
         events
@@ -360,6 +380,9 @@ impl<E: FlowExtractor, S: Send + 'static> FlowTracker<E, S> {
                     FlowState::Closed | FlowState::Reset => continue, // already emitted
                     _ => EndReason::IdleTimeout,
                 };
+                if self.hot.as_ref() == Some(&key) {
+                    self.hot = None;
+                }
                 ended.push(FlowEvent::Ended {
                     key,
                     reason,
@@ -412,7 +435,11 @@ impl<E: FlowExtractor, S: Send + 'static> FlowTracker<E, S> {
     /// `BufferOverflow` end event so subsequent packets start a fresh
     /// flow. Returns `true` if a flow was removed.
     pub fn forget(&mut self, key: &E::Key) -> bool {
-        self.flows.pop(key).is_some()
+        let removed = self.flows.pop(key).is_some();
+        if removed && self.hot.as_ref() == Some(key) {
+            self.hot = None;
+        }
+        removed
     }
 
     /// Tracker stats (cumulative since construction).
@@ -427,11 +454,13 @@ impl<E: FlowExtractor, S: Send + 'static> FlowTracker<E, S> {
 
     /// Replace the config in-place. Resizes the LRU capacity if
     /// `max_flows` changed (excess flows are dropped — no events
-    /// emitted for them).
+    /// emitted for them). Also clears the hot-cache for safety —
+    /// the dropped entries may have included the hot key.
     pub fn set_config(&mut self, config: FlowTrackerConfig) {
         let cap = NonZeroUsize::new(config.max_flows.max(1)).unwrap();
         self.flows.resize(cap);
         self.config = config;
+        self.hot = None;
     }
 
     /// Consume the tracker and return the inner extractor. Used by
@@ -683,5 +712,110 @@ mod tests {
         let entry = t.flows().next().unwrap().1;
         assert_eq!(entry.stats.packets_initiator, 2);
         assert_eq!(entry.stats.packets_responder, 1);
+    }
+
+    #[test]
+    fn hot_cache_set_on_first_packet() {
+        let mut t = FlowTracker::<FiveTuple>::new(FiveTuple::bidirectional());
+        assert!(t.hot.is_none(), "hot starts empty");
+        let fwd = ipv4_udp([10, 0, 0, 1], [10, 0, 0, 2], 1, 2, b"x");
+        t.track(view(&fwd, 0));
+        assert!(t.hot.is_some(), "hot populated after first packet");
+    }
+
+    #[test]
+    fn hot_cache_cleared_on_flow_end_via_rst() {
+        let mut t = FlowTracker::<FiveTuple>::new(FiveTuple::bidirectional());
+        let syn = ipv4_tcp(
+            [0; 6], [0; 6],
+            [10, 0, 0, 1], [10, 0, 0, 2],
+            1234, 80, 1, 0, 0x02, b"",
+        );
+        let rst = ipv4_tcp(
+            [0; 6], [0; 6],
+            [10, 0, 0, 2], [10, 0, 0, 1],
+            80, 1234, 0, 0, 0x04, b"",
+        );
+        t.track(view(&syn, 0));
+        assert!(t.hot.is_some());
+        t.track(view(&rst, 0));
+        assert!(t.hot.is_none(), "hot cleared on RST end");
+    }
+
+    #[test]
+    fn hot_cache_cleared_on_eviction() {
+        let config = FlowTrackerConfig {
+            max_flows: 2,
+            ..FlowTrackerConfig::default()
+        };
+        let mut t = FlowTracker::<FiveTuple>::with_config(FiveTuple::bidirectional(), config);
+        // Three distinct flows; the first should be evicted on the
+        // third insertion.
+        for src in [1u16, 2, 3] {
+            let f = ipv4_udp([10, 0, 0, 1], [10, 0, 0, 2], src, 80, b"x");
+            t.track(view(&f, 0));
+        }
+        // hot should still be Some(third key) since the third packet
+        // was the most recent.
+        assert!(t.hot.is_some());
+    }
+
+    #[test]
+    fn hot_cache_cleared_on_forget() {
+        let mut t = FlowTracker::<FiveTuple>::new(FiveTuple::bidirectional());
+        let fwd = ipv4_udp([10, 0, 0, 1], [10, 0, 0, 2], 1, 2, b"x");
+        t.track(view(&fwd, 0));
+        let key = *t.flows().next().unwrap().0;
+        assert!(t.forget(&key));
+        assert!(t.hot.is_none());
+    }
+
+    #[test]
+    fn hot_cache_does_not_change_event_sequence_for_monoflow() {
+        // Run the same packet sequence; results should be identical
+        // whether or not the hot path triggers (it always triggers
+        // on second-and-later packets of the same flow).
+        let mut t = FlowTracker::<FiveTuple>::new(FiveTuple::bidirectional());
+        let fwd = ipv4_udp([10, 0, 0, 1], [10, 0, 0, 2], 1, 2, b"x");
+        let mut events = Vec::new();
+        for _ in 0..10 {
+            events.extend(t.track(view(&fwd, 0)));
+        }
+        // 1 Started + 10 Packet
+        let starts = events
+            .iter()
+            .filter(|e| matches!(e, FlowEvent::Started { .. }))
+            .count();
+        let packets = events
+            .iter()
+            .filter(|e| matches!(e, FlowEvent::Packet { .. }))
+            .count();
+        assert_eq!(starts, 1);
+        assert_eq!(packets, 10);
+    }
+
+    #[test]
+    fn hot_cache_handles_alternating_flows_correctly() {
+        // Two distinct flows interleaved — fast path should miss
+        // every other packet but the event sequence stays correct.
+        let mut t = FlowTracker::<FiveTuple>::new(FiveTuple::bidirectional());
+        let fwd_a = ipv4_udp([10, 0, 0, 1], [10, 0, 0, 2], 1, 2, b"x");
+        let fwd_b = ipv4_udp([10, 0, 0, 1], [10, 0, 0, 2], 3, 4, b"x");
+        let mut events = Vec::new();
+        for _ in 0..5 {
+            events.extend(t.track(view(&fwd_a, 0)));
+            events.extend(t.track(view(&fwd_b, 0)));
+        }
+        let starts = events
+            .iter()
+            .filter(|e| matches!(e, FlowEvent::Started { .. }))
+            .count();
+        let packets = events
+            .iter()
+            .filter(|e| matches!(e, FlowEvent::Packet { .. }))
+            .count();
+        assert_eq!(starts, 2, "two distinct flows started");
+        assert_eq!(packets, 10, "ten packets total");
+        assert_eq!(t.flow_count(), 2);
     }
 }
