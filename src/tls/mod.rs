@@ -34,8 +34,10 @@ mod factory;
 #[cfg(feature = "ja3")]
 mod fingerprint;
 mod parser;
+mod session;
 mod types;
 
 pub use factory::{TlsFactory, TlsReassembler};
 pub use parser::Error;
+pub use session::{TlsMessage, TlsParser};
 pub use types::*;

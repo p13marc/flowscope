@@ -1,5 +1,41 @@
 # Changelog
 
+## Unreleased
+
+### Plan 31 phase 2: TLS + DNS-TCP `SessionParser` bridges
+
+Completes the `SessionParser` parser family started in 0.1.0. All
+four shipped Tier 2 parsers now expose both the callback-style
+factory API (`HttpFactory`, `TlsFactory`, `DnsUdpObserver`) and the
+typed-message-stream `SessionParser` / `DatagramParser` API.
+
+- **`flowscope::tls::TlsParser`** — `SessionParser` impl producing
+  `TlsMessage::{ClientHello, ServerHello, Alert}`. With the `ja3`
+  feature, also emits `TlsMessage::Ja3 { hash, canonical }`. Holds
+  independent `DirState` per direction inside one parser; encrypted
+  records (post-CCS in TLS 1.2, post-ServerHello in 1.3) are
+  silently dropped, preserving the existing `TlsFactory` semantics.
+  4 unit tests.
+
+- **`flowscope::dns::DnsTcpParser`** — `SessionParser` impl for
+  DNS over TCP (RFC 1035 §4.2.2). Each direction runs an
+  independent length-framed state machine: read 2-byte big-endian
+  length, then `len` bytes of message body, parse via the existing
+  `parse_message`, emit. Pipelined and split-segment cases handled.
+  Reuses `DnsMessage::{Query, Response}` from the UDP path.
+  Malformed bodies are dropped without losing framing (the length
+  prefix tells us how many bytes to skip). 8 unit tests.
+
+The `SessionParser` trait shape is unchanged; phase 2 only adds
+implementations. With four parsers (HTTP, TLS, DNS-UDP, DNS-TCP)
+exercising the trait across both `SessionParser` and
+`DatagramParser` variants, the trait shape can now be considered
+stable for the 1.0 lock.
+
+Out of scope for this release (deferred follow-ups):
+- Property tests across all parsers (planned for pre-1.0).
+- Migration guide (`docs/SESSION_GUIDE.md`).
+
 ## 0.1.0 — Initial release
 
 `flowscope` is a one-crate consolidation of the previous
