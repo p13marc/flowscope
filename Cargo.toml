@@ -1,0 +1,133 @@
+[package]
+name = "flowscope"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/p13marc/flowscope"
+homepage = "https://github.com/p13marc/flowscope"
+authors = ["Marc Pardo <p13marc@gmail.com>"]
+description = "Passive flow & session tracking for packet capture (runtime-free, cross-platform)"
+keywords = ["flow", "session", "tcp", "packet", "passive"]
+categories = ["network-programming", "parser-implementations"]
+readme = "README.md"
+documentation = "https://docs.rs/flowscope"
+
+[dependencies]
+bitflags = "2"
+thiserror = "2"
+
+# `extractors` feature
+etherparse = { version = "0.16", optional = true }
+
+# `tracker` feature
+ahash = { version = "0.8", default-features = false, optional = true }
+smallvec = { version = "1", optional = true }
+arrayvec = { version = "0.7", optional = true }
+lru = { version = "0.16", optional = true }
+
+# `http` feature
+httparse = { version = "1.10", optional = true }
+bytes = { version = "1", optional = true }
+
+# `tls` feature
+tls-parser = { version = "0.12", optional = true }
+
+# `tls/ja3` sub-feature
+md-5 = { version = "0.10", optional = true }
+hex = { version = "0.4", optional = true }
+
+# `dns` feature
+simple-dns = { version = "0.10", optional = true }
+
+# `pcap` feature
+pcap-file = { version = "2", optional = true }
+
+[dev-dependencies]
+proptest = "1"
+pcap-file = "2"
+
+[features]
+default = ["extractors", "tracker", "reassembler", "session"]
+
+# Core layers — start small or take the lot.
+extractors = ["dep:etherparse"]
+tracker = ["dep:ahash", "dep:smallvec", "dep:arrayvec", "dep:lru"]
+reassembler = ["tracker"]
+session = ["tracker"]
+
+# `test-helpers` exposes `extract::parse::test_frames` for proptest,
+# fuzz harnesses, and fixture generation. Not for production use.
+test-helpers = ["extractors"]
+
+# Protocol parsers. Each is a self-contained module gated by its feature.
+http = ["reassembler", "session", "dep:httparse", "dep:bytes"]
+tls = ["reassembler", "session", "dep:tls-parser", "dep:bytes"]
+ja3 = ["tls", "dep:md-5", "dep:hex"]
+dns = ["extractors", "tracker", "session", "dep:simple-dns"]
+
+# pcap source adapter (offline replay).
+pcap = ["extractors", "tracker", "dep:pcap-file"]
+
+# Convenience: turn everything on.
+full = ["http", "tls", "ja3", "dns", "pcap"]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[[example]]
+name = "generate_fixtures"
+required-features = ["test-helpers"]
+
+[[example]]
+name = "pcap_buffered_reassembly"
+required-features = ["pcap", "reassembler"]
+
+[[example]]
+name = "pcap_flow_keys"
+required-features = ["pcap"]
+
+[[example]]
+name = "pcap_flow_summary"
+required-features = ["pcap"]
+
+[[example]]
+name = "http_log"
+required-features = ["http", "pcap"]
+
+[[example]]
+name = "tls_observer"
+required-features = ["tls", "pcap"]
+
+[[example]]
+name = "dns_log"
+required-features = ["dns", "pcap"]
+
+[[test]]
+name = "http_parser"
+required-features = ["http"]
+
+[[test]]
+name = "http_pcap"
+required-features = ["http", "pcap"]
+
+[[test]]
+name = "tls_parser"
+required-features = ["tls"]
+
+[[test]]
+name = "dns_parser"
+required-features = ["dns"]
+
+[[test]]
+name = "pcap_integration"
+required-features = ["pcap"]
+
+[[test]]
+name = "pcap_fixtures"
+required-features = ["pcap", "test-helpers"]
+
+[[test]]
+name = "proptest_invariants"
+required-features = ["test-helpers", "tracker"]
