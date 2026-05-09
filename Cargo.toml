@@ -131,3 +131,7 @@ required-features = ["pcap", "test-helpers"]
 [[test]]
 name = "proptest_invariants"
 required-features = ["test-helpers", "tracker"]
+
+[[test]]
+name = "parser_proptest"
+required-features = ["http", "tls", "dns"]

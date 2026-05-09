@@ -2,6 +2,29 @@
 
 ## Unreleased
 
+### Plan 31 phase 3a: parser property tests
+
+11 proptest harnesses across the four parsers (HTTP, TLS, DNS-UDP,
+DNS-TCP) cover two invariants:
+
+1. **Splitting invariance** — feeding a known-valid byte sequence
+   in one chunk produces the same set of messages as feeding it in
+   two random-split chunks (or byte-by-byte for DNS-TCP). Catches
+   buffer-management bugs in per-direction state machines.
+2. **No-panic on random bytes** — the parsers accept any `Vec<u8>`
+   without panicking. Pure robustness test.
+
+Plus DNS-TCP-specific:
+- `malformed_body_keeps_framing` — a length-prefixed garbage frame
+  followed by a valid query must still emit the valid query
+  (the parser must consume `len` bytes regardless of body
+  validity).
+
+Run with `cargo test --features http,tls,dns --test parser_proptest`.
+Increase iterations via `PROPTEST_CASES=10000 cargo test ...`. The
+in-tree harness defaults to 256 cases per property; verified at
+2000 cases with no failures.
+
 ### Plan 31 phase 2: TLS + DNS-TCP `SessionParser` bridges
 
 Completes the `SessionParser` parser family started in 0.1.0. All
