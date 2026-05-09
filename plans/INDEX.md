@@ -38,19 +38,33 @@ historical record; new plans pick up where they left off.
 
 ---
 
-## Status snapshot
+## Foundational history (built inside the netring repo, then migrated here)
 
 | Plan | Goal | Status |
 |------|------|--------|
+| [`00-workspace-split.md`](./00-workspace-split.md) | original split of flow types out of netring's main crate | ✅ done (superseded by single-crate consolidation) |
+| [`01-flow-extractor.md`](./01-flow-extractor.md) | `FlowExtractor` trait + built-in extractors + decap combinators | ✅ done |
+| [`02-flow-tracker.md`](./02-flow-tracker.md) | `FlowTracker` + TCP state machine + idle/eviction | ✅ done |
+| [`03-flow-reassembler.md`](./03-flow-reassembler.md) | `Reassembler` trait + `BufferedReassembler` + sync `FlowDriver` | ✅ done |
+| [`04-flow-release.md`](./04-flow-release.md) | netring-flow 0.1.0 release prep | ✅ done (rolled into flowscope 0.1.0) |
 | [`12-test-infra.md`](./12-test-infra.md) | pcap fixtures, `proptest`, `cargo-fuzz` harness | ✅ done |
+
+## Status snapshot — current
+
+| Plan | Goal | Status |
+|------|------|--------|
 | [`20-flow-pcap.md`](./20-flow-pcap.md) | pcap source — now `pcap` feature module | ✅ done |
+| [`21-flow-protolens.md`](./21-flow-protolens.md) | `protolens` bridge as a feature module / sub-crate | not started |
 | [`22-flow-http.md`](./22-flow-http.md) | HTTP/1.x — now `http` feature module | ✅ done |
 | [`23-flow-tls.md`](./23-flow-tls.md) | TLS observer — now `tls` feature module | ✅ done (JA3; JA4 deferred) |
 | [`24-flow-dns.md`](./24-flow-dns.md) | DNS-over-UDP — now `dns` feature module | ✅ done (UDP/53 only) |
 | [`30-conversation.md`](./30-conversation.md) | `Conversation<K>` aggregate | ✅ done (lives in `netring`) |
 | [`31-session-parser.md`](./31-session-parser.md) | `SessionParser` / `DatagramParser` traits + Stream impls | 🚧 phase 1 done; TLS + DNS-TCP bridges, property tests, migration guide pending |
 | [`32-flow-export.md`](./32-flow-export.md) | NetFlow/IPFIX export via `netgauze-flow-pkt` | not started |
+| [`40-observability.md`](./40-observability.md) | `metrics` + `tracing` integration | not started |
 | [`41-perf-foundations.md`](./41-perf-foundations.md) | Zero-copy reassembly, LRU hot-cache | not started |
+| [`50-deferred-catchup.md`](./50-deferred-catchup.md) | InnerGre, FlowLabel, AutoDetectEncap, IPv6 frags, etc. | not started |
+| [`60-cli-tools.md`](./60-cli-tools.md) | `flow-replay` / `flow-summary` CLI binaries | not started |
 
 ---
 
