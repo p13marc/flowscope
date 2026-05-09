@@ -68,6 +68,9 @@ pub mod driver;
 #[cfg(feature = "reassembler")]
 pub mod reassembler;
 
+#[cfg(all(feature = "reassembler", feature = "session"))]
+pub mod session_driver;
+
 #[cfg(feature = "session")]
 pub mod session;
 
@@ -105,3 +108,6 @@ pub use reassembler::{
 pub use session::{
     DatagramParser, DatagramParserFactory, SessionEvent, SessionParser, SessionParserFactory,
 };
+
+#[cfg(all(feature = "reassembler", feature = "session"))]
+pub use session_driver::FlowSessionDriver;
