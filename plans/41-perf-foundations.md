@@ -1,14 +1,17 @@
-# Plan 41 — Performance foundations
+# Plan 41 — Performance foundations (flowscope hot-cache)
 
 ## Summary
 
-Two optimizations that together target a 1.5–3× throughput
-improvement on representative workloads:
+A single targeted optimization on flowscope's tracker: a "last flow
+seen" hot cache that skips the LRU lookup when consecutive packets
+belong to the same flow. ~50 LOC, no API impact, measurable win on
+monoflow workloads (single iperf3 stream, single HTTP/2 connection,
+etc.).
 
-1. **Zero-copy reassembly via `BytesMut` pool** — eliminate
-   `Bytes::copy_from_slice` per TCP segment in the async path.
-2. **LRU hot-cache fast-path** — Suricata-style "remember the last
-   flow" optimization for monoflow / packet-burst workloads.
+The original Plan 41 draft also covered a `BytesMut` pool
+optimization in netring's `flow_stream` async adapter — that lives
+in netring's repo, not flowscope's, so it has been moved out of
+this plan. See "Companion work in netring" below.
 
 ## Status
 
@@ -16,160 +19,117 @@ Not started.
 
 ## Prerequisites
 
-- Profiling data on representative workloads (perf, tracy,
-  flamegraph). Either ad-hoc local profiling or a one-off micro-bench
-  set up alongside this plan — whatever gives confidence the
-  optimization is targeting a real cost.
+- Some form of profiling/micro-bench so the hot-cache win can be
+  measured. Ad-hoc local profiling against a synthetic monoflow pcap
+  is enough; doesn't need a full criterion harness.
 
 ## Out of scope
 
 - SIMD acceleration of header parsing (would warrant its own plan).
-- Lock-free / shard-by-key flow table (replace HashMap with
-  flurry/dashmap). Worth considering only if our profiling points
-  to HashMap contention.
-- AF_XDP zero-copy frame ownership for flow tracking (separate plan,
-  needs aya / xsk-rs evolution first).
+- Replacing `LruCache` with a lock-free / shard-by-key flow table.
+  Worth considering only if profiling points to lookup contention,
+  which it currently doesn't.
+- AF_XDP zero-copy frame ownership for flow tracking. Lives in
+  netring; separate plan; needs aya / xsk-rs evolution first.
+- The `BytesMut` pool optimization for netring's async reassembler
+  path (was Part A of the original plan; see below).
 
 ---
 
-## Part A — Zero-copy reassembly
+## The hot cache
 
-### The cost we're paying
+### Cost we're paying
 
-Today, `FlowStream::poll_next` for the async-reassembler path does:
-
-```rust
-let payload = &view.frame[off..off+len];
-let bytes = Bytes::copy_from_slice(payload);  // ALLOC
-self.reassembler.pending_payloads.push((..., bytes));
-```
-
-`copy_from_slice` allocates a fresh heap `Bytes` per segment. At
-1 Gbps with 1500-byte MTU and 50% TCP/data, that's ~80k allocs/sec.
-Each costs ~100–300 ns plus heap fragmentation.
-
-### The fix: BytesMut frozen pool
-
-Each batch from the kernel ring is contiguous (well, a block of
-contiguous packets). We can:
-
-1. Once per batch, allocate one `BytesMut` of size `batch_len`.
-2. Copy the entire batch into it (one big memcpy — fast, prefetcher-
-   friendly).
-3. For each TCP packet in the batch, `BytesMut::split_to(packet_payload_offset_in_batch)` →
-   shareable `Bytes` views.
-4. Drop the reassembler's `Bytes` when it consumes them; the underlying
-   `BytesMut` ref-count goes to zero when the last reference drops.
-
-End state: 1 alloc per batch (typically 32–256 packets), not per
-packet. Throughput gain estimated 1.5–2.5× on TCP-heavy workloads.
-
-### Implementation
-
-In `flow_stream.rs` (the async-reassembler path):
-
-```rust
-let batch_total_bytes: usize = batch.iter().map(|p| p.data().len()).sum();
-let mut shared = BytesMut::with_capacity(batch_total_bytes);
-for pkt in &batch {
-    shared.extend_from_slice(pkt.data());
-    let frame = &shared[(shared.len() - pkt.data().len())..];
-    // ... extractor.extract(view), tracker.track_with_payload(...).
-    //     payload_cb takes &[u8] from shared; we materialize Bytes
-    //     by splitting:
-    //
-    //   let payload_offset = shared.len() - pkt.data().len() + tcp.payload_offset;
-    //   let payload_bytes = shared.clone().split_to(payload_offset)... 
-}
-let frozen: Bytes = shared.freeze();
-// Hand frozen.slice(off..off+len) to the reassembler — zero-copy.
-```
-
-The trick: `Bytes::slice` is O(1) and shares the underlying
-allocation. As long as ANY reassembler still holds a slice, the
-batch's allocation lives. Once they all drop, it's freed.
-
-### API impact
-
-Internal-only. The user-facing `AsyncReassembler::segment(..., payload: Bytes)`
-already takes `Bytes`. We just stop allocating per segment.
-
-### Risks
-
-- **Lifetime extends beyond expected**: if a reassembler holds bytes
-  for a long time (e.g., HttpReassembler buffering 1 MB across many
-  segments), the underlying batch alloc lives. For pathological
-  cases this could push memory up. **Mitigation**: HTTP/TLS/DNS
-  parsers should `Bytes::copy_from_slice` themselves when they
-  decide to buffer long-term, which converts to an owned alloc.
-  Document.
-
----
-
-## Part B — LRU hot-cache fast-path
-
-### The cost we're paying
-
-Today, every `FlowTracker::track` call does:
+Today every `FlowTracker::track` call does:
 
 ```rust
 let key = extractor.extract(view).key;
-let entry = self.flows.get_mut(&key);  // HashMap lookup
+let entry = self.flows.get_mut(&key);  // LruCache lookup
 ```
 
-For monoflow workloads (e.g., a single iperf3 stream, or a single
-HTTP/2 connection saturating a link), every packet is the SAME flow.
-The HashMap lookup is ~50 ns; redundant.
+For monoflow workloads (a single iperf3 stream saturating a link, a
+single HTTP/2 connection, a single long-lived TLS tunnel) every
+packet has the **same** key. The lookup is ~50 ns per packet —
+redundant when consecutive packets share a key.
 
-Suricata's profiling showed this; their fix is a per-thread "last
-flow seen" pointer.
+Suricata profiles this; their fix is a per-thread "last flow seen"
+pointer. We borrow the same idea.
 
-### The fix: sticky reference
+### Fix — sticky reference
 
-Add a thread-local-ish hot cache to `FlowTracker`:
+Add a hot-cache field to `FlowTracker`:
 
 ```rust
 pub struct FlowTracker<E: FlowExtractor, S = ()> {
-    flows: LruCache<...>,
-    /// Most recently accessed key — checked first on `track`.
-    /// Avoids the HashMap lookup when consecutive packets belong
-    /// to the same flow.
+    extractor: E,
+    flows: LruCache<E::Key, FlowEntry<S>, RandomState>,
+    config: FlowTrackerConfig,
+    stats: FlowTrackerStats,
+    init: StateInit<E::Key, S>,
+    /// New: most recently accessed key. Skips the LruCache lookup
+    /// (and the LRU promotion that follows) when the same key
+    /// reappears immediately. Cleared on `Ended`/`Evicted`/`forget`.
     hot: Option<E::Key>,
-    // ...
 }
 ```
 
-`track` becomes:
+`track_with_payload` becomes:
 
 ```rust
-pub fn track(&mut self, view: PacketView<'_>) -> FlowEvents<E::Key> {
-    let key = extractor.extract(view)?.key;
-    if Some(&key) == self.hot.as_ref() {
-        // FAST PATH: still touches the LruCache to update LRU order
-        // (one O(1) cache.promote()), but skips the bulk lookup.
-        // Actually we can skip the LRU promote on `hot` since the
-        // hot key is by definition recent.
-        let entry = self.flows.get_mut(&key).expect("hot key must exist");
-        // ... update entry, return events
-    } else {
-        // SLOW PATH (existing logic).
-        self.hot = Some(key.clone());
-        // ... existing track logic
-    }
-}
+let key = match self.extractor.extract(view) {
+    Some(e) => e.key,
+    None => { self.stats.packets_unmatched += 1; return events; }
+};
+let entry = if Some(&key) == self.hot.as_ref() {
+    // Fast path — key matches the cached one. Skip LRU lookup
+    // entirely; entry is by definition the LRU front for this key
+    // (we just touched it last call).
+    self.flows.get_mut(&key).expect("hot key must exist")
+} else {
+    self.hot = Some(key.clone());
+    self.flows.get_or_insert_mut(&key, /* ... */)
+};
+// ... existing logic continues with `entry` ...
 ```
 
-Estimated win: 2× on monoflow. ~1.05–1.1× on heterogeneous.
+### Hot-cache invalidation
 
-### Risks
+Three places clear `hot`:
 
-- **Wrong fast-path on tail of bidirectional flow.** Initiator
-  packet then responder packet share the same key in bidirectional
-  mode. Confirmed: same key, fast-path wins. ✓
-- **Hot-key invalidation on Ended.** When a flow ends and is
-  removed from the LruCache, we need to clear `hot` if it points
-  there. Add a check in the Ended branch.
-- **Code complexity.** Adds ~30 LOC. Trivial.
+1. **End-of-flow.** When a flow ends (`Fin`/`Rst`/`IdleTimeout`/
+   `Evicted`/`BufferOverflow`), if `hot == Some(key)`, set
+   `hot = None`.
+2. **Eviction.** Same condition — handled by the Ended path.
+3. **`FlowTracker::forget(&K)`** — Plan 42's new accessor; also
+   clears `hot` if it points to the forgotten key.
+
+### Estimated win
+
+- Monoflow workload (1 active flow): ~2× throughput on `track`.
+- Two-flow workload (alternating packets): ~0.95× — slight
+  pessimization from the failed hot-check. Real-world traffic is
+  bursty per flow, so this is rare in practice.
+- Heterogeneous (1000+ flows, even mix): ~1.05–1.1× — small win
+  from the per-burst stickiness.
+
+### API impact
+
+Zero. Field is `pub(crate)`; behaviour is observably identical.
+
+---
+
+## Companion work in netring (not in this plan)
+
+The `BytesMut`-pool optimization (one alloc per kernel-batch
+instead of one alloc per TCP segment) lives in netring's
+`async_adapters/flow_stream.rs`. It is the bigger throughput win
+(estimated 1.5–2.5× on TCP-heavy workloads) but is netring's
+problem, not flowscope's.
+
+When picking that up, file it as `netring/plans/NN-bytes-pool.md`
+and cross-link from netring's CHANGELOG. The `AsyncReassembler::segment`
+trait already takes `Bytes`; the optimization is purely about how
+that `Bytes` is sourced.
 
 ---
 
@@ -177,49 +137,92 @@ Estimated win: 2× on monoflow. ~1.05–1.1× on heterogeneous.
 
 ### MODIFIED
 
-- `netring-flow/src/tracker.rs` — add `hot: Option<E::Key>`
-  field + fast-path branch in `track` / `track_with_payload`.
-- `netring/src/async_adapters/flow_stream.rs` — switch the async
-  reassembler path to the BytesMut-pool pattern.
-- `docs/PERFORMANCE.md` — document the new numbers.
+- `src/tracker.rs` — `hot: Option<E::Key>` field + fast-path branch
+  in `track_with_payload` + invalidation in the eviction/Ended
+  paths.
+- `docs/PERFORMANCE.md` — new file documenting the methodology +
+  before/after numbers for the hot-cache.
+
+### NEW
+
+None.
 
 ---
 
 ## Implementation steps
 
 1. **Capture a baseline** with whatever profiler / micro-bench you
-   prefer (perf, flamegraph, criterion ad-hoc, hyperfine wrapping
-   a flow-replay). Document it inline in PERFORMANCE.md.
-2. **Land Part B (hot cache)** first — smaller, simpler change.
-3. **Re-measure; document delta.**
-4. **Land Part A (BytesMut pool).**
-5. **Re-measure; document delta.**
-6. **Add `PERFORMANCE.md`** showing before/after for the
-   representative workloads (monoflow, 1M-flows, mixed).
+   prefer (`perf stat`, `flamegraph`, `criterion` ad-hoc, `hyperfine`
+   wrapping `pcap-driven` replay). Document inline in PERFORMANCE.md
+   the methodology + numbers — what workload, what hardware, what
+   compile flags.
+2. **Land the hot-cache** in `src/tracker.rs`. Single new field, two
+   new branches (fast path, invalidation).
+3. **Re-measure**; document the delta.
+4. **Property test** that the event stream is identical with the
+   hot-cache enabled vs. a `cfg!(feature = "no-hot-cache")` fork.
+   Add to `tests/proptest_invariants.rs`.
 
 ---
 
 ## Tests
 
-- All existing tests pass after each change.
-- Add a property test: feed N packets into the tracker via
-  hot-path ON vs OFF (via `cfg!(feature = "no-hot-cache")` fork);
-  verify identical event sequences.
+- All existing tests pass after the change. The hot cache changes
+  only the lookup mechanism, not the events emitted.
+- New proptest: random sequences of (key, packet) pairs from a pool
+  of 4 keys; assert that the `Vec<FlowEvent<K>>` produced with the
+  hot cache matches the `Vec<FlowEvent<K>>` produced when forced to
+  always take the slow path. Use a `cfg(test)`-gated method like
+  `set_hot_cache_enabled(bool)` to test both branches from one
+  binary.
 
 ---
 
 ## Acceptance criteria
 
-- [ ] Hot-cache fast path implemented; measurable throughput gain
-      on monoflow workload (target ≥10%).
-- [ ] BytesMut pool in async reassembler path; measurable
-      throughput gain on TCP-heavy workload (target ≥30%).
+- [ ] Hot-cache fast path implemented; baseline benchmark exists in
+      `docs/PERFORMANCE.md`.
+- [ ] Measurable throughput gain on monoflow workload (target ≥10%;
+      stretch goal ≥50% — the original draft estimated 2×).
+- [ ] Proptest verifies identical event sequences across enabled /
+      disabled.
 - [ ] No regression on existing tests.
-- [ ] PERFORMANCE.md has the numbers (before / after / methodology).
+- [ ] PERFORMANCE.md has the numbers (workload, hardware, before /
+      after, methodology).
+- [ ] `cargo clippy --all-features --all-targets -- -D warnings` clean.
+
+---
+
+## Risks
+
+1. **Wrong fast-path on tail of bidirectional flow.** Initiator
+   then responder packets share the same key in bidirectional mode
+   — verified, fast-path wins.
+2. **Hot-key invalidation correctness.** Three invalidation sites
+   (Ended, Evicted, forget). Easy to miss one; the proptest catches
+   that case (a key whose entry was removed but whose `hot` slot
+   wasn't would trigger an `expect("hot key must exist")` panic).
+3. **`E::Key: Clone` cost.** The fast path's miss branch clones the
+   key into `hot`. For `FiveTuple` (the canonical key) `Clone` is a
+   trivial 24-byte copy. For larger custom keys the clone may matter
+   — but no worse than the LRU's existing requirement that keys be
+   cheap to hash + compare.
+4. **Code complexity.** ~50 LOC. Trivial.
 
 ---
 
 ## Effort
 
-- LOC: ~200 across both parts.
-- Time: 3 days (most of it benchmarking + tuning, not coding).
+- LOC: ~50.
+- Time: 1 day (½ day implementation + ½ day benchmarking + writing
+  PERFORMANCE.md).
+
+---
+
+## Provenance
+
+This plan was originally a two-part scope: Part A (BytesMut pool
+in `flow_stream`) and Part B (hot-cache in `FlowTracker`). Part A
+lives in netring (which owns `flow_stream.rs`), not flowscope, and
+has been moved to a netring-side plan. This file now covers Part B
+only.

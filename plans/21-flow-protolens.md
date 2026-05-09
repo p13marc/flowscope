@@ -1,4 +1,30 @@
-# Plan 21 — `netring-flow-protolens` companion crate
+# Plan 21 — `flowscope-protolens` companion crate
+
+> **STALE — pre-consolidation draft. Rewrite required before
+> execution.** This plan was written before the `netring-flow*`
+> workspace was consolidated into the single `flowscope` crate.
+> Concretely:
+>
+> - **Crate name** should be `flowscope-protolens`, not
+>   `netring-flow-protolens`.
+> - **Dependency wiring** — flowscope is the upstream now; references
+>   to `netring-flow` should be `flowscope` with the appropriate
+>   feature flags (`reassembler`, `tracker`).
+> - **Sister-crate placement** per `DPI_ARCHITECTURE.md` §recommendations:
+>   this should live as a separate crate `flowscope-protolens` (own
+>   repo or a sibling crate), depending on `flowscope` for the
+>   `Reassembler` / `SessionParser` traits.
+> - **Async path** — the original draft targeted netring's
+>   `AsyncReassembler`, which still exists. The bridge is async-side
+>   only; flowscope itself stays runtime-free.
+> - **Performance hazard** — `tokio::task::spawn_blocking` per TCP
+>   segment is documented as a known throughput hazard. Before
+>   shipping, replace with a dedicated worker thread per `Prolens`
+>   instance + MPSC channel for segments.
+>
+> The body below is preserved as historical context. Treat the
+> "Files", "Cargo.toml", and "Implementation steps" sections as
+> needing rewrite before anyone picks this up.
 
 ## Summary
 

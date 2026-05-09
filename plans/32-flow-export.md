@@ -1,10 +1,34 @@
-# Plan 32 — `netring-flow-export` (NetFlow / IPFIX export)
+# Plan 32 — `flowscope-export` (NetFlow / IPFIX export)
+
+> **STALE — pre-consolidation draft. Rewrite required before
+> execution.** This plan was written before the `netring-flow*`
+> workspace was consolidated into the single `flowscope` crate.
+> Concretely:
+>
+> - **Crate name** should be `flowscope-export`, not
+>   `netring-flow-export`. Per `DPI_ARCHITECTURE.md` recommendation,
+>   this is a sister crate that depends on `flowscope`.
+> - **Dependency wiring** — drop references to `netring-flow`; the
+>   import is now `flowscope` with the `tracker` feature.
+> - **`FlowStats` shape** — Plan 42 widens `FlowStats` with
+>   reassembly-diagnostic fields. The IPFIX template here doesn't
+>   need them, but the field-mapping table below should be regenerated
+>   against the post-42 struct so any user who *wants* to export
+>   them can.
+> - **`FlowEvent::key()` signature** — Plan 42 changes it to
+>   `Option<&K>`. The `IntoFlowKey` adapter pattern below isn't
+>   affected (it operates on the matched `K`), but call-sites must
+>   handle the option.
+>
+> The body below is preserved as historical context. Pick up only
+> after Plan 42 ships and a real consumer asks for the export
+> integration.
 
 ## Summary
 
 Export `FlowEvent::Ended` records as NetFlow v9 / IPFIX template-based
 flow records to a configurable collector (UDP or TCP). Bridges the
-gap between netring-flow's tracker and the standard observability
+gap between flowscope's tracker and the standard observability
 pipeline that NetFlow collectors (nProbe, ntopng, Splunk Stream,
 Kentik, etc.) consume.
 

@@ -1,4 +1,27 @@
-# Plan 60 — CLI tooling (`netring-cli`)
+# Plan 60 — CLI tooling (`flowscope-cli`)
+
+> **STALE — pre-consolidation draft. Rewrite required before
+> execution.** This plan was written before the `netring-flow*`
+> workspace was consolidated into the single `flowscope` crate.
+> Concretely:
+>
+> - **Crate name** should be `flowscope-cli`, not `netring-cli`,
+>   per `DPI_ARCHITECTURE.md` recommendation.
+> - **Dependency wiring** — `netring-flow-pcap` doesn't exist;
+>   pcap is now a feature flag on flowscope (`flowscope = { ...,
+>   features = ["pcap"] }`). `netring-flow` is just `flowscope`.
+> - **netring features** — for live capture the binary depends on
+>   `netring` with whatever feature gates expose `AsyncCapture` +
+>   `flow_stream`.
+> - **L7 output formats** — when Plan 42 (anomaly events) ships,
+>   `--format json` should include the new `Anomaly` variant; the
+>   formatter list below needs that case.
+> - **`flow-summary` and `flow-replay` design** is sound; the wiring
+>   just needs renaming and re-targeting to the single-crate world.
+>
+> The body below is preserved as historical context. Pick up after
+> at least Plan 42 ships, since the CLIs are the natural place to
+> exercise its anomaly stream against real pcaps.
 
 ## Summary
 
