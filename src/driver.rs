@@ -120,6 +120,10 @@ where
         if self.emit_anomalies {
             let anomalies = Self::diff_anomaly_state(snapshot, reassemblers, &self.tracker, ts);
             for a in anomalies {
+                if let FlowEvent::Anomaly { kind, .. } = &a {
+                    crate::obs::record_anomaly(kind);
+                    crate::obs::trace_anomaly(kind);
+                }
                 events.push(a);
             }
         }
@@ -146,6 +150,12 @@ where
         if self.emit_anomalies {
             let anomalies =
                 Self::diff_anomaly_state(snapshot, &self.reassemblers, &self.tracker, now);
+            for a in &anomalies {
+                if let FlowEvent::Anomaly { kind, .. } = a {
+                    crate::obs::record_anomaly(kind);
+                    crate::obs::trace_anomaly(kind);
+                }
+            }
             events.extend(anomalies);
         }
         let synthesised = Self::synthesise_buffer_overflow_ends(
@@ -280,6 +290,8 @@ where
             };
             let history = tracker.snapshot_history(&key).unwrap_or_default();
             tracker.forget(&key);
+            crate::obs::record_flow_ended(EndReason::BufferOverflow, &stats);
+            crate::obs::trace_flow_ended(EndReason::BufferOverflow, &stats);
             out.push(FlowEvent::Ended {
                 key,
                 reason: EndReason::BufferOverflow,

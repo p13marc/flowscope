@@ -60,6 +60,9 @@ mod tcp_state;
 #[cfg(feature = "tracker")]
 pub mod tracker;
 
+#[cfg(feature = "tracker")]
+pub mod obs;
+
 #[cfg(feature = "reassembler")]
 pub mod driver;
 #[cfg(feature = "reassembler")]

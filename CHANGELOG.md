@@ -1,11 +1,14 @@
 # Changelog
 
-## 0.2.0 — Reassembly observability
+## 0.2.0 — Reassembly observability + metrics/tracing hooks
 
 This minor release ships the bundle described in
 [plans/42-reassembly-observability.md](plans/42-reassembly-observability.md):
 optional buffer caps on `BufferedReassembler`, end-of-flow reassembly
 diagnostics on `FlowStats`, and a live `FlowEvent::Anomaly` stream.
+It also adds opt-in `metrics` + `tracing` features ([Plan 40](plans/40-observability.md))
+that share the same `AnomalyKind` vocabulary, plus a hot-cache
+fast-path on `FlowTracker` ([Plan 41](plans/41-perf-foundations.md)).
 The motivating consumer is [`des-rs`](https://github.com/p13marc/des-rs)'s
 `tools/des-capture`, which can now drop its hand-rolled
 `TcpStreamTracker` in favour of flowscope.
@@ -53,6 +56,24 @@ The motivating consumer is [`des-rs`](https://github.com/p13marc/des-rs)'s
   methods (`dropped_segments`, `bytes_dropped_oversize`,
   `is_poisoned`). Existing impls compile unchanged; surface real
   counts by overriding.
+
+### Observability hooks (Plan 40)
+
+- New optional `metrics` Cargo feature: counters, gauges, and
+  histograms wired through `FlowTracker` and `FlowDriver`. Metric
+  vocabulary documented in [docs/OBSERVABILITY.md](docs/OBSERVABILITY.md).
+- New optional `tracing` Cargo feature: structured events at flow
+  lifecycle transitions and on every emitted anomaly.
+- Both features are zero-cost when off (compile-time stubbed).
+- Public metric-name constants exported from `flowscope::obs`
+  (`METRIC_FLOWS_CREATED`, `METRIC_ANOMALIES`, …).
+
+### Performance (Plan 41)
+
+- `FlowTracker` gains a "last flow seen" hot-cache that skips the
+  hash lookup when consecutive packets share a key. Estimated 2x
+  throughput on monoflow workloads (single iperf3 / HTTP/2 stream),
+  small win on heterogeneous traffic. No API impact.
 
 ### New API
 

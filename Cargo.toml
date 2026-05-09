@@ -46,9 +46,17 @@ simple-dns = { version = "0.10", optional = true }
 # `pcap` feature
 pcap-file = { version = "2", optional = true }
 
+# `metrics` feature
+metrics = { version = "0.24", optional = true }
+
+# `tracing` feature
+tracing = { version = "0.1", default-features = false, features = ["std", "attributes"], optional = true }
+
 [dev-dependencies]
 proptest = "1"
 pcap-file = "2"
+metrics-util = "0.20"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [features]
 default = ["extractors", "tracker", "reassembler", "session"]
@@ -72,8 +80,12 @@ dns = ["extractors", "tracker", "session", "dep:simple-dns"]
 # pcap source adapter (offline replay).
 pcap = ["extractors", "tracker", "dep:pcap-file"]
 
+# Observability hooks (zero-cost when off).
+metrics = ["tracker", "dep:metrics"]
+tracing = ["tracker", "dep:tracing"]
+
 # Convenience: turn everything on.
-full = ["http", "tls", "ja3", "dns", "pcap"]
+full = ["http", "tls", "ja3", "dns", "pcap", "metrics", "tracing"]
 
 [package.metadata.docs.rs]
 all-features = true
@@ -138,3 +150,7 @@ required-features = ["test-helpers", "tracker"]
 [[test]]
 name = "parser_proptest"
 required-features = ["http", "tls", "dns"]
+
+[[test]]
+name = "metrics_integration"
+required-features = ["metrics", "extractors", "reassembler", "test-helpers"]

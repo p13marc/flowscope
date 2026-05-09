@@ -174,6 +174,7 @@ impl<E: FlowExtractor, S: Send + 'static> FlowTracker<E, S> {
             Some(e) => e,
             None => {
                 self.stats.packets_unmatched += 1;
+                crate::obs::record_packet_unmatched();
                 return events;
             }
         };
@@ -220,6 +221,8 @@ impl<E: FlowExtractor, S: Send + 'static> FlowTracker<E, S> {
                     if self.hot.as_ref() == Some(&evicted_key) {
                         self.hot = None;
                     }
+                    crate::obs::record_flow_ended(EndReason::Evicted, &evicted_entry.stats);
+                    crate::obs::trace_flow_ended(EndReason::Evicted, &evicted_entry.stats);
                     events.push(FlowEvent::Ended {
                         key: evicted_key,
                         reason: EndReason::Evicted,
@@ -232,6 +235,8 @@ impl<E: FlowExtractor, S: Send + 'static> FlowTracker<E, S> {
             }
 
             self.stats.flows_created += 1;
+            crate::obs::record_flow_created(l4);
+            crate::obs::trace_flow_started(l4);
 
             events.push(FlowEvent::Started {
                 key: key.clone(),
@@ -329,6 +334,8 @@ impl<E: FlowExtractor, S: Send + 'static> FlowTracker<E, S> {
                 if self.hot.as_ref() == Some(&key) {
                     self.hot = None;
                 }
+                crate::obs::record_flow_ended(reason, &removed.stats);
+                crate::obs::trace_flow_ended(reason, &removed.stats);
                 events.push(FlowEvent::Ended {
                     key,
                     reason,
@@ -383,6 +390,8 @@ impl<E: FlowExtractor, S: Send + 'static> FlowTracker<E, S> {
                 if self.hot.as_ref() == Some(&key) {
                     self.hot = None;
                 }
+                crate::obs::record_flow_ended(reason, &entry.stats);
+                crate::obs::trace_flow_ended(reason, &entry.stats);
                 ended.push(FlowEvent::Ended {
                     key,
                     reason,
