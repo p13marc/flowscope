@@ -63,7 +63,7 @@ historical record; new plans pick up where they left off.
 | [`32-flow-export.md`](./32-flow-export.md) | NetFlow/IPFIX export via `netgauze-flow-pkt` | not started |
 | [`40-observability.md`](./40-observability.md) | `metrics` + `tracing` integration | not started |
 | [`41-perf-foundations.md`](./41-perf-foundations.md) | Zero-copy reassembly, LRU hot-cache | not started |
-| [`50-deferred-catchup.md`](./50-deferred-catchup.md) | InnerGre, FlowLabel, AutoDetectEncap, IPv6 frags, etc. | not started |
+| [`50-deferred-catchup.md`](./50-deferred-catchup.md) | InnerGre, FlowLabel, AutoDetectEncap, IPv6 frags, etc. | 🚧 50.1 (InnerGre), 50.2 (FlowLabel), 50.3 (AutoDetectEncap), 50.4 (manual_tick) ✅ done. 50.5 (IPv6 frag reassembly) and 50.6 (FlowStream::broadcast, lives in netring) deferred. |
 | [`60-cli-tools.md`](./60-cli-tools.md) | `flow-replay` / `flow-summary` CLI binaries | not started |
 
 ---

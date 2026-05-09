@@ -2,6 +2,34 @@
 
 ## Unreleased
 
+### Plan 50 deferred-feature catchup (4 of 6 sub-plans)
+
+- **50.1 `InnerGre<E>`** — decapsulate GRE (RFC 2784/2890) and run
+  the inner extractor on the carried protocol. Handles IPv4-in-GRE,
+  IPv6-in-GRE, and Transparent Ethernet Bridging (`0x6558`).
+  Optional checksum/key/sequence headers walked correctly.
+  PPTP-GRE (version 1) explicitly rejected. 6 unit tests.
+- **50.2 `FlowLabel<E>`** — augment any inner key with the 20-bit
+  IPv6 flow label (RFC 6437). IPv4 packets get `label = 0`. Useful
+  for distinguishing flows that share a 5-tuple (MPTCP subflows,
+  ECMP-affinity flows). 4 unit tests.
+- **50.3 `AutoDetectEncap<E>`** — combinator that tries plain
+  extraction, then each enabled decap variant in order (VLAN →
+  MPLS → VXLAN → GTP-U → GRE), returning the first match. For
+  homogeneous traffic, manual composition is faster; this is the
+  ergonomic option for mixed traffic. 4 unit tests.
+- **50.4 `FlowTracker::manual_tick(now)`** — alias for `sweep`,
+  exists for tests that prefer a name not implying background-thread
+  machinery. 5 LOC.
+
+Out of scope for this release (deferred):
+- 50.5 IPv6 fragment reassembly (its own micro-plan when demand
+  surfaces; non-trivial state machine).
+- 50.6 `FlowStream::broadcast(buffer)` (lives in netring, not
+  flowscope, since FlowStream is a netring async adapter).
+
+167 lib tests pass workspace-wide. Clippy + fmt clean.
+
 ### Plan 31 phase 3b: SESSION_GUIDE.md
 
 [`docs/SESSION_GUIDE.md`](../docs/SESSION_GUIDE.md) explains how to

@@ -309,6 +309,13 @@ impl<E: FlowExtractor, S: Send + 'static> FlowTracker<E, S> {
         events
     }
 
+    /// Alias for [`Self::sweep`]. Exists for tests and docs that
+    /// prefer a name not implying background-thread machinery.
+    #[inline]
+    pub fn manual_tick(&mut self, now: Timestamp) -> Vec<FlowEvent<E::Key>> {
+        self.sweep(now)
+    }
+
     /// Run the idle-timeout sweep. Returns events for flows that
     /// ended due to timeout. Call periodically (e.g., from a tokio
     /// `Interval`).
