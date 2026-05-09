@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+### Plan 31 phase 3b: SESSION_GUIDE.md
+
+[`docs/SESSION_GUIDE.md`](../docs/SESSION_GUIDE.md) explains how to
+pick between `FlowEvent`, `Reassembler`, `*Factory<H>`,
+`SessionParser`, `DatagramParser`, and `Conversation<K>` for a given
+use case. Includes a decision-flow checklist, runnable examples for
+each shape, and a migration recipe from the callback-style factory
+API to the typed-stream parser API.
+
+Also documents the trait-stability lock: `SessionParser` /
+`DatagramParser` are now considered stable for the 1.0 lock; future
+additions are additive. Plan 31 is now complete.
+
 ### Plan 31 phase 3a: parser property tests
 
 11 proptest harnesses across the four parsers (HTTP, TLS, DNS-UDP,

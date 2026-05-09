@@ -59,7 +59,7 @@ historical record; new plans pick up where they left off.
 | [`23-flow-tls.md`](./23-flow-tls.md) | TLS observer — now `tls` feature module | ✅ done (JA3; JA4 deferred) |
 | [`24-flow-dns.md`](./24-flow-dns.md) | DNS-over-UDP — now `dns` feature module | ✅ done (UDP/53 only) |
 | [`30-conversation.md`](./30-conversation.md) | `Conversation<K>` aggregate | ✅ done (lives in `netring`) |
-| [`31-session-parser.md`](./31-session-parser.md) | `SessionParser` / `DatagramParser` traits + Stream impls + parser bridges + proptests | ✅ phases 1+2+3a done (HTTP, TLS, DNS-UDP, DNS-TCP shipped, 11 splitting-invariance & no-panic proptests). Migration guide (`docs/SESSION_GUIDE.md`) deferred until 1.0 polish. |
+| [`31-session-parser.md`](./31-session-parser.md) | `SessionParser` / `DatagramParser` traits + Stream impls + parser bridges + proptests + migration guide | ✅ done (4 parsers across both trait shapes, 11 proptests, [SESSION_GUIDE.md](../docs/SESSION_GUIDE.md)) |
 | [`32-flow-export.md`](./32-flow-export.md) | NetFlow/IPFIX export via `netgauze-flow-pkt` | not started |
 | [`40-observability.md`](./40-observability.md) | `metrics` + `tracing` integration | not started |
 | [`41-perf-foundations.md`](./41-perf-foundations.md) | Zero-copy reassembly, LRU hot-cache | not started |
