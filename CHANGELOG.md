@@ -1,5 +1,104 @@
 # Changelog
 
+## 0.2.0 — Reassembly observability
+
+This minor release ships the bundle described in
+[plans/42-reassembly-observability.md](plans/42-reassembly-observability.md):
+optional buffer caps on `BufferedReassembler`, end-of-flow reassembly
+diagnostics on `FlowStats`, and a live `FlowEvent::Anomaly` stream.
+The motivating consumer is [`des-rs`](https://github.com/p13marc/des-rs)'s
+`tools/des-capture`, which can now drop its hand-rolled
+`TcpStreamTracker` in favour of flowscope.
+
+### Highlights
+
+- **`BufferedReassembler::with_max_buffer(n)`** — optional per-side
+  byte cap, paired with **`with_overflow_policy(...)`** to choose:
+  - `OverflowPolicy::SlidingWindow` (default) — drop oldest bytes
+    from the buffer; flow stays alive; parser sees a gap and must
+    resync. Best for stream-shaped / append-only protocols.
+  - `OverflowPolicy::DropFlow` — poison the reassembler; the driver
+    synthesises an `Ended { reason: EndReason::BufferOverflow }`
+    event on the next tick. Best for framed binary protocols (DES
+    PSMSG, TLS records, length-prefixed wire formats).
+- **Reassembly diagnostics on `FlowStats`** — four new fields
+  (`reassembly_dropped_ooo_initiator/responder`,
+  `reassembly_bytes_dropped_oversize_initiator/responder`) populated
+  by `FlowDriver` when each flow ends.
+- **Live `FlowEvent::Anomaly`** — opt-in via
+  `FlowDriver::with_emit_anomalies(true)`. Emits one `AnomalyKind`
+  per (flow, side, kind) per tick:
+  - `BufferOverflow { side, bytes, policy }`
+  - `OutOfOrderSegment { side, count }`
+  - `FlowTableEvictionPressure { evicted_in_tick, evicted_total }` —
+    tracker-global signal that `max_flows` is the bottleneck.
+
+### Breaking changes
+
+- **`#[non_exhaustive]`** applied project-wide to every public
+  struct/enum that's likely to grow over time. From now on, additive
+  changes are unconditionally non-breaking.
+  Affected types: `FlowStats`, `FlowTrackerConfig`, `AnomalyKind`,
+  `OverflowPolicy`. Construct via `::default()` and mutate; do not
+  rely on struct-literal construction from outside the crate.
+- **`FlowEvent::key()`** now returns `Option<&K>` (was `&K`).
+  `None` is reserved for tracker-global anomalies (e.g.
+  `FlowTableEvictionPressure`); per-flow events still return
+  `Some(key)`. Migrate via `event.key().expect("non-anomaly")` or
+  pattern-match.
+- **`EndReason`** gained a new `BufferOverflow` variant. Any
+  exhaustive `match EndReason { ... }` needs a new arm. Treat it
+  like `Rst` for cleanup semantics (the driver does).
+- **`Reassembler` trait** gained three default-zero diagnostic
+  methods (`dropped_segments`, `bytes_dropped_oversize`,
+  `is_poisoned`). Existing impls compile unchanged; surface real
+  counts by overriding.
+
+### New API
+
+- `flowscope::OverflowPolicy` (`SlidingWindow`, `DropFlow`).
+- `flowscope::AnomalyKind` (non_exhaustive).
+- `BufferedReassembler::with_max_buffer` /
+  `with_overflow_policy` / `bytes_dropped_oversize` / `is_poisoned`.
+- `BufferedReassemblerFactory::with_max_buffer` /
+  `with_overflow_policy`.
+- `FlowTrackerConfig::max_reassembler_buffer` / `overflow_policy`.
+- `FlowTracker::snapshot_stats(&K)` /
+  `snapshot_history(&K)` / `forget(&K)` — accessors used by the
+  driver to synthesise `BufferOverflow` end events.
+- `FlowDriver::with_emit_anomalies(bool)`.
+- `FlowEvent::Anomaly { key, kind, ts }`.
+
+### Migration
+
+Most consumers need only:
+
+```diff
+- let cfg = FlowTrackerConfig { max_flows: 100, ..Default::default() };
++ let mut cfg = FlowTrackerConfig::default();
++ cfg.max_flows = 100;
+```
+
+(Within the same crate, struct-literal syntax with `..Default::default()`
+keeps working — `non_exhaustive` only restricts external constructors.)
+
+If you destructure or pattern-match `FlowEvent::Ended { stats: FlowStats { ... } }`,
+add `..` to the inner pattern:
+
+```diff
+- FlowEvent::Ended { stats: FlowStats { packets_initiator, packets_responder, ... } } => ...
++ FlowEvent::Ended { stats: FlowStats { packets_initiator, packets_responder, .. } } => ...
+```
+
+If you call `event.key()` and treat the return as a borrow:
+
+```diff
+- let k: &K = event.key();
++ let k: Option<&K> = event.key();
+```
+
+---
+
 ## 0.1.0 — Initial release
 
 `flowscope` is a passive flow & session tracking library extracted

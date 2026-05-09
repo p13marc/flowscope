@@ -292,6 +292,106 @@ It's **not** the right tool when:
 - You need to emit messages synchronously inside your packet loop
   (sync). `Conversation` is async.
 
+## Reassembly health (0.2.0)
+
+Every `FlowEvent::Ended` now carries reassembly diagnostics in its
+`stats` field:
+
+```rust,ignore
+let FlowEvent::Ended { stats, .. } = ev else { return };
+println!(
+    "ooo init={} resp={}; oversize init={} resp={}",
+    stats.reassembly_dropped_ooo_initiator,
+    stats.reassembly_dropped_ooo_responder,
+    stats.reassembly_bytes_dropped_oversize_initiator,
+    stats.reassembly_bytes_dropped_oversize_responder,
+);
+```
+
+`reassembly_dropped_ooo_*` counts segments dropped because they
+arrived out of order. `reassembly_bytes_dropped_oversize_*` counts
+payload bytes dropped from the buffer because of an
+[`OverflowPolicy`](#recovery-after-buffer-cap)-driven cap (zero
+unless `with_max_buffer` was set). Custom `Reassembler` impls can
+opt into surfacing these counters by overriding the default-zero
+trait methods.
+
+## Recovery after buffer cap
+
+`BufferedReassembler::with_max_buffer(n)` caps the per-side
+in-flight buffer at `n` bytes. When the cap is hit the
+[`OverflowPolicy`] decides what happens next.
+
+### `OverflowPolicy::SlidingWindow` (default)
+
+The reassembler drops oldest bytes from the front of the buffer
+until the new payload fits. The flow stays alive; the parser sees a
+gap and must resync. Best for **stream-shaped / append-only
+protocols** (HTTP body streams, plain TCP).
+
+`bytes_dropped_oversize` (per-side, on `FlowStats` and via
+`Reassembler::bytes_dropped_oversize()`) records the count of
+rotated-out bytes. A non-zero value tells your parser its buffered
+state is no longer contiguous with the wire.
+
+### `OverflowPolicy::DropFlow`
+
+The reassembler poisons itself on first overflow; subsequent
+segments are no-ops. The driver synthesises an
+`Ended { reason: EndReason::BufferOverflow }` event for the flow on
+the next tick, after which the tracker forgets it (so the next
+packet starts a fresh flow).
+
+Best for **framed binary protocols** (DES PSMSG, TLS records,
+length-prefixed wire formats) where dropping bytes mid-frame would
+permanently desync the parser.
+
+```rust,ignore
+use flowscope::{BufferedReassemblerFactory, OverflowPolicy, FlowDriver};
+use flowscope::extract::FiveTuple;
+
+let factory = BufferedReassemblerFactory::default()
+    .with_max_buffer(1_000_000)               // 1 MiB cap
+    .with_overflow_policy(OverflowPolicy::DropFlow);
+let mut driver = FlowDriver::new(FiveTuple::bidirectional(), factory);
+```
+
+Or set both at the tracker-config level via
+`FlowTrackerConfig::max_reassembler_buffer` and `overflow_policy`,
+which the default factory honours when constructed via
+`FlowDriver::with_config`.
+
+## Anomaly events (0.2.0)
+
+For live observability — operators watching long-lived flows want
+to know the moment a buffer overflow / OOO drop / eviction-pressure
+event happens, not when the flow eventually closes.
+
+Opt in via `FlowDriver::with_emit_anomalies(true)`:
+
+```rust,ignore
+let mut driver = FlowDriver::new(FiveTuple::bidirectional(), factory)
+    .with_emit_anomalies(true);
+```
+
+The driver then emits `FlowEvent::Anomaly { kind, .. }` events
+inline, coalesced per (flow, side, kind) per tick:
+
+| `AnomalyKind` | Fires when | Carries |
+|---------------|-----------|---------|
+| `BufferOverflow` | reassembler dropped bytes due to a cap | `side`, `bytes` (delta this tick), `policy` |
+| `OutOfOrderSegment` | reassembler dropped one or more OOO segments | `side`, `count` (delta) |
+| `FlowTableEvictionPressure` | tracker hit `max_flows` and evicted ≥ 1 flow | `evicted_in_tick`, `evicted_total` |
+
+Anomalies appear **before** any synthesised `Ended` event for the
+same flow so cause-then-effect ordering is preserved. The default
+is `false` — existing consumers see no behaviour change without
+opting in.
+
+For production aggregation (Prometheus / OpenTelemetry), pair this
+with the `metrics` feature (Plan 40, future release): the same
+`AnomalyKind` vocabulary drives the metric labels.
+
 ## Trait stability
 
 The `SessionParser` / `DatagramParser` trait shape locked in
