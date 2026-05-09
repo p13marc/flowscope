@@ -59,10 +59,10 @@ and need a rewrite pass before execution.
 
 | Plan | Goal | Status |
 |------|------|--------|
-| [`25-binary-protocol-example.md`](./25-binary-protocol-example.md) | `FlowSessionDriver` + length-prefixed binary protocol example | not started — ready to execute |
-| [`42-reassembly-observability.md`](./42-reassembly-observability.md) | Buffer cap + `OverflowPolicy` + `FlowStats` diagnostics + `FlowEvent::Anomaly` (0.2.0 bundle) | not started — primary candidate for next minor |
-| [`40-observability.md`](./40-observability.md) | `metrics` + `tracing` integration | not started — coordinates with Plan 42 vocabulary |
-| [`41-perf-foundations.md`](./41-perf-foundations.md) | Hot-cache fast-path in `FlowTracker` | not started — small, mechanical, no API impact |
+| [`25-binary-protocol-example.md`](./25-binary-protocol-example.md) | `FlowSessionDriver` + length-prefixed binary protocol example | ✅ done — shipped in 0.2.0 |
+| [`42-reassembly-observability.md`](./42-reassembly-observability.md) | Buffer cap + `OverflowPolicy` + `FlowStats` diagnostics + `FlowEvent::Anomaly` (0.2.0 bundle) | ✅ done — shipped in 0.2.0 |
+| [`40-observability.md`](./40-observability.md) | `metrics` + `tracing` integration | ✅ done — shipped in 0.2.0 |
+| [`41-perf-foundations.md`](./41-perf-foundations.md) | Hot-cache fast-path in `FlowTracker` | ✅ done — shipped in 0.2.0 |
 
 ### Already shipped (kept as record)
 
