@@ -81,7 +81,9 @@ where
                     if let Some(mut r) = reassemblers.remove(&(key.clone(), side)) {
                         match reason {
                             EndReason::Fin | EndReason::IdleTimeout => r.fin(),
-                            EndReason::Rst | EndReason::Evicted => r.rst(),
+                            EndReason::Rst
+                            | EndReason::Evicted
+                            | EndReason::BufferOverflow => r.rst(),
                         }
                     }
                 }
@@ -101,7 +103,9 @@ where
                     if let Some(mut r) = self.reassemblers.remove(&(key.clone(), side)) {
                         match reason {
                             EndReason::Fin | EndReason::IdleTimeout => r.fin(),
-                            EndReason::Rst | EndReason::Evicted => r.rst(),
+                            EndReason::Rst
+                            | EndReason::Evicted
+                            | EndReason::BufferOverflow => r.rst(),
                         }
                     }
                 }
@@ -135,7 +139,10 @@ mod tests {
 
     #[test]
     fn buffered_reassembly_in_order() {
-        let mut d = FlowDriver::<_, _>::new(FiveTuple::bidirectional(), BufferedReassemblerFactory);
+        let mut d = FlowDriver::<_, _>::new(
+            FiveTuple::bidirectional(),
+            BufferedReassemblerFactory::default(),
+        );
         // SYN, SYN-ACK, ACK
         let syn = ipv4_tcp(
             [0; 6],

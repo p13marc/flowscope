@@ -26,7 +26,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut reader = PcapReader::new(BufReader::new(file))?;
 
     let mut driver: FlowDriver<FiveTuple, BufferedReassemblerFactory, ()> =
-        FlowDriver::new(FiveTuple::bidirectional(), BufferedReassemblerFactory);
+        FlowDriver::new(FiveTuple::bidirectional(), BufferedReassemblerFactory::default());
 
     let mut packets = 0usize;
     let mut total_payload = 0u64;

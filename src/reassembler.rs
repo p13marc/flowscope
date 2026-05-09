@@ -8,7 +8,7 @@
 //! For tokio users with backpressure needs, see `netring`'s
 //! `AsyncReassembler` and `channel_factory`.
 
-use crate::event::FlowSide;
+use crate::event::{FlowSide, OverflowPolicy};
 
 /// Receives TCP segments for one direction of one session. Sync —
 /// implementors don't await; for blocking consumers (Vec buffer,
@@ -41,16 +41,44 @@ pub trait ReassemblerFactory<K>: Send + 'static {
 /// Sync, no channel dep. Users who want a channel send via
 /// `std::sync::mpsc` themselves, or use `netring`'s
 /// `TokioChannelReassembler` for tokio integration.
+///
+/// Optionally bounded via [`with_max_buffer`](Self::with_max_buffer).
+/// When the cap is reached the [`OverflowPolicy`] decides whether to
+/// rotate bytes out (sliding window) or poison the reassembler so
+/// the driver can tear the flow down on the next tick.
 #[derive(Debug, Default)]
 pub struct BufferedReassembler {
     buffer: Vec<u8>,
     expected_seq: Option<u32>,
     dropped_segments: u64,
+    bytes_dropped_oversize: u64,
+    max_buffer: Option<usize>,
+    overflow_policy: OverflowPolicy,
+    poisoned: bool,
 }
 
 impl BufferedReassembler {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Set a maximum in-flight buffer size in bytes. When new
+    /// in-order segments would push `buffered_len()` past this cap,
+    /// the configured [`OverflowPolicy`] kicks in.
+    ///
+    /// Default policy is [`OverflowPolicy::SlidingWindow`]. Pair with
+    /// [`with_overflow_policy`](Self::with_overflow_policy) to switch
+    /// to [`OverflowPolicy::DropFlow`] for framed binary protocols.
+    pub fn with_max_buffer(mut self, max_bytes: usize) -> Self {
+        self.max_buffer = Some(max_bytes);
+        self
+    }
+
+    /// Override the overflow policy. Has no effect unless
+    /// [`with_max_buffer`](Self::with_max_buffer) is also called.
+    pub fn with_overflow_policy(mut self, policy: OverflowPolicy) -> Self {
+        self.overflow_policy = policy;
+        self
     }
 
     /// Drain accumulated in-order bytes, leaving the buffer empty.
@@ -65,9 +93,63 @@ impl BufferedReassembler {
         self.dropped_segments
     }
 
+    /// Number of payload bytes dropped because the per-side buffer
+    /// cap was exceeded. Zero when no cap is set or when the cap has
+    /// not yet been hit.
+    pub fn bytes_dropped_oversize(&self) -> u64 {
+        self.bytes_dropped_oversize
+    }
+
     /// Bytes currently buffered (not yet drained).
     pub fn buffered_len(&self) -> usize {
         self.buffer.len()
+    }
+
+    /// True after an [`OverflowPolicy::DropFlow`] overflow. The
+    /// driver checks this once per tick; `true` triggers an
+    /// `Ended { reason: BufferOverflow }` event for the flow.
+    pub fn is_poisoned(&self) -> bool {
+        self.poisoned
+    }
+
+    fn append_with_cap(&mut self, payload: &[u8]) {
+        let Some(cap) = self.max_buffer else {
+            self.buffer.extend_from_slice(payload);
+            return;
+        };
+        if self.poisoned {
+            return;
+        }
+        let projected = self.buffer.len() + payload.len();
+        if projected <= cap {
+            self.buffer.extend_from_slice(payload);
+            return;
+        }
+        match self.overflow_policy {
+            OverflowPolicy::DropFlow => {
+                self.bytes_dropped_oversize += payload.len() as u64;
+                self.buffer.clear();
+                self.poisoned = true;
+            }
+            OverflowPolicy::SlidingWindow => {
+                let to_drop = projected - cap;
+                if to_drop >= self.buffer.len() {
+                    self.bytes_dropped_oversize += self.buffer.len() as u64;
+                    self.buffer.clear();
+                    if payload.len() > cap {
+                        let extra = payload.len() - cap;
+                        self.bytes_dropped_oversize += extra as u64;
+                        self.buffer.extend_from_slice(&payload[extra..]);
+                    } else {
+                        self.buffer.extend_from_slice(payload);
+                    }
+                } else {
+                    self.bytes_dropped_oversize += to_drop as u64;
+                    self.buffer.drain(..to_drop);
+                    self.buffer.extend_from_slice(payload);
+                }
+            }
+        }
     }
 }
 
@@ -76,14 +158,17 @@ impl Reassembler for BufferedReassembler {
         if payload.is_empty() {
             return;
         }
+        if self.poisoned {
+            return;
+        }
         match self.expected_seq {
             None => {
                 self.expected_seq = Some(seq.wrapping_add(payload.len() as u32));
-                self.buffer.extend_from_slice(payload);
+                self.append_with_cap(payload);
             }
             Some(exp) if seq == exp => {
                 self.expected_seq = Some(seq.wrapping_add(payload.len() as u32));
-                self.buffer.extend_from_slice(payload);
+                self.append_with_cap(payload);
             }
             Some(_) => {
                 self.dropped_segments += 1;
@@ -95,14 +180,42 @@ impl Reassembler for BufferedReassembler {
 /// Default factory that builds a fresh [`BufferedReassembler`] per
 /// (flow, side). Useful when you want byte buffers without
 /// implementing a custom factory.
+///
+/// Optionally configures the per-reassembler buffer cap and overflow
+/// policy via [`with_max_buffer`](Self::with_max_buffer) /
+/// [`with_overflow_policy`](Self::with_overflow_policy). The same
+/// settings apply to every reassembler this factory creates.
 #[derive(Debug, Default)]
-pub struct BufferedReassemblerFactory;
+pub struct BufferedReassemblerFactory {
+    max_buffer: Option<usize>,
+    overflow_policy: OverflowPolicy,
+}
+
+impl BufferedReassemblerFactory {
+    /// Apply the same cap to every reassembler this factory creates.
+    pub fn with_max_buffer(mut self, max_bytes: usize) -> Self {
+        self.max_buffer = Some(max_bytes);
+        self
+    }
+
+    /// Apply the same overflow policy to every reassembler this
+    /// factory creates. Has no effect unless
+    /// [`with_max_buffer`](Self::with_max_buffer) is also called.
+    pub fn with_overflow_policy(mut self, policy: OverflowPolicy) -> Self {
+        self.overflow_policy = policy;
+        self
+    }
+}
 
 impl<K: Send + 'static> ReassemblerFactory<K> for BufferedReassemblerFactory {
     type Reassembler = BufferedReassembler;
 
     fn new_reassembler(&mut self, _key: &K, _side: FlowSide) -> BufferedReassembler {
-        BufferedReassembler::new()
+        let mut r = BufferedReassembler::new();
+        if let Some(cap) = self.max_buffer {
+            r = r.with_max_buffer(cap).with_overflow_policy(self.overflow_policy);
+        }
+        r
     }
 }
 
@@ -152,7 +265,7 @@ mod tests {
 
     #[test]
     fn factory_creates_fresh_reassembler() {
-        let mut f = BufferedReassemblerFactory;
+        let mut f = BufferedReassemblerFactory::default();
         let mut r1: BufferedReassembler = f.new_reassembler(&42u32, FlowSide::Initiator);
         let mut r2: BufferedReassembler = f.new_reassembler(&42u32, FlowSide::Responder);
         r1.segment(0, b"x");
@@ -167,5 +280,108 @@ mod tests {
         r.fin();
         r.rst();
         // No-op defaults exist; this test just confirms they compile.
+    }
+
+    #[test]
+    fn cap_unbounded_by_default() {
+        let mut r = BufferedReassembler::new();
+        r.segment(0, &[0u8; 10_000]);
+        assert_eq!(r.buffered_len(), 10_000);
+        assert_eq!(r.bytes_dropped_oversize(), 0);
+        assert!(!r.is_poisoned());
+    }
+
+    #[test]
+    fn cap_drops_oldest_on_overflow_sliding_window() {
+        let mut r = BufferedReassembler::new().with_max_buffer(100);
+        r.segment(0, &[b'a'; 80]);
+        // Next segment is in-order (seq = 80, len = 80) — would push
+        // buffer to 160; cap is 100 so 60 oldest 'a's get dropped.
+        r.segment(80, &[b'b'; 80]);
+        assert_eq!(r.buffered_len(), 100);
+        assert_eq!(r.bytes_dropped_oversize(), 60);
+        let drained = r.take();
+        assert_eq!(&drained[..20], &[b'a'; 20][..]);
+        assert_eq!(&drained[20..], &[b'b'; 80][..]);
+    }
+
+    #[test]
+    fn cap_payload_bigger_than_cap_keeps_tail() {
+        let mut r = BufferedReassembler::new().with_max_buffer(50);
+        let payload: Vec<u8> = (0u8..100).collect();
+        r.segment(0, &payload);
+        assert_eq!(r.buffered_len(), 50);
+        assert_eq!(r.bytes_dropped_oversize(), 50);
+        assert_eq!(r.take(), (50u8..100).collect::<Vec<u8>>());
+    }
+
+    #[test]
+    fn cap_skips_ooo_segments_without_changing_overflow_counter() {
+        let mut r = BufferedReassembler::new().with_max_buffer(100);
+        r.segment(0, &[b'a'; 80]);
+        r.segment(200, &[b'b'; 80]); // OOO — dropped via existing path
+        assert_eq!(r.dropped_segments(), 1);
+        assert_eq!(r.bytes_dropped_oversize(), 0);
+        assert_eq!(r.buffered_len(), 80);
+    }
+
+    #[test]
+    fn cap_take_resets_buffer_but_not_counters() {
+        let mut r = BufferedReassembler::new().with_max_buffer(100);
+        r.segment(0, &[b'a'; 80]);
+        r.segment(80, &[b'b'; 80]); // bytes_dropped_oversize += 60
+        let _ = r.take();
+        r.segment(160, &[b'c'; 80]); // buf = 80
+        assert_eq!(r.buffered_len(), 80);
+        assert_eq!(r.bytes_dropped_oversize(), 60);
+        assert_eq!(r.dropped_segments(), 0);
+    }
+
+    #[test]
+    fn cap_poisons_on_overflow_drop_flow() {
+        let mut r = BufferedReassembler::new()
+            .with_max_buffer(100)
+            .with_overflow_policy(OverflowPolicy::DropFlow);
+        r.segment(0, &[b'a'; 80]);
+        assert!(!r.is_poisoned());
+        r.segment(80, &[b'b'; 80]); // would overflow → poison
+        assert!(r.is_poisoned());
+        assert_eq!(r.bytes_dropped_oversize(), 80);
+        assert_eq!(r.buffered_len(), 0);
+        // Subsequent segments are no-ops.
+        r.segment(160, &[b'c'; 10]);
+        assert_eq!(r.buffered_len(), 0);
+        assert_eq!(r.bytes_dropped_oversize(), 80);
+    }
+
+    #[test]
+    fn cap_drop_flow_does_not_poison_under_cap() {
+        let mut r = BufferedReassembler::new()
+            .with_max_buffer(100)
+            .with_overflow_policy(OverflowPolicy::DropFlow);
+        r.segment(0, &[b'a'; 50]);
+        r.segment(50, &[b'b'; 50]); // exactly at cap — no poison
+        assert!(!r.is_poisoned());
+        assert_eq!(r.buffered_len(), 100);
+        assert_eq!(r.bytes_dropped_oversize(), 0);
+    }
+
+    #[test]
+    fn factory_propagates_cap_and_policy() {
+        let mut f = BufferedReassemblerFactory::default()
+            .with_max_buffer(64)
+            .with_overflow_policy(OverflowPolicy::DropFlow);
+        let mut r: BufferedReassembler = f.new_reassembler(&0u32, FlowSide::Initiator);
+        r.segment(0, &[0u8; 100]);
+        assert!(r.is_poisoned());
+    }
+
+    #[test]
+    fn factory_default_unbounded() {
+        let mut f = BufferedReassemblerFactory::default();
+        let mut r: BufferedReassembler = f.new_reassembler(&0u32, FlowSide::Initiator);
+        r.segment(0, &[0u8; 10_000]);
+        assert_eq!(r.buffered_len(), 10_000);
+        assert!(!r.is_poisoned());
     }
 }

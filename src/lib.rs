@@ -83,7 +83,7 @@ pub use view::PacketView;
 pub use extractor::{Extracted, FlowExtractor, L4Proto, Orientation, TcpFlags, TcpInfo};
 
 #[cfg(feature = "tracker")]
-pub use event::{EndReason, FlowEvent, FlowSide, FlowState, FlowStats};
+pub use event::{EndReason, FlowEvent, FlowSide, FlowState, FlowStats, OverflowPolicy};
 #[cfg(feature = "tracker")]
 pub use history::HistoryString;
 #[cfg(feature = "tracker")]

@@ -28,6 +28,33 @@ pub enum EndReason {
     IdleTimeout,
     /// Tracker hit `max_flows` and evicted the oldest flow.
     Evicted,
+    /// A reassembler with [`OverflowPolicy::DropFlow`] hit its cap;
+    /// the driver tore the flow down rather than dropping bytes.
+    /// Synthesised by [`crate::FlowDriver`] (the tracker itself never
+    /// emits this reason).
+    BufferOverflow,
+}
+
+/// What to do when [`crate::BufferedReassembler`]'s in-flight buffer
+/// would exceed its configured cap.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub enum OverflowPolicy {
+    /// Drop oldest bytes from the front of the buffer until the new
+    /// payload fits. The flow stays alive; the parser sees a gap and
+    /// must resync. `bytes_dropped_oversize` counts bytes rotated out.
+    ///
+    /// Default. Best for stream-shaped / append-only protocols (HTTP
+    /// body streams, plain TCP) where resync after a gap is well-defined.
+    #[default]
+    SlidingWindow,
+    /// Mark the reassembler as poisoned and signal end-of-flow on the
+    /// next driver tick via [`EndReason::BufferOverflow`]. Subsequent
+    /// segments are no-ops; the buffer is cleared.
+    ///
+    /// Best for framed binary protocols (DES PSMSG, TLS records,
+    /// length-prefixed wire formats) where a mid-frame gap would
+    /// permanently desync the parser.
+    DropFlow,
 }
 
 /// Aggregate counters maintained per flow.

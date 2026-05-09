@@ -60,6 +60,16 @@ pub struct FlowTrackerConfig {
     /// Sweep interval used by async adapters (the sync API doesn't
     /// auto-sweep — call [`FlowTracker::sweep`] yourself).
     pub sweep_interval: Duration,
+    /// Hint to the default [`crate::BufferedReassemblerFactory`] when
+    /// it's used via [`crate::FlowDriver`]. The tracker itself owns
+    /// no reassemblers; custom `ReassemblerFactory` impls must read
+    /// this and honour it themselves.
+    ///
+    /// `None` means unbounded (historical behaviour).
+    pub max_reassembler_buffer: Option<usize>,
+    /// Companion to [`max_reassembler_buffer`](Self::max_reassembler_buffer);
+    /// no effect unless that field is `Some`.
+    pub overflow_policy: crate::event::OverflowPolicy,
 }
 
 impl Default for FlowTrackerConfig {
@@ -71,6 +81,8 @@ impl Default for FlowTrackerConfig {
             max_flows: 100_000,
             initial_capacity: 1024,
             sweep_interval: Duration::from_secs(1),
+            max_reassembler_buffer: None,
+            overflow_policy: crate::event::OverflowPolicy::SlidingWindow,
         }
     }
 }
