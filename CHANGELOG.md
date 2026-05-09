@@ -68,6 +68,23 @@ The motivating consumer is [`des-rs`](https://github.com/p13marc/des-rs)'s
 - Public metric-name constants exported from `flowscope::obs`
   (`METRIC_FLOWS_CREATED`, `METRIC_ANOMALIES`, …).
 
+### Sync session driver + worked example (Plan 25)
+
+- **`FlowSessionDriver<E, P, S>`** — the sync mirror of netring's
+  async `session_stream`. Bundles `FlowTracker` + per-(flow, side)
+  `BufferedReassembler` + per-flow `SessionParser` and yields
+  `SessionEvent`s without a runtime dependency. Honours
+  `FlowTrackerConfig::max_reassembler_buffer` / `overflow_policy`
+  automatically.
+- **`examples/length_prefixed_pcap.rs`** — end-to-end example of
+  writing a custom `SessionParser` for a length-prefixed binary
+  protocol (PSMSG-shaped). Demonstrates partial-header / partial-body
+  buffering and pairs with a deterministic pcap fixture under
+  `tests/fixtures/length_prefixed/`.
+- New integration test `tests/length_prefixed_example.rs` verifies
+  the parser against the fixture and against byte-by-byte sliced
+  input.
+
 ### Performance (Plan 41)
 
 - `FlowTracker` gains a "last flow seen" hot-cache that skips the

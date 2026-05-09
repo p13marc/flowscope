@@ -58,8 +58,8 @@ use crate::Timestamp;
 /// reassemblers, and per-flow [`SessionParser`] instances.
 ///
 /// `E` — the flow extractor.
-/// `P` — the session parser; auto-becomes a
-/// [`SessionParserFactory`] when it implements `Default + Clone`.
+/// `P` — the session parser; the helper requires `Default + Clone`
+/// so each new flow gets a fresh per-flow instance via clone.
 /// `S` — optional per-flow user state stored on the tracker.
 pub struct FlowSessionDriver<E, P, S = ()>
 where

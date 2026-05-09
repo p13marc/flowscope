@@ -292,6 +292,41 @@ It's **not** the right tool when:
 - You need to emit messages synchronously inside your packet loop
   (sync). `Conversation` is async.
 
+## Sync vs async session driving (0.2.0)
+
+`SessionParser` is just a trait — the *driver* that feeds it bytes
+and emits `SessionEvent` lives in two places:
+
+| Path | Helper | Where |
+|------|--------|-------|
+| Async (tokio) | `cap.flow_stream(...).session_stream(parser)` | `netring` |
+| Sync (no runtime) | `FlowSessionDriver::<_, P>::new(extractor)` | `flowscope` |
+
+Both produce the same `SessionEvent` stream for the same wire bytes.
+Pick by control flow:
+
+- **Live capture, tokio app** → netring's `session_stream`.
+- **Offline pcap replay, embedded, CLI tools** → `FlowSessionDriver`.
+
+The sync path is exercised end-to-end by
+`examples/length_prefixed_pcap.rs`, which implements a custom
+length-prefixed binary protocol parser and runs it against a pcap
+fixture without any runtime dependency.
+
+```rust,ignore
+let mut driver = FlowSessionDriver::<_, MyParser>::new(FiveTuple::bidirectional());
+for view in PcapFlowSource::open("trace.pcap")?.views() {
+    for ev in driver.track(view?.as_view()) {
+        // SessionEvent::Started / Application / Closed
+    }
+}
+```
+
+`FlowSessionDriver::with_config` honours
+`FlowTrackerConfig::max_reassembler_buffer` and `overflow_policy`
+automatically — buffer caps and overflow policies (Plan 42) work
+identically across sync and async.
+
 ## Reassembly health (0.2.0)
 
 Every `FlowEvent::Ended` now carries reassembly diagnostics in its

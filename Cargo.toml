@@ -119,6 +119,14 @@ required-features = ["tls", "pcap"]
 name = "dns_log"
 required-features = ["dns", "pcap"]
 
+[[example]]
+name = "length_prefixed_pcap"
+required-features = ["pcap", "session"]
+
+[[example]]
+name = "generate_length_prefixed_pcap"
+required-features = ["test-helpers", "pcap"]
+
 [[test]]
 name = "http_parser"
 required-features = ["http"]
@@ -154,3 +162,7 @@ required-features = ["http", "tls", "dns"]
 [[test]]
 name = "metrics_integration"
 required-features = ["metrics", "extractors", "reassembler", "test-helpers"]
+
+[[test]]
+name = "length_prefixed_example"
+required-features = ["pcap", "session", "extractors"]

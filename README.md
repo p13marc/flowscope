@@ -68,6 +68,16 @@ for evt in PcapFlowSource::open("trace.pcap")?.with_extractor(FiveTuple::bidirec
 For HTTP / TLS / DNS examples and the typed `SessionParser` / `DatagramParser`
 APIs, see `examples/` and the per-module documentation on docs.rs.
 
+### Custom protocols
+
+For an end-to-end example of writing a `SessionParser` for your own
+wire format — including the synchronous offline pcap path via
+[`FlowSessionDriver`](https://docs.rs/flowscope/latest/flowscope/session_driver/struct.FlowSessionDriver.html) —
+see `examples/length_prefixed_pcap.rs`. The example demonstrates a
+length-prefixed binary protocol (PSMSG-shaped) with two
+variable-length markers and is paired with a deterministic pcap
+fixture under `tests/fixtures/length_prefixed/`.
+
 ## Tokio integration
 
 `flowscope` itself is runtime-free. To consume a live capture into a stream
@@ -89,7 +99,7 @@ while let Some(evt) = s.next().await { /* ... */ }
 
 ## Status
 
-0.1.0 published — the API is settled. The core flow APIs
+0.2.0 published — the API is settled. The core flow APIs
 (`FlowExtractor`, `FlowTracker`, `Reassembler`) and
 `SessionParser` / `DatagramParser` traits are stable; future
 additions will be additive. Major breaking changes will require a
