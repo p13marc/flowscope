@@ -91,6 +91,12 @@ full = ["http", "tls", "ja3", "dns", "pcap", "metrics", "tracing"]
 all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
+# `md-5` is published with package name `md-5` but exports the crate
+# as `md5` (no hyphen). cargo-machete can't tell, so explicitly
+# allow-list it.
+[package.metadata.cargo-machete]
+ignored = ["md-5"]
+
 [[example]]
 name = "generate_fixtures"
 required-features = ["test-helpers"]

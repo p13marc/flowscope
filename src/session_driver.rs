@@ -44,6 +44,7 @@ use std::hash::Hash;
 
 use ahash::RandomState;
 
+use crate::Timestamp;
 use crate::event::{EndReason, FlowEvent, FlowSide};
 use crate::extractor::FlowExtractor;
 use crate::reassembler::{
@@ -52,7 +53,6 @@ use crate::reassembler::{
 use crate::session::{SessionEvent, SessionParser};
 use crate::tracker::{FlowTracker, FlowTrackerConfig};
 use crate::view::PacketView;
-use crate::Timestamp;
 
 /// Sync session-event driver. Owns a tracker, per-(flow, side)
 /// reassemblers, and per-flow [`SessionParser`] instances.
@@ -116,10 +116,7 @@ where
     S: Send + 'static,
 {
     /// Drive one packet. Returns zero or more [`SessionEvent`]s.
-    pub fn track(
-        &mut self,
-        view: PacketView<'_>,
-    ) -> Vec<SessionEvent<E::Key, P::Message>> {
+    pub fn track(&mut self, view: PacketView<'_>) -> Vec<SessionEvent<E::Key, P::Message>> {
         let factory = &mut self.factory;
         let reassemblers = &mut self.reassemblers;
         let flow_events = self
@@ -169,10 +166,7 @@ where
                     self.drain_into_parser(&key, ts, &mut out);
                 }
                 FlowEvent::Ended {
-                    key,
-                    reason,
-                    stats,
-                    ..
+                    key, reason, stats, ..
                 } => {
                     // Final drain + fin/rst handlers, then close.
                     let ts = stats.last_seen;
@@ -197,17 +191,17 @@ where
                                     });
                                 }
                             }
-                            EndReason::Rst
-                            | EndReason::Evicted
-                            | EndReason::BufferOverflow => {
+                            EndReason::Rst | EndReason::Evicted | EndReason::BufferOverflow => {
                                 parser.rst_initiator();
                                 parser.rst_responder();
                             }
                         }
                     }
                     // Drop both side reassemblers.
-                    self.reassemblers.remove(&(key.clone(), FlowSide::Initiator));
-                    self.reassemblers.remove(&(key.clone(), FlowSide::Responder));
+                    self.reassemblers
+                        .remove(&(key.clone(), FlowSide::Initiator));
+                    self.reassemblers
+                        .remove(&(key.clone(), FlowSide::Responder));
                     out.push(SessionEvent::Closed { key, reason, stats });
                 }
                 FlowEvent::Established { .. }
@@ -329,16 +323,26 @@ mod tests {
         // Initiator data — two complete lines.
         let mac = [0u8; 6];
         let data = ipv4_tcp(
-            mac, mac,
-            [10, 0, 0, 1], [10, 0, 0, 2],
-            1234, 80, 1001, 5001, 0x18,
+            mac,
+            mac,
+            [10, 0, 0, 1],
+            [10, 0, 0, 2],
+            1234,
+            80,
+            1001,
+            5001,
+            0x18,
             b"hello\nworld\n",
         );
         events.extend(d.track(view(&data, 0)));
         let lines: Vec<_> = events
             .iter()
             .filter_map(|e| match e {
-                SessionEvent::Application { side, message: (s, m), .. } => {
+                SessionEvent::Application {
+                    side,
+                    message: (s, m),
+                    ..
+                } => {
                     assert_eq!(s, side);
                     Some(m.clone())
                 }
@@ -357,9 +361,16 @@ mod tests {
         }
         let mac = [0u8; 6];
         let rst = ipv4_tcp(
-            mac, mac,
-            [10, 0, 0, 1], [10, 0, 0, 2],
-            1234, 80, 1001, 5001, 0x04, b"",
+            mac,
+            mac,
+            [10, 0, 0, 1],
+            [10, 0, 0, 2],
+            1234,
+            80,
+            1001,
+            5001,
+            0x04,
+            b"",
         );
         events.extend(d.track(view(&rst, 0)));
         let closed = events

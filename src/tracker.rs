@@ -736,14 +736,28 @@ mod tests {
     fn hot_cache_cleared_on_flow_end_via_rst() {
         let mut t = FlowTracker::<FiveTuple>::new(FiveTuple::bidirectional());
         let syn = ipv4_tcp(
-            [0; 6], [0; 6],
-            [10, 0, 0, 1], [10, 0, 0, 2],
-            1234, 80, 1, 0, 0x02, b"",
+            [0; 6],
+            [0; 6],
+            [10, 0, 0, 1],
+            [10, 0, 0, 2],
+            1234,
+            80,
+            1,
+            0,
+            0x02,
+            b"",
         );
         let rst = ipv4_tcp(
-            [0; 6], [0; 6],
-            [10, 0, 0, 2], [10, 0, 0, 1],
-            80, 1234, 0, 0, 0x04, b"",
+            [0; 6],
+            [0; 6],
+            [10, 0, 0, 2],
+            [10, 0, 0, 1],
+            80,
+            1234,
+            0,
+            0,
+            0x04,
+            b"",
         );
         t.track(view(&syn, 0));
         assert!(t.hot.is_some());

@@ -12,16 +12,26 @@
 //! - [`PacketView`] / [`Timestamp`] — the abstract input.
 //! - [`FlowExtractor`] — turn a frame into a flow descriptor.
 //! - [`FlowTracker`] — bidirectional flow accounting + TCP state
-//!   machine + idle/eviction policy.
+//!   machine + idle/eviction policy. Hot-cache fast path on
+//!   monoflow workloads.
 //! - [`Reassembler`] — sync per-(flow, side) TCP byte stream hook.
+//!   Optional per-side buffer cap with [`OverflowPolicy`]
+//!   (sliding-window or drop-flow).
 //! - [`SessionParser`] / [`DatagramParser`] — typed L7 message
 //!   parsing per flow.
+//! - [`FlowDriver`] — sync wrapper combining the tracker with a
+//!   reassembler factory; optional anomaly emission via
+//!   [`FlowDriver::with_emit_anomalies`].
+//! - [`FlowSessionDriver`] — sync mirror of netring's
+//!   `session_stream` for offline / no-tokio session-event consumers.
 //!
 //! Built-in extractors and decap combinators (`extractors` feature):
 //!
 //! - [`extract::FiveTuple`], [`extract::IpPair`], [`extract::MacPair`]
 //! - [`extract::StripVlan`], [`extract::StripMpls`],
-//!   [`extract::InnerVxlan`], [`extract::InnerGtpU`]
+//!   [`extract::InnerVxlan`], [`extract::InnerGtpU`],
+//!   [`extract::InnerGre`], [`extract::AutoDetectEncap`],
+//!   [`extract::FlowLabel`]
 //!
 //! Protocol parsers (each behind its own feature):
 //!
@@ -29,15 +39,23 @@
 //! |---------|-----------|--------------|
 //! | `http`  | [`http`]  | HTTP/1.x request/response parser |
 //! | `tls`   | [`tls`]   | TLS handshake observer (ClientHello/ServerHello/Alert), optional JA3 |
-//! | `dns`   | [`dns`]   | DNS-over-UDP message parser + query/response correlator |
+//! | `dns`   | [`dns`]   | DNS-over-UDP and DNS-over-TCP message parsers + query/response correlator |
 //! | `pcap`  | [`pcap`]  | pcap file source for offline replay |
+//!
+//! Observability (each behind its own feature, zero-cost when off):
+//!
+//! | Feature   | What you get |
+//! |-----------|--------------|
+//! | `metrics` | Prometheus / OpenTelemetry counters, gauges, histograms (see [`obs`]) |
+//! | `tracing` | Structured events on flow lifecycle + anomalies |
 //!
 //! ## Tokio integration
 //!
 //! For async iteration over flow / session / datagram events, see
 //! [`netring`](https://crates.io/crates/netring)'s `AsyncCapture::flow_stream`
 //! / `.session_stream` / `.datagram_stream`. Those depend on this
-//! crate's traits.
+//! crate's traits. The sync analogue for `session_stream` is
+//! [`FlowSessionDriver`].
 
 #![cfg_attr(docsrs, feature(doc_cfg))]
 

@@ -48,7 +48,7 @@ Protocol parsers (each behind its own feature):
 
 ```toml
 [dependencies]
-flowscope = { version = "0.1", features = ["full"] }
+flowscope = { version = "0.2", features = ["full"] }
 ```
 
 ```rust,no_run
@@ -99,14 +99,26 @@ while let Some(evt) = s.next().await { /* ... */ }
 
 ## Status
 
-0.2.0 published — the API is settled. The core flow APIs
-(`FlowExtractor`, `FlowTracker`, `Reassembler`) and
-`SessionParser` / `DatagramParser` traits are stable; future
-additions will be additive. Major breaking changes will require a
-1.0 / 0.2 bump.
+0.2.0 published. Core flow APIs (`FlowExtractor`, `FlowTracker`,
+`Reassembler`) and the `SessionParser` / `DatagramParser` traits
+are stable. Public structs are `#[non_exhaustive]` since 0.2.0 —
+additive fields/variants are unconditionally non-breaking from now
+on.
+
+0.2.0 ships:
+- Optional reassembly buffer caps with `SlidingWindow` / `DropFlow`
+  policies.
+- Per-flow reassembly diagnostics on every `FlowStats`.
+- Live `FlowEvent::Anomaly` stream (opt-in).
+- `FlowSessionDriver` — sync mirror of netring's `session_stream`.
+- Optional `metrics` / `tracing` features (zero-cost when off).
+- Hot-cache fast path on `FlowTracker` (~2× monoflow throughput,
+  no API impact).
 
 See [`docs/SESSION_GUIDE.md`](docs/SESSION_GUIDE.md) for the
-decision-flow on which API to pick.
+decision-flow on which API to pick, and
+[`docs/OBSERVABILITY.md`](docs/OBSERVABILITY.md) for the metric
+vocabulary.
 
 ## License
 

@@ -9,19 +9,20 @@ the core.
 
 - Edition 2024, MSRV 1.85
 - Single Cargo package; modules `http` / `tls` (+ `ja3`) / `dns` /
-  `pcap` are opt-in via Cargo features
+  `pcap` are opt-in via Cargo features. Observability hooks
+  (`metrics`, `tracing`) are opt-in too.
 - Pairs with [`netring`](https://crates.io/crates/netring) for live
   Linux capture; with `pcap` files for offline replay; with any other
   source of `&[u8]` frames (tun-tap, eBPF userspace, embedded, etc.)
-- Pre-1.0 API stable: `SessionParser` / `DatagramParser` shape locked
-  in 0.1.0; future additions are additive, breaking changes need a
-  major bump
+- Pre-1.0 API; trait shape (`SessionParser` / `DatagramParser`) is
+  stable since 0.1.0. Public structs are `#[non_exhaustive]` since
+  0.2.0 — additive fields/variants are unconditionally non-breaking.
 
 ## Implementation Status
 
-**0.1.0 published** (crates.io). 167 lib + integration tests, 11
-parser proptests, additional tracker proptests. Zero clippy warnings,
-zero rustdoc warnings, fmt-clean.
+**0.2.0 published** (crates.io). 139 lib + integration tests, 11
+parser proptests, additional tracker proptests. Zero clippy
+warnings, zero rustdoc warnings, fmt-clean.
 
 ### Modules
 
@@ -44,12 +45,20 @@ src/
 │   ├── auto_detect.rs           # AutoDetectEncap<E>     (plan 50.3)
 │   └── flow_label.rs            # FlowLabel<E>           (plan 50.2)
 ├── event.rs                     # FlowEvent / FlowSide / EndReason / FlowStats
+│                                # AnomalyKind / OverflowPolicy   (0.2.0)
 ├── history.rs                   # HistoryString (Zeek-style ShAdaFf)
 ├── tcp_state.rs                 # TCP state machine (transitions + idle policy)
-├── tracker.rs                   # FlowTracker<E, S>      (manual_tick alias added in 50.4)
+├── tracker.rs                   # FlowTracker<E, S>     (manual_tick alias added in 50.4)
+│                                # hot-cache fast path   (plan 41, 0.2.0)
+│                                # snapshot_stats / snapshot_history / forget (0.2.0)
 ├── reassembler.rs               # Reassembler trait + BufferedReassembler
+│                                # buffer cap + OverflowPolicy (plan 42 §1, 0.2.0)
 ├── driver.rs                    # FlowDriver<E, F, S>     (sync wrapper)
+│                                # diagnostics patch + BufferOverflow synthesis +
+│                                # with_emit_anomalies      (plan 42 §2/§3, 0.2.0)
 ├── session.rs                   # SessionParser / DatagramParser traits + factories + SessionEvent
+├── session_driver.rs            # FlowSessionDriver — sync mirror of session_stream (plan 25, 0.2.0)
+├── obs.rs                       # metrics / tracing hooks (plan 40, 0.2.0)
 ├── http/                        # `http` feature
 │   ├── parser.rs                # internal step() machine (httparse-based)
 │   ├── factory.rs               # HttpFactory / HttpReassembler (callback-style)
@@ -82,6 +91,11 @@ src/
 - `tests/{http,tls,dns}_parser.rs` — fixture-based unit tests per parser.
 - `tests/{http,pcap}_pcap.rs`, `tests/pcap_integration.rs`,
   `tests/pcap_fixtures.rs` — pcap-driven integration tests.
+- `tests/length_prefixed_example.rs` — sync `FlowSessionDriver` +
+  custom protocol parser, paired with
+  `tests/fixtures/length_prefixed/sample.pcap` (0.2.0).
+- `tests/metrics_integration.rs` — DebuggingRecorder snapshot test
+  for the `metrics` feature (0.2.0).
 
 ## Build & Test
 
@@ -89,7 +103,7 @@ src/
 # Default features
 cargo test
 
-# All features (incl. ja3, dns, pcap)
+# All features (incl. ja3, dns, pcap, metrics, tracing)
 cargo test --all-features
 
 # Just one module
@@ -114,13 +128,14 @@ cargo doc --all-features --no-deps
    decap combinators wrap each other (`StripVlan(InnerVxlan(FiveTuple))`).
 2. **Tracker** (`FlowTracker<E, S>`) — bidirectional flow accounting
    on top of an extractor. TCP state machine with Suricata-style idle
-   timeouts and LRU eviction. Emits `FlowEvent` lifecycle.
+   timeouts and LRU eviction. Emits `FlowEvent` lifecycle. Hot-cache
+   fast path for monoflow workloads (0.2.0).
 3. **Reassembler** / **SessionParser** / **DatagramParser** — three
    API shapes for consuming TCP / UDP payloads. Pick by use case
    ([SESSION_GUIDE.md](docs/SESSION_GUIDE.md) walks through the
    decision tree).
 
-### Two API shapes for L7 parsing
+### Two API shapes for L7 parsing — sync / async parity
 
 Every shipped parser exposes both:
 
@@ -128,12 +143,40 @@ Every shipped parser exposes both:
   `TlsHandler`, `DnsHandler`). Callback-driven. Pair with a sync
   `FlowDriver` or netring's `with_async_reassembler`.
 - **`SessionParser` / `DatagramParser`** — typed message stream.
-  `feed_initiator` / `feed_responder` return `Vec<Self::Message>`;
-  pair with netring's `session_stream` / `datagram_stream` for async
-  iteration.
+  `feed_initiator` / `feed_responder` return `Vec<Self::Message>`.
 
-Both produce the same events for the same wire bytes — pick the API
-that matches your control flow.
+For the typed-stream API, two driver helpers:
+
+- Sync, no runtime: **`FlowSessionDriver<E, P, S>`** in flowscope
+  (0.2.0).
+- Async tokio: **`flow_stream(...).session_stream(parser)`** in
+  netring.
+
+Both produce the same `SessionEvent`s for the same wire bytes.
+
+### Reassembly observability (0.2.0)
+
+`BufferedReassembler` ships an optional per-side cap with two
+overflow policies:
+
+- `OverflowPolicy::SlidingWindow` (default): drop oldest bytes;
+  flow stays alive; parser must resync.
+- `OverflowPolicy::DropFlow`: poison the reassembler; the driver
+  synthesises an `Ended { reason: BufferOverflow }` event for the
+  flow on the next tick.
+
+`FlowStats` carries per-side reassembly diagnostics
+(`reassembly_dropped_ooo_*`, `reassembly_bytes_dropped_oversize_*`)
+on every `Ended` event. For live signal, `FlowDriver::with_emit_anomalies(true)`
+emits `FlowEvent::Anomaly { kind: AnomalyKind::… }` events inline,
+coalesced per (flow, side, kind) per tick.
+
+### Observability features (0.2.0)
+
+`metrics` and `tracing` Cargo features wire the tracker and driver
+into the standard observability ecosystem. Both zero-cost when off
+(every entry point compile-time stubbed). Metric vocabulary in
+[docs/OBSERVABILITY.md](docs/OBSERVABILITY.md).
 
 ### Design constraints
 
@@ -142,34 +185,43 @@ that matches your control flow.
   way around). This is a hard project rule; PRs adding tokio to
   flowscope are wrong-shaped.
 - **No `unsafe` outside well-justified zero-copy spots.** Buffer
-  handling uses `Bytes` / `Vec<u8>` with `safe` slicing. Plan 41
-  (zero-copy reassembly) when it lands will introduce some via
-  `BytesMut` lifetime tricks; bounded scope.
+  handling uses `Bytes` / `Vec<u8>` with safe slicing.
 - **Deterministic state machines.** No background threads, no global
   state. Every parser holds its state and returns messages
   synchronously.
 - **Bounded memory.** Tracker has `max_flows`; reassemblers have
-  `max_buffer`; correlator has `max_pending`. No unbounded growth.
+  optional `max_buffer`; correlator has `max_pending`. No unbounded
+  growth.
+- **`#[non_exhaustive]` on every public struct/enum that may grow.**
+  Added project-wide in 0.2.0. Construct via `::default()` and mutate;
+  do not rely on struct-literal construction from outside the crate.
+  All future additions are additive.
+- **Single vocabulary across event stream and metrics.** `AnomalyKind`
+  is the source of truth for both `FlowEvent::Anomaly` and the
+  `flowscope_anomalies_total` metric labels. Adding a variant
+  requires adding the corresponding metric label arm in
+  `src/obs.rs::anomaly_label`.
 - **Trait stability lock.** `SessionParser` / `DatagramParser` shape
-  is committed as of 0.1.0. Future additions are additive (new
-  methods with default implementations); breaking changes will need
-  a 0.2 / 1.0 bump. Plan 31 phase 3b documents this in
-  `docs/SESSION_GUIDE.md`.
+  was committed in 0.1.0. `Reassembler` grew default-zero diagnostic
+  methods in 0.2.0 (purely additive). Future additions stay additive;
+  breaking changes need a major bump.
 
 ## Plans
 
 `plans/` (in-repo only — excluded from the published package via
 `Cargo.toml`'s `exclude` field) contains the roadmap:
 
-- `INDEX.md` — status of every plan
-- `00-04` — historical: how flow types were originally split out of
-  netring (now superseded by the single-crate consolidation)
-- `12, 20, 22-24, 30, 31, 50.1-50.4, 50.6` — ✅ done
-- `21` (protolens), `32` (NetFlow/IPFIX), `40` (observability),
-  `41` (perf foundations), `50.5` (IPv6 frags), `60` (CLI tools) — deferred
+- `INDEX.md` — status of every plan, project conventions
+- `00-04`, `12` — historical: how flow types were originally split
+  out of netring (superseded by the single-crate consolidation)
+- `20`, `22–24`, `30`, `31`, `50.1–50.4`, `50.6`, `25`, `40`, `41`,
+  `42` — ✅ done
+- `21` (protolens), `32` (NetFlow/IPFIX), `60` (CLI tools) —
+  pre-consolidation drafts; STALE pending rewrite + a real consumer
+- `50.5` (IPv6 frag reassembly) — deferred indefinitely
 
-`plans/DPI_ARCHITECTURE.md` is the SOTA-DPI research and crate-split
-recommendations report.
+`plans/DPI_ARCHITECTURE.md` is the SOTA-DPI research and
+crate-split recommendations report.
 
 ## Pre-publish checklist
 
@@ -200,6 +252,11 @@ non-optional dep. Specifically:
   `datagram_stream`, `flow_broadcast`, `conversation`) live in
   netring because they depend on tokio + `AsyncCapture`. They
   consume flowscope's traits.
+- The 0.2.0 `FlowEvent::key()` signature change (`&K` → `Option<&K>`)
+  needs a matching netring update if netring's adapters call
+  `event.key()`.
+- `FlowEvent::Anomaly` and `EndReason::BufferOverflow` flow through
+  the async adapters verbatim — no netring changes needed for those.
 
 If you add a new public API in flowscope, consider whether netring
 needs a corresponding re-export under `netring::flow::*`.
@@ -210,9 +267,15 @@ needs a corresponding re-export under `netring::flow::*`.
 - `CHANGELOG.md` — release history.
 - `docs/SESSION_GUIDE.md` — how to pick between FlowEvent /
   Reassembler / *Factory<H> / SessionParser / DatagramParser /
-  Conversation. Includes migration recipes.
+  Conversation / FlowSessionDriver. Includes migration recipes.
+- `docs/OBSERVABILITY.md` — metric vocabulary, cardinality notes,
+  Prometheus / Grafana sample queries, tracing-subscriber wiring.
 - `Cargo.toml` — package manifest. `exclude = ["plans/"]` keeps
   internal roadmap docs out of the published package.
 - `src/lib.rs` — top-level rustdoc + feature/module wiring.
 - `src/session.rs` — the strategic 1.0 abstraction
   (`SessionParser` / `DatagramParser`).
+- `src/session_driver.rs` — `FlowSessionDriver`, the sync mirror of
+  `session_stream`.
+- `src/obs.rs` — metrics + tracing hooks; metric-name constants
+  exported here.

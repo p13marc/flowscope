@@ -48,9 +48,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 3WHS.
     let syn = ipv4_tcp(MAC, MAC, IP_A, IP_B, PORT_A, PORT_B, 1000, 0, 0x02, b"");
     write(&mut pw, tick(), &syn)?;
-    let synack = ipv4_tcp(
-        MAC, MAC, IP_B, IP_A, PORT_B, PORT_A, 5000, 1001, 0x12, b"",
-    );
+    let synack = ipv4_tcp(MAC, MAC, IP_B, IP_A, PORT_B, PORT_A, 5000, 1001, 0x12, b"");
     write(&mut pw, tick(), &synack)?;
     let ack = ipv4_tcp(MAC, MAC, IP_A, IP_B, PORT_A, PORT_B, 1001, 5001, 0x10, b"");
     write(&mut pw, tick(), &ack)?;
@@ -64,7 +62,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         init_payload.extend_from_slice(body.as_bytes());
     }
     let init_data = ipv4_tcp(
-        MAC, MAC, IP_A, IP_B, PORT_A, PORT_B, 1001, 5001, 0x18, &init_payload,
+        MAC,
+        MAC,
+        IP_A,
+        IP_B,
+        PORT_A,
+        PORT_B,
+        1001,
+        5001,
+        0x18,
+        &init_payload,
     );
     write(&mut pw, tick(), &init_data)?;
 

@@ -97,7 +97,6 @@ fn anomaly_label(kind: &AnomalyKind) -> &'static str {
     }
 }
 
-
 #[cfg(feature = "metrics")]
 pub(crate) fn record_flow_created(l4: Option<L4Proto>) {
     metrics::counter!(METRIC_FLOWS_CREATED, "l4" => l4_label(l4)).increment(1);

@@ -106,6 +106,11 @@ The motivating consumer is [`des-rs`](https://github.com/p13marc/des-rs)'s
   driver to synthesise `BufferOverflow` end events.
 - `FlowDriver::with_emit_anomalies(bool)`.
 - `FlowEvent::Anomaly { key, kind, ts }`.
+- `FlowSessionDriver<E, P, S>` — sync session driver that bundles
+  `FlowTracker` + per-(flow, side) reassembler + per-flow
+  `SessionParser`. The sync mirror of netring's `session_stream`.
+- `flowscope::obs` module — `metrics` / `tracing` hook surface plus
+  the public metric-name constants.
 
 ### Migration
 

@@ -8,12 +8,12 @@ use std::collections::HashMap;
 
 use ahash::RandomState;
 
+use crate::Timestamp;
 use crate::event::{AnomalyKind, EndReason, FlowEvent, FlowSide, OverflowPolicy};
 use crate::extractor::FlowExtractor;
 use crate::reassembler::{Reassembler, ReassemblerFactory};
 use crate::tracker::{FlowEvents, FlowTracker, FlowTrackerConfig};
 use crate::view::PacketView;
-use crate::Timestamp;
 
 /// Sync flow driver: tracker + per-(flow, side) reassembler dispatch.
 ///
@@ -331,9 +331,9 @@ where
                         }
                         match reason {
                             EndReason::Fin | EndReason::IdleTimeout => r.fin(),
-                            EndReason::Rst
-                            | EndReason::Evicted
-                            | EndReason::BufferOverflow => r.rst(),
+                            EndReason::Rst | EndReason::Evicted | EndReason::BufferOverflow => {
+                                r.rst()
+                            }
                         }
                     }
                 }
@@ -535,7 +535,9 @@ mod tests {
 
     /// 3WHS + initiator data segment + RST.
     /// Returns the full event vector after the RST.
-    fn drive_simple_tcp_with_data<F>(driver: &mut FlowDriver<FiveTuple, F>) -> Vec<FlowEvent<crate::extract::FiveTupleKey>>
+    fn drive_simple_tcp_with_data<F>(
+        driver: &mut FlowDriver<FiveTuple, F>,
+    ) -> Vec<FlowEvent<crate::extract::FiveTupleKey>>
     where
         F: ReassemblerFactory<crate::extract::FiveTupleKey>,
     {
@@ -608,8 +610,8 @@ mod tests {
     #[test]
     fn anomaly_event_emitted_for_buffer_overflow_sliding_window() {
         let factory = BufferedReassemblerFactory::default().with_max_buffer(64);
-        let mut d = FlowDriver::<_, _>::new(FiveTuple::bidirectional(), factory)
-            .with_emit_anomalies(true);
+        let mut d =
+            FlowDriver::<_, _>::new(FiveTuple::bidirectional(), factory).with_emit_anomalies(true);
         let events = drive_simple_tcp_with_data(&mut d);
         let anomalies: Vec<_> = events
             .iter()
@@ -623,10 +625,19 @@ mod tests {
                 )
             })
             .collect();
-        assert_eq!(anomalies.len(), 1, "expected exactly one BufferOverflow anomaly");
+        assert_eq!(
+            anomalies.len(),
+            1,
+            "expected exactly one BufferOverflow anomaly"
+        );
         match anomalies[0] {
             FlowEvent::Anomaly {
-                kind: AnomalyKind::BufferOverflow { side, bytes, policy },
+                kind:
+                    AnomalyKind::BufferOverflow {
+                        side,
+                        bytes,
+                        policy,
+                    },
                 ..
             } => {
                 assert_eq!(*side, FlowSide::Initiator);
@@ -655,18 +666,20 @@ mod tests {
         let factory = BufferedReassemblerFactory::default()
             .with_max_buffer(64)
             .with_overflow_policy(OverflowPolicy::DropFlow);
-        let mut d = FlowDriver::<_, _>::new(FiveTuple::bidirectional(), factory)
-            .with_emit_anomalies(true);
+        let mut d =
+            FlowDriver::<_, _>::new(FiveTuple::bidirectional(), factory).with_emit_anomalies(true);
         let events = drive_simple_tcp_with_data(&mut d);
         let anomaly = events
             .iter()
-            .find(|e| matches!(
-                e,
-                FlowEvent::Anomaly {
-                    kind: AnomalyKind::BufferOverflow { .. },
-                    ..
-                }
-            ))
+            .find(|e| {
+                matches!(
+                    e,
+                    FlowEvent::Anomaly {
+                        kind: AnomalyKind::BufferOverflow { .. },
+                        ..
+                    }
+                )
+            })
             .expect("expected a BufferOverflow anomaly");
         match anomaly {
             FlowEvent::Anomaly {
@@ -723,10 +736,11 @@ mod tests {
         assert_eq!(pressure.len(), 1, "expected one eviction-pressure anomaly");
         match pressure[0] {
             FlowEvent::Anomaly {
-                kind: AnomalyKind::FlowTableEvictionPressure {
-                    evicted_in_tick,
-                    evicted_total,
-                },
+                kind:
+                    AnomalyKind::FlowTableEvictionPressure {
+                        evicted_in_tick,
+                        evicted_total,
+                    },
                 key,
                 ..
             } => {
@@ -755,8 +769,7 @@ mod tests {
         assert_eq!(ended.0, EndReason::Rst);
         // 200 in - 64 cap = 136 dropped.
         assert_eq!(
-            ended.1.reassembly_bytes_dropped_oversize_initiator,
-            136,
+            ended.1.reassembly_bytes_dropped_oversize_initiator, 136,
             "stats: {:?}",
             ended.1
         );

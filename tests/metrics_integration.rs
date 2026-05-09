@@ -8,12 +8,8 @@
 #![cfg(all(feature = "metrics", feature = "extractors", feature = "reassembler"))]
 
 use flowscope::extract::{FiveTuple, parse::test_frames::ipv4_tcp};
-use flowscope::obs::{
-    METRIC_ANOMALIES, METRIC_BYTES, METRIC_FLOWS_CREATED, METRIC_FLOWS_ENDED,
-};
-use flowscope::{
-    BufferedReassemblerFactory, FlowDriver, OverflowPolicy, PacketView, Timestamp,
-};
+use flowscope::obs::{METRIC_ANOMALIES, METRIC_BYTES, METRIC_FLOWS_CREATED, METRIC_FLOWS_ENDED};
+use flowscope::{BufferedReassemblerFactory, FlowDriver, OverflowPolicy, PacketView, Timestamp};
 use metrics_util::MetricKind;
 use metrics_util::debugging::{DebugValue, DebuggingRecorder, Snapshotter};
 
@@ -64,8 +60,8 @@ fn metrics_capture_basic_flow_lifecycle_and_anomalies() {
     let factory = BufferedReassemblerFactory::default()
         .with_max_buffer(64)
         .with_overflow_policy(OverflowPolicy::DropFlow);
-    let mut d = FlowDriver::<_, _>::new(FiveTuple::bidirectional(), factory)
-        .with_emit_anomalies(true);
+    let mut d =
+        FlowDriver::<_, _>::new(FiveTuple::bidirectional(), factory).with_emit_anomalies(true);
 
     // 3WHS + 200B initiator data. The data segment poisons the
     // 64-byte cap; the driver synthesises an Ended{BufferOverflow}
@@ -94,7 +90,11 @@ fn metrics_capture_basic_flow_lifecycle_and_anomalies() {
         "expected 1 tcp flow created"
     );
     assert_eq!(
-        counter_value(&rows, METRIC_FLOWS_ENDED, Some(("reason", "buffer_overflow"))),
+        counter_value(
+            &rows,
+            METRIC_FLOWS_ENDED,
+            Some(("reason", "buffer_overflow"))
+        ),
         1,
         "expected 1 ended with reason=buffer_overflow"
     );

@@ -255,7 +255,9 @@ impl<K: Send + 'static> ReassemblerFactory<K> for BufferedReassemblerFactory {
     fn new_reassembler(&mut self, _key: &K, _side: FlowSide) -> BufferedReassembler {
         let mut r = BufferedReassembler::new();
         if let Some(cap) = self.max_buffer {
-            r = r.with_max_buffer(cap).with_overflow_policy(self.overflow_policy);
+            r = r
+                .with_max_buffer(cap)
+                .with_overflow_policy(self.overflow_policy);
         }
         r
     }
