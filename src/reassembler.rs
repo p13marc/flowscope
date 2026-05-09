@@ -26,6 +26,36 @@ pub trait Reassembler: Send + 'static {
     /// RST observed in this direction (or session aborted).
     /// Default: no-op.
     fn rst(&mut self) {}
+
+    /// Number of TCP segments dropped because they arrived out of
+    /// order for this side. Default: 0.
+    ///
+    /// A default-zero return means "this implementation doesn't
+    /// track that counter," not "the counter is zero." Custom
+    /// reassemblers may surface their own drop accounting via this
+    /// method.
+    fn dropped_segments(&self) -> u64 {
+        0
+    }
+
+    /// Number of payload bytes dropped because the per-side buffer
+    /// cap was exceeded. Default: 0.
+    ///
+    /// A default-zero return means "this implementation doesn't
+    /// track that counter." Only meaningful when the reassembler
+    /// implements a cap (see [`BufferedReassembler::with_max_buffer`]).
+    fn bytes_dropped_oversize(&self) -> u64 {
+        0
+    }
+
+    /// True after a fatal-style overflow (e.g.
+    /// [`crate::OverflowPolicy::DropFlow`]). The driver checks this
+    /// once per tick; `true` triggers synthesis of an
+    /// `Ended { reason: BufferOverflow }` event for the flow.
+    /// Default: `false`.
+    fn is_poisoned(&self) -> bool {
+        false
+    }
 }
 
 /// Build a [`Reassembler`] for a brand-new session, given its key
@@ -174,6 +204,18 @@ impl Reassembler for BufferedReassembler {
                 self.dropped_segments += 1;
             }
         }
+    }
+
+    fn dropped_segments(&self) -> u64 {
+        Self::dropped_segments(self)
+    }
+
+    fn bytes_dropped_oversize(&self) -> u64 {
+        Self::bytes_dropped_oversize(self)
+    }
+
+    fn is_poisoned(&self) -> bool {
+        Self::is_poisoned(self)
     }
 }
 

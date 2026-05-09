@@ -117,10 +117,8 @@ proptest! {
         n_flows in 1u16..200u16,
         max_flows in 5usize..32usize,
     ) {
-        let cfg = FlowTrackerConfig {
-            max_flows,
-            ..FlowTrackerConfig::default()
-        };
+        let mut cfg = FlowTrackerConfig::default();
+        cfg.max_flows = max_flows;
         let mut t = FlowTracker::<FiveTuple>::with_config(
             FiveTuple::bidirectional(),
             cfg,
@@ -147,7 +145,8 @@ proptest! {
     ) {
         // After processing N distinct flows: created = ended + active
         // (where ended includes both Fin/Rst/IdleTimeout/Evicted).
-        let cfg = FlowTrackerConfig { max_flows, ..FlowTrackerConfig::default() };
+        let mut cfg = FlowTrackerConfig::default();
+        cfg.max_flows = max_flows;
         let mut t = FlowTracker::<FiveTuple>::with_config(
             FiveTuple::bidirectional(),
             cfg,

@@ -50,7 +50,12 @@ impl<S> FlowEntry<S> {
 }
 
 /// Tracker configuration. Defaults follow Suricata's normal-mode values.
+///
+/// `#[non_exhaustive]` to keep future additions purely additive.
+/// Construct via `FlowTrackerConfig::default()` and mutate; do not
+/// rely on struct-literal construction from outside the crate.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct FlowTrackerConfig {
     pub idle_timeout_tcp: Duration,
     pub idle_timeout_udp: Duration,
@@ -385,6 +390,29 @@ impl<E: FlowExtractor, S: Send + 'static> FlowTracker<E, S> {
     /// Number of live flows currently being tracked.
     pub fn flow_count(&self) -> usize {
         self.flows.len()
+    }
+
+    /// Snapshot the [`FlowStats`] of a live flow without ending it.
+    /// Returns `None` when the key is unknown. Used by
+    /// [`crate::FlowDriver`] to synthesise an
+    /// `Ended { reason: BufferOverflow }` event when a reassembler
+    /// poisons mid-flow.
+    pub fn snapshot_stats(&self, key: &E::Key) -> Option<FlowStats> {
+        self.flows.peek(key).map(|e| e.stats.clone())
+    }
+
+    /// Snapshot the [`HistoryString`] of a live flow without ending
+    /// it. Companion to [`Self::snapshot_stats`].
+    pub fn snapshot_history(&self, key: &E::Key) -> Option<crate::HistoryString> {
+        self.flows.peek(key).map(|e| e.history)
+    }
+
+    /// Remove a flow from the tracker without emitting an event.
+    /// Used by [`crate::FlowDriver`] after a synthesised
+    /// `BufferOverflow` end event so subsequent packets start a fresh
+    /// flow. Returns `true` if a flow was removed.
+    pub fn forget(&mut self, key: &E::Key) -> bool {
+        self.flows.pop(key).is_some()
     }
 
     /// Tracker stats (cumulative since construction).

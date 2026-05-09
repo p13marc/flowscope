@@ -58,7 +58,12 @@ pub enum OverflowPolicy {
 }
 
 /// Aggregate counters maintained per flow.
+///
+/// `#[non_exhaustive]` to keep future additions purely additive.
+/// Construct via `FlowStats::default()` and mutate; do not rely on
+/// struct-literal construction from outside the crate.
 #[derive(Debug, Clone, Default)]
+#[non_exhaustive]
 pub struct FlowStats {
     pub packets_initiator: u64,
     pub packets_responder: u64,
@@ -66,6 +71,17 @@ pub struct FlowStats {
     pub bytes_responder: u64,
     pub started: Timestamp,
     pub last_seen: Timestamp,
+    /// Per-side reassembly diagnostics, populated by [`crate::FlowDriver`]
+    /// when the flow ends. Zero when no driver is in play (i.e. the
+    /// consumer used [`crate::FlowTracker`] directly without a
+    /// reassembler factory).
+    pub reassembly_dropped_ooo_initiator: u64,
+    pub reassembly_dropped_ooo_responder: u64,
+    /// See [`crate::BufferedReassembler::with_max_buffer`] /
+    /// [`crate::OverflowPolicy::SlidingWindow`]. Counts payload bytes
+    /// dropped from the per-side reassembler buffer due to overflow.
+    pub reassembly_bytes_dropped_oversize_initiator: u64,
+    pub reassembly_bytes_dropped_oversize_responder: u64,
 }
 
 /// Lifecycle state of a flow as tracked by [`crate::FlowTracker`].

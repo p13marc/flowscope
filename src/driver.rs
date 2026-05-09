@@ -65,7 +65,7 @@ where
     pub fn track(&mut self, view: PacketView<'_>) -> FlowEvents<E::Key> {
         let factory = &mut self.factory;
         let reassemblers = &mut self.reassemblers;
-        let events = self
+        let mut events = self
             .tracker
             .track_with_payload(view, |key, side, seq, payload| {
                 let r = reassemblers
@@ -74,21 +74,16 @@ where
                 r.segment(seq, payload);
             });
 
-        // Clean up reassemblers for ended flows.
-        for ev in &events {
-            if let FlowEvent::Ended { key, reason, .. } = ev {
-                for side in [FlowSide::Initiator, FlowSide::Responder] {
-                    if let Some(mut r) = reassemblers.remove(&(key.clone(), side)) {
-                        match reason {
-                            EndReason::Fin | EndReason::IdleTimeout => r.fin(),
-                            EndReason::Rst
-                            | EndReason::Evicted
-                            | EndReason::BufferOverflow => r.rst(),
-                        }
-                    }
-                }
-            }
+        // Synthesise `Ended { reason: BufferOverflow }` for any
+        // reassembler that just poisoned and isn't already ending.
+        let synthesised =
+            Self::synthesise_buffer_overflow_ends(&events, reassemblers, &mut self.tracker);
+        for ev in synthesised {
+            events.push(ev);
         }
+        // Patch reassembly diagnostics + drop the reassemblers for
+        // ended flows.
+        Self::finalize_ended_flows(events.as_mut_slice(), reassemblers);
 
         events
     }
@@ -96,11 +91,90 @@ where
     /// Run the idle-timeout sweep and clean up reassemblers for
     /// ended flows.
     pub fn sweep(&mut self, now: crate::Timestamp) -> Vec<FlowEvent<E::Key>> {
-        let events = self.tracker.sweep(now);
-        for ev in &events {
-            if let FlowEvent::Ended { key, reason, .. } = ev {
+        let mut events = self.tracker.sweep(now);
+        let synthesised = Self::synthesise_buffer_overflow_ends(
+            &events,
+            &mut self.reassemblers,
+            &mut self.tracker,
+        );
+        events.extend(synthesised);
+        Self::finalize_ended_flows(events.as_mut_slice(), &mut self.reassemblers);
+        events
+    }
+
+    /// Build a list of `Ended { reason: BufferOverflow }` events for
+    /// any reassembler that's poisoned but whose flow hasn't already
+    /// ended in `existing`.
+    fn synthesise_buffer_overflow_ends(
+        existing: &[FlowEvent<E::Key>],
+        reassemblers: &mut HashMap<(E::Key, FlowSide), F::Reassembler, RandomState>,
+        tracker: &mut FlowTracker<E, S>,
+    ) -> Vec<FlowEvent<E::Key>> {
+        // Collect keys whose reassembler is poisoned.
+        let mut poisoned_keys: Vec<E::Key> = Vec::new();
+        for ((key, _side), r) in reassemblers.iter() {
+            if r.is_poisoned() && !poisoned_keys.contains(key) {
+                poisoned_keys.push(key.clone());
+            }
+        }
+        if poisoned_keys.is_empty() {
+            return Vec::new();
+        }
+        // Skip keys already ending in this tick.
+        let already_ending: std::collections::HashSet<E::Key> = existing
+            .iter()
+            .filter_map(|ev| match ev {
+                FlowEvent::Ended { key, .. } => Some(key.clone()),
+                _ => None,
+            })
+            .collect();
+        let mut out = Vec::new();
+        for key in poisoned_keys {
+            if already_ending.contains(&key) {
+                continue;
+            }
+            let Some(stats) = tracker.snapshot_stats(&key) else {
+                continue;
+            };
+            let history = tracker.snapshot_history(&key).unwrap_or_default();
+            tracker.forget(&key);
+            out.push(FlowEvent::Ended {
+                key,
+                reason: EndReason::BufferOverflow,
+                stats,
+                history,
+            });
+        }
+        out
+    }
+
+    /// Patch reassembly diagnostics into the `FlowStats` of every
+    /// `Ended` event in `events`, then drop the corresponding
+    /// reassemblers (calling `fin` / `rst` on the way out).
+    fn finalize_ended_flows(
+        events: &mut [FlowEvent<E::Key>],
+        reassemblers: &mut HashMap<(E::Key, FlowSide), F::Reassembler, RandomState>,
+    ) {
+        for ev in events.iter_mut() {
+            // Patch in reassembly diagnostics + drop reassemblers.
+            if let FlowEvent::Ended {
+                key, reason, stats, ..
+            } = ev
+            {
                 for side in [FlowSide::Initiator, FlowSide::Responder] {
-                    if let Some(mut r) = self.reassemblers.remove(&(key.clone(), side)) {
+                    if let Some(mut r) = reassemblers.remove(&(key.clone(), side)) {
+                        let dropped = r.dropped_segments();
+                        let oversize = r.bytes_dropped_oversize();
+                        match side {
+                            FlowSide::Initiator => {
+                                stats.reassembly_dropped_ooo_initiator = dropped;
+                                stats.reassembly_bytes_dropped_oversize_initiator = oversize;
+                            }
+                            FlowSide::Responder => {
+                                stats.reassembly_dropped_ooo_responder = dropped;
+                                stats.reassembly_bytes_dropped_oversize_responder = oversize;
+                            }
+                        }
                         match reason {
                             EndReason::Fin | EndReason::IdleTimeout => r.fin(),
                             EndReason::Rst
@@ -111,7 +185,6 @@ where
                 }
             }
         }
-        events
     }
 
     /// Borrow the inner tracker (for stats, introspection).
@@ -304,5 +377,101 @@ mod tests {
         d.track(view(&syn, 0));
         // No payload yet → no reassembler instantiated.
         assert!(d.factory.0.borrow().is_empty());
+    }
+
+    /// 3WHS + initiator data segment + RST.
+    /// Returns the full event vector after the RST.
+    fn drive_simple_tcp_with_data<F>(driver: &mut FlowDriver<FiveTuple, F>) -> Vec<FlowEvent<crate::extract::FiveTupleKey>>
+    where
+        F: ReassemblerFactory<crate::extract::FiveTupleKey>,
+    {
+        let mac = [0u8; 6];
+        let ip_a = [10, 0, 0, 1];
+        let ip_b = [10, 0, 0, 2];
+        let syn = ipv4_tcp(mac, mac, ip_a, ip_b, 1234, 80, 1000, 0, 0x02, b"");
+        let synack = ipv4_tcp(mac, mac, ip_b, ip_a, 80, 1234, 5000, 1001, 0x12, b"");
+        let ack = ipv4_tcp(mac, mac, ip_a, ip_b, 1234, 80, 1001, 5001, 0x10, b"");
+        // 200 bytes initiator data
+        let payload = vec![b'A'; 200];
+        let data = ipv4_tcp(mac, mac, ip_a, ip_b, 1234, 80, 1001, 5001, 0x18, &payload);
+        // RST
+        let rst = ipv4_tcp(mac, mac, ip_a, ip_b, 1234, 80, 1201, 5001, 0x04, b"");
+
+        let mut events = Vec::new();
+        for f in [&syn, &synack, &ack, &data, &rst] {
+            events.extend(driver.track(view(f, 0)).into_iter());
+        }
+        events
+    }
+
+    #[test]
+    fn ended_event_carries_zero_diagnostics_for_clean_flow() {
+        let mut d = FlowDriver::<_, _>::new(
+            FiveTuple::bidirectional(),
+            BufferedReassemblerFactory::default(),
+        );
+        let events = drive_simple_tcp_with_data(&mut d);
+        let ended = events
+            .into_iter()
+            .find_map(|e| match e {
+                FlowEvent::Ended { stats, .. } => Some(stats),
+                _ => None,
+            })
+            .expect("one Ended event");
+        assert_eq!(ended.reassembly_dropped_ooo_initiator, 0);
+        assert_eq!(ended.reassembly_dropped_ooo_responder, 0);
+        assert_eq!(ended.reassembly_bytes_dropped_oversize_initiator, 0);
+        assert_eq!(ended.reassembly_bytes_dropped_oversize_responder, 0);
+    }
+
+    #[test]
+    fn ended_event_with_buffer_overflow_reason_drop_flow_policy() {
+        // Cap = 64; initiator pushes 200 bytes — should poison and
+        // synthesise Ended { reason: BufferOverflow }.
+        let factory = BufferedReassemblerFactory::default()
+            .with_max_buffer(64)
+            .with_overflow_policy(crate::OverflowPolicy::DropFlow);
+        let mut d = FlowDriver::<_, _>::new(FiveTuple::bidirectional(), factory);
+        let events = drive_simple_tcp_with_data(&mut d);
+        let ended = events
+            .iter()
+            .find_map(|e| match e {
+                FlowEvent::Ended { reason, stats, .. } => Some((*reason, stats.clone())),
+                _ => None,
+            })
+            .expect("an Ended event");
+        // The first end-of-life event for this flow should be BufferOverflow
+        // (the data segment poisons the reassembler before the RST arrives).
+        assert_eq!(ended.0, EndReason::BufferOverflow);
+        // Diagnostic counters surface the dropped bytes.
+        assert!(
+            ended.1.reassembly_bytes_dropped_oversize_initiator > 0,
+            "expected oversize bytes recorded, got {}",
+            ended.1.reassembly_bytes_dropped_oversize_initiator
+        );
+    }
+
+    #[test]
+    fn sliding_window_overflow_recorded_in_diagnostics() {
+        let factory = BufferedReassemblerFactory::default().with_max_buffer(64);
+        let mut d = FlowDriver::<_, _>::new(FiveTuple::bidirectional(), factory);
+        let events = drive_simple_tcp_with_data(&mut d);
+        // SlidingWindow doesn't end the flow early; the RST closes it.
+        // Diagnostics still surface the dropped bytes on Ended.
+        let ended = events
+            .into_iter()
+            .find_map(|e| match e {
+                FlowEvent::Ended { reason, stats, .. } => Some((reason, stats)),
+                _ => None,
+            })
+            .expect("an Ended event");
+        assert_eq!(ended.0, EndReason::Rst);
+        // 200 in - 64 cap = 136 dropped.
+        assert_eq!(
+            ended.1.reassembly_bytes_dropped_oversize_initiator,
+            136,
+            "stats: {:?}",
+            ended.1
+        );
     }
 }

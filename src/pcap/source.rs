@@ -69,12 +69,11 @@ impl<R: Read> PcapFlowSource<R> {
     /// use std::time::Duration;
     ///
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let mut config = FlowTrackerConfig::default();
+    /// config.idle_timeout_tcp = Duration::from_secs(60);
     /// let mut tracker = FlowTracker::<FiveTuple>::with_config(
     ///     FiveTuple::bidirectional(),
-    ///     FlowTrackerConfig {
-    ///         idle_timeout_tcp: Duration::from_secs(60),
-    ///         ..Default::default()
-    ///     },
+    ///     config,
     /// );
     /// for view in PcapFlowSource::open("trace.pcap")?.views() {
     ///     for _evt in tracker.track(view?.as_view()) {
