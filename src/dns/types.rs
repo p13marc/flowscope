@@ -138,7 +138,7 @@ impl DnsFlags {
 pub trait DnsHandler: Send + Sync + 'static {
     fn on_query(&self, _q: &DnsQuery) {}
     fn on_response(&self, _r: &DnsResponse) {}
-    /// Called by [`crate::Correlator::sweep`] for queries that
+    /// Called by [`crate::dns::Correlator::sweep`] for queries that
     /// timed out without a matching response.
     fn on_unanswered(&self, _q: &DnsQuery) {}
 }

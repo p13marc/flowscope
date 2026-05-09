@@ -3,7 +3,7 @@
 //!
 //! Pair with `netring::FlowStream::datagram_stream(...)` for an
 //! async iterator API. For the callback-style "tap on top of an
-//! existing extractor" integration, see [`crate::DnsUdpObserver`].
+//! existing extractor" integration, see [`crate::dns::DnsUdpObserver`].
 
 use crate::{DatagramParser, FlowSide};
 
@@ -19,7 +19,7 @@ pub enum DnsMessage {
 
 /// Per-flow parser. Stateless w.r.t. across-packet correlation —
 /// each datagram is parsed independently. For query/response RTT
-/// matching, see [`crate::Correlator`] (used by [`crate::DnsUdpObserver`]).
+/// matching, see [`crate::dns::Correlator`] (used by [`crate::dns::DnsUdpObserver`]).
 #[derive(Debug, Default, Clone)]
 pub struct DnsUdpParser;
 

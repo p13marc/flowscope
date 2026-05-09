@@ -19,7 +19,7 @@ pub enum DnsParseResult {
 /// Parse one DNS UDP payload into a [`DnsQuery`] or [`DnsResponse`].
 ///
 /// `timestamp` is attached to the resulting event. `elapsed` is
-/// always `None` here — that field is filled by [`crate::Correlator`]
+/// always `None` here — that field is filled by [`crate::dns::Correlator`]
 /// when the response is matched against a previously-seen query.
 pub fn parse_message(payload: &[u8]) -> Result<DnsParseResult, super::Error> {
     parse_message_at(payload, Timestamp::default())

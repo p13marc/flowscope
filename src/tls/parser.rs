@@ -11,7 +11,8 @@ use super::types::{
 };
 
 /// Parser-side errors. Bubbled up to the reassembler, which transitions
-/// the per-direction state to [`DirState::Desynced`].
+/// the per-direction state to a desynchronised mode that drops further
+/// bytes on the floor.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("invalid TLS record: {0}")]

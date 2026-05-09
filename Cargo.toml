@@ -12,6 +12,9 @@ keywords = ["flow", "session", "tcp", "packet", "passive"]
 categories = ["network-programming", "parser-implementations"]
 readme = "README.md"
 documentation = "https://docs.rs/flowscope"
+# `plans/` is roadmap / design history — useful in-repo, not on
+# crates.io. `target/` is auto-excluded.
+exclude = ["plans/"]
 
 [dependencies]
 bitflags = "2"

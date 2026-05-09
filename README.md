@@ -26,7 +26,8 @@ PacketView   →   FlowExtractor   →   FlowTracker   →   Reassembler   →  
 Core (always on):
 
 - `FlowExtractor` trait + built-in extractors (5-tuple, IP-pair, MAC-pair) +
-  decap combinators (VLAN, MPLS, VXLAN, GTP-U).
+  decap combinators (VLAN, MPLS, VXLAN, GTP-U, GRE) + `AutoDetectEncap`
+  combinator + `FlowLabel` IPv6 augmentation.
 - `FlowTracker` — bidirectional flow accounting, TCP state machine, idle
   timeouts, LRU eviction.
 - `Reassembler` — sync per-(flow, side) hook for TCP byte streams.
@@ -36,10 +37,10 @@ Protocol parsers (each behind its own feature):
 
 | Feature | What you get |
 |---------|--------------|
-| `http`  | HTTP/1.x request/response parsing (built on `httparse`) |
+| `http`  | HTTP/1.x request/response parsing — both `HttpFactory` (callback) and `HttpParser` (`SessionParser`) |
 | `tls`   | TLS handshake observer (ClientHello/ServerHello/Alert) — passive only, no decryption |
 | `ja3`   | [JA3](https://github.com/salesforce/ja3) client fingerprinting (sub-feature of `tls`) |
-| `dns`   | DNS-over-UDP message parser + per-flow query/response correlator |
+| `dns`   | DNS message parser, per-flow query/response correlator. UDP via `DnsUdpParser` (`DatagramParser`); TCP via `DnsTcpParser` (`SessionParser`, RFC 1035 §4.2.2 length-framed) |
 | `pcap`  | pcap file source for offline replay |
 | `full`  | All of the above |
 
@@ -88,12 +89,14 @@ while let Some(evt) = s.next().await { /* ... */ }
 
 ## Status
 
-Pre-1.0. The core flow APIs (`FlowExtractor`, `FlowTracker`, `Reassembler`)
-are settling. `SessionParser` / `DatagramParser` shipped in 0.1 as the
-strategic 1.0 abstraction; the trait shape is on probation pending
-real-world feedback.
+0.1.0 published — the API is settled. The core flow APIs
+(`FlowExtractor`, `FlowTracker`, `Reassembler`) and
+`SessionParser` / `DatagramParser` traits are stable; future
+additions will be additive. Major breaking changes will require a
+1.0 / 0.2 bump.
 
-See `plans/INDEX.md` for the roadmap.
+See [`docs/SESSION_GUIDE.md`](docs/SESSION_GUIDE.md) for the
+decision-flow on which API to pick.
 
 ## License
 
