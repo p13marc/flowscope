@@ -97,6 +97,20 @@ where
         self
     }
 
+    /// Set a per-key idle-timeout override on the underlying tracker
+    /// (see [`FlowTracker::set_idle_timeout_fn`]). Builder-style
+    /// passthrough — chains nicely with [`Self::new`] /
+    /// [`Self::with_config`] / [`Self::with_emit_anomalies`].
+    pub fn with_idle_timeout_fn<G>(mut self, f: G) -> Self
+    where
+        G: Fn(&E::Key, Option<crate::L4Proto>) -> Option<std::time::Duration>
+            + Send
+            + 'static,
+    {
+        self.tracker.set_idle_timeout_fn(f);
+        self
+    }
+
     /// Process one packet. Drives the tracker and dispatches TCP
     /// payloads to the factory's reassemblers. Reassemblers are
     /// created on demand and cleaned up on `Ended`.

@@ -141,6 +141,18 @@ where
         self
     }
 
+    /// Set a per-key idle-timeout override on the underlying
+    /// tracker. Mirrors [`FlowDriver::with_idle_timeout_fn`].
+    pub fn with_idle_timeout_fn<G>(mut self, f: G) -> Self
+    where
+        G: Fn(&E::Key, Option<crate::L4Proto>) -> Option<std::time::Duration>
+            + Send
+            + 'static,
+    {
+        self.driver = self.driver.with_idle_timeout_fn(f);
+        self
+    }
+
     /// Drive one packet. Returns zero or more [`SessionEvent`]s.
     pub fn track(&mut self, view: PacketView<'_>) -> Vec<SessionEvent<E::Key, P::Message>> {
         let mut flow_events = self.driver.track_pending(view);

@@ -55,6 +55,22 @@ pub struct FiveTupleKey {
     pub b: SocketAddr,
 }
 
+impl FiveTupleKey {
+    /// Convenience: matches either endpoint's port.
+    ///
+    /// Useful in idle-timeout predicates (see
+    /// [`crate::FlowTracker::set_idle_timeout_fn`]) and any place
+    /// where you want to route on "either side talks to port X."
+    ///
+    /// In bidirectional-mode flows (default), `a` and `b` are
+    /// canonicalised lexicographically so neither is "source" —
+    /// this helper avoids that footgun.
+    #[inline]
+    pub fn either_port(&self, port: u16) -> bool {
+        self.a.port() == port || self.b.port() == port
+    }
+}
+
 impl FlowExtractor for FiveTuple {
     type Key = FiveTupleKey;
 

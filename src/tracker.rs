@@ -103,6 +103,17 @@ pub struct FlowTrackerStats {
 
 type StateInit<K, S> = Box<dyn FnMut(&K) -> S + Send + 'static>;
 
+/// Per-key idle-timeout override predicate. Receives the flow's
+/// key and (when extractable) the L4 protocol, returns
+/// `Some(duration)` to override the per-protocol default from
+/// [`FlowTrackerConfig`], or `None` to fall through to the
+/// default.
+///
+/// `Send + 'static` matches the existing [`StateInit`] shape on
+/// `FlowTracker`. `Sync` isn't required.
+pub type IdleTimeoutFn<K> =
+    Box<dyn Fn(&K, Option<L4Proto>) -> Option<Duration> + Send + 'static>;
+
 /// Bidirectional flow tracker, generic over an extractor `E` and
 /// optional per-flow user state `S`.
 pub struct FlowTracker<E: FlowExtractor, S = ()> {
@@ -116,6 +127,10 @@ pub struct FlowTracker<E: FlowExtractor, S = ()> {
     /// lookup. Cleared on `Ended`/`Evicted`/`forget` (and on every
     /// `set_config` for safety).
     hot: Option<E::Key>,
+    /// Optional per-key idle-timeout predicate (Plan 47). When
+    /// `Some`, [`Self::sweep`] consults this before falling back to
+    /// the per-protocol defaults in [`FlowTrackerConfig`].
+    idle_timeout_fn: Option<IdleTimeoutFn<E::Key>>,
 }
 
 impl<E: FlowExtractor, S: Send + 'static> FlowTracker<E, S> {
@@ -141,6 +156,7 @@ impl<E: FlowExtractor, S: Send + 'static> FlowTracker<E, S> {
             stats: FlowTrackerStats::default(),
             init: Box::new(init),
             hot: None,
+            idle_timeout_fn: None,
         }
     }
 
@@ -372,11 +388,16 @@ impl<E: FlowExtractor, S: Send + 'static> FlowTracker<E, S> {
             let last = entry.stats.last_seen.to_duration();
             // Saturating: if `last_seen` somehow exceeds `now`, treat as not idle.
             let idle = now_dur.saturating_sub(last);
-            let timeout = match entry.l4 {
+            let default_timeout = match entry.l4 {
                 Some(L4Proto::Tcp) => self.config.idle_timeout_tcp,
                 Some(L4Proto::Udp) => self.config.idle_timeout_udp,
                 _ => self.config.idle_timeout_other,
             };
+            let timeout = self
+                .idle_timeout_fn
+                .as_ref()
+                .and_then(|f| f(k, entry.l4))
+                .unwrap_or(default_timeout);
             if idle >= timeout {
                 expired_keys.push(k.clone());
             }
@@ -474,6 +495,43 @@ impl<E: FlowExtractor, S: Send + 'static> FlowTracker<E, S> {
     /// Tracker config.
     pub fn config(&self) -> &FlowTrackerConfig {
         &self.config
+    }
+
+    /// Set a per-key idle-timeout override predicate. The
+    /// predicate receives `(&E::Key, Option<L4Proto>)` and returns
+    /// `Some(d)` to use `d` as that flow's idle timeout, or `None`
+    /// to fall back to the per-protocol default from
+    /// [`FlowTrackerConfig`].
+    ///
+    /// Replaces any previously-set predicate.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use std::time::Duration;
+    /// use flowscope::extract::{FiveTuple, FiveTupleKey};
+    /// use flowscope::{FlowTracker, L4Proto};
+    ///
+    /// let mut t = FlowTracker::<FiveTuple>::new(FiveTuple::bidirectional());
+    /// t.set_idle_timeout_fn(|key: &FiveTupleKey, _l4| {
+    ///     if key.either_port(15987) {
+    ///         Some(Duration::from_secs(60))   // control flows: long
+    ///     } else {
+    ///         Some(Duration::from_secs(5))    // data flows: short
+    ///     }
+    /// });
+    /// ```
+    pub fn set_idle_timeout_fn<F>(&mut self, f: F)
+    where
+        F: Fn(&E::Key, Option<L4Proto>) -> Option<Duration> + Send + 'static,
+    {
+        self.idle_timeout_fn = Some(Box::new(f));
+    }
+
+    /// Remove any per-key idle-timeout override. Subsequent sweeps
+    /// use only the per-protocol defaults from [`FlowTrackerConfig`].
+    pub fn clear_idle_timeout_fn(&mut self) {
+        self.idle_timeout_fn = None;
     }
 
     /// Replace the config in-place. Resizes the LRU capacity if
@@ -855,5 +913,78 @@ mod tests {
         assert_eq!(starts, 2, "two distinct flows started");
         assert_eq!(packets, 10, "ten packets total");
         assert_eq!(t.flow_count(), 2);
+    }
+
+    #[test]
+    fn idle_timeout_fn_overrides_per_protocol_default() {
+        let mut t = FlowTracker::<FiveTuple>::new(FiveTuple::bidirectional());
+        // Default TCP idle = 300s. Override: 5s for non-port-80 flows.
+        t.set_idle_timeout_fn(|key: &crate::extract::FiveTupleKey, _l4| {
+            if key.either_port(80) {
+                None
+            } else {
+                Some(Duration::from_secs(5))
+            }
+        });
+        let f80 = ipv4_tcp(
+            [0; 6], [0; 6], [10, 0, 0, 1], [10, 0, 0, 2], 1234, 80, 1, 0, 0x02, b"",
+        );
+        let f8080 = ipv4_tcp(
+            [0; 6], [0; 6], [10, 0, 0, 1], [10, 0, 0, 2], 1235, 8080, 1, 0, 0x02, b"",
+        );
+        t.track(view(&f80, 0));
+        t.track(view(&f8080, 0));
+        // Sweep at t=10s — port 80 keeps the 300s default; port 8080
+        // override of 5s has fired.
+        let ended = t.sweep(Timestamp::new(10, 0));
+        assert_eq!(ended.len(), 1);
+        match &ended[0] {
+            FlowEvent::Ended { key, reason, .. } => {
+                assert_eq!(*reason, EndReason::IdleTimeout);
+                assert!(
+                    key.either_port(8080),
+                    "the 8080 flow expired, not the 80 flow"
+                );
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    #[test]
+    fn idle_timeout_fn_returning_none_uses_protocol_default() {
+        let mut t = FlowTracker::<FiveTuple>::new(FiveTuple::bidirectional());
+        t.set_idle_timeout_fn(|_, _| None);
+        let f = ipv4_udp([10, 0, 0, 1], [10, 0, 0, 2], 1, 2, b"x");
+        t.track(view(&f, 0));
+        // UDP default = 60s. At t=10s the flow lives; at t=120s it expires.
+        assert_eq!(t.sweep(Timestamp::new(10, 0)).len(), 0);
+        assert_eq!(t.sweep(Timestamp::new(120, 0)).len(), 1);
+    }
+
+    #[test]
+    fn clear_idle_timeout_fn_restores_defaults() {
+        let mut t = FlowTracker::<FiveTuple>::new(FiveTuple::bidirectional());
+        t.set_idle_timeout_fn(|_, _| Some(Duration::from_secs(1)));
+        let f = ipv4_tcp(
+            [0; 6], [0; 6], [10, 0, 0, 1], [10, 0, 0, 2], 1234, 80, 1, 0, 0x02, b"",
+        );
+        t.track(view(&f, 0));
+        t.clear_idle_timeout_fn();
+        // TCP default = 300s; sweep at 10s does not expire.
+        assert_eq!(t.sweep(Timestamp::new(10, 0)).len(), 0);
+    }
+
+    #[test]
+    fn five_tuple_either_port_matches_src_or_dst() {
+        use crate::extract::FiveTupleKey;
+        use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+        let key = FiveTupleKey {
+            proto: L4Proto::Tcp,
+            a: SocketAddr::new(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)), 1234),
+            b: SocketAddr::new(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 2)), 80),
+        };
+        assert!(key.either_port(1234));
+        assert!(key.either_port(80));
+        assert!(!key.either_port(443));
     }
 }
