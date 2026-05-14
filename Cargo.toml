@@ -179,6 +179,10 @@ required-features = ["metrics", "extractors", "reassembler", "test-helpers"]
 name = "length_prefixed_example"
 required-features = ["pcap", "session", "extractors"]
 
+[[test]]
+name = "round_trip"
+required-features = ["pcap", "session", "reassembler", "extractors", "test-helpers"]
+
 [[bench]]
 name = "extractor"
 harness = false
