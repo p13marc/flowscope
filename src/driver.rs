@@ -377,9 +377,10 @@ where
                         }
                         match reason {
                             EndReason::Fin | EndReason::IdleTimeout => r.fin(),
-                            EndReason::Rst | EndReason::Evicted | EndReason::BufferOverflow => {
-                                r.rst()
-                            }
+                            EndReason::Rst
+                            | EndReason::Evicted
+                            | EndReason::BufferOverflow
+                            | EndReason::ParseError => r.rst(),
                         }
                     }
                 }
@@ -395,6 +396,13 @@ where
     /// Borrow the inner tracker mutably.
     pub fn tracker_mut(&mut self) -> &mut FlowTracker<E, S> {
         &mut self.tracker
+    }
+
+    /// True when [`Self::with_emit_anomalies`] was called with
+    /// `true`. Used by wrappers (e.g. [`crate::FlowSessionDriver`])
+    /// that need to mirror the same anomaly-emission policy.
+    pub fn emits_anomalies(&self) -> bool {
+        self.emit_anomalies
     }
 }
 

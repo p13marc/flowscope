@@ -46,12 +46,31 @@ use ahash::RandomState;
 
 use crate::Timestamp;
 use crate::driver::FlowDriver;
-use crate::event::{EndReason, FlowEvent, FlowSide};
+use crate::event::{AnomalyKind, EndReason, FlowEvent, FlowSide};
 use crate::extractor::FlowExtractor;
 use crate::reassembler::BufferedReassemblerFactory;
 use crate::session::{SessionEvent, SessionParser};
 use crate::tracker::{FlowTracker, FlowTrackerConfig};
 use crate::view::PacketView;
+
+/// Cap on the size of `poison_reason()` strings carried through
+/// [`AnomalyKind::SessionParseError`]. Bounds anomaly event size
+/// so a malicious / verbose parser can't blow the consumer's
+/// memory.
+const POISON_REASON_MAX_BYTES: usize = 256;
+
+fn truncate_reason(s: &str) -> String {
+    let mut owned = String::from(s);
+    if owned.len() > POISON_REASON_MAX_BYTES {
+        // Find char boundary at or below the cap.
+        let cap = (0..=POISON_REASON_MAX_BYTES)
+            .rev()
+            .find(|i| owned.is_char_boundary(*i))
+            .unwrap_or(0);
+        owned.truncate(cap);
+    }
+    owned
+}
 
 /// Sync session-event driver. Wraps a [`FlowDriver`] with
 /// [`BufferedReassemblerFactory`] and adds per-flow
@@ -205,7 +224,10 @@ where
                                     });
                                 }
                             }
-                            EndReason::Rst | EndReason::Evicted | EndReason::BufferOverflow => {
+                            EndReason::Rst
+                            | EndReason::Evicted
+                            | EndReason::BufferOverflow
+                            | EndReason::ParseError => {
                                 parser.rst_initiator();
                                 parser.rst_responder();
                             }
@@ -239,15 +261,19 @@ where
         ts: Timestamp,
         out: &mut Vec<SessionEvent<E::Key, P::Message>>,
     ) {
-        let parser = match self.parsers.get_mut(key) {
-            Some(p) => p,
-            None => return,
-        };
+        // Two passes over the sides so we can synthesise poison events
+        // BEFORE returning (callers expect: anomaly first, then Closed).
         for side in [FlowSide::Initiator, FlowSide::Responder] {
             let drained = self.driver.drain_buffer(key, side);
             if drained.is_empty() {
                 continue;
             }
+            // Get the parser fresh inside the loop — it may have been
+            // removed by a previous poison-synthesis call on this key.
+            let parser = match self.parsers.get_mut(key) {
+                Some(p) => p,
+                None => return,
+            };
             let messages = match side {
                 FlowSide::Initiator => parser.feed_initiator(&drained),
                 FlowSide::Responder => parser.feed_responder(&drained),
@@ -260,7 +286,55 @@ where
                     ts,
                 });
             }
+            // Plan 55: check is_poisoned() after every feed_*. If
+            // the parser has poisoned, emit the anomaly + synthesise
+            // a parse-error Closed event, then tear down the parser
+            // slot. The flow stays in the tracker (FlowDriver
+            // doesn't see SessionParser poison); subsequent packets
+            // will produce no further Application events because the
+            // parser slot is gone.
+            if parser.is_poisoned() {
+                let reason = parser.poison_reason().map(truncate_reason);
+                self.synthesise_parser_poison(key, side, reason, ts, out);
+                return;
+            }
         }
+    }
+
+    fn synthesise_parser_poison(
+        &mut self,
+        key: &E::Key,
+        side: FlowSide,
+        reason: Option<String>,
+        ts: Timestamp,
+        out: &mut Vec<SessionEvent<E::Key, P::Message>>,
+    ) {
+        if self.driver.emits_anomalies() {
+            out.push(SessionEvent::Anomaly {
+                key: Some(key.clone()),
+                kind: AnomalyKind::SessionParseError {
+                    side,
+                    reason: reason.clone(),
+                },
+                ts,
+            });
+        }
+        // Snapshot stats BEFORE forgetting the flow so the Closed
+        // event carries the final counters.
+        let stats = self
+            .driver
+            .tracker()
+            .snapshot_stats(key)
+            .unwrap_or_default();
+        crate::obs::record_flow_ended(EndReason::ParseError, &stats);
+        crate::obs::trace_flow_ended(EndReason::ParseError, &stats);
+        out.push(SessionEvent::Closed {
+            key: key.clone(),
+            reason: EndReason::ParseError,
+            stats,
+        });
+        self.parsers.remove(key);
+        self.driver.tracker_mut().forget(key);
     }
 }
 
@@ -521,6 +595,171 @@ mod tests {
                 .iter()
                 .any(|e| matches!(e, SessionEvent::Anomaly { .. })),
             "expected no anomaly events when emit_anomalies is off"
+        );
+    }
+
+    /// Parser that poisons after seeing more than N bytes on the
+    /// initiator side.
+    #[derive(Default, Clone)]
+    struct PoisonAfterBytes {
+        init_bytes: usize,
+        poisoned: bool,
+    }
+
+    impl SessionParser for PoisonAfterBytes {
+        type Message = Vec<u8>;
+        fn feed_initiator(&mut self, bytes: &[u8]) -> Vec<Vec<u8>> {
+            self.init_bytes += bytes.len();
+            if self.init_bytes > 5 {
+                self.poisoned = true;
+            }
+            vec![bytes.to_vec()]
+        }
+        fn feed_responder(&mut self, bytes: &[u8]) -> Vec<Vec<u8>> {
+            vec![bytes.to_vec()]
+        }
+        fn is_poisoned(&self) -> bool {
+            self.poisoned
+        }
+        fn poison_reason(&self) -> Option<&str> {
+            if self.poisoned {
+                Some("test: poisoned after >5 initiator bytes")
+            } else {
+                None
+            }
+        }
+    }
+
+    #[test]
+    fn parser_poison_synthesises_parse_error_closed() {
+        let mut d =
+            FlowSessionDriver::<_, PoisonAfterBytes>::new(FiveTuple::bidirectional());
+        let mut events = Vec::new();
+        for f in build_3whs() {
+            events.extend(d.track(view(&f, 0)));
+        }
+        let mac = [0u8; 6];
+        // Send 10 bytes initiator data — parser poisons.
+        let data = ipv4_tcp(
+            mac,
+            mac,
+            [10, 0, 0, 1],
+            [10, 0, 0, 2],
+            1234,
+            80,
+            1001,
+            5001,
+            0x18,
+            b"0123456789",
+        );
+        events.extend(d.track(view(&data, 0)));
+        let closed = events
+            .iter()
+            .find_map(|e| match e {
+                SessionEvent::Closed { reason, .. } => Some(*reason),
+                _ => None,
+            })
+            .expect("Closed event");
+        assert_eq!(closed, EndReason::ParseError);
+    }
+
+    #[test]
+    fn parser_poison_with_anomalies_emits_parse_error_anomaly() {
+        let mut d = FlowSessionDriver::<_, PoisonAfterBytes>::new(FiveTuple::bidirectional())
+            .with_emit_anomalies(true);
+        let mut events = Vec::new();
+        for f in build_3whs() {
+            events.extend(d.track(view(&f, 0)));
+        }
+        let mac = [0u8; 6];
+        let data = ipv4_tcp(
+            mac,
+            mac,
+            [10, 0, 0, 1],
+            [10, 0, 0, 2],
+            1234,
+            80,
+            1001,
+            5001,
+            0x18,
+            b"0123456789",
+        );
+        events.extend(d.track(view(&data, 0)));
+        let (anomaly_idx, _) = events
+            .iter()
+            .enumerate()
+            .find(|(_, e)| {
+                matches!(
+                    e,
+                    SessionEvent::Anomaly {
+                        kind: AnomalyKind::SessionParseError { .. },
+                        ..
+                    }
+                )
+            })
+            .expect("ParseError anomaly");
+        let closed_idx = events
+            .iter()
+            .position(|e| {
+                matches!(
+                    e,
+                    SessionEvent::Closed {
+                        reason: EndReason::ParseError,
+                        ..
+                    }
+                )
+            })
+            .expect("ParseError Closed");
+        assert!(
+            anomaly_idx < closed_idx,
+            "anomaly must precede Closed (cause then effect)"
+        );
+        // Reason string is forwarded + truncated.
+        match &events[anomaly_idx] {
+            SessionEvent::Anomaly {
+                kind: AnomalyKind::SessionParseError { reason, side },
+                ..
+            } => {
+                assert_eq!(*side, FlowSide::Initiator);
+                assert!(reason.as_ref().is_some());
+                assert!(reason.as_ref().unwrap().contains("poisoned"));
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    #[test]
+    fn non_poisoning_parser_unaffected_by_poison_path() {
+        // LineParser never poisons; existing tests should still
+        // produce no ParseError events.
+        let mut d = FlowSessionDriver::<_, LineParser>::new(FiveTuple::bidirectional());
+        let mut events = Vec::new();
+        for f in build_3whs() {
+            events.extend(d.track(view(&f, 0)));
+        }
+        let mac = [0u8; 6];
+        let data = ipv4_tcp(
+            mac,
+            mac,
+            [10, 0, 0, 1],
+            [10, 0, 0, 2],
+            1234,
+            80,
+            1001,
+            5001,
+            0x18,
+            b"hello\nworld\n",
+        );
+        events.extend(d.track(view(&data, 0)));
+        assert!(
+            !events.iter().any(|e| matches!(
+                e,
+                SessionEvent::Closed {
+                    reason: EndReason::ParseError,
+                    ..
+                }
+            )),
+            "non-poisoning parser produced a ParseError Closed event"
         );
     }
 

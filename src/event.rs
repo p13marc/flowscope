@@ -19,6 +19,7 @@ pub enum FlowSide {
 
 /// Why a flow ended.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum EndReason {
     /// TCP FIN observed (graceful close).
     Fin,
@@ -33,6 +34,11 @@ pub enum EndReason {
     /// Synthesised by [`crate::FlowDriver`] (the tracker itself never
     /// emits this reason).
     BufferOverflow,
+    /// A [`crate::SessionParser`] or [`crate::DatagramParser`]
+    /// returned `true` from `is_poisoned()`. Synthesised by the
+    /// session-/datagram-driver — the tracker itself never emits
+    /// this reason.
+    ParseError,
 }
 
 /// What to do when [`crate::BufferedReassembler`]'s in-flight buffer
@@ -155,6 +161,14 @@ pub enum AnomalyKind {
     FlowTableEvictionPressure {
         evicted_in_tick: u64,
         evicted_total: u64,
+    },
+    /// A [`crate::SessionParser`] / [`crate::DatagramParser`] just
+    /// returned `true` from `is_poisoned()`. The corresponding
+    /// `Ended { reason: ParseError }` follows in the same tick.
+    /// `reason` carries `poison_reason()` truncated to ~256 bytes.
+    SessionParseError {
+        side: FlowSide,
+        reason: Option<String>,
     },
 }
 

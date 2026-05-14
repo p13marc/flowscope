@@ -105,6 +105,33 @@ pub trait SessionParser: Send + 'static {
 
     /// Responder side observed a RST.
     fn rst_responder(&mut self) {}
+
+    /// True after the parser has hit an unrecoverable error and
+    /// can no longer make progress. The driver checks this after
+    /// every `feed_*` / `fin_*` call and tears the flow down on
+    /// `true`. Default: `false` (parser never poisons).
+    ///
+    /// Parsers that want to drop a malformed message and keep
+    /// going should NOT use this — just don't push the message
+    /// into the returned `Vec`. Reserve poison for cases where
+    /// internal state is corrupted past recovery (desynced framing,
+    /// invalid magic bytes that won't appear later, etc.).
+    ///
+    /// Mirrors [`crate::Reassembler::is_poisoned`] — same wiring
+    /// shape, same operator mental model.
+    fn is_poisoned(&self) -> bool {
+        false
+    }
+
+    /// Optional human-readable description of why the parser
+    /// poisoned. Consulted only when [`is_poisoned`](Self::is_poisoned)
+    /// returns `true`. Default: `None`.
+    ///
+    /// The driver truncates to ~256 bytes when forwarding via
+    /// [`crate::SessionEvent::Anomaly`].
+    fn poison_reason(&self) -> Option<&str> {
+        None
+    }
 }
 
 /// Builds a fresh [`SessionParser`] per session. Modeled on
@@ -136,6 +163,18 @@ pub trait DatagramParser: Send + 'static {
     /// Parse one L4 payload. `side` is the direction relative to
     /// the flow's initiator. Returns any complete messages decoded.
     fn parse(&mut self, payload: &[u8], side: FlowSide) -> Vec<Self::Message>;
+
+    /// True after the parser has hit an unrecoverable error. See
+    /// [`SessionParser::is_poisoned`] for the contract.
+    fn is_poisoned(&self) -> bool {
+        false
+    }
+
+    /// Optional reason for poison. See
+    /// [`SessionParser::poison_reason`].
+    fn poison_reason(&self) -> Option<&str> {
+        None
+    }
 }
 
 /// Builds a fresh [`DatagramParser`] per session.

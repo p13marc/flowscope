@@ -85,6 +85,7 @@ fn reason_label(reason: EndReason) -> &'static str {
         EndReason::IdleTimeout => "idle",
         EndReason::Evicted => "evicted",
         EndReason::BufferOverflow => "buffer_overflow",
+        EndReason::ParseError => "parse_error",
     }
 }
 
@@ -94,6 +95,7 @@ fn anomaly_label(kind: &AnomalyKind) -> &'static str {
         AnomalyKind::BufferOverflow { .. } => "buffer_overflow",
         AnomalyKind::OutOfOrderSegment { .. } => "ooo_segment",
         AnomalyKind::FlowTableEvictionPressure { .. } => "flow_table_eviction",
+        AnomalyKind::SessionParseError { .. } => "parse_error",
     }
 }
 
