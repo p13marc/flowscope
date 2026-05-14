@@ -292,6 +292,108 @@ It's **not** the right tool when:
 - You need to emit messages synchronously inside your packet loop
   (sync). `Conversation` is async.
 
+## Writing your own `SessionParser`
+
+This is the worked walkthrough that the
+`examples/length_prefixed_pcap.rs` example demonstrates.
+
+### Trait-method contract
+
+| Method | When called | Driver guarantees | Parser responsibilities |
+|--------|-------------|-------------------|--------------------------|
+| `feed_initiator(bytes)` | Per packet on the initiator side | `bytes` is 1..N bytes, never empty. Calls are serialised — never concurrent. Subsequent calls deliver bytes in TCP-sequence order (reassembler ensures this). | Buffer partial frames in `&mut self`. Return only complete decoded messages. Don't assume `bytes` is aligned to a frame boundary. |
+| `feed_responder(bytes)` | Mirror of initiator | Same | Same |
+| `fin_initiator() -> Vec<Message>` | Initiator-side stream closes cleanly (FIN observed) | Called once per flow; not after `rst_initiator` | Flush any in-flight decodable state and return it. Drop partial / undecodable buffers silently. Default impl returns an empty `Vec`. |
+| `fin_responder() -> Vec<Message>` | Mirror | Same | Same |
+| `rst_initiator()` | Initiator-side aborts (RST, eviction, buffer-overflow, or parse-error tear-down) | Called once per flow; not after `fin_initiator` | Drop in-flight buffers. **Don't** flush — the truncation is unrecoverable. Default impl is a no-op. |
+| `rst_responder()` | Mirror | Same | Same |
+| `is_poisoned() -> bool` (0.3.0) | After every `feed_*` / `fin_*` call | `false` means "keep going" | Return `true` once you've hit an unrecoverable error (desynced framing, invalid magic that won't appear later). The driver then tears the flow down with `EndReason::ParseError` and drops your parser slot. Default returns `false`. |
+| `poison_reason() -> Option<&str>` (0.3.0) | After `is_poisoned()` returns `true` | Consulted once | Optional human-readable reason; truncated to ~256 bytes when forwarded via `SessionEvent::Anomaly`. |
+
+### The canonical partial-buffer pattern
+
+```rust,ignore
+#[derive(Default, Clone)]
+struct MyParser {
+    init_buf: Vec<u8>,
+    resp_buf: Vec<u8>,
+}
+
+impl SessionParser for MyParser {
+    type Message = MyMessage;
+
+    fn feed_initiator(&mut self, bytes: &[u8]) -> Vec<Self::Message> {
+        self.init_buf.extend_from_slice(bytes);
+        drain(&mut self.init_buf, FlowSide::Initiator)
+    }
+    fn feed_responder(&mut self, bytes: &[u8]) -> Vec<Self::Message> {
+        self.resp_buf.extend_from_slice(bytes);
+        drain(&mut self.resp_buf, FlowSide::Responder)
+    }
+}
+
+fn drain(buf: &mut Vec<u8>, side: FlowSide) -> Vec<MyMessage> {
+    let mut out = Vec::new();
+    while let Some(consumed) = try_decode_one(buf, side) {
+        out.push(consumed);
+    }
+    out
+}
+```
+
+Key rules:
+- **Don't drain the buffer until a complete message is in.** Decode-and-consume is atomic per message; the next call sees the rest.
+- **Per-side buffers are independent.** A partial frame on initiator does not block responder progress.
+
+### Resync after bytes dropped
+
+When `FlowStats.reassembly_bytes_dropped_oversize_* > 0` on an `Ended` event (or `FlowEvent::Anomaly { kind: BufferOverflow, .. }` fires inline), your parser's buffer is no longer contiguous with the wire. Three recovery strategies, in increasing order of parser-side cost:
+
+1. **Use `OverflowPolicy::DropFlow`** (recommended for framed binary protocols). The driver tears the flow down on first overflow with `EndReason::BufferOverflow`; the parser never sees a desynced continuation. See [Recovery after buffer cap](#recovery-after-buffer-cap).
+2. **Marker re-scan** for protocols with a fixed-length marker prefix (HTTP `\r\n\r\n`, PSMSG-style framing). Walk the buffer looking for the next marker, discard everything before it.
+3. **Tear down at the parser layer** via `is_poisoned()` (0.3.0): return `true` from `is_poisoned()` after detecting the desync; the driver synthesises `EndReason::ParseError` and drops your state. Consumers observe a `SessionEvent::Closed { reason: ParseError }`.
+
+### Signalling unrecoverable errors (0.3.0)
+
+For per-message errors (one bad message but the rest of the stream is fine), just don't push the bad message into the returned `Vec`. The framework can't tell the difference between "no message ready" and "bad message skipped" — both are fine.
+
+For flow-level errors (the parser's internal state is corrupted past recovery), set `is_poisoned() -> true` after you detect it. The driver then:
+
+1. Optionally emits `SessionEvent::Anomaly { kind: SessionParseError { side, reason } }` (when `with_emit_anomalies(true)`).
+2. Synthesises `SessionEvent::Closed { reason: EndReason::ParseError }`.
+3. Calls `rst_initiator` / `rst_responder` on your parser, then drops the slot.
+
+Subsequent packets for the same 5-tuple will start a fresh flow with a fresh parser instance.
+
+### Testing pattern
+
+Pair every custom parser with a byte-by-byte sliced test. Run the same wire bytes one byte at a time and assert identical output:
+
+```rust,ignore
+#[test]
+fn handles_partial_chunks() {
+    let wire_bytes: &[u8] = /* ... build via test_frames or hex ... */;
+    let mut parser = MyParser::default();
+    let mut out = Vec::new();
+    for byte in wire_bytes {
+        out.extend(parser.feed_initiator(std::slice::from_ref(byte)));
+    }
+    assert_eq!(out, expected_messages);
+}
+```
+
+This catches the vast majority of partial-frame bugs without a proptest harness. Recommended for every custom parser.
+
+### Length-prefixed binary protocols — worked reference
+
+The [`examples/length_prefixed_pcap.rs`](../examples/length_prefixed_pcap.rs) example implements a PSMSG-shaped protocol with two variable-length markers (PFX2/PFX4). It demonstrates:
+
+1. **Variable-length headers** — `peek_header` returns `Some((header_len, body_len))` only when the full header is present.
+2. **Partial-header / partial-body buffering** — both wait for "enough bytes" before consuming.
+3. **Unknown-marker handling** — the example stalls on unknown markers; real parsers should pair with `OverflowPolicy::DropFlow` and signal poison via `is_poisoned()`.
+
+The example is paired with a deterministic pcap fixture and an integration test that exercises both the standard path and the byte-by-byte sliced path. Worth reading end-to-end if you're writing a custom binary-protocol parser.
+
 ## Sync vs async session driving (0.2.0)
 
 `SessionParser` is just a trait — the *driver* that feeds it bytes

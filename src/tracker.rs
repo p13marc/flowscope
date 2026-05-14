@@ -109,7 +109,7 @@ type StateInit<K, S> = Box<dyn FnMut(&K) -> S + Send + 'static>;
 /// [`FlowTrackerConfig`], or `None` to fall through to the
 /// default.
 ///
-/// `Send + 'static` matches the existing [`StateInit`] shape on
+/// `Send + 'static` matches the existing `StateInit` shape on
 /// `FlowTracker`. `Sync` isn't required.
 pub type IdleTimeoutFn<K> =
     Box<dyn Fn(&K, Option<L4Proto>) -> Option<Duration> + Send + 'static>;
