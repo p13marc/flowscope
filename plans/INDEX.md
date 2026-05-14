@@ -1,117 +1,40 @@
 # plans/ — index
 
-Two kinds of files:
+Two kinds of files live here:
 
-- **Design docs** (`*-design.md`, `DPI_ARCHITECTURE.md`) —
-  architecture, rationale, prior-art surveys, decision matrices.
-  Source of truth for *why*.
-- **Implementation plans** (`NN-*.md`, numbered) — concrete,
-  mechanical, file-by-file work breakdowns. Source of truth for
-  *how*. Each plan should be executable: pick it up, follow it
-  step-by-step, finish.
+- **Design / research docs** (`*-design.md`, `DPI_ARCHITECTURE.md`,
+  feedback reports). Architecture rationale, prior-art surveys,
+  consumer feedback. Source of truth for *why*.
+- **Backlog plans** (`NN-*.md`, numbered). Each plan is concrete
+  and executable — pick it up, follow it step-by-step, finish.
 
-If a design doc and a plan disagree, the plan wins for execution
-detail; design wins for "why is this even shaped this way."
-
-Some plans were carried over from the previous `netring-flow`
-workspace where they were originally numbered. The numbering is
-preserved as historical record; new plans pick up where they left
-off. Plans flagged **STALE** below were written pre-consolidation
-and need a rewrite pass before execution.
+Plans whose implementation has shipped are **deleted** rather
+than archived in-place. `git log` is the historical record;
+`plans/` is the active backlog. (Previous convention was to
+keep shipped plans as records; we changed to deletion when the
+directory got crowded enough that it stopped being a useful
+working backlog.)
 
 ---
 
-## Design docs
+## Design / research docs
 
-| File | Status |
-|------|--------|
-| [`flow-session-tracking-design.md`](./flow-session-tracking-design.md) | Approved |
-| [`high-level-features-design.md`](./high-level-features-design.md) | Approved |
-| [`DPI_ARCHITECTURE.md`](./DPI_ARCHITECTURE.md) | Research report |
+| File | What |
+|------|------|
+| [`flow-session-tracking-design.md`](./flow-session-tracking-design.md) | Original design for the flow / session tracking surface. Approved; mostly implemented. Useful for the *why* behind the trait shapes. |
+| [`high-level-features-design.md`](./high-level-features-design.md) | High-level features survey (loopback dedup, etc.). Drove the `Dedup` primitive shape. |
+| [`DPI_ARCHITECTURE.md`](./DPI_ARCHITECTURE.md) | SOTA-DPI research and crate-split recommendations report (2026). |
+| [`flowscope-feedback-2026-05-14.md`](./flowscope-feedback-2026-05-14.md) | External feedback from the `des-rs` team. Drove the 0.3.0 "production hardening" release. Worth re-reading when the next consumer-feedback cycle starts. |
 
-## Numbering scheme
+## Backlog — sister-crate roadmap
 
-| Range | Theme |
-|-------|-------|
-| 10–19 | Capture-side features (now mostly in `netring`) |
-| 20–29 | Protocol parsers and packet sources (feature-gated modules) |
-| 30–39 | Higher-level abstractions (Conversation, SessionParser) |
-| 40–49 | Observability + performance |
-| 50–59 | Deferred-feature catchup |
-| 60–69 | Tooling (CLIs) |
-
----
-
-## Foundational history (built inside the netring repo, then migrated here)
-
-| Plan | Goal | Status |
-|------|------|--------|
-| [`00-workspace-split.md`](./00-workspace-split.md) | Original split of flow types out of netring's main crate | ✅ done (superseded by single-crate consolidation) |
-| [`01-flow-extractor.md`](./01-flow-extractor.md) | `FlowExtractor` trait + built-in extractors + decap combinators | ✅ done |
-| [`02-flow-tracker.md`](./02-flow-tracker.md) | `FlowTracker` + TCP state machine + idle/eviction | ✅ done |
-| [`03-flow-reassembler.md`](./03-flow-reassembler.md) | `Reassembler` trait + `BufferedReassembler` + sync `FlowDriver` | ✅ done |
-| [`04-flow-release.md`](./04-flow-release.md) | netring-flow 0.1.0 release prep | ✅ done (rolled into flowscope 0.1.0) |
-| [`12-test-infra.md`](./12-test-infra.md) | pcap fixtures, `proptest`, `cargo-fuzz` harness | ✅ done |
-
-## Status snapshot — current
-
-### Shipped in 0.3.0
-
-Driven by external feedback from the `des-rs` team
-(`flowscope-feedback-2026-05-14.md`), plus four sub-plans
-identified during planning review. See
-[`45-release-0.3.0.md`](./45-release-0.3.0.md) for scope,
-sequencing, rejected proposals, and acceptance criteria.
-
-| Plan | Goal | Status |
-|------|------|--------|
-| [`45-release-0.3.0.md`](./45-release-0.3.0.md) | Umbrella plan for the 0.3.0 release | ✅ done — shipped in 0.3.0 |
-| [`46-flowstats-snapshots-and-watermark.md`](./46-flowstats-snapshots-and-watermark.md) | FlowStats live snapshots + reassembler high-watermark | ✅ done — shipped in 0.3.0 |
-| [`47-per-key-idle-timeouts.md`](./47-per-key-idle-timeouts.md) | Per-key idle-timeout predicate API | ✅ done — shipped in 0.3.0 |
-| [`48-monotonic-timestamps.md`](./48-monotonic-timestamps.md) | Monotonic timestamps (opt-in helper) | ✅ done — shipped in 0.3.0 |
-| [`49-sync-dedup.md`](./49-sync-dedup.md) | Sync-side content-hash dedup primitive | ✅ done — shipped in 0.3.0 |
-| [`51-session-event-anomaly-forwarding.md`](./51-session-event-anomaly-forwarding.md) | Forward `FlowEvent::Anomaly` through `FlowSessionDriver` | ✅ done — shipped in 0.3.0 |
-| [`52-round-trip-ci.md`](./52-round-trip-ci.md) | Cross-source round-trip CI fixture | ✅ done — shipped in 0.3.0 |
-| [`53-session-parser-author-guide.md`](./53-session-parser-author-guide.md) | `SessionParser` author guide in SESSION_GUIDE.md | ✅ done — shipped in 0.3.0 |
-| [`54-criterion-bench-harness.md`](./54-criterion-bench-harness.md) | Criterion bench harness + `PERFORMANCE.md` | ✅ done — shipped in 0.3.0 |
-| [`55-parser-fallibility.md`](./55-parser-fallibility.md) | Fallible parsers via `is_poisoned()` | ✅ done — shipped in 0.3.0 |
-| [`56-tracing-messages.md`](./56-tracing-messages.md) | `tracing-messages` Cargo sub-feature | ✅ done — shipped in 0.3.0 |
-| [`57-datagram-driver.md`](./57-datagram-driver.md) | `FlowDatagramDriver` — sync mirror of `datagram_stream` | ✅ done — shipped in 0.3.0 |
-
-### Deferred to 0.4.0
-
-| Item | Why deferred |
-|------|--------------|
-| JA4 fingerprint | TLS-only work, separately scoped from 0.3.0's production-hardening theme. Revisit when there's other TLS work to bundle. |
-
-### Shipped in 0.2.0
-
-| Plan | Goal | Status |
-|------|------|--------|
-| [`25-binary-protocol-example.md`](./25-binary-protocol-example.md) | `FlowSessionDriver` + length-prefixed binary protocol example | ✅ done — shipped in 0.2.0 |
-| [`42-reassembly-observability.md`](./42-reassembly-observability.md) | Buffer cap + `OverflowPolicy` + `FlowStats` diagnostics + `FlowEvent::Anomaly` (0.2.0 bundle) | ✅ done — shipped in 0.2.0 |
-| [`40-observability.md`](./40-observability.md) | `metrics` + `tracing` integration | ✅ done — shipped in 0.2.0 |
-| [`41-perf-foundations.md`](./41-perf-foundations.md) | Hot-cache fast-path in `FlowTracker` | ✅ done — shipped in 0.2.0 |
-
-### Already shipped (kept as record)
-
-| Plan | Goal | Status |
-|------|------|--------|
-| [`20-flow-pcap.md`](./20-flow-pcap.md) | pcap source — now `pcap` feature module | ✅ done |
-| [`22-flow-http.md`](./22-flow-http.md) | HTTP/1.x — now `http` feature module | ✅ done |
-| [`23-flow-tls.md`](./23-flow-tls.md) | TLS observer — now `tls` feature module | ✅ done (JA3; JA4 deferred) |
-| [`24-flow-dns.md`](./24-flow-dns.md) | DNS-over-UDP — now `dns` feature module | ✅ done (UDP/53 + DNS-over-TCP) |
-| [`30-conversation.md`](./30-conversation.md) | `Conversation<K>` aggregate | ✅ done (lives in `netring`) |
-| [`31-session-parser.md`](./31-session-parser.md) | `SessionParser` / `DatagramParser` traits + Stream impls + parser bridges + proptests + migration guide | ✅ done (4 parsers across both trait shapes, 11 proptests, [SESSION_GUIDE.md](../docs/SESSION_GUIDE.md)) |
-| [`50-deferred-catchup.md`](./50-deferred-catchup.md) | InnerGre, FlowLabel, AutoDetectEncap, IPv6 frags, etc. | 🚧 50.1, 50.2, 50.3, 50.4 ✅; 50.6 ✅ (lives in netring); 50.5 IPv6 frag reassembly deferred |
-
-### Sister-crate roadmap (pre-consolidation drafts — STALE)
-
-These describe artifacts that should ship as separate sister crates
-(`flowscope-protolens`, `flowscope-export`, `flowscope-cli`) per the
-`DPI_ARCHITECTURE.md` recommendation. The drafts predate the single-
-crate consolidation; each carries a STALE header listing what needs
-to change before execution. Pick up only when a real consumer asks.
+These three plans describe artifacts that should ship as separate
+sister crates (`flowscope-protolens`, `flowscope-export`,
+`flowscope-cli`) per [`DPI_ARCHITECTURE.md`](./DPI_ARCHITECTURE.md).
+All carry STALE headers — they were drafted pre-consolidation
+(when flowscope was a workspace of `netring-flow*` crates) and
+need a rewrite pass before execution. Pick up only when a real
+consumer asks.
 
 | Plan | Goal | Status |
 |------|------|--------|
@@ -119,56 +42,82 @@ to change before execution. Pick up only when a real consumer asks.
 | [`32-flow-export.md`](./32-flow-export.md) | `flowscope-export` — NetFlow v9 / IPFIX exporter | 🛑 stale, deferred |
 | [`60-cli-tools.md`](./60-cli-tools.md) | `flowscope-cli` — `flow-summary` + `flow-replay` binaries | 🛑 stale, deferred |
 
+## Backlog — deferred features
+
+| Plan | Goal | Status |
+|------|------|--------|
+| [`50-deferred-catchup.md`](./50-deferred-catchup.md) | Omnibus of catchup features. 50.1 InnerGre / 50.2 FlowLabel / 50.3 AutoDetectEncap / 50.4 manual_tick / 50.6 broadcast all ✅ shipped. **50.5 IPv6 fragment reassembly** remains deferred indefinitely (no consumer demand yet). |
+
 ---
 
-## Project conventions
+## Numbering scheme (for new plans)
 
-These conventions are enforced for every plan in this directory.
-Listed once here so individual plans can refer back instead of
-re-litigating.
+| Range | Theme |
+|-------|-------|
+| 10–19 | Capture-side features (now mostly in `netring`) |
+| 20–29 | Protocol parsers and packet sources |
+| 30–39 | Higher-level abstractions (Conversation, SessionParser) |
+| 40–49 | Observability + performance |
+| 50–59 | Deferred-feature catchup |
+| 60–69 | Tooling (CLIs) |
+
+Plan numbers 00–04, 12, 22–25, 30–31, 40–42, 45–49, 51–57 are
+all retired (implementation shipped); new plans pick the lowest
+free number in the appropriate range.
+
+---
+
+## Conventions
+
+These apply to every new plan in this directory.
 
 ### `#[non_exhaustive]` on every public struct/enum
 
-All public structs and `non-trivial` enums in flowscope's API ship
-with `#[non_exhaustive]`. This is a one-time minor break that lands
-with Plan 42 (0.2.0); thereafter every additive field/variant is
-unconditionally non-breaking. Construct via `::default()` and
-mutate; do not rely on struct-literal construction from outside the
-crate.
+Applied project-wide in 0.2.0; future additions are unconditionally
+non-breaking. Construct via `::default()` and mutate; do not rely
+on struct-literal construction from outside the crate.
+
+### Pre-1.0 backward-compatibility policy
+
+Pre-1.0, flowscope optimises for the best possible design over
+preserving compatibility. When a sharper API shape is better, we
+ship it and migrate consumers — `netring` and the known external
+consumers update in lockstep. The CHANGELOG documents every break
+with a migration recipe. Post-1.0 the trade-off flips.
 
 ### Trait-method overrides for diagnostics
 
 When a trait grows a diagnostic method (e.g.
-`Reassembler::dropped_segments`), it ships with a default-zero
-implementation so existing third-party impls don't break. Document
-the contract: a default-zero return means "this implementation
-doesn't track that counter," not "the counter is zero."
+`Reassembler::high_watermark`), it ships with a default-zero /
+default-`None` implementation so existing third-party impls don't
+break. A default return means "this implementation doesn't track
+that," not "the value is zero / absent."
 
 ### Single vocabulary across event stream and metrics
 
-The `AnomalyKind` enum (Plan 42) is the single source of truth for
-both the `FlowEvent::Anomaly` variant and the
-`flowscope_anomalies_total` metric labels (Plan 40). Adding a new
-variant requires adding the corresponding label arm in the same
-PR; a `#[non_exhaustive]` reminder test catches drift.
+The `AnomalyKind` enum is the single source of truth for both
+the `FlowEvent::Anomaly` variant and the
+`flowscope_anomalies_total` metric labels. Adding a new variant
+requires a corresponding label arm in `src/obs.rs::anomaly_label`
+in the same change.
 
-### Sync vs async parity
+### Sync / async parity
 
-flowscope is runtime-free. Every async helper in netring
+flowscope is runtime-free. Every async helper in `netring`
 (`flow_stream`, `session_stream`, `datagram_stream`) has a sync
-mirror in flowscope (`FlowDriver`, `FlowSessionDriver`, eventually
+mirror in flowscope (`FlowDriver`, `FlowSessionDriver`,
 `FlowDatagramDriver`). The async path is the ergonomic one; the
-sync path is what offline pcap consumers and embedded users get.
+sync path is what offline-pcap consumers and embedded users get.
 
 ### No `tokio` in flowscope's deps
 
-Hard rule (also stated in CLAUDE.md). Async lives in netring, which
-depends on flowscope. PRs adding tokio to flowscope are
+Hard rule (also stated in CLAUDE.md). Async lives in `netring`,
+which depends on flowscope. PRs adding tokio to flowscope are
 wrong-shaped.
 
 ---
 
-## Plan structure conventions
+## Plan structure for new plans
 
 Each `NN-*.md` plan has these sections:
 
@@ -183,10 +132,8 @@ Each `NN-*.md` plan has these sections:
 9. **Acceptance criteria** — what "done" looks like
 10. **Risks** — known unknowns specific to this phase
 11. **Effort** — LOC and time estimate
-12. **Provenance** (when applicable) — what this plan supersedes
-    or what historical context shaped it
+12. **Provenance** (when applicable) — context that shaped this plan
 
-Plan files are living documents: update Status as you go. When a
-phase ships, the plan stays in `plans/` as a record — don't delete.
-When a plan is superseded by a consolidation, the new plan documents
-the supersession in its **Provenance** section.
+Update Status as you go. When a plan ships and goes to git
+history, delete the file in the same PR series that lands the
+implementation (or in a follow-up cleanup commit).

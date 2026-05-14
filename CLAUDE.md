@@ -222,19 +222,40 @@ into the standard observability ecosystem. Both zero-cost when off
 ## Plans
 
 `plans/` (in-repo only — excluded from the published package via
-`Cargo.toml`'s `exclude` field) contains the roadmap:
+`Cargo.toml`'s `exclude` field) holds the active backlog plus
+the design / research docs that informed past releases.
 
-- `INDEX.md` — status of every plan, project conventions
-- `00-04`, `12` — historical: how flow types were originally split
-  out of netring (superseded by the single-crate consolidation)
-- `20`, `22–24`, `30`, `31`, `50.1–50.4`, `50.6`, `25`, `40`, `41`,
-  `42` — ✅ done
-- `21` (protolens), `32` (NetFlow/IPFIX), `60` (CLI tools) —
-  pre-consolidation drafts; STALE pending rewrite + a real consumer
-- `50.5` (IPv6 frag reassembly) — deferred indefinitely
+**Convention**: when an implementation plan ships, **delete the
+plan file** in the same PR series. `git log` is the historical
+record; `plans/` is the working backlog. The previous "keep as
+record" convention accumulated 28+ files before we switched.
 
-`plans/DPI_ARCHITECTURE.md` is the SOTA-DPI research and
-crate-split recommendations report.
+Current contents (after 0.3.0 cleanup):
+
+- `INDEX.md` — backlog index + project conventions.
+- Design docs (evergreen):
+  - `flow-session-tracking-design.md` — original session-tracking
+    design.
+  - `high-level-features-design.md` — high-level features
+    survey; drove the dedup primitive.
+  - `DPI_ARCHITECTURE.md` — SOTA-DPI research + crate-split
+    recommendations.
+  - `flowscope-feedback-2026-05-14.md` — `des-rs` team feedback
+    that drove the 0.3.0 release.
+- Backlog (sister-crate roadmap, STALE pending real consumer
+  ask):
+  - `21-flow-protolens.md` — protolens bridge sister crate.
+  - `32-flow-export.md` — NetFlow / IPFIX exporter sister crate.
+  - `60-cli-tools.md` — `flow-summary` / `flow-replay` CLIs.
+- Backlog (deferred features):
+  - `50-deferred-catchup.md` — 50.5 IPv6 fragment reassembly
+    still deferred indefinitely. Other 50.x sub-features
+    already shipped.
+
+Plan numbers 00–04, 12, 20, 22–25, 30–31, 40–42, 45–49, 51–57
+are retired (implementation shipped, file removed). See
+[`plans/INDEX.md`](plans/INDEX.md) for the numbering scheme used
+by new plans.
 
 ## Pre-publish checklist
 
