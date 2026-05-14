@@ -745,7 +745,7 @@ mod tests {
 
         let mut events = Vec::new();
         for f in [&syn, &synack, &ack, &data, &rst] {
-            events.extend(driver.track(view(f, 0)).into_iter());
+            events.extend(driver.track(view(f, 0)));
         }
         events
     }
@@ -909,7 +909,7 @@ mod tests {
                 0x02,
                 b"",
             );
-            events.extend(d.track(view(&frame, 0)).into_iter());
+            events.extend(d.track(view(&frame, 0)));
         }
         let pressure: Vec<_> = events
             .iter()
