@@ -56,6 +56,11 @@ where
     reassemblers: HashMap<(E::Key, FlowSide), F::Reassembler, RandomState>,
     emit_anomalies: bool,
     dedup: Option<crate::dedup::Dedup>,
+    /// When `Some`, the running max of all timestamps the driver
+    /// has emitted. Each incoming view's timestamp is clamped to
+    /// this max. `None` means monotonisation is off (raw NIC
+    /// timestamps flow through unmodified).
+    monotonic_ts: Option<Timestamp>,
 }
 
 impl<E, F, S> FlowDriver<E, F, S>
@@ -77,6 +82,7 @@ where
             reassemblers: HashMap::with_hasher(RandomState::new()),
             emit_anomalies: false,
             dedup: None,
+            monotonic_ts: None,
         }
     }
 }
@@ -129,6 +135,40 @@ where
         self.dedup.as_ref()
     }
 
+    /// Opt in to strictly non-decreasing timestamps across the
+    /// stream. Each packet's `view.timestamp` is clamped to
+    /// `max(view.timestamp, last_emitted_timestamp)`.
+    ///
+    /// Useful for downstream consumers that build timelines
+    /// from `FlowEvent` and want a guarantee that successive
+    /// events never go backwards in time. Default: off (raw NIC
+    /// timestamps flow through unmodified). The clamp also
+    /// applies to [`Self::sweep`]'s `now` argument.
+    pub fn with_monotonic_timestamps(mut self, enable: bool) -> Self {
+        self.monotonic_ts = if enable { Some(Timestamp::default()) } else { None };
+        self
+    }
+
+    /// Clamp a view's timestamp against the running max if
+    /// monotonisation is on; otherwise return the view unchanged.
+    fn clamp_view<'a>(&mut self, view: PacketView<'a>) -> PacketView<'a> {
+        let Some(last) = self.monotonic_ts.as_mut() else {
+            return view;
+        };
+        *last = (*last).max(view.timestamp);
+        PacketView::new(view.frame, *last)
+    }
+
+    /// Clamp a `now` argument used by [`Self::sweep`] against the
+    /// running max.
+    fn clamp_now(&mut self, now: Timestamp) -> Timestamp {
+        let Some(last) = self.monotonic_ts.as_mut() else {
+            return now;
+        };
+        *last = (*last).max(now);
+        *last
+    }
+
     /// Process one packet. Drives the tracker and dispatches TCP
     /// payloads to the factory's reassemblers. Reassemblers are
     /// created on demand and cleaned up on `Ended`.
@@ -156,6 +196,9 @@ where
                 return FlowEvents::new();
             }
         }
+        // Monotonic timestamp clamp (Plan 48) — applied to the
+        // view's timestamp before tracker dispatch.
+        let view = self.clamp_view(view);
         let ts = view.timestamp;
         let snapshot = self.snapshot_anomaly_state();
         let factory = &mut self.factory;
@@ -206,6 +249,9 @@ where
     /// finalize ended flows' reassemblers. See [`Self::track_pending`]
     /// for the contract.
     pub fn sweep_pending(&mut self, now: Timestamp) -> Vec<FlowEvent<E::Key>> {
+        // Plan 48: clamp `now` to the running max when
+        // monotonisation is on.
+        let now = self.clamp_now(now);
         let snapshot = self.snapshot_anomaly_state();
         let mut events = self.tracker.sweep(now);
         if self.emit_anomalies {
@@ -998,6 +1044,80 @@ mod tests {
             !evs2.is_empty(),
             "no dedup → both copies fully processed"
         );
+    }
+
+    #[test]
+    fn raw_timestamps_flow_through_by_default() {
+        let mut d = FlowDriver::<_, _>::new(
+            FiveTuple::bidirectional(),
+            BufferedReassemblerFactory::default(),
+        );
+        let f = ipv4_udp([10, 0, 0, 1], [10, 0, 0, 2], 1, 2, b"x");
+        let _ = d.track(PacketView::new(&f, Timestamp::new(10, 0)));
+        let evs2 = d.track(PacketView::new(&f, Timestamp::new(5, 0)));
+        let ts2 = evs2
+            .iter()
+            .find_map(|e| match e {
+                FlowEvent::Packet { ts, .. } => Some(*ts),
+                _ => None,
+            })
+            .expect("Packet event");
+        assert_eq!(ts2, Timestamp::new(5, 0), "raw ts preserved by default");
+    }
+
+    #[test]
+    fn monotonic_timestamps_clamp_backwards_jumps() {
+        let mut d = FlowDriver::<_, _>::new(
+            FiveTuple::bidirectional(),
+            BufferedReassemblerFactory::default(),
+        )
+        .with_monotonic_timestamps(true);
+        let f = ipv4_udp([10, 0, 0, 1], [10, 0, 0, 2], 1, 2, b"x");
+        let _ = d.track(PacketView::new(&f, Timestamp::new(10, 0)));
+        let evs2 = d.track(PacketView::new(&f, Timestamp::new(5, 0)));
+        let ts2 = evs2
+            .iter()
+            .find_map(|e| match e {
+                FlowEvent::Packet { ts, .. } => Some(*ts),
+                _ => None,
+            })
+            .expect("Packet event");
+        assert_eq!(ts2, Timestamp::new(10, 0), "backwards jump clamped");
+    }
+
+    #[test]
+    fn monotonic_timestamps_forward_jumps_pass_through() {
+        let mut d = FlowDriver::<_, _>::new(
+            FiveTuple::bidirectional(),
+            BufferedReassemblerFactory::default(),
+        )
+        .with_monotonic_timestamps(true);
+        let f = ipv4_udp([10, 0, 0, 1], [10, 0, 0, 2], 1, 2, b"x");
+        let _ = d.track(PacketView::new(&f, Timestamp::new(5, 0)));
+        let evs2 = d.track(PacketView::new(&f, Timestamp::new(10, 0)));
+        let ts2 = evs2
+            .iter()
+            .find_map(|e| match e {
+                FlowEvent::Packet { ts, .. } => Some(*ts),
+                _ => None,
+            })
+            .expect("Packet event");
+        assert_eq!(ts2, Timestamp::new(10, 0));
+    }
+
+    #[test]
+    fn monotonic_timestamps_sweep_clamps_too() {
+        let mut d = FlowDriver::<_, _>::new(
+            FiveTuple::bidirectional(),
+            BufferedReassemblerFactory::default(),
+        )
+        .with_monotonic_timestamps(true);
+        let f = ipv4_udp([10, 0, 0, 1], [10, 0, 0, 2], 1, 2, b"x");
+        let _ = d.track(PacketView::new(&f, Timestamp::new(100, 0)));
+        // sweep at t=50s (before the last packet). Internally
+        // clamped to 100s; flow still alive (UDP idle = 60s).
+        let ended = d.sweep(Timestamp::new(50, 0));
+        assert_eq!(ended.len(), 0);
     }
 
     #[test]

@@ -165,6 +165,13 @@ where
         self.driver.dedup()
     }
 
+    /// Opt in to strictly non-decreasing timestamps. Mirrors
+    /// [`FlowDriver::with_monotonic_timestamps`].
+    pub fn with_monotonic_timestamps(mut self, enable: bool) -> Self {
+        self.driver = self.driver.with_monotonic_timestamps(enable);
+        self
+    }
+
     /// Drive one packet. Returns zero or more [`SessionEvent`]s.
     pub fn track(&mut self, view: PacketView<'_>) -> Vec<SessionEvent<E::Key, P::Message>> {
         let mut flow_events = self.driver.track_pending(view);
