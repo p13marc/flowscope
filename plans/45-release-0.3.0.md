@@ -25,6 +25,14 @@ Concretely for 0.3.0:
 - `SessionEvent` gains `#[non_exhaustive]` and a new `Anomaly`
   variant ([Plan 51](./51-session-event-anomaly-forwarding.md)).
   Breaks exhaustive external `match` blocks.
+- `EndReason` gains a `ParseError` variant
+  ([Plan 55](./55-parser-fallibility.md)). Breaks exhaustive
+  external `match` blocks; one-line fix.
+- `SessionParser::Message` and `DatagramParser::Message` gain a
+  `Debug` trait bound
+  ([Plan 56](./56-tracing-messages.md)). Likely free for most
+  external impls (Debug is conventional); explicit derive
+  needed for impls that didn't already have it.
 - `FlowSessionDriver` is internally refactored to wrap `FlowDriver`
   ([Plan 51](./51-session-event-anomaly-forwarding.md)). No public
   signature changes, but consumers using the type alias / generic
@@ -32,6 +40,9 @@ Concretely for 0.3.0:
 - `Reassembler` trait gains a new `high_watermark()` method
   ([Plan 46](./46-flowstats-snapshots-and-watermark.md)) with a
   default impl, so external trait impls compile unchanged.
+- `SessionParser` / `DatagramParser` gain `is_poisoned()` and
+  `poison_reason()` methods ([Plan 55](./55-parser-fallibility.md))
+  with default impls — external impls compile unchanged.
 - New trait additions and new fields on `#[non_exhaustive]`
   structs (`FlowStats`) are purely additive.
 
@@ -54,10 +65,16 @@ Not started. Targets `0.3.0`.
   roadmap" section).
 - IPv6 fragment reassembly (Plan 50.5). Deferred indefinitely;
   no consumer demand yet.
-- `1.0` API freeze. The post-`0.2.0` API is settled in shape;
-  `0.3.0` adds opt-in helpers but doesn't lock the trait surface
-  yet. We'll cut `1.0` after at least one more consumer-feedback
-  cycle on `0.3.0`.
+- JA4 fingerprint. Smaller follow-up release (0.4.0) — TLS-only
+  work, doesn't fit the production-hardening theme.
+- New L7 protocol parsers (HTTP/2, MQTT, Modbus TCP, etc.). Out of
+  theme. New parsers should land in their own focused releases
+  after their consumers materialise.
+- `1.0` API freeze. 0.3.0 settles most trait shapes
+  (`SessionParser` / `DatagramParser` gain `is_poisoned` +
+  `Message: Debug`; `EndReason` gains `ParseError`). After 0.3.0
+  we'll have a real consumer-feedback cycle to inform the 1.0
+  cut.
 
 ---
 
@@ -66,6 +83,8 @@ Not started. Targets `0.3.0`.
 Each sub-plan stands on its own (file paths to create/modify,
 API sketch, tests, acceptance criteria). Land them in the order
 below — earlier items unblock later ones.
+
+### Driven by external feedback
 
 | Plan | Title | Effort | Maps to feedback item |
 |------|-------|--------|------------------------|
@@ -76,10 +95,28 @@ below — earlier items unblock later ones.
 | [`51`](./51-session-event-anomaly-forwarding.md) | `SessionEvent::Anomaly` forwarding | ½ d | #7 |
 | [`52`](./52-round-trip-ci.md) | Cross-source round-trip CI fixture | ½ d | #10 |
 | [`53`](./53-session-parser-author-guide.md) | `SessionParser` author guide | ½ d | #9 |
+| [`56`](./56-tracing-messages.md) | `tracing-messages` sub-feature | ¼ d | #8 (was deferred; small enough to ship) |
 
-**Total effort: ~4 days of focused work** (plan-aligned commits,
+### Identified during 0.3.0 planning review
+
+These weren't in the des-rs report but are right-shaped for the
+"production hardening" theme and benefit from the same BC window.
+
+| Plan | Title | Effort | Rationale |
+|------|-------|--------|------------|
+| [`54`](./54-criterion-bench-harness.md) | Criterion bench harness + `PERFORMANCE.md` | 1 d | Plan 41 owed `PERFORMANCE.md` and never delivered; future perf work needs a baseline. |
+| [`55`](./55-parser-fallibility.md) | Fallible `SessionParser` / `DatagramParser` via `is_poisoned()` | 1.5 d | Strategic 1.0 trait-shape decision. Mirrors `Reassembler::is_poisoned` precedent. |
+| [`57`](./57-datagram-driver.md) | `FlowDatagramDriver` (UDP sync mirror) | ½ d | Completes the sync/async parity matrix; UDP consumers currently reinvent the boilerplate. |
+
+**Total effort: ~8 days of focused work** (plan-aligned commits,
 following the same one-plan-per-PR-or-commit-series discipline
 that landed `0.2.0`).
+
+### Deferred to 0.4.0
+
+- **JA4 fingerprint** — newer than JA3 (the existing
+  `ja3` feature behind `tls`). Separately scoped from the 0.3.0
+  theme; revisit when there's TLS work to bundle it with.
 
 ---
 
@@ -193,59 +230,73 @@ emit a `tracing::trace_span!` per `SessionEvent::Application`.
 
 ## Sequencing
 
-The sub-plans are mostly independent and can be developed in
-parallel. The recommended landing order respects internal
-dependencies and stacks small wins early so each commit is
-reviewable on its own:
+The sub-plans are mostly independent. The recommended landing
+order respects internal dependencies and stacks small wins early
+so each commit is reviewable on its own:
 
-1. **Plan 51 — Anomaly forwarding** (½ d). Smallest, fixes a
-   concrete consumer-visible gap. May refactor `FlowSessionDriver`
-   to wrap `FlowDriver` (the recommended path); doing that
-   refactor first simplifies the rest.
-2. **Plan 46 — FlowStats snapshots + watermark** (1 d). Highest
-   ⭐ rating from the feedback; touches reassembler, driver, and
-   session-driver. Builds on the refactor from Plan 51 if that
-   landed.
-3. **Plan 47 — Per-key idle timeouts** (½ d). Independent of the
-   above; small and well-bounded.
-4. **Plan 49 — Sync dedup** (1 d). Independent; new module
-   `src/dedup.rs`.
-5. **Plan 48 — Monotonic timestamps** (¼ d). Small builder
-   method; lands after Plan 51's refactor if landed.
-6. **Plan 52 — Round-trip CI** (½ d). After most features land
-   so the round-trip exercises them.
-7. **Plan 53 — Parser-author guide** (½ d). Doc-only; can land
-   any time but reads better once everything else is done so the
-   guide can reference the final APIs.
+1. **Plan 51 — Anomaly forwarding** (½ d). Smallest; refactors
+   `FlowSessionDriver` to wrap `FlowDriver` internally. Doing
+   this first simplifies plans 46, 48, and 55.
+2. **Plan 55 — Parser fallibility** (1.5 d). Strategic trait-shape
+   decision; touches the four shipped parsers and the
+   `SessionEvent` shape. Land before tests (Plan 52) so the
+   round-trip can use the final API. Land before Plan 57 so the
+   datagram driver inherits the wiring.
+3. **Plan 46 — FlowStats snapshots + watermark** (1 d). Highest ⭐
+   rating from the des-rs feedback; touches reassembler, driver,
+   and session-driver. Builds on the Plan 51 refactor.
+4. **Plan 47 — Per-key idle timeouts** (½ d). Independent.
+5. **Plan 49 — Sync dedup** (1 d). Independent; new module.
+6. **Plan 48 — Monotonic timestamps** (¼ d). Small builder.
+7. **Plan 57 — `FlowDatagramDriver`** (½ d). Inherits parser
+   poison from Plan 55; mirrors Plan 49 / 48 builder methods.
+8. **Plan 56 — `tracing-messages`** (¼ d). Tiny feature-gate
+   addition; lands after the drivers (Plans 51, 57) are in
+   their final shape.
+9. **Plan 54 — Bench harness + PERFORMANCE.md** (1 d). After
+   most features land so the benches measure the final shape.
+10. **Plan 52 — Round-trip CI** (½ d). After Plan 55 (uses the
+    new `EndReason` arm) and Plan 57 (datagram round-trip).
+11. **Plan 53 — Parser-author guide** (½ d). Final docs polish;
+    references the final APIs including the parser-poison
+    section from Plan 55.
 
 Each lands as its own commit (or 2–3 commits for larger plans
-like 46 and 49). Same discipline as `0.2.0`: plan-aligned commits,
-tests + clippy + rustdoc green at each step, CHANGELOG growing
-incrementally.
+like 46, 49, and 55). Same discipline as `0.2.0`: plan-aligned
+commits, tests + clippy + rustdoc green at each step, CHANGELOG
+growing incrementally.
 
 ---
 
 ## Dependency graph
 
 ```
-        Plan 51 (anomaly forwarding)
-           │
-           │  (refactors FlowSessionDriver to wrap FlowDriver;
-           │   simplifies plans 46 and 48)
+        Plan 51 (anomaly forwarding) ─────┐
+           │                              │
+           │ (FlowSessionDriver wraps    │
+           │  FlowDriver internally)     │
+           ▼                              ▼
+        Plan 55 (parser fallibility)   Plan 46 (snapshots + watermark)
+           │                              │
+           ├──────────────────────────────┤
+           │                              │
+           ▼                              ▼
+        Plan 57 (datagram driver)      Plan 52 (round-trip CI)
+           │                              ▲
+           ├──────────────────────────────┘
            ▼
-        Plan 46 (FlowStats snapshots + watermark)
-           │
-           ▼
-        Plan 52 (round-trip CI uses snapshot accessor in tests)
+        Plan 56 (tracing-messages)
 
 
         Plan 47 (per-key timeouts)     — independent
-        Plan 48 (monotonic ts)         — independent
+        Plan 48 (monotonic ts)         — depends on 51 refactor
         Plan 49 (sync dedup)           — independent
-        Plan 53 (parser guide)         — doc-only, independent
+        Plan 54 (bench harness)        — after most features land
+        Plan 53 (parser guide)         — doc-only, after all features
 ```
 
-The independent plans can be tackled in any order.
+The strictly-independent plans (47, 49) can be tackled in any
+order. The big internal sequence is 51 → 55 → 46/57/56/52.
 
 ---
 
@@ -297,8 +348,8 @@ Each sub-plan ships its own tests. After all sub-plans land:
 
 ## Acceptance criteria for `0.3.0` release
 
-- [ ] All seven sub-plans (46, 47, 48, 49, 51, 52, 53) marked
-      done in INDEX.md.
+- [ ] All eleven sub-plans (46, 47, 48, 49, 51, 52, 53, 54, 55,
+      56, 57) marked done in INDEX.md.
 - [ ] `Cargo.toml` version bumped to `0.3.0`.
 - [ ] CHANGELOG `## 0.3.0` section complete with the migration
       paragraph for `SessionEvent` non_exhaustive.
@@ -318,13 +369,25 @@ Each sub-plan ships its own tests. After all sub-plans land:
 1. **`SessionEvent` non_exhaustive churn.** External consumers'
    exhaustive `match` blocks will need a wildcard arm. Pre-1.0;
    acceptable; documented in the CHANGELOG migration paragraph.
-2. **FlowSessionDriver refactor.** Plan 51 wires
+2. **`EndReason::ParseError` exhaustive-match churn.** Same
+   shape as the BufferOverflow addition in 0.2.0. One-line fix
+   per consumer.
+3. **`Message: Debug` bound on parser traits.** All four shipped
+   parsers' Message types already derive Debug. External impls
+   that don't will fail to compile with a clear error pointing
+   at the missing derive.
+4. **FlowSessionDriver refactor.** Plan 51 wires
    `FlowSessionDriver` to wrap `FlowDriver` instead of
    duplicating its anomaly logic. This is the right shape — one
    source of truth for anomaly emission, BufferOverflow
    synthesis, and reassembler bookkeeping. The refactor is
    internal-only (no public signature changes); existing tests
    pin the behaviour.
+5. **Bench numbers tied to one machine.** Plan 54 records
+   baseline numbers on the developer machine that lands the
+   benches. Absolute numbers will vary across hardware;
+   relationships (with-hot-cache vs without, with-cap vs without)
+   should hold. Document.
 3. **`Dedup` performance**. The ahash-based hash + 256-entry
    linear scan should be <1 µs/packet but isn't verified. Plan
    49 calls for a criterion check; if it shows up as a hot spot,
@@ -350,9 +413,9 @@ Each sub-plan ships its own tests. After all sub-plans land:
 
 ## Effort
 
-- LOC: ~1300 (across seven sub-plans + docs).
-- Tests: ~600 LOC of new test coverage.
-- Time: ~4 days of focused work.
+- LOC: ~2400 (across eleven sub-plans + docs).
+- Tests: ~900 LOC of new test coverage.
+- Time: ~8 days of focused work.
 
 ---
 

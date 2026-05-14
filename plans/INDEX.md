@@ -58,7 +58,8 @@ and need a rewrite pass before execution.
 ### Active / next-up — 0.3.0 "production hardening"
 
 Driven by external feedback from the `des-rs` team
-(`flowscope-feedback-2026-05-14.md`). See
+(`flowscope-feedback-2026-05-14.md`), plus four sub-plans
+identified during planning review. See
 [`45-release-0.3.0.md`](./45-release-0.3.0.md) for scope,
 sequencing, rejected proposals, and acceptance criteria.
 
@@ -72,6 +73,16 @@ sequencing, rejected proposals, and acceptance criteria.
 | [`51-session-event-anomaly-forwarding.md`](./51-session-event-anomaly-forwarding.md) | Forward `FlowEvent::Anomaly` through `FlowSessionDriver` to `SessionEvent::Anomaly` | not started |
 | [`52-round-trip-ci.md`](./52-round-trip-ci.md) | Cross-source round-trip CI fixture | not started |
 | [`53-session-parser-author-guide.md`](./53-session-parser-author-guide.md) | `SessionParser` author guide in SESSION_GUIDE.md | not started |
+| [`54-criterion-bench-harness.md`](./54-criterion-bench-harness.md) | Criterion bench harness + `PERFORMANCE.md` | not started |
+| [`55-parser-fallibility.md`](./55-parser-fallibility.md) | Fallible `SessionParser` / `DatagramParser` via `is_poisoned()` | not started |
+| [`56-tracing-messages.md`](./56-tracing-messages.md) | `tracing-messages` Cargo sub-feature | not started |
+| [`57-datagram-driver.md`](./57-datagram-driver.md) | `FlowDatagramDriver` — sync mirror of `datagram_stream` | not started |
+
+### Deferred to 0.4.0
+
+| Item | Why deferred |
+|------|--------------|
+| JA4 fingerprint | TLS-only work, separately scoped from 0.3.0's production-hardening theme. Revisit when there's other TLS work to bundle. |
 
 ### Shipped in 0.2.0
 
