@@ -92,6 +92,9 @@ pub mod dedup;
 #[cfg(all(feature = "reassembler", feature = "session"))]
 pub mod session_driver;
 
+#[cfg(all(feature = "extractors", feature = "reassembler", feature = "session"))]
+pub mod datagram_driver;
+
 #[cfg(feature = "session")]
 pub mod session;
 
@@ -135,3 +138,6 @@ pub use session::{
 
 #[cfg(all(feature = "reassembler", feature = "session"))]
 pub use session_driver::FlowSessionDriver;
+
+#[cfg(all(feature = "extractors", feature = "reassembler", feature = "session"))]
+pub use datagram_driver::FlowDatagramDriver;
