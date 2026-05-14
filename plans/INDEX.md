@@ -55,7 +55,7 @@ and need a rewrite pass before execution.
 
 ## Status snapshot — current
 
-### Active / next-up — 0.3.0 "production hardening"
+### Shipped in 0.3.0
 
 Driven by external feedback from the `des-rs` team
 (`flowscope-feedback-2026-05-14.md`), plus four sub-plans
@@ -65,18 +65,18 @@ sequencing, rejected proposals, and acceptance criteria.
 
 | Plan | Goal | Status |
 |------|------|--------|
-| [`45-release-0.3.0.md`](./45-release-0.3.0.md) | Umbrella plan for the 0.3.0 release | not started |
-| [`46-flowstats-snapshots-and-watermark.md`](./46-flowstats-snapshots-and-watermark.md) | FlowStats live snapshots + reassembler high-watermark | not started |
-| [`47-per-key-idle-timeouts.md`](./47-per-key-idle-timeouts.md) | Per-key idle-timeout predicate API | not started |
-| [`48-monotonic-timestamps.md`](./48-monotonic-timestamps.md) | Monotonic timestamps (opt-in helper) | not started |
-| [`49-sync-dedup.md`](./49-sync-dedup.md) | Sync-side content-hash dedup primitive | not started |
-| [`51-session-event-anomaly-forwarding.md`](./51-session-event-anomaly-forwarding.md) | Forward `FlowEvent::Anomaly` through `FlowSessionDriver` to `SessionEvent::Anomaly` | not started |
-| [`52-round-trip-ci.md`](./52-round-trip-ci.md) | Cross-source round-trip CI fixture | not started |
-| [`53-session-parser-author-guide.md`](./53-session-parser-author-guide.md) | `SessionParser` author guide in SESSION_GUIDE.md | not started |
-| [`54-criterion-bench-harness.md`](./54-criterion-bench-harness.md) | Criterion bench harness + `PERFORMANCE.md` | not started |
-| [`55-parser-fallibility.md`](./55-parser-fallibility.md) | Fallible `SessionParser` / `DatagramParser` via `is_poisoned()` | not started |
-| [`56-tracing-messages.md`](./56-tracing-messages.md) | `tracing-messages` Cargo sub-feature | not started |
-| [`57-datagram-driver.md`](./57-datagram-driver.md) | `FlowDatagramDriver` — sync mirror of `datagram_stream` | not started |
+| [`45-release-0.3.0.md`](./45-release-0.3.0.md) | Umbrella plan for the 0.3.0 release | ✅ done — shipped in 0.3.0 |
+| [`46-flowstats-snapshots-and-watermark.md`](./46-flowstats-snapshots-and-watermark.md) | FlowStats live snapshots + reassembler high-watermark | ✅ done — shipped in 0.3.0 |
+| [`47-per-key-idle-timeouts.md`](./47-per-key-idle-timeouts.md) | Per-key idle-timeout predicate API | ✅ done — shipped in 0.3.0 |
+| [`48-monotonic-timestamps.md`](./48-monotonic-timestamps.md) | Monotonic timestamps (opt-in helper) | ✅ done — shipped in 0.3.0 |
+| [`49-sync-dedup.md`](./49-sync-dedup.md) | Sync-side content-hash dedup primitive | ✅ done — shipped in 0.3.0 |
+| [`51-session-event-anomaly-forwarding.md`](./51-session-event-anomaly-forwarding.md) | Forward `FlowEvent::Anomaly` through `FlowSessionDriver` | ✅ done — shipped in 0.3.0 |
+| [`52-round-trip-ci.md`](./52-round-trip-ci.md) | Cross-source round-trip CI fixture | ✅ done — shipped in 0.3.0 |
+| [`53-session-parser-author-guide.md`](./53-session-parser-author-guide.md) | `SessionParser` author guide in SESSION_GUIDE.md | ✅ done — shipped in 0.3.0 |
+| [`54-criterion-bench-harness.md`](./54-criterion-bench-harness.md) | Criterion bench harness + `PERFORMANCE.md` | ✅ done — shipped in 0.3.0 |
+| [`55-parser-fallibility.md`](./55-parser-fallibility.md) | Fallible parsers via `is_poisoned()` | ✅ done — shipped in 0.3.0 |
+| [`56-tracing-messages.md`](./56-tracing-messages.md) | `tracing-messages` Cargo sub-feature | ✅ done — shipped in 0.3.0 |
+| [`57-datagram-driver.md`](./57-datagram-driver.md) | `FlowDatagramDriver` — sync mirror of `datagram_stream` | ✅ done — shipped in 0.3.0 |
 
 ### Deferred to 0.4.0
 

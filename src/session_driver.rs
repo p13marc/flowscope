@@ -145,9 +145,7 @@ where
     /// tracker. Mirrors [`FlowDriver::with_idle_timeout_fn`].
     pub fn with_idle_timeout_fn<G>(mut self, f: G) -> Self
     where
-        G: Fn(&E::Key, Option<crate::L4Proto>) -> Option<std::time::Duration>
-            + Send
-            + 'static,
+        G: Fn(&E::Key, Option<crate::L4Proto>) -> Option<std::time::Duration> + Send + 'static,
     {
         self.driver = self.driver.with_idle_timeout_fn(f);
         self
@@ -202,9 +200,7 @@ where
     /// Iterate `(key, FlowStats)` for every live flow with
     /// reassembler diagnostics patched in. Delegates to the inner
     /// [`FlowDriver::snapshot_flow_stats`].
-    pub fn snapshot_flow_stats(
-        &self,
-    ) -> impl Iterator<Item = (E::Key, crate::FlowStats)> + '_ {
+    pub fn snapshot_flow_stats(&self) -> impl Iterator<Item = (E::Key, crate::FlowStats)> + '_ {
         self.driver.snapshot_flow_stats()
     }
 
@@ -234,10 +230,7 @@ where
                     self.drain_into_parser(key, *ts, &mut out);
                 }
                 FlowEvent::Ended {
-                    key,
-                    reason,
-                    stats,
-                    ..
+                    key, reason, stats, ..
                 } => {
                     // Final drain (captures FIN-with-payload bytes
                     // before the reassembler is dropped in finalize),
@@ -673,8 +666,7 @@ mod tests {
 
     #[test]
     fn parser_poison_synthesises_parse_error_closed() {
-        let mut d =
-            FlowSessionDriver::<_, PoisonAfterBytes>::new(FiveTuple::bidirectional());
+        let mut d = FlowSessionDriver::<_, PoisonAfterBytes>::new(FiveTuple::bidirectional());
         let mut events = Vec::new();
         for f in build_3whs() {
             events.extend(d.track(view(&f, 0)));

@@ -142,9 +142,7 @@ where
     /// Set a per-key idle-timeout override.
     pub fn with_idle_timeout_fn<G>(mut self, f: G) -> Self
     where
-        G: Fn(&E::Key, Option<crate::L4Proto>) -> Option<std::time::Duration>
-            + Send
-            + 'static,
+        G: Fn(&E::Key, Option<crate::L4Proto>) -> Option<std::time::Duration> + Send + 'static,
     {
         self.driver = self.driver.with_idle_timeout_fn(f);
         self
@@ -193,9 +191,7 @@ where
     }
 
     /// Iterate `(key, FlowStats)` for every live flow.
-    pub fn snapshot_flow_stats(
-        &self,
-    ) -> impl Iterator<Item = (E::Key, crate::FlowStats)> + '_ {
+    pub fn snapshot_flow_stats(&self) -> impl Iterator<Item = (E::Key, crate::FlowStats)> + '_ {
         self.driver.snapshot_flow_stats()
     }
 
@@ -336,7 +332,11 @@ mod tests {
         let mut d = FlowDatagramDriver::<_, EchoUdp>::new(FiveTuple::bidirectional());
         let f = ipv4_udp([10, 0, 0, 1], [10, 0, 0, 2], 1, 53, b"query");
         let events = d.track(view(&f, 0));
-        assert!(events.iter().any(|e| matches!(e, SessionEvent::Started { .. })));
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, SessionEvent::Started { .. }))
+        );
         let app = events.iter().find_map(|e| match e {
             SessionEvent::Application {
                 message: (s, b), ..
@@ -352,10 +352,7 @@ mod tests {
             idle_timeout_udp: std::time::Duration::from_secs(1),
             ..FlowTrackerConfig::default()
         };
-        let mut d = FlowDatagramDriver::<_, EchoUdp>::with_config(
-            FiveTuple::bidirectional(),
-            cfg,
-        );
+        let mut d = FlowDatagramDriver::<_, EchoUdp>::with_config(FiveTuple::bidirectional(), cfg);
         let f = ipv4_udp([10, 0, 0, 1], [10, 0, 0, 2], 1, 53, b"q");
         d.track(view(&f, 0));
         let ended = d.sweep(Timestamp::new(10, 0));
@@ -370,10 +367,23 @@ mod tests {
     fn tcp_packets_do_not_fire_application_events() {
         let mut d = FlowDatagramDriver::<_, EchoUdp>::new(FiveTuple::bidirectional());
         let syn = ipv4_tcp(
-            [0; 6], [0; 6], [10, 0, 0, 1], [10, 0, 0, 2], 1234, 80, 0, 0, 0x02, b"",
+            [0; 6],
+            [0; 6],
+            [10, 0, 0, 1],
+            [10, 0, 0, 2],
+            1234,
+            80,
+            0,
+            0,
+            0x02,
+            b"",
         );
         let events = d.track(view(&syn, 0));
-        assert!(events.iter().any(|e| matches!(e, SessionEvent::Started { .. })));
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, SessionEvent::Started { .. }))
+        );
         assert!(
             !events
                 .iter()
@@ -401,14 +411,17 @@ mod tests {
             self.poisoned
         }
         fn poison_reason(&self) -> Option<&str> {
-            if self.poisoned { Some("too many bytes") } else { None }
+            if self.poisoned {
+                Some("too many bytes")
+            } else {
+                None
+            }
         }
     }
 
     #[test]
     fn datagram_parser_poison_synthesises_parse_error_closed() {
-        let mut d =
-            FlowDatagramDriver::<_, PoisonAfterBytes>::new(FiveTuple::bidirectional());
+        let mut d = FlowDatagramDriver::<_, PoisonAfterBytes>::new(FiveTuple::bidirectional());
         let f = ipv4_udp([10, 0, 0, 1], [10, 0, 0, 2], 1, 53, b"0123456789");
         let events = d.track(view(&f, 0));
         let closed = events.iter().find_map(|e| match e {

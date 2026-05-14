@@ -111,8 +111,7 @@ type StateInit<K, S> = Box<dyn FnMut(&K) -> S + Send + 'static>;
 ///
 /// `Send + 'static` matches the existing `StateInit` shape on
 /// `FlowTracker`. `Sync` isn't required.
-pub type IdleTimeoutFn<K> =
-    Box<dyn Fn(&K, Option<L4Proto>) -> Option<Duration> + Send + 'static>;
+pub type IdleTimeoutFn<K> = Box<dyn Fn(&K, Option<L4Proto>) -> Option<Duration> + Send + 'static>;
 
 /// Bidirectional flow tracker, generic over an extractor `E` and
 /// optional per-flow user state `S`.
@@ -927,10 +926,28 @@ mod tests {
             }
         });
         let f80 = ipv4_tcp(
-            [0; 6], [0; 6], [10, 0, 0, 1], [10, 0, 0, 2], 1234, 80, 1, 0, 0x02, b"",
+            [0; 6],
+            [0; 6],
+            [10, 0, 0, 1],
+            [10, 0, 0, 2],
+            1234,
+            80,
+            1,
+            0,
+            0x02,
+            b"",
         );
         let f8080 = ipv4_tcp(
-            [0; 6], [0; 6], [10, 0, 0, 1], [10, 0, 0, 2], 1235, 8080, 1, 0, 0x02, b"",
+            [0; 6],
+            [0; 6],
+            [10, 0, 0, 1],
+            [10, 0, 0, 2],
+            1235,
+            8080,
+            1,
+            0,
+            0x02,
+            b"",
         );
         t.track(view(&f80, 0));
         t.track(view(&f8080, 0));
@@ -966,7 +983,16 @@ mod tests {
         let mut t = FlowTracker::<FiveTuple>::new(FiveTuple::bidirectional());
         t.set_idle_timeout_fn(|_, _| Some(Duration::from_secs(1)));
         let f = ipv4_tcp(
-            [0; 6], [0; 6], [10, 0, 0, 1], [10, 0, 0, 2], 1234, 80, 1, 0, 0x02, b"",
+            [0; 6],
+            [0; 6],
+            [10, 0, 0, 1],
+            [10, 0, 0, 2],
+            1234,
+            80,
+            1,
+            0,
+            0x02,
+            b"",
         );
         t.track(view(&f, 0));
         t.clear_idle_timeout_fn();

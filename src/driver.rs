@@ -111,9 +111,7 @@ where
     /// [`Self::with_config`] / [`Self::with_emit_anomalies`].
     pub fn with_idle_timeout_fn<G>(mut self, f: G) -> Self
     where
-        G: Fn(&E::Key, Option<crate::L4Proto>) -> Option<std::time::Duration>
-            + Send
-            + 'static,
+        G: Fn(&E::Key, Option<crate::L4Proto>) -> Option<std::time::Duration> + Send + 'static,
     {
         self.tracker.set_idle_timeout_fn(f);
         self
@@ -145,7 +143,11 @@ where
     /// timestamps flow through unmodified). The clamp also
     /// applies to [`Self::sweep`]'s `now` argument.
     pub fn with_monotonic_timestamps(mut self, enable: bool) -> Self {
-        self.monotonic_ts = if enable { Some(Timestamp::default()) } else { None };
+        self.monotonic_ts = if enable {
+            Some(Timestamp::default())
+        } else {
+            None
+        };
         self
     }
 
@@ -290,11 +292,7 @@ where
     /// Most useful between [`Self::track_pending`] and
     /// [`Self::finalize`], where reassemblers for ended flows
     /// haven't been dropped yet.
-    pub fn reassembler(
-        &mut self,
-        key: &E::Key,
-        side: FlowSide,
-    ) -> Option<&mut F::Reassembler> {
+    pub fn reassembler(&mut self, key: &E::Key, side: FlowSide) -> Option<&mut F::Reassembler> {
         self.reassemblers.get_mut(&(key.clone(), side))
     }
 
@@ -503,23 +501,15 @@ where
     /// `Timestamp`s) and patches in the reassembler-derived
     /// fields. Collect with `.collect::<Vec<_>>()` if you need to
     /// hold the snapshot past further `track()` calls.
-    pub fn snapshot_flow_stats(
-        &self,
-    ) -> impl Iterator<Item = (E::Key, crate::FlowStats)> + '_ {
+    pub fn snapshot_flow_stats(&self) -> impl Iterator<Item = (E::Key, crate::FlowStats)> + '_ {
         self.tracker.flows().map(move |(key, entry)| {
             let mut stats = entry.stats.clone();
-            if let Some(r) = self
-                .reassemblers
-                .get(&(key.clone(), FlowSide::Initiator))
-            {
+            if let Some(r) = self.reassemblers.get(&(key.clone(), FlowSide::Initiator)) {
                 stats.reassembly_dropped_ooo_initiator = r.dropped_segments();
                 stats.reassembly_bytes_dropped_oversize_initiator = r.bytes_dropped_oversize();
                 stats.reassembler_high_watermark_initiator = r.high_watermark();
             }
-            if let Some(r) = self
-                .reassemblers
-                .get(&(key.clone(), FlowSide::Responder))
-            {
+            if let Some(r) = self.reassemblers.get(&(key.clone(), FlowSide::Responder)) {
                 stats.reassembly_dropped_ooo_responder = r.dropped_segments();
                 stats.reassembly_bytes_dropped_oversize_responder = r.bytes_dropped_oversize();
                 stats.reassembler_high_watermark_responder = r.high_watermark();
@@ -977,11 +967,52 @@ mod tests {
         // 3WHS + 200B initiator data — flow still alive.
         let mac = [0u8; 6];
         let frames = [
-            ipv4_tcp(mac, mac, [10, 0, 0, 1], [10, 0, 0, 2], 1234, 80, 1000, 0, 0x02, b""),
-            ipv4_tcp(mac, mac, [10, 0, 0, 2], [10, 0, 0, 1], 80, 1234, 5000, 1001, 0x12, b""),
-            ipv4_tcp(mac, mac, [10, 0, 0, 1], [10, 0, 0, 2], 1234, 80, 1001, 5001, 0x10, b""),
             ipv4_tcp(
-                mac, mac, [10, 0, 0, 1], [10, 0, 0, 2], 1234, 80, 1001, 5001, 0x18,
+                mac,
+                mac,
+                [10, 0, 0, 1],
+                [10, 0, 0, 2],
+                1234,
+                80,
+                1000,
+                0,
+                0x02,
+                b"",
+            ),
+            ipv4_tcp(
+                mac,
+                mac,
+                [10, 0, 0, 2],
+                [10, 0, 0, 1],
+                80,
+                1234,
+                5000,
+                1001,
+                0x12,
+                b"",
+            ),
+            ipv4_tcp(
+                mac,
+                mac,
+                [10, 0, 0, 1],
+                [10, 0, 0, 2],
+                1234,
+                80,
+                1001,
+                5001,
+                0x10,
+                b"",
+            ),
+            ipv4_tcp(
+                mac,
+                mac,
+                [10, 0, 0, 1],
+                [10, 0, 0, 2],
+                1234,
+                80,
+                1001,
+                5001,
+                0x18,
                 &[b'A'; 200],
             ),
         ];
@@ -1040,10 +1071,7 @@ mod tests {
         let evs1 = d.track(view(&frame, 0));
         let evs2 = d.track(PacketView::new(&frame, Timestamp::new(0, 100_000)));
         assert!(!evs1.is_empty());
-        assert!(
-            !evs2.is_empty(),
-            "no dedup → both copies fully processed"
-        );
+        assert!(!evs2.is_empty(), "no dedup → both copies fully processed");
     }
 
     #[test]

@@ -75,8 +75,7 @@ fn write_pcap(frames: &[(Duration, Vec<u8>)]) -> Vec<u8> {
 /// return the per-side byte concatenations.
 fn round_trip_via_pcap(frames: Vec<(Duration, Vec<u8>)>) -> (Vec<u8>, Vec<u8>) {
     let pcap_bytes = write_pcap(&frames);
-    let mut driver =
-        FlowSessionDriver::<_, PassthroughParser>::new(FiveTuple::bidirectional());
+    let mut driver = FlowSessionDriver::<_, PassthroughParser>::new(FiveTuple::bidirectional());
     let mut init = Vec::new();
     let mut resp = Vec::new();
     let cursor = Cursor::new(pcap_bytes);
@@ -142,8 +141,7 @@ fn build_session(payloads: &[(&[u8], &[u8])]) -> Vec<(Duration, Vec<u8>)> {
             frames.push((
                 tick(&mut t),
                 ipv4_tcp(
-                    mac, mac, ip_a, ip_b, port_a, port_b, init_seq, resp_seq, 0x18,
-                    init_chunk,
+                    mac, mac, ip_a, ip_b, port_a, port_b, init_seq, resp_seq, 0x18, init_chunk,
                 ),
             ));
             init_seq = init_seq.wrapping_add(init_chunk.len() as u32);
@@ -152,8 +150,7 @@ fn build_session(payloads: &[(&[u8], &[u8])]) -> Vec<(Duration, Vec<u8>)> {
             frames.push((
                 tick(&mut t),
                 ipv4_tcp(
-                    mac, mac, ip_b, ip_a, port_b, port_a, resp_seq, init_seq, 0x18,
-                    resp_chunk,
+                    mac, mac, ip_b, ip_a, port_b, port_a, resp_seq, init_seq, 0x18, resp_chunk,
                 ),
             ));
             resp_seq = resp_seq.wrapping_add(resp_chunk.len() as u32);
@@ -163,7 +160,9 @@ fn build_session(payloads: &[(&[u8], &[u8])]) -> Vec<(Duration, Vec<u8>)> {
     // RST to close the flow.
     frames.push((
         tick(&mut t),
-        ipv4_tcp(mac, mac, ip_a, ip_b, port_a, port_b, init_seq, resp_seq, 0x04, b""),
+        ipv4_tcp(
+            mac, mac, ip_a, ip_b, port_a, port_b, init_seq, resp_seq, 0x04, b"",
+        ),
     ));
     frames
 }

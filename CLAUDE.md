@@ -20,9 +20,11 @@ the core.
 
 ## Implementation Status
 
-**0.2.0 published** (crates.io). 139 lib + integration tests, 11
-parser proptests, additional tracker proptests. Zero clippy
-warnings, zero rustdoc warnings, fmt-clean.
+**0.3.0 published** (crates.io). 172 lib + integration tests, 11
+parser proptests, additional tracker + round-trip proptests.
+Zero clippy warnings, zero rustdoc warnings, fmt-clean.
+Five criterion bench groups under `benches/` with baseline
+numbers in `docs/PERFORMANCE.md`.
 
 ### Modules
 
@@ -58,7 +60,11 @@ src/
 │                                # with_emit_anomalies      (plan 42 §2/§3, 0.2.0)
 ├── session.rs                   # SessionParser / DatagramParser traits + factories + SessionEvent
 ├── session_driver.rs            # FlowSessionDriver — sync mirror of session_stream (plan 25, 0.2.0)
+│                                # Refactored to wrap FlowDriver (plan 51, 0.3.0)
+├── datagram_driver.rs           # FlowDatagramDriver — sync UDP mirror (plan 57, 0.3.0)
+├── dedup.rs                     # Dedup — content-hash + window dedup (plan 49, 0.3.0)
 ├── obs.rs                       # metrics / tracing hooks (plan 40, 0.2.0)
+│                                # tracing-messages sub-feature (plan 56, 0.3.0)
 ├── http/                        # `http` feature
 │   ├── parser.rs                # internal step() machine (httparse-based)
 │   ├── factory.rs               # HttpFactory / HttpReassembler (callback-style)
@@ -96,6 +102,13 @@ src/
   `tests/fixtures/length_prefixed/sample.pcap` (0.2.0).
 - `tests/metrics_integration.rs` — DebuggingRecorder snapshot test
   for the `metrics` feature (0.2.0).
+- `tests/round_trip.rs` — synthesize→pcap→PcapFlowSource→
+  FlowSessionDriver→assert byte-equality regression test. Three
+  hand-written variants plus a proptest (0.3.0).
+- `benches/{extractor,tracker,reassembler,session_driver,dedup}.rs`
+  — criterion benchmark harness (0.3.0). Run with
+  `cargo bench --all-features`; baselines in
+  `docs/PERFORMANCE.md`.
 
 ## Build & Test
 

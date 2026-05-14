@@ -48,7 +48,7 @@ Protocol parsers (each behind its own feature):
 
 ```toml
 [dependencies]
-flowscope = { version = "0.2", features = ["full"] }
+flowscope = { version = "0.3", features = ["full"] }
 ```
 
 ```rust,no_run
@@ -99,26 +99,38 @@ while let Some(evt) = s.next().await { /* ... */ }
 
 ## Status
 
-0.2.0 published. Core flow APIs (`FlowExtractor`, `FlowTracker`,
-`Reassembler`) and the `SessionParser` / `DatagramParser` traits
-are stable. Public structs are `#[non_exhaustive]` since 0.2.0 —
-additive fields/variants are unconditionally non-breaking from now
-on.
+0.3.0 published — "production hardening" release. Core flow APIs
+(`FlowExtractor`, `FlowTracker`, `Reassembler`,
+`SessionParser`, `DatagramParser`) are settled; `SessionEvent`
+and `EndReason` are `#[non_exhaustive]` so future variants are
+additive.
 
-0.2.0 ships:
-- Optional reassembly buffer caps with `SlidingWindow` / `DropFlow`
-  policies.
-- Per-flow reassembly diagnostics on every `FlowStats`.
-- Live `FlowEvent::Anomaly` stream (opt-in).
-- `FlowSessionDriver` — sync mirror of netring's `session_stream`.
-- Optional `metrics` / `tracing` features (zero-cost when off).
-- Hot-cache fast path on `FlowTracker` (~2× monoflow throughput,
-  no API impact).
+0.3.0 ships:
+- `FlowDatagramDriver` — sync mirror of netring's `datagram_stream`.
+- Sync-side `Dedup` primitive + `with_dedup` builder on both
+  drivers.
+- Per-key idle-timeout predicate (`with_idle_timeout_fn`).
+- Live `FlowStats` snapshots (`snapshot_flow_stats`) with
+  reassembler high-watermark.
+- Opt-in monotonic timestamps (`with_monotonic_timestamps`).
+- Parser fallibility (`is_poisoned` on both parser traits) →
+  synthesised `EndReason::ParseError`.
+- `SessionEvent::Anomaly` forwarding through the session driver.
+- Optional `tracing-messages` Cargo sub-feature for
+  per-Application trace events.
+- Criterion benchmark harness under `benches/` (run with
+  `cargo bench`); baseline numbers in
+  [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md).
 
 See [`docs/SESSION_GUIDE.md`](docs/SESSION_GUIDE.md) for the
 decision-flow on which API to pick, and
 [`docs/OBSERVABILITY.md`](docs/OBSERVABILITY.md) for the metric
 vocabulary.
+
+0.2.0 features remain: buffer caps with `SlidingWindow` /
+`DropFlow` policies, per-flow reassembly diagnostics, live
+`FlowEvent::Anomaly` stream, `FlowSessionDriver`,
+`metrics` / `tracing` features, hot-cache fast path.
 
 ## License
 

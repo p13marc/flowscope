@@ -1,5 +1,175 @@
 # Changelog
 
+## 0.3.0 — Production hardening
+
+Eleven sub-plans driven by external feedback from the `des-rs`
+team ([`plans/flowscope-feedback-2026-05-14.md`](plans/flowscope-feedback-2026-05-14.md))
+plus four planning-review additions. See the umbrella plan at
+[`plans/45-release-0.3.0.md`](plans/45-release-0.3.0.md).
+
+### Highlights
+
+- **Live `FlowStats` snapshots** ([Plan 46](plans/46-flowstats-snapshots-and-watermark.md))
+  via `FlowDriver::snapshot_flow_stats()` and
+  `FlowSessionDriver::snapshot_flow_stats()`. Lazy iterator
+  returning `(K, FlowStats)` with reassembler diagnostics
+  patched in. Use `.collect::<Vec<_>>()` for the snapshot-
+  everything case; `.take(1)` / `.filter()` consumers pay
+  nothing for the rest.
+- **Reassembler high-watermark** on `FlowStats` (peak buffer
+  occupancy per side). Useful for tuning
+  `max_reassembler_buffer`. New
+  `flowscope_reassembler_high_watermark_bytes` metric (histogram).
+- **Per-key idle timeouts** ([Plan 47](plans/47-per-key-idle-timeouts.md))
+  via `FlowTracker::set_idle_timeout_fn(F)` and the matching
+  `with_idle_timeout_fn(F)` builders on both drivers. Plus
+  `FiveTupleKey::either_port(u16) -> bool` helper for the
+  canonical port-based override case.
+- **Monotonic timestamps** (opt-in,
+  [Plan 48](plans/48-monotonic-timestamps.md)) via
+  `with_monotonic_timestamps(true)`. Clamps NIC timestamps to a
+  running max — useful when downstream consumers want a strictly
+  non-decreasing timeline.
+- **Sync-side dedup** ([Plan 49](plans/49-sync-dedup.md))
+  via the new `flowscope::Dedup` primitive and
+  `with_dedup(Dedup::loopback())` builder on both drivers.
+  Content-hash + length + time-window match; ~1.2 µs per
+  1500-byte frame.
+- **`FlowDatagramDriver`** ([Plan 57](plans/57-datagram-driver.md))
+  — sync mirror of netring's `datagram_stream` for UDP-based
+  `DatagramParser`s.
+- **`SessionEvent::Anomaly`** forwarding
+  ([Plan 51](plans/51-session-event-anomaly-forwarding.md)) +
+  `FlowSessionDriver::with_emit_anomalies(true)`. Plus an
+  internal refactor: `FlowSessionDriver` now wraps `FlowDriver`
+  for single source of truth on anomaly / overflow synthesis.
+- **Parser fallibility** ([Plan 55](plans/55-parser-fallibility.md))
+  via `SessionParser::is_poisoned()` / `poison_reason()` (mirror
+  on `DatagramParser`). On poison, the driver synthesises
+  `Ended { reason: ParseError }` plus optional
+  `Anomaly { kind: SessionParseError, .. }`.
+- **`tracing-messages` sub-feature** ([Plan 56](plans/56-tracing-messages.md))
+  — emit `tracing::trace!` per `SessionEvent::Application`.
+  Off by default; targets `flowscope.message`.
+- **Criterion benchmark harness** ([Plan 54](plans/54-criterion-bench-harness.md))
+  under `benches/` with five groups (extractor, tracker,
+  reassembler, session_driver, dedup). Documented baselines in
+  [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md). Plan 41's
+  hot-cache claim verified at ~1.4× monoflow vs 10k-flow
+  round-robin.
+- **Round-trip CI fixture** ([Plan 52](plans/52-round-trip-ci.md))
+  — `tests/round_trip.rs` exercises
+  synthesize→pcap→PcapFlowSource→FlowSessionDriver→assert
+  byte-equality across hand-written + proptest cases.
+- **SessionParser author guide**
+  ([Plan 53](plans/53-session-parser-author-guide.md)) — new
+  walkthrough section in `docs/SESSION_GUIDE.md` covering the
+  trait contract, partial-buffer pattern, resync strategies,
+  and testing approach.
+
+### Breaking changes
+
+Pre-1.0 release; these are minor breaks that pay off in
+long-term API quality:
+
+- **`SessionEvent` is now `#[non_exhaustive]`** with a new
+  `Anomaly` variant. External `match` blocks need a wildcard
+  arm.
+- **`EndReason` is now `#[non_exhaustive]`** with a new
+  `ParseError` variant. External `match` blocks over
+  `EndReason` need a new arm (treat it like `Rst` for
+  cleanup semantics).
+- **`SessionParser::Message` and `DatagramParser::Message`**
+  gain a `Debug` trait bound (was just `Send + 'static`). All
+  four shipped parsers + the example parser already derive
+  `Debug`; external impls add one derive line.
+- **`Reassembler` trait gains a `high_watermark()` method**
+  with a default-zero impl. Existing impls compile unchanged;
+  custom reassemblers can override to surface their own peak.
+- **`SessionParser` / `DatagramParser` gain `is_poisoned()` +
+  `poison_reason()`** methods with default impls (`false` /
+  `None`). Existing impls compile unchanged.
+
+Internal-only:
+- **`FlowSessionDriver` is rewired** to wrap `FlowDriver`
+  internally. Public signature unchanged; consumers using the
+  type alias / generic shape need a recompile.
+- **`FlowDriver::track` split into `track_pending` +
+  `finalize`** for callers that need access to reassemblers
+  between segment dispatch and Ended-event finalization. The
+  high-level `track` and `sweep` methods keep the existing
+  one-shot semantics.
+
+### New API
+
+- `flowscope::FlowDatagramDriver<E, P, S>` — sync UDP driver.
+- `flowscope::Dedup` — content-hash dedup primitive.
+- `flowscope::IdleTimeoutFn<K>` — predicate type alias for
+  per-key idle-timeout overrides.
+- `FlowTracker::all_flow_stats()` — borrow-iterator over live
+  FlowStats.
+- `FlowTracker::set_idle_timeout_fn` / `clear_idle_timeout_fn`.
+- `FlowDriver::snapshot_flow_stats()` / `with_idle_timeout_fn`
+  / `with_dedup` / `with_monotonic_timestamps` /
+  `track_pending` / `sweep_pending` / `finalize` /
+  `reassembler` / `drain_buffer` / `emits_anomalies` / `dedup`.
+- `FlowSessionDriver::snapshot_flow_stats` /
+  `with_idle_timeout_fn` / `with_dedup` /
+  `with_monotonic_timestamps` / `dedup`.
+- `FiveTupleKey::either_port(u16) -> bool`.
+- `BufferedReassembler::high_watermark()` /
+  `Reassembler::high_watermark()` trait method.
+- `Timestamp::saturating_sub(other) -> Duration`.
+- `EndReason::ParseError`.
+- `AnomalyKind::SessionParseError { side, reason }`.
+- `flowscope::obs::METRIC_REASSEMBLER_HIGH_WATERMARK`.
+
+### Migration
+
+Most consumers need only a recompile. The exhaustive-match
+fixes:
+
+```diff
+- match reason {
+-     EndReason::Fin => ...,
+-     EndReason::Rst => ...,
+-     EndReason::IdleTimeout => ...,
+-     EndReason::Evicted => ...,
+-     EndReason::BufferOverflow => ...,
+- }
++ match reason {
++     EndReason::Fin => ...,
++     EndReason::Rst => ...,
++     EndReason::IdleTimeout => ...,
++     EndReason::Evicted => ...,
++     EndReason::BufferOverflow => ...,
++     EndReason::ParseError => ..., // treat like Rst
++     _ => ..., // future variants land in 0.4.0+
++ }
+
+- match event {
+-     SessionEvent::Started { .. } => ...,
+-     SessionEvent::Application { .. } => ...,
+-     SessionEvent::Closed { .. } => ...,
+- }
++ match event {
++     SessionEvent::Started { .. } => ...,
++     SessionEvent::Application { .. } => ...,
++     SessionEvent::Closed { .. } => ...,
++     SessionEvent::Anomaly { .. } => ..., // new in 0.3.0
++     _ => ..., // forward-compatible
++ }
+```
+
+For external `SessionParser` / `DatagramParser` impls whose
+`Message` type didn't derive `Debug`:
+
+```diff
+- #[derive(Clone)]
++ #[derive(Debug, Clone)]
+  struct MyMessage { ... }
+```
+
 ## 0.2.0 — Reassembly observability + metrics/tracing hooks
 
 This minor release ships the bundle described in

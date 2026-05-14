@@ -69,8 +69,7 @@ pub const METRIC_REASSEMBLY_BYTES_DROPPED_OVERSIZE: &str =
     "flowscope_reassembly_bytes_dropped_oversize_total";
 /// `flowscope_reassembler_high_watermark_bytes{side=...}` —
 /// histogram of peak buffer occupancy per ended flow.
-pub const METRIC_REASSEMBLER_HIGH_WATERMARK: &str =
-    "flowscope_reassembler_high_watermark_bytes";
+pub const METRIC_REASSEMBLER_HIGH_WATERMARK: &str = "flowscope_reassembler_high_watermark_bytes";
 
 #[cfg(feature = "metrics")]
 fn l4_label(l4: Option<L4Proto>) -> &'static str {
@@ -227,10 +226,7 @@ pub(crate) fn trace_anomaly(_kind: &AnomalyKind) {}
 // ── per-message tracing (Plan 56) ─────────────────────────────────
 
 #[cfg(all(feature = "tracing-messages", feature = "session"))]
-pub(crate) fn trace_session_message<M: std::fmt::Debug>(
-    side: crate::event::FlowSide,
-    msg: &M,
-) {
+pub(crate) fn trace_session_message<M: std::fmt::Debug>(side: crate::event::FlowSide, msg: &M) {
     tracing::trace!(
         target: "flowscope.message",
         ?side,
