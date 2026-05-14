@@ -258,11 +258,12 @@ record; `plans/` is the working backlog.
 
 ### `plans/` (active backlog)
 
-- `INDEX.md` — backlog index + project conventions.
+- `INDEX.md` — backlog index, project conventions, and a
+  "considered but not in the backlog" footnote listing known
+  capability gaps without active plans (NetFlow/IPFIX export,
+  CLIs, IPv6 fragment reassembly).
 - `21-flow-protolens.md` — protolens bridge sister crate (STALE
   pre-consolidation draft, pending real consumer ask).
-- `50-deferred-catchup.md` — 50.5 IPv6 fragment reassembly still
-  deferred indefinitely. Other 50.x sub-features already shipped.
 
 Plan numbers 00–04, 12, 20, 22–25, 30–31, 40–42, 45–49, 51–57
 are retired (implementation shipped, file removed). See

@@ -220,6 +220,16 @@ A pipeline-stage architecture (separate threads for capture / classify
 - **Trait stability lock.** `SessionParser` / `DatagramParser`
   shape is committed as of 0.1.0; additions only.
 
+## Known limitations
+
+- **IPv6 fragment reassembly.** `etherparse` parses the first
+  fragment; subsequent fragments are tracked by their
+  fragment-header tuple rather than being reassembled into the
+  inner flow. Most flow tracking is fine without this; if you
+  hit heavy-fragmentation workloads where the inner-header
+  classification matters, file an issue and we'll plan a
+  `ReassembledFragments<E>` extractor wrapper.
+
 ## See also
 
 - [`SESSION_GUIDE.md`](SESSION_GUIDE.md) — picking the right L7

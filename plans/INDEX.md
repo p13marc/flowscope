@@ -17,8 +17,6 @@ before we switched.
 
 ## Backlog
 
-### Sister-crate roadmap (STALE pending real consumer)
-
 [`../docs/DPI_ARCHITECTURE.md`](../docs/DPI_ARCHITECTURE.md)
 recommends some functionality ships as separate sister crates
 rather than features of flowscope. Only one such plan is
@@ -28,18 +26,29 @@ currently parked here:
 |------|------|--------|
 | [`21-flow-protolens.md`](./21-flow-protolens.md) | `flowscope-protolens` — protolens bridge as a sister crate | 🛑 stale, deferred |
 
-Earlier sister-crate plans (`32-flow-export` for NetFlow/IPFIX
-export and `60-cli-tools` for `flow-summary` / `flow-replay`
-CLIs) were removed — both were pre-consolidation drafts that
-would need a full rewrite before picking up, and neither has a
-real consumer asking. If demand surfaces, write a fresh plan
-against the current codebase.
+### Considered but not in the backlog
 
-### Deferred features
+A few capability gaps are known but not currently planned. They
+live here as a footnote rather than as plan files so the backlog
+stays a working set rather than a wish list.
 
-| Plan | Goal | Status |
-|------|------|--------|
-| [`50-deferred-catchup.md`](./50-deferred-catchup.md) | Omnibus of catchup features. 50.1 / 50.2 / 50.3 / 50.4 / 50.6 all ✅ shipped. **50.5 IPv6 fragment reassembly** remains deferred indefinitely (no consumer demand yet). |
+- **NetFlow / IPFIX export** — would integrate with the
+  enterprise observability stack (ntopng, Kentik, Splunk
+  Stream). Belongs in a sister crate (`flowscope-export`) per
+  `DPI_ARCHITECTURE.md`. No current consumer asking.
+- **`flow-summary` / `flow-replay` CLIs** — sister crate
+  `flowscope-cli`. Useful for "try without writing code" demos
+  and CI replay testing. No current consumer asking.
+- **IPv6 fragment reassembly** — `etherparse` parses the first
+  fragment; subsequent fragments are tracked under their
+  fragment-header tuple rather than reassembled. Most flow
+  tracking is fine without this; heavy-fragmentation workloads
+  would want a `ReassembledFragments<E>` extractor wrapper
+  following RFC 8200 / RFC 5722. No current consumer asking.
+
+If any of these surface as real needs, write a fresh plan
+against the current codebase — earlier drafts were
+pre-consolidation and would need full rewrites.
 
 ---
 
