@@ -101,6 +101,23 @@ where
     /// payloads to the factory's reassemblers. Reassemblers are
     /// created on demand and cleaned up on `Ended`.
     pub fn track(&mut self, view: PacketView<'_>) -> FlowEvents<E::Key> {
+        let mut events = self.track_pending(view);
+        self.finalize(events.as_mut_slice());
+        events
+    }
+
+    /// Lower-level: process one packet and return events **without**
+    /// finalizing reassemblers. Reassemblers remain accessible (via
+    /// [`Self::reassembler`] / [`Self::drain_buffer`]) until
+    /// [`Self::finalize`] is called.
+    ///
+    /// You MUST call [`Self::finalize`] before the next
+    /// `track_pending` / `sweep_pending` / `track` / `sweep` call —
+    /// otherwise reassemblers for ended flows are never cleaned up.
+    /// Typical use: [`crate::FlowSessionDriver`] calls
+    /// `track_pending`, drains buffered bytes from reassemblers, then
+    /// calls `finalize`.
+    pub fn track_pending(&mut self, view: PacketView<'_>) -> FlowEvents<E::Key> {
         let ts = view.timestamp;
         let snapshot = self.snapshot_anomaly_state();
         let factory = &mut self.factory;
@@ -135,9 +152,6 @@ where
         for ev in synthesised {
             events.push(ev);
         }
-        // Patch reassembly diagnostics + drop the reassemblers for
-        // ended flows.
-        Self::finalize_ended_flows(events.as_mut_slice(), reassemblers);
 
         events
     }
@@ -145,6 +159,15 @@ where
     /// Run the idle-timeout sweep and clean up reassemblers for
     /// ended flows.
     pub fn sweep(&mut self, now: Timestamp) -> Vec<FlowEvent<E::Key>> {
+        let mut events = self.sweep_pending(now);
+        self.finalize(events.as_mut_slice());
+        events
+    }
+
+    /// Lower-level sweep variant. Like [`Self::sweep`] but does NOT
+    /// finalize ended flows' reassemblers. See [`Self::track_pending`]
+    /// for the contract.
+    pub fn sweep_pending(&mut self, now: Timestamp) -> Vec<FlowEvent<E::Key>> {
         let snapshot = self.snapshot_anomaly_state();
         let mut events = self.tracker.sweep(now);
         if self.emit_anomalies {
@@ -164,8 +187,31 @@ where
             &mut self.tracker,
         );
         events.extend(synthesised);
-        Self::finalize_ended_flows(events.as_mut_slice(), &mut self.reassemblers);
         events
+    }
+
+    /// Patch reassembly diagnostics into every `Ended` event and
+    /// drop the corresponding reassemblers (calling `fin` / `rst`).
+    /// Called automatically by [`Self::track`] / [`Self::sweep`];
+    /// callers using [`Self::track_pending`] / [`Self::sweep_pending`]
+    /// must call this before the next `track*` / `sweep*` call.
+    pub fn finalize(&mut self, events: &mut [FlowEvent<E::Key>]) {
+        Self::finalize_ended_flows(events, &mut self.reassemblers);
+    }
+
+    /// Borrow the per-(flow, side) reassembler. Returns `None` when
+    /// no reassembler exists (no TCP payload has been seen on that
+    /// side, or the flow has already ended and been finalized).
+    ///
+    /// Most useful between [`Self::track_pending`] and
+    /// [`Self::finalize`], where reassemblers for ended flows
+    /// haven't been dropped yet.
+    pub fn reassembler(
+        &mut self,
+        key: &E::Key,
+        side: FlowSide,
+    ) -> Option<&mut F::Reassembler> {
+        self.reassemblers.get_mut(&(key.clone(), side))
     }
 
     /// Snapshot the per-reassembler diagnostic counters and the
@@ -349,6 +395,29 @@ where
     /// Borrow the inner tracker mutably.
     pub fn tracker_mut(&mut self) -> &mut FlowTracker<E, S> {
         &mut self.tracker
+    }
+}
+
+impl<E, S> FlowDriver<E, crate::reassembler::BufferedReassemblerFactory, S>
+where
+    E: FlowExtractor,
+    S: Send + 'static,
+{
+    /// Drain buffered bytes for the given (key, side) and return
+    /// them as a `Vec<u8>`. Returns an empty `Vec` when no
+    /// reassembler exists for that key/side or the buffer is empty.
+    ///
+    /// Specialisation of [`Self::reassembler`] for the
+    /// [`crate::BufferedReassemblerFactory`] case — calls
+    /// [`crate::BufferedReassembler::take`] on the reassembler.
+    /// Used by [`crate::FlowSessionDriver`] between `track_pending`
+    /// and `finalize` to harvest payload bytes before ended-flow
+    /// reassemblers are dropped.
+    pub fn drain_buffer(&mut self, key: &E::Key, side: FlowSide) -> Vec<u8> {
+        self.reassemblers
+            .get_mut(&(key.clone(), side))
+            .map(|r| r.take())
+            .unwrap_or_default()
     }
 }
 

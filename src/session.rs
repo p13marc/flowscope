@@ -67,7 +67,7 @@
 //! }
 //! ```
 
-use crate::event::{EndReason, FlowSide, FlowStats};
+use crate::event::{AnomalyKind, EndReason, FlowSide, FlowStats};
 use crate::timestamp::Timestamp;
 
 /// Parses a stream-oriented L7 protocol session. One instance per
@@ -157,7 +157,12 @@ where
 /// Output of a [`SessionParser`] or [`DatagramParser`]-backed stream.
 ///
 /// `K` is the flow key, `M` is the parser's message type.
+///
+/// `#[non_exhaustive]` to keep future variants additive without
+/// breaking exhaustive external `match` blocks. Match with a
+/// trailing `_ => {}` arm for forward-compatibility.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum SessionEvent<K, M> {
     /// First packet of a new session.
     Started { key: K, ts: Timestamp },
@@ -175,6 +180,17 @@ pub enum SessionEvent<K, M> {
         key: K,
         reason: EndReason,
         stats: FlowStats,
+    },
+    /// Live, in-flight anomaly forwarded from
+    /// [`crate::FlowEvent::Anomaly`]. Emitted only when the
+    /// owning driver has `with_emit_anomalies(true)` set.
+    ///
+    /// `key` is `None` for tracker-global anomalies (e.g.
+    /// [`AnomalyKind::FlowTableEvictionPressure`]).
+    Anomaly {
+        key: Option<K>,
+        kind: AnomalyKind,
+        ts: Timestamp,
     },
 }
 

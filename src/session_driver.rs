@@ -1,6 +1,6 @@
-//! Sync companion to netring's async `session_stream`. Bundles a
-//! [`FlowTracker`] + per-(flow, side) [`BufferedReassembler`] + per-
-//! flow [`SessionParser`] and yields [`SessionEvent`]s.
+//! Sync companion to netring's async `session_stream`. Wraps a
+//! [`FlowDriver`] and adds per-flow [`SessionParser`] dispatch,
+//! yielding [`SessionEvent`]s.
 //!
 //! Use this when you want typed L7 messages from a synchronous loop
 //! (offline pcap replay, embedded use, non-tokio CLI tools). The
@@ -45,17 +45,17 @@ use std::hash::Hash;
 use ahash::RandomState;
 
 use crate::Timestamp;
+use crate::driver::FlowDriver;
 use crate::event::{EndReason, FlowEvent, FlowSide};
 use crate::extractor::FlowExtractor;
-use crate::reassembler::{
-    BufferedReassembler, BufferedReassemblerFactory, Reassembler, ReassemblerFactory,
-};
+use crate::reassembler::BufferedReassemblerFactory;
 use crate::session::{SessionEvent, SessionParser};
 use crate::tracker::{FlowTracker, FlowTrackerConfig};
 use crate::view::PacketView;
 
-/// Sync session-event driver. Owns a tracker, per-(flow, side)
-/// reassemblers, and per-flow [`SessionParser`] instances.
+/// Sync session-event driver. Wraps a [`FlowDriver`] with
+/// [`BufferedReassemblerFactory`] and adds per-flow
+/// [`SessionParser`] dispatch.
 ///
 /// `E` — the flow extractor.
 /// `P` — the session parser; the helper requires `Default + Clone`
@@ -68,9 +68,7 @@ where
     P: SessionParser + Default + Clone + Send + 'static,
     S: Send + 'static,
 {
-    tracker: FlowTracker<E, S>,
-    factory: BufferedReassemblerFactory,
-    reassemblers: HashMap<(E::Key, FlowSide), BufferedReassembler, RandomState>,
+    driver: FlowDriver<E, BufferedReassemblerFactory, S>,
     parser_factory: P,
     parsers: HashMap<E::Key, P, RandomState>,
 }
@@ -99,9 +97,7 @@ where
             None => BufferedReassemblerFactory::default(),
         };
         Self {
-            tracker: FlowTracker::with_config(extractor, config),
-            factory,
-            reassemblers: HashMap::with_hasher(RandomState::new()),
+            driver: FlowDriver::with_config(extractor, factory, config),
             parser_factory: P::default(),
             parsers: HashMap::with_hasher(RandomState::new()),
         }
@@ -115,43 +111,53 @@ where
     P: SessionParser + Default + Clone + Send + 'static,
     S: Send + 'static,
 {
+    /// Opt in to forwarding [`SessionEvent::Anomaly`]s through the
+    /// stream. Default: `false`. Mirrors
+    /// [`FlowDriver::with_emit_anomalies`].
+    ///
+    /// Anomalies are coalesced per (flow, side, kind) per tick by
+    /// the underlying [`FlowDriver`].
+    pub fn with_emit_anomalies(mut self, enable: bool) -> Self {
+        self.driver = self.driver.with_emit_anomalies(enable);
+        self
+    }
+
     /// Drive one packet. Returns zero or more [`SessionEvent`]s.
     pub fn track(&mut self, view: PacketView<'_>) -> Vec<SessionEvent<E::Key, P::Message>> {
-        let factory = &mut self.factory;
-        let reassemblers = &mut self.reassemblers;
-        let flow_events = self
-            .tracker
-            .track_with_payload(view, |key, side, seq, payload| {
-                let r = reassemblers
-                    .entry((key.clone(), side))
-                    .or_insert_with(|| factory.new_reassembler(key, side));
-                r.segment(seq, payload);
-            });
-        self.translate_events(flow_events.into_vec())
+        let mut flow_events = self.driver.track_pending(view);
+        let out = self.translate_events(&flow_events);
+        self.driver.finalize(flow_events.as_mut_slice());
+        out
     }
 
     /// Run the idle-timeout sweep. Returns any resulting `Closed`
-    /// events.
+    /// events plus anomalies emitted during the sweep.
     pub fn sweep(&mut self, now: Timestamp) -> Vec<SessionEvent<E::Key, P::Message>> {
-        let flow_events = self.tracker.sweep(now);
-        self.translate_events(flow_events)
+        let mut flow_events = self.driver.sweep_pending(now);
+        let out = self.translate_events(&flow_events);
+        self.driver.finalize(flow_events.as_mut_slice());
+        out
     }
 
     /// Borrow the inner tracker (for stats, introspection).
     pub fn tracker(&self) -> &FlowTracker<E, S> {
-        &self.tracker
+        self.driver.tracker()
     }
 
     /// Borrow the inner tracker mutably.
     pub fn tracker_mut(&mut self) -> &mut FlowTracker<E, S> {
-        &mut self.tracker
+        self.driver.tracker_mut()
     }
 
     /// Map a tick's `FlowEvent`s to `SessionEvent`s, draining
-    /// reassemblers and feeding the per-flow parser as we go.
+    /// reassembler buffers and feeding the per-flow parser as we go.
+    ///
+    /// Called between `track_pending` / `sweep_pending` and
+    /// `finalize` — reassemblers for ended flows are still
+    /// accessible here, so FIN-with-payload bytes are captured.
     fn translate_events(
         &mut self,
-        flow_events: Vec<FlowEvent<E::Key>>,
+        flow_events: &[FlowEvent<E::Key>],
     ) -> Vec<SessionEvent<E::Key, P::Message>> {
         let mut out: Vec<SessionEvent<E::Key, P::Message>> = Vec::new();
         for ev in flow_events {
@@ -160,18 +166,26 @@ where
                     self.parsers
                         .entry(key.clone())
                         .or_insert_with(|| self.parser_factory.clone());
-                    out.push(SessionEvent::Started { key, ts });
+                    out.push(SessionEvent::Started {
+                        key: key.clone(),
+                        ts: *ts,
+                    });
                 }
                 FlowEvent::Packet { key, ts, .. } => {
-                    self.drain_into_parser(&key, ts, &mut out);
+                    self.drain_into_parser(key, *ts, &mut out);
                 }
                 FlowEvent::Ended {
-                    key, reason, stats, ..
+                    key,
+                    reason,
+                    stats,
+                    ..
                 } => {
-                    // Final drain + fin/rst handlers, then close.
+                    // Final drain (captures FIN-with-payload bytes
+                    // before the reassembler is dropped in finalize),
+                    // then call the parser's fin/rst hook.
                     let ts = stats.last_seen;
-                    self.drain_into_parser(&key, ts, &mut out);
-                    if let Some(mut parser) = self.parsers.remove(&key) {
+                    self.drain_into_parser(key, ts, &mut out);
+                    if let Some(mut parser) = self.parsers.remove(key) {
                         match reason {
                             EndReason::Fin | EndReason::IdleTimeout => {
                                 for m in parser.fin_initiator() {
@@ -197,18 +211,22 @@ where
                             }
                         }
                     }
-                    // Drop both side reassemblers.
-                    self.reassemblers
-                        .remove(&(key.clone(), FlowSide::Initiator));
-                    self.reassemblers
-                        .remove(&(key.clone(), FlowSide::Responder));
-                    out.push(SessionEvent::Closed { key, reason, stats });
+                    out.push(SessionEvent::Closed {
+                        key: key.clone(),
+                        reason: *reason,
+                        stats: stats.clone(),
+                    });
                 }
-                FlowEvent::Established { .. }
-                | FlowEvent::StateChange { .. }
-                | FlowEvent::Anomaly { .. } => {
-                    // Not surfaced to SessionEvent today. Anomalies could
-                    // be added later if there's demand.
+                FlowEvent::Anomaly { key, kind, ts } => {
+                    out.push(SessionEvent::Anomaly {
+                        key: key.clone(),
+                        kind: kind.clone(),
+                        ts: *ts,
+                    });
+                }
+                FlowEvent::Established { .. } | FlowEvent::StateChange { .. } => {
+                    // TCP-machine internal transitions; not surfaced
+                    // to SessionEvent.
                 }
             }
         }
@@ -226,10 +244,7 @@ where
             None => return,
         };
         for side in [FlowSide::Initiator, FlowSide::Responder] {
-            let drained = match self.reassemblers.get_mut(&(key.clone(), side)) {
-                Some(r) => r.take(),
-                None => continue,
-            };
+            let drained = self.driver.drain_buffer(key, side);
             if drained.is_empty() {
                 continue;
             }
@@ -252,6 +267,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::AnomalyKind;
     use crate::extract::{FiveTuple, parse::test_frames::ipv4_tcp};
 
     fn view(frame: &[u8], sec: u32) -> PacketView<'_> {
@@ -382,6 +398,178 @@ mod tests {
                 assert_eq!(reason, EndReason::Rst);
                 // Three packets in 3WHS + one RST.
                 assert_eq!(stats.packets_initiator + stats.packets_responder, 4);
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    #[test]
+    fn fin_with_payload_drains_before_close() {
+        // FIN packet carries payload — bytes must reach the parser
+        // before the Closed event fires (the FlowDriver finalize
+        // path drops the reassembler; FlowSessionDriver drains it
+        // first via the track_pending -> drain -> finalize split).
+        let mut d = FlowSessionDriver::<_, LineParser>::new(FiveTuple::bidirectional());
+        let mut events = Vec::new();
+        for f in build_3whs() {
+            events.extend(d.track(view(&f, 0)));
+        }
+        let mac = [0u8; 6];
+        let fin_with_data = ipv4_tcp(
+            mac,
+            mac,
+            [10, 0, 0, 1],
+            [10, 0, 0, 2],
+            1234,
+            80,
+            1001,
+            5001,
+            0x19, // FIN + ACK + PSH
+            b"goodbye\n",
+        );
+        events.extend(d.track(view(&fin_with_data, 0)));
+        let goodbye = events.iter().find_map(|e| match e {
+            SessionEvent::Application {
+                message: (_, m), ..
+            } if m.as_slice() == b"goodbye" => Some(()),
+            _ => None,
+        });
+        assert!(
+            goodbye.is_some(),
+            "FIN-with-payload bytes lost; events: {:?}",
+            events
+                .iter()
+                .filter(|e| matches!(e, SessionEvent::Application { .. }))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn anomaly_event_forwarded_when_emit_anomalies_on() {
+        let cfg = FlowTrackerConfig {
+            max_reassembler_buffer: Some(64),
+            ..FlowTrackerConfig::default()
+        };
+        let mut d =
+            FlowSessionDriver::<_, LineParser>::with_config(FiveTuple::bidirectional(), cfg)
+                .with_emit_anomalies(true);
+
+        let mut events = Vec::new();
+        for f in build_3whs() {
+            events.extend(d.track(view(&f, 0)));
+        }
+        let mac = [0u8; 6];
+        let big = vec![b'A'; 200];
+        let data = ipv4_tcp(
+            mac,
+            mac,
+            [10, 0, 0, 1],
+            [10, 0, 0, 2],
+            1234,
+            80,
+            1001,
+            5001,
+            0x18,
+            &big,
+        );
+        events.extend(d.track(view(&data, 0)));
+
+        let buffer_overflow = events.iter().find(|e| {
+            matches!(
+                e,
+                SessionEvent::Anomaly {
+                    kind: AnomalyKind::BufferOverflow { .. },
+                    ..
+                }
+            )
+        });
+        assert!(
+            buffer_overflow.is_some(),
+            "expected a BufferOverflow anomaly forwarded"
+        );
+    }
+
+    #[test]
+    fn no_anomaly_events_by_default() {
+        let cfg = FlowTrackerConfig {
+            max_reassembler_buffer: Some(64),
+            ..FlowTrackerConfig::default()
+        };
+        let mut d =
+            FlowSessionDriver::<_, LineParser>::with_config(FiveTuple::bidirectional(), cfg);
+        let mut events = Vec::new();
+        for f in build_3whs() {
+            events.extend(d.track(view(&f, 0)));
+        }
+        let mac = [0u8; 6];
+        let big = vec![b'A'; 200];
+        let data = ipv4_tcp(
+            mac,
+            mac,
+            [10, 0, 0, 1],
+            [10, 0, 0, 2],
+            1234,
+            80,
+            1001,
+            5001,
+            0x18,
+            &big,
+        );
+        events.extend(d.track(view(&data, 0)));
+        assert!(
+            !events
+                .iter()
+                .any(|e| matches!(e, SessionEvent::Anomaly { .. })),
+            "expected no anomaly events when emit_anomalies is off"
+        );
+    }
+
+    #[test]
+    fn eviction_pressure_anomaly_has_no_key() {
+        let cfg = FlowTrackerConfig {
+            max_flows: 2,
+            ..FlowTrackerConfig::default()
+        };
+        let mut d =
+            FlowSessionDriver::<_, LineParser>::with_config(FiveTuple::bidirectional(), cfg)
+                .with_emit_anomalies(true);
+        let mut events = Vec::new();
+        for src_port in [1234u16, 1235, 1236] {
+            let frame = ipv4_tcp(
+                [0; 6],
+                [0; 6],
+                [10, 0, 0, 1],
+                [10, 0, 0, 2],
+                src_port,
+                80,
+                0,
+                0,
+                0x02,
+                b"",
+            );
+            events.extend(d.track(view(&frame, 0)));
+        }
+        let pressure = events.iter().find(|e| {
+            matches!(
+                e,
+                SessionEvent::Anomaly {
+                    kind: AnomalyKind::FlowTableEvictionPressure { .. },
+                    ..
+                }
+            )
+        });
+        let pressure = pressure.expect("expected an eviction-pressure anomaly");
+        match pressure {
+            SessionEvent::Anomaly {
+                key,
+                kind:
+                    AnomalyKind::FlowTableEvictionPressure {
+                        evicted_in_tick, ..
+                    },
+                ..
+            } => {
+                assert!(key.is_none());
+                assert_eq!(*evicted_in_tick, 1);
             }
             _ => unreachable!(),
         }
