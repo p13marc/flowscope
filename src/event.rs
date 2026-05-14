@@ -88,6 +88,14 @@ pub struct FlowStats {
     /// dropped from the per-side reassembler buffer due to overflow.
     pub reassembly_bytes_dropped_oversize_initiator: u64,
     pub reassembly_bytes_dropped_oversize_responder: u64,
+    /// Peak buffer occupancy ever observed for the per-side
+    /// reassembler. Useful for tuning
+    /// [`crate::FlowTrackerConfig::max_reassembler_buffer`].
+    /// Populated by [`crate::FlowDriver`] /
+    /// [`crate::FlowSessionDriver`] on `Ended` and via live
+    /// snapshot accessors. Zero when no reassembler was attached.
+    pub reassembler_high_watermark_initiator: u64,
+    pub reassembler_high_watermark_responder: u64,
 }
 
 /// Lifecycle state of a flow as tracked by [`crate::FlowTracker`].

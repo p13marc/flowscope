@@ -433,6 +433,21 @@ impl<E: FlowExtractor, S: Send + 'static> FlowTracker<E, S> {
         self.flows.peek(key).map(|e| e.stats.clone())
     }
 
+    /// Iterate `(&key, &FlowStats)` for every live flow without
+    /// touching LRU order.
+    ///
+    /// **Reassembly diagnostic fields**
+    /// (`reassembly_dropped_ooo_*`, `bytes_dropped_oversize_*`,
+    /// `reassembler_high_watermark_*`) are **stale** through this
+    /// accessor — the tracker doesn't own reassemblers. For live
+    /// reassembly diagnostics, call
+    /// [`crate::FlowDriver::snapshot_flow_stats`] or
+    /// [`crate::FlowSessionDriver::snapshot_flow_stats`] which
+    /// combine tracker stats with live reassembler state.
+    pub fn all_flow_stats(&self) -> impl Iterator<Item = (&E::Key, &FlowStats)> {
+        self.flows.iter().map(|(k, e)| (k, &e.stats))
+    }
+
     /// Snapshot the [`HistoryString`] of a live flow without ending
     /// it. Companion to [`Self::snapshot_stats`].
     pub fn snapshot_history(&self, key: &E::Key) -> Option<crate::HistoryString> {

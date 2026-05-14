@@ -67,6 +67,10 @@ pub const METRIC_REASSEMBLY_DROPPED_OOO: &str = "flowscope_reassembly_dropped_oo
 /// cumulative bytes dropped due to per-side buffer cap.
 pub const METRIC_REASSEMBLY_BYTES_DROPPED_OVERSIZE: &str =
     "flowscope_reassembly_bytes_dropped_oversize_total";
+/// `flowscope_reassembler_high_watermark_bytes{side=...}` —
+/// histogram of peak buffer occupancy per ended flow.
+pub const METRIC_REASSEMBLER_HIGH_WATERMARK: &str =
+    "flowscope_reassembler_high_watermark_bytes";
 
 #[cfg(feature = "metrics")]
 fn l4_label(l4: Option<L4Proto>) -> &'static str {
@@ -132,6 +136,14 @@ pub(crate) fn record_flow_ended(reason: EndReason, stats: &FlowStats) {
     if stats.reassembly_bytes_dropped_oversize_responder > 0 {
         metrics::counter!(METRIC_REASSEMBLY_BYTES_DROPPED_OVERSIZE, "side" => "responder")
             .increment(stats.reassembly_bytes_dropped_oversize_responder);
+    }
+    if stats.reassembler_high_watermark_initiator > 0 {
+        metrics::histogram!(METRIC_REASSEMBLER_HIGH_WATERMARK, "side" => "initiator")
+            .record(stats.reassembler_high_watermark_initiator as f64);
+    }
+    if stats.reassembler_high_watermark_responder > 0 {
+        metrics::histogram!(METRIC_REASSEMBLER_HIGH_WATERMARK, "side" => "responder")
+            .record(stats.reassembler_high_watermark_responder as f64);
     }
 }
 

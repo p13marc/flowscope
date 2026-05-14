@@ -168,6 +168,15 @@ where
         self.driver.tracker_mut()
     }
 
+    /// Iterate `(key, FlowStats)` for every live flow with
+    /// reassembler diagnostics patched in. Delegates to the inner
+    /// [`FlowDriver::snapshot_flow_stats`].
+    pub fn snapshot_flow_stats(
+        &self,
+    ) -> impl Iterator<Item = (E::Key, crate::FlowStats)> + '_ {
+        self.driver.snapshot_flow_stats()
+    }
+
     /// Map a tick's `FlowEvent`s to `SessionEvent`s, draining
     /// reassembler buffers and feeding the per-flow parser as we go.
     ///

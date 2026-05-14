@@ -365,14 +365,17 @@ where
                     if let Some(mut r) = reassemblers.remove(&(key.clone(), side)) {
                         let dropped = r.dropped_segments();
                         let oversize = r.bytes_dropped_oversize();
+                        let watermark = r.high_watermark();
                         match side {
                             FlowSide::Initiator => {
                                 stats.reassembly_dropped_ooo_initiator = dropped;
                                 stats.reassembly_bytes_dropped_oversize_initiator = oversize;
+                                stats.reassembler_high_watermark_initiator = watermark;
                             }
                             FlowSide::Responder => {
                                 stats.reassembly_dropped_ooo_responder = dropped;
                                 stats.reassembly_bytes_dropped_oversize_responder = oversize;
+                                stats.reassembler_high_watermark_responder = watermark;
                             }
                         }
                         match reason {
@@ -403,6 +406,42 @@ where
     /// that need to mirror the same anomaly-emission policy.
     pub fn emits_anomalies(&self) -> bool {
         self.emit_anomalies
+    }
+
+    /// Iterate `(key, FlowStats)` for every live flow. Unlike
+    /// [`crate::FlowTracker::all_flow_stats`], this combines the
+    /// tracker's per-flow stats with **live** reassembler
+    /// diagnostics (OOO drops, oversize-byte drops, peak
+    /// watermark) so consumers get an up-to-date picture mid-flow.
+    ///
+    /// Returns a lazy iterator. Each item clones the underlying
+    /// [`crate::FlowStats`] (cheap — owned `u64`s + two
+    /// `Timestamp`s) and patches in the reassembler-derived
+    /// fields. Collect with `.collect::<Vec<_>>()` if you need to
+    /// hold the snapshot past further `track()` calls.
+    pub fn snapshot_flow_stats(
+        &self,
+    ) -> impl Iterator<Item = (E::Key, crate::FlowStats)> + '_ {
+        self.tracker.flows().map(move |(key, entry)| {
+            let mut stats = entry.stats.clone();
+            if let Some(r) = self
+                .reassemblers
+                .get(&(key.clone(), FlowSide::Initiator))
+            {
+                stats.reassembly_dropped_ooo_initiator = r.dropped_segments();
+                stats.reassembly_bytes_dropped_oversize_initiator = r.bytes_dropped_oversize();
+                stats.reassembler_high_watermark_initiator = r.high_watermark();
+            }
+            if let Some(r) = self
+                .reassemblers
+                .get(&(key.clone(), FlowSide::Responder))
+            {
+                stats.reassembly_dropped_ooo_responder = r.dropped_segments();
+                stats.reassembly_bytes_dropped_oversize_responder = r.bytes_dropped_oversize();
+                stats.reassembler_high_watermark_responder = r.high_watermark();
+            }
+            (key.clone(), stats)
+        })
     }
 }
 
@@ -827,6 +866,67 @@ mod tests {
             }
             _ => unreachable!(),
         }
+    }
+
+    #[test]
+    fn ended_event_carries_high_watermark() {
+        let mut d = FlowDriver::<_, _>::new(
+            FiveTuple::bidirectional(),
+            BufferedReassemblerFactory::default(),
+        );
+        let events = drive_simple_tcp_with_data(&mut d);
+        let ended = events
+            .into_iter()
+            .find_map(|e| match e {
+                FlowEvent::Ended { stats, .. } => Some(stats),
+                _ => None,
+            })
+            .expect("Ended");
+        assert_eq!(ended.reassembler_high_watermark_initiator, 200);
+        assert_eq!(ended.reassembler_high_watermark_responder, 0);
+    }
+
+    #[test]
+    fn snapshot_flow_stats_returns_live_diagnostics_mid_flow() {
+        let factory = BufferedReassemblerFactory::default().with_max_buffer(64);
+        let mut d = FlowDriver::<_, _>::new(FiveTuple::bidirectional(), factory);
+        // 3WHS + 200B initiator data — flow still alive.
+        let mac = [0u8; 6];
+        let frames = [
+            ipv4_tcp(mac, mac, [10, 0, 0, 1], [10, 0, 0, 2], 1234, 80, 1000, 0, 0x02, b""),
+            ipv4_tcp(mac, mac, [10, 0, 0, 2], [10, 0, 0, 1], 80, 1234, 5000, 1001, 0x12, b""),
+            ipv4_tcp(mac, mac, [10, 0, 0, 1], [10, 0, 0, 2], 1234, 80, 1001, 5001, 0x10, b""),
+            ipv4_tcp(
+                mac, mac, [10, 0, 0, 1], [10, 0, 0, 2], 1234, 80, 1001, 5001, 0x18,
+                &[b'A'; 200],
+            ),
+        ];
+        for f in &frames {
+            d.track(view(f, 0));
+        }
+        let snapshot: Vec<_> = d.snapshot_flow_stats().collect();
+        assert_eq!(snapshot.len(), 1, "flow still alive");
+        let (_key, stats) = &snapshot[0];
+        // sliding-window cap 64: post-rotation peak is 64
+        assert_eq!(stats.reassembler_high_watermark_initiator, 64);
+        // 200 - 64 = 136 dropped
+        assert_eq!(stats.reassembly_bytes_dropped_oversize_initiator, 136);
+    }
+
+    #[test]
+    fn snapshot_flow_stats_is_lazy() {
+        let mut d = FlowDriver::<_, _>::new(
+            FiveTuple::bidirectional(),
+            BufferedReassemblerFactory::default(),
+        );
+        let f = ipv4_udp([10, 0, 0, 1], [10, 0, 0, 2], 1, 2, b"x");
+        d.track(view(&f, 0));
+        let mut iter = d.snapshot_flow_stats();
+        let first = iter.next();
+        assert!(first.is_some());
+        // Dropping the iterator without consuming it should not panic
+        // or do unnecessary work.
+        drop(iter);
     }
 
     #[test]

@@ -56,6 +56,17 @@ pub trait Reassembler: Send + 'static {
     fn is_poisoned(&self) -> bool {
         false
     }
+
+    /// Peak in-flight buffer occupancy ever observed for this side.
+    /// Default: `0` (custom reassemblers may not track this).
+    ///
+    /// A default-zero return means "this implementation doesn't
+    /// track that counter," not "the buffer never had bytes." Only
+    /// meaningful when the reassembler implements an in-memory
+    /// buffer (see [`BufferedReassembler::high_watermark`]).
+    fn high_watermark(&self) -> u64 {
+        0
+    }
 }
 
 /// Build a [`Reassembler`] for a brand-new session, given its key
@@ -85,6 +96,7 @@ pub struct BufferedReassembler {
     max_buffer: Option<usize>,
     overflow_policy: OverflowPolicy,
     poisoned: bool,
+    high_watermark: u64,
 }
 
 impl BufferedReassembler {
@@ -142,9 +154,19 @@ impl BufferedReassembler {
         self.poisoned
     }
 
+    /// Peak buffer occupancy ever observed for this reassembler.
+    /// Updated on every `append_with_cap` call, reflecting
+    /// post-rotation state under [`OverflowPolicy::SlidingWindow`].
+    /// Survives [`take`](Self::take) — useful for tuning
+    /// [`crate::FlowTrackerConfig::max_reassembler_buffer`].
+    pub fn high_watermark(&self) -> u64 {
+        self.high_watermark
+    }
+
     fn append_with_cap(&mut self, payload: &[u8]) {
         let Some(cap) = self.max_buffer else {
             self.buffer.extend_from_slice(payload);
+            self.update_watermark();
             return;
         };
         if self.poisoned {
@@ -153,6 +175,7 @@ impl BufferedReassembler {
         let projected = self.buffer.len() + payload.len();
         if projected <= cap {
             self.buffer.extend_from_slice(payload);
+            self.update_watermark();
             return;
         }
         match self.overflow_policy {
@@ -178,7 +201,16 @@ impl BufferedReassembler {
                     self.buffer.drain(..to_drop);
                     self.buffer.extend_from_slice(payload);
                 }
+                self.update_watermark();
             }
+        }
+    }
+
+    #[inline]
+    fn update_watermark(&mut self) {
+        let len = self.buffer.len() as u64;
+        if len > self.high_watermark {
+            self.high_watermark = len;
         }
     }
 }
@@ -216,6 +248,10 @@ impl Reassembler for BufferedReassembler {
 
     fn is_poisoned(&self) -> bool {
         Self::is_poisoned(self)
+    }
+
+    fn high_watermark(&self) -> u64 {
+        Self::high_watermark(self)
     }
 }
 
@@ -427,5 +463,46 @@ mod tests {
         r.segment(0, &[0u8; 10_000]);
         assert_eq!(r.buffered_len(), 10_000);
         assert!(!r.is_poisoned());
+    }
+
+    #[test]
+    fn high_watermark_tracks_peak_buffer_unbounded() {
+        let mut r = BufferedReassembler::new();
+        r.segment(0, &[b'a'; 50]);
+        assert_eq!(r.high_watermark(), 50);
+        let _ = r.take(); // drains buffer but does NOT reset watermark
+        assert_eq!(r.high_watermark(), 50);
+        r.segment(50, &[b'b'; 20]);
+        assert_eq!(r.high_watermark(), 50, "buffer is now 20 < 50; unchanged");
+        let _ = r.take();
+        r.segment(70, &[b'c'; 100]);
+        assert_eq!(r.high_watermark(), 100);
+    }
+
+    #[test]
+    fn high_watermark_reflects_post_rotation_under_sliding_window() {
+        // Cap = 100, sliding window. Push 80, watermark = 80.
+        // Push 80 more: 60 dropped from front, buffer ends at 100,
+        // watermark bumps to 100.
+        let mut r = BufferedReassembler::new().with_max_buffer(100);
+        r.segment(0, &[b'a'; 80]);
+        assert_eq!(r.high_watermark(), 80);
+        r.segment(80, &[b'b'; 80]);
+        assert_eq!(r.high_watermark(), 100);
+    }
+
+    #[test]
+    fn high_watermark_stays_at_pre_poison_peak_drop_flow() {
+        let mut r = BufferedReassembler::new()
+            .with_max_buffer(100)
+            .with_overflow_policy(OverflowPolicy::DropFlow);
+        r.segment(0, &[b'a'; 80]);
+        assert_eq!(r.high_watermark(), 80);
+        r.segment(80, &[b'b'; 80]); // poisons; buffer cleared
+        assert!(r.is_poisoned());
+        assert_eq!(r.high_watermark(), 80);
+        // Post-poison segments are no-ops; watermark stays.
+        r.segment(160, &[b'c'; 10]);
+        assert_eq!(r.high_watermark(), 80);
     }
 }
