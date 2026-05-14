@@ -55,7 +55,25 @@ and need a rewrite pass before execution.
 
 ## Status snapshot — current
 
-### Active / next-up
+### Active / next-up — 0.3.0 "production hardening"
+
+Driven by external feedback from the `des-rs` team
+(`flowscope-feedback-2026-05-14.md`). See
+[`45-release-0.3.0.md`](./45-release-0.3.0.md) for scope,
+sequencing, rejected proposals, and acceptance criteria.
+
+| Plan | Goal | Status |
+|------|------|--------|
+| [`45-release-0.3.0.md`](./45-release-0.3.0.md) | Umbrella plan for the 0.3.0 release | not started |
+| [`46-flowstats-snapshots-and-watermark.md`](./46-flowstats-snapshots-and-watermark.md) | FlowStats live snapshots + reassembler high-watermark | not started |
+| [`47-per-key-idle-timeouts.md`](./47-per-key-idle-timeouts.md) | Per-key idle-timeout predicate API | not started |
+| [`48-monotonic-timestamps.md`](./48-monotonic-timestamps.md) | Monotonic timestamps (opt-in helper) | not started |
+| [`49-sync-dedup.md`](./49-sync-dedup.md) | Sync-side content-hash dedup primitive | not started |
+| [`51-session-event-anomaly-forwarding.md`](./51-session-event-anomaly-forwarding.md) | Forward `FlowEvent::Anomaly` through `FlowSessionDriver` to `SessionEvent::Anomaly` | not started |
+| [`52-round-trip-ci.md`](./52-round-trip-ci.md) | Cross-source round-trip CI fixture | not started |
+| [`53-session-parser-author-guide.md`](./53-session-parser-author-guide.md) | `SessionParser` author guide in SESSION_GUIDE.md | not started |
+
+### Shipped in 0.2.0
 
 | Plan | Goal | Status |
 |------|------|--------|
