@@ -29,6 +29,17 @@ impl Timestamp {
     pub fn to_duration(self) -> Duration {
         Duration::new(self.sec as u64, self.nsec)
     }
+
+    /// Saturating duration from `other` to `self`. Returns
+    /// [`Duration::ZERO`] when `self` precedes `other`.
+    ///
+    /// Used by [`crate::Dedup`] and any consumer that wants the
+    /// elapsed-since-X without panicking on backwards-ordered
+    /// timestamps.
+    #[inline]
+    pub fn saturating_sub(self, other: Timestamp) -> Duration {
+        self.to_duration().saturating_sub(other.to_duration())
+    }
 }
 
 impl From<Timestamp> for SystemTime {

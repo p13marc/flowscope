@@ -153,6 +153,18 @@ where
         self
     }
 
+    /// Filter incoming `PacketView`s through a content-hash
+    /// [`crate::Dedup`]. Mirrors [`FlowDriver::with_dedup`].
+    pub fn with_dedup(mut self, dedup: crate::dedup::Dedup) -> Self {
+        self.driver = self.driver.with_dedup(dedup);
+        self
+    }
+
+    /// Borrow the dedup state.
+    pub fn dedup(&self) -> Option<&crate::dedup::Dedup> {
+        self.driver.dedup()
+    }
+
     /// Drive one packet. Returns zero or more [`SessionEvent`]s.
     pub fn track(&mut self, view: PacketView<'_>) -> Vec<SessionEvent<E::Key, P::Message>> {
         let mut flow_events = self.driver.track_pending(view);

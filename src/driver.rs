@@ -55,6 +55,7 @@ where
     factory: F,
     reassemblers: HashMap<(E::Key, FlowSide), F::Reassembler, RandomState>,
     emit_anomalies: bool,
+    dedup: Option<crate::dedup::Dedup>,
 }
 
 impl<E, F, S> FlowDriver<E, F, S>
@@ -75,6 +76,7 @@ where
             factory,
             reassemblers: HashMap::with_hasher(RandomState::new()),
             emit_anomalies: false,
+            dedup: None,
         }
     }
 }
@@ -111,6 +113,22 @@ where
         self
     }
 
+    /// Filter incoming `PacketView`s through a content-hash
+    /// [`crate::Dedup`] before extraction. Views the dedup
+    /// classifies as duplicates produce zero events. Useful for
+    /// loopback captures (`tcpdump -i lo`) where every packet
+    /// arrives twice via the kernel's outgoing/host reinjection.
+    pub fn with_dedup(mut self, dedup: crate::dedup::Dedup) -> Self {
+        self.dedup = Some(dedup);
+        self
+    }
+
+    /// Borrow the dedup state (e.g. for `.dropped()` /
+    /// `.buffered()` stats). `None` when no dedup is configured.
+    pub fn dedup(&self) -> Option<&crate::dedup::Dedup> {
+        self.dedup.as_ref()
+    }
+
     /// Process one packet. Drives the tracker and dispatches TCP
     /// payloads to the factory's reassemblers. Reassemblers are
     /// created on demand and cleaned up on `Ended`.
@@ -132,6 +150,12 @@ where
     /// `track_pending`, drains buffered bytes from reassemblers, then
     /// calls `finalize`.
     pub fn track_pending(&mut self, view: PacketView<'_>) -> FlowEvents<E::Key> {
+        // Dedup before extraction — duplicates produce no events.
+        if let Some(d) = self.dedup.as_mut() {
+            if !d.keep(view) {
+                return FlowEvents::new();
+            }
+        }
         let ts = view.timestamp;
         let snapshot = self.snapshot_anomaly_state();
         let factory = &mut self.factory;
@@ -941,6 +965,39 @@ mod tests {
         // Dropping the iterator without consuming it should not panic
         // or do unnecessary work.
         drop(iter);
+    }
+
+    #[test]
+    fn dedup_filters_duplicate_packets() {
+        use crate::Dedup;
+        let mut d = FlowDriver::<_, _>::new(
+            FiveTuple::bidirectional(),
+            BufferedReassemblerFactory::default(),
+        )
+        .with_dedup(Dedup::loopback());
+        let frame = ipv4_udp([10, 0, 0, 1], [10, 0, 0, 2], 1, 2, b"x");
+        let evs1 = d.track(view(&frame, 0));
+        // Same frame 100 µs later (well within 1 ms window).
+        let evs2 = d.track(PacketView::new(&frame, Timestamp::new(0, 100_000)));
+        assert!(!evs1.is_empty(), "first copy generates events");
+        assert!(evs2.is_empty(), "second copy is silently dropped");
+        assert_eq!(d.dedup().unwrap().dropped(), 1);
+    }
+
+    #[test]
+    fn driver_without_dedup_processes_both_copies() {
+        let mut d = FlowDriver::<_, _>::new(
+            FiveTuple::bidirectional(),
+            BufferedReassemblerFactory::default(),
+        );
+        let frame = ipv4_udp([10, 0, 0, 1], [10, 0, 0, 2], 1, 2, b"x");
+        let evs1 = d.track(view(&frame, 0));
+        let evs2 = d.track(PacketView::new(&frame, Timestamp::new(0, 100_000)));
+        assert!(!evs1.is_empty());
+        assert!(
+            !evs2.is_empty(),
+            "no dedup → both copies fully processed"
+        );
     }
 
     #[test]

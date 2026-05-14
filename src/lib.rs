@@ -86,6 +86,9 @@ pub mod driver;
 #[cfg(feature = "reassembler")]
 pub mod reassembler;
 
+#[cfg(feature = "tracker")]
+pub mod dedup;
+
 #[cfg(all(feature = "reassembler", feature = "session"))]
 pub mod session_driver;
 
@@ -103,6 +106,9 @@ pub mod tls;
 
 pub use timestamp::Timestamp;
 pub use view::PacketView;
+
+#[cfg(feature = "tracker")]
+pub use dedup::Dedup;
 
 pub use extractor::{Extracted, FlowExtractor, L4Proto, Orientation, TcpFlags, TcpInfo};
 
