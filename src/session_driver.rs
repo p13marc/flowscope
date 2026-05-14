@@ -319,6 +319,7 @@ where
                 FlowSide::Responder => parser.feed_responder(&drained),
             };
             for m in messages {
+                crate::obs::trace_session_message(side, &m);
                 out.push(SessionEvent::Application {
                     key: key.clone(),
                     side,

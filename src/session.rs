@@ -79,9 +79,14 @@ use crate::timestamp::Timestamp;
 /// kernel ring once the per-flow message buffer fills up — see
 /// the `netring::SessionStream` adapter.
 pub trait SessionParser: Send + 'static {
-    /// L7 message produced by this parser. `Send + 'static` so it
-    /// can cross task boundaries when streamed.
-    type Message: Send + 'static;
+    /// L7 message produced by this parser.
+    ///
+    /// - `Send + 'static` so messages can cross task boundaries.
+    /// - `Debug` is required so the optional `tracing-messages`
+    ///   Cargo feature can format each emitted message; almost
+    ///   every Rust type derives it anyway, and the bound is
+    ///   trivial to add for those that don't.
+    type Message: Send + std::fmt::Debug + 'static;
 
     /// Feed the next chunk of bytes from the **initiator** side.
     /// Returns any complete messages parsed during this call.
@@ -158,7 +163,9 @@ where
 /// Parses a packet-oriented L7 protocol. One instance per flow;
 /// receives one L4 payload at a time along with which side sent it.
 pub trait DatagramParser: Send + 'static {
-    type Message: Send + 'static;
+    /// L7 message produced by this parser. Same `Debug` bound as
+    /// [`SessionParser::Message`].
+    type Message: Send + std::fmt::Debug + 'static;
 
     /// Parse one L4 payload. `side` is the direction relative to
     /// the flow's initiator. Returns any complete messages decoded.

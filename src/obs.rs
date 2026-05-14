@@ -223,3 +223,22 @@ pub(crate) fn trace_flow_ended(_reason: EndReason, _stats: &FlowStats) {}
 #[cfg(all(not(feature = "tracing"), feature = "reassembler"))]
 #[inline(always)]
 pub(crate) fn trace_anomaly(_kind: &AnomalyKind) {}
+
+// ── per-message tracing (Plan 56) ─────────────────────────────────
+
+#[cfg(all(feature = "tracing-messages", feature = "session"))]
+pub(crate) fn trace_session_message<M: std::fmt::Debug>(
+    side: crate::event::FlowSide,
+    msg: &M,
+) {
+    tracing::trace!(
+        target: "flowscope.message",
+        ?side,
+        message = ?msg,
+        "session message"
+    );
+}
+
+#[cfg(all(not(feature = "tracing-messages"), feature = "session"))]
+#[inline(always)]
+pub(crate) fn trace_session_message<M>(_side: crate::event::FlowSide, _msg: &M) {}

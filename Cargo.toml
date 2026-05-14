@@ -83,9 +83,14 @@ pcap = ["extractors", "tracker", "dep:pcap-file"]
 # Observability hooks (zero-cost when off).
 metrics = ["tracker", "dep:metrics"]
 tracing = ["tracker", "dep:tracing"]
+# Optional sub-feature: emit tracing::trace! events per
+# SessionEvent::Application, gated behind `tracing`. Adds a
+# Message: Debug bound on the parser traits. Off by default —
+# enable only when the per-message overhead is acceptable.
+tracing-messages = ["tracing"]
 
 # Convenience: turn everything on.
-full = ["http", "tls", "ja3", "dns", "pcap", "metrics", "tracing"]
+full = ["http", "tls", "ja3", "dns", "pcap", "metrics", "tracing", "tracing-messages"]
 
 [package.metadata.docs.rs]
 all-features = true
