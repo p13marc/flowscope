@@ -57,6 +57,7 @@ proptest = "1"
 pcap-file = "2"
 metrics-util = "0.20"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+criterion = { version = "0.5", features = ["html_reports"] }
 
 [features]
 default = ["extractors", "tracker", "reassembler", "session"]
@@ -177,3 +178,28 @@ required-features = ["metrics", "extractors", "reassembler", "test-helpers"]
 [[test]]
 name = "length_prefixed_example"
 required-features = ["pcap", "session", "extractors"]
+
+[[bench]]
+name = "extractor"
+harness = false
+required-features = ["extractors", "test-helpers"]
+
+[[bench]]
+name = "tracker"
+harness = false
+required-features = ["tracker", "extractors", "test-helpers"]
+
+[[bench]]
+name = "reassembler"
+harness = false
+required-features = ["reassembler"]
+
+[[bench]]
+name = "session_driver"
+harness = false
+required-features = ["session", "reassembler", "extractors", "test-helpers"]
+
+[[bench]]
+name = "dedup"
+harness = false
+required-features = ["tracker"]
