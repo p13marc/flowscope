@@ -99,15 +99,13 @@ use std::time::Duration;
 use crate::Timestamp;
 use crate::view::PacketView;
 
-/// Number of recent entries to remember by default. ~24 B per
-/// entry — `Dedup::default()` is ~6 KiB resident.
-pub const DEFAULT_RING_SIZE: usize = 256;
-
-/// Recurrence window for the default loopback profile.
-pub const DEFAULT_LOOPBACK_WINDOW: Duration = Duration::from_millis(1);
-
 /// Bounded content-hash dedup. Cheap to construct; cheap per
 /// packet (~one hash + one short linear scan).
+///
+/// No `Default` impl on purpose — "no dedup at all" is what users
+/// get by not constructing a `Dedup`. If you reach for `Dedup`,
+/// pick a profile explicitly via [`loopback`](Self::loopback) or
+/// [`new`](Self::new).
 #[derive(Debug)]
 pub struct Dedup {
     window: Duration,
@@ -124,13 +122,21 @@ struct Entry {
 }
 
 impl Dedup {
+    /// Default ring size for [`Self::loopback`]: 256 entries × ~24 B
+    /// = ~6 KiB resident.
+    pub const DEFAULT_RING_SIZE: usize = 256;
+
+    /// Default recurrence window for [`Self::loopback`]: 1 ms.
+    pub const DEFAULT_LOOPBACK_WINDOW: Duration = Duration::from_millis(1);
+
     /// Construct a content-hash dedup with explicit window and
-    /// ring size.
+    /// ring size. Capacity is clamped to `>= 1`.
     pub fn new(window: Duration, capacity: usize) -> Self {
+        let capacity = capacity.max(1);
         Self {
             window,
-            capacity: capacity.max(1),
-            ring: VecDeque::with_capacity(capacity.max(1)),
+            capacity,
+            ring: VecDeque::with_capacity(capacity),
             dropped: 0,
         }
     }
@@ -138,7 +144,7 @@ impl Dedup {
     /// Tuned defaults for loopback (`tcpdump -i lo` / AF_PACKET on
     /// `lo`): 1 ms window, 256-entry ring.
     pub fn loopback() -> Self {
-        Self::new(DEFAULT_LOOPBACK_WINDOW, DEFAULT_RING_SIZE)
+        Self::new(Self::DEFAULT_LOOPBACK_WINDOW, Self::DEFAULT_RING_SIZE)
     }
 
     /// Returns `true` to keep the view, `false` to drop it as a
@@ -147,18 +153,16 @@ impl Dedup {
         let hash = hash_frame(view.frame);
         let len = view.frame.len() as u32;
         // Walk most-recent first; ring is small so linear scan is fine.
-        for entry in self.ring.iter() {
-            if entry.hash == hash
+        let is_dup = self.ring.iter().any(|entry| {
+            entry.hash == hash
                 && entry.len == len
                 && view.timestamp.saturating_sub(entry.ts) <= self.window
-            {
-                self.dropped += 1;
-                self.push_entry(Entry { hash, len, ts: view.timestamp });
-                return false;
-            }
-        }
+        });
         self.push_entry(Entry { hash, len, ts: view.timestamp });
-        true
+        if is_dup {
+            self.dropped += 1;
+        }
+        !is_dup
     }
 
     /// Number of views dropped as duplicates since construction.
@@ -176,12 +180,6 @@ impl Dedup {
             self.ring.pop_front();
         }
         self.ring.push_back(e);
-    }
-}
-
-impl Default for Dedup {
-    fn default() -> Self {
-        Self::loopback()
     }
 }
 

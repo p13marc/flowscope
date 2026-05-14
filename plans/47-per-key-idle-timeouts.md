@@ -78,8 +78,13 @@ None.
 /// Return `Some(d)` to use `d` as the idle timeout for this flow.
 /// Return `None` to fall back to the per-protocol default from
 /// [`FlowTrackerConfig`].
+///
+/// `Send + 'static` matches the existing `StateInit` predicate
+/// stored on `FlowTracker`. `Sync` isn't required because the
+/// tracker isn't shared across threads — netring's async stream
+/// owns it exclusively, and sync consumers do the same.
 type IdleTimeoutFn<K> =
-    Box<dyn Fn(&K, Option<L4Proto>) -> Option<Duration> + Send + Sync + 'static>;
+    Box<dyn Fn(&K, Option<L4Proto>) -> Option<Duration> + Send + 'static>;
 
 pub struct FlowTracker<E: FlowExtractor, S = ()> {
     // existing fields ...
@@ -96,7 +101,7 @@ impl<E: FlowExtractor, S: Send + 'static> FlowTracker<E, S> {
     /// default.
     pub fn set_idle_timeout_fn<F>(&mut self, f: F)
     where
-        F: Fn(&E::Key, Option<L4Proto>) -> Option<Duration> + Send + Sync + 'static,
+        F: Fn(&E::Key, Option<L4Proto>) -> Option<Duration> + Send + 'static,
     {
         self.idle_timeout_fn = Some(Box::new(f));
     }
@@ -142,7 +147,7 @@ where
     /// [`crate::FlowTracker::set_idle_timeout_fn`]).
     pub fn with_idle_timeout_fn<G>(mut self, f: G) -> Self
     where
-        G: Fn(&E::Key, Option<L4Proto>) -> Option<Duration> + Send + Sync + 'static,
+        G: Fn(&E::Key, Option<L4Proto>) -> Option<Duration> + Send + 'static,
     {
         self.tracker.set_idle_timeout_fn(f);
         self
@@ -355,10 +360,11 @@ fn driver_with_idle_timeout_fn_threads_through_to_tracker() {
    interval that's 100k closure calls/second. With an empty `None`
    default, modern CPUs handle this in microseconds. Document that
    the predicate should be cheap.
-3. **`Fn + Send + Sync + 'static` bound.** Restrictive but
-   matches netring's async-stream contract. Internal state in
-   the closure must be `Arc<...>`-wrapped. Documented in the
-   rustdoc.
+3. **`Fn + Send + 'static` bound.** Matches the existing
+   `StateInit` closure stored on `FlowTracker`. The closure can
+   capture `!Sync` state without `Arc`-wrapping; only `Send` is
+   required so the tracker can move across thread boundaries
+   (e.g. into a netring `tokio::spawn`'d stream).
 4. **Predicate returning `Some(Duration::ZERO)`.** Edge case:
    immediate expiry of the flow on the next sweep. Well-defined
    semantics — the flow ends with `IdleTimeout` on the first

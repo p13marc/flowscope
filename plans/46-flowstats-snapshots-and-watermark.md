@@ -196,56 +196,55 @@ where
     F: ReassemblerFactory<E::Key>,
     S: Send + 'static,
 {
-    /// Return a `FlowStats` snapshot for every live flow. Unlike
+    /// Iterate `(key, FlowStats)` for every live flow. Unlike
     /// [`crate::FlowTracker::all_flow_stats`], this combines the
     /// tracker's per-flow stats with **live** reassembler
     /// diagnostics (OOO drops, oversize-byte drops, peak watermark)
     /// so consumers get an up-to-date picture mid-flow.
     ///
-    /// Returned values are owned `FlowStats` clones, decoupling
-    /// the borrow lifetime from the driver. Allocation is
-    /// proportional to live-flow count; for very large flow
-    /// tables (>>10k flows) prefer iterating
-    /// [`crate::FlowTracker::all_flow_stats`] and patching
-    /// reassembler fields manually.
-    pub fn snapshot_flow_stats(&self) -> Vec<(E::Key, FlowStats)> {
-        let mut out = Vec::with_capacity(self.tracker.flow_count());
-        for (key, entry) in self.tracker.flows() {
+    /// Returns a lazy iterator. Each item clones the underlying
+    /// `FlowStats` (cheap — owned `u64`s + two `Timestamp`s) and
+    /// patches in the four reassembler-derived fields. Collect
+    /// with `.collect::<Vec<_>>()` if you need to hold the
+    /// snapshot past further `track()` calls.
+    pub fn snapshot_flow_stats(
+        &self,
+    ) -> impl Iterator<Item = (E::Key, FlowStats)> + '_ {
+        self.tracker.flows().map(move |(key, entry)| {
             let mut stats = entry.stats.clone();
-            for side in [FlowSide::Initiator, FlowSide::Responder] {
-                if let Some(r) = self.reassemblers.get(&(key.clone(), side)) {
-                    let dropped = r.dropped_segments();
-                    let oversize = r.bytes_dropped_oversize();
-                    let watermark = r.high_watermark();
-                    match side {
-                        FlowSide::Initiator => {
-                            stats.reassembly_dropped_ooo_initiator = dropped;
-                            stats.reassembly_bytes_dropped_oversize_initiator = oversize;
-                            stats.reassembler_high_watermark_initiator = watermark;
-                        }
-                        FlowSide::Responder => {
-                            stats.reassembly_dropped_ooo_responder = dropped;
-                            stats.reassembly_bytes_dropped_oversize_responder = oversize;
-                            stats.reassembler_high_watermark_responder = watermark;
-                        }
-                    }
-                }
+            if let Some(r) = self.reassemblers.get(&(key.clone(), FlowSide::Initiator)) {
+                stats.reassembly_dropped_ooo_initiator = r.dropped_segments();
+                stats.reassembly_bytes_dropped_oversize_initiator = r.bytes_dropped_oversize();
+                stats.reassembler_high_watermark_initiator = r.high_watermark();
             }
-            out.push((key.clone(), stats));
-        }
-        out
+            if let Some(r) = self.reassemblers.get(&(key.clone(), FlowSide::Responder)) {
+                stats.reassembly_dropped_ooo_responder = r.dropped_segments();
+                stats.reassembly_bytes_dropped_oversize_responder = r.bytes_dropped_oversize();
+                stats.reassembler_high_watermark_responder = r.high_watermark();
+            }
+            (key.clone(), stats)
+        })
     }
 }
 ```
+
+> **Why `impl Iterator` and not `Vec`?** Returning the iterator
+> defers allocation to the call site — consumers that only want
+> the first hot flow (`take(1)`), or that filter (`filter(|...|`)
+> before consuming, pay nothing for the rest. For
+> "give me everything", `.collect()` is one line.
 
 ### `src/session_driver.rs` — same surface
 
 ```rust
 impl<E, P, S> FlowSessionDriver<E, P, S> {
-    pub fn snapshot_flow_stats(&self) -> Vec<(E::Key, FlowStats)> {
-        // same implementation, just borrows the inner FlowDriver's
-        // reassemblers (assuming Plan 51's refactor lands — then
-        // this delegates to self.driver.snapshot_flow_stats())
+    /// Iterate `(key, FlowStats)` for every live flow. Delegates to
+    /// the inner `FlowDriver` (assuming Plan 51's refactor lands;
+    /// otherwise duplicates the same iterator).
+    pub fn snapshot_flow_stats(
+        &self,
+    ) -> impl Iterator<Item = (E::Key, FlowStats)> + '_ {
+        self.driver.snapshot_flow_stats()
     }
 }
 ```
@@ -416,13 +415,29 @@ fn snapshot_flow_stats_returns_live_diagnostics_mid_flow() {
         &vec![b'A'; 200],
     );
     d.track(view(&data, 0));
-    let snapshot = d.snapshot_flow_stats();
+    let snapshot: Vec<_> = d.snapshot_flow_stats().collect();
     assert_eq!(snapshot.len(), 1, "flow is still alive");
     let (_key, stats) = &snapshot[0];
     // Watermark reflects post-rotation peak (sliding window cap = 64).
     assert_eq!(stats.reassembler_high_watermark_initiator, 64);
     // Bytes dropped: 200 - 64 = 136
     assert_eq!(stats.reassembly_bytes_dropped_oversize_initiator, 136);
+}
+
+#[test]
+fn snapshot_flow_stats_is_lazy() {
+    // Verify the returned iterator is lazy — take(0) does no work.
+    let mut d = FlowDriver::<_, _>::new(
+        FiveTuple::bidirectional(),
+        BufferedReassemblerFactory::default(),
+    );
+    let f = ipv4_udp([10, 0, 0, 1], [10, 0, 0, 2], 1, 2, b"x");
+    d.track(view(&f, 0));
+    let mut iter = d.snapshot_flow_stats();
+    // take(1) and stop — second flow's stats are never cloned.
+    let first = iter.next();
+    assert!(first.is_some());
+    drop(iter);  // does not panic; no work done on remaining flows.
 }
 
 #[test]
@@ -490,10 +505,11 @@ fn session_driver_snapshot_includes_watermark() {
       `snapshot_flow_stats`.
 - [ ] `FlowTracker::all_flow_stats()` returns a borrow-iterator
       over `(key, &FlowStats)` for every live flow.
-- [ ] `FlowDriver::snapshot_flow_stats()` returns owned clones
-      with reassembler diagnostics merged in.
-- [ ] `FlowSessionDriver::snapshot_flow_stats()` mirrors the
-      driver-side accessor.
+- [ ] `FlowDriver::snapshot_flow_stats()` returns a lazy
+      `impl Iterator<Item = (E::Key, FlowStats)> + '_` with
+      reassembler diagnostics patched in.
+- [ ] `FlowSessionDriver::snapshot_flow_stats()` delegates to the
+      inner `FlowDriver`.
 - [ ] `flowscope_reassembler_high_watermark_bytes` histogram metric
       fires on every `Ended` with side label.
 - [ ] SESSION_GUIDE.md "Reassembly health" extended.
@@ -512,11 +528,13 @@ fn session_driver_snapshot_includes_watermark() {
    that's the value users tuning `max_reassembler_buffer` care
    about — "how full does the buffer actually get in steady state."
    Document the choice in the rustdoc.
-2. **Snapshot allocation cost.** `snapshot_flow_stats` allocates
-   one `Vec` of `(K, FlowStats)` per call. At 10k flows × ~80 bytes
-   per `FlowStats` clone = ~800 KB per call. Document this; suggest
-   `FlowTracker::all_flow_stats()` for borrowed iteration when
-   reassembler diagnostics aren't needed.
+2. **Snapshot allocation cost.** Each yielded `(E::Key,
+   FlowStats)` clones the key + a ~80-byte `FlowStats`. For a
+   `take(1)` consumer that's ~96 bytes; for a full `.collect()` at
+   10k flows, ~800 KB. Lazy iteration lets consumers stay on the
+   light path. For borrowed-only iteration with no reassembler
+   diagnostics, use `FlowTracker::all_flow_stats()` which yields
+   `(&E::Key, &FlowStats)` and never clones.
 3. **`E::Key: Clone` requirement.** Already in the trait bound
    (`FlowExtractor::Key: Clone`). No new constraint.
 4. **Snapshot during driver mutation.** `snapshot_flow_stats`

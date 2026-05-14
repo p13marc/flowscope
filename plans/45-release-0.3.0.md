@@ -13,12 +13,29 @@ the rejected proposals (with rationale), the implementation
 order, the dependency graph, and the release-completion criteria.
 Each individual feature lives in its own numbered sub-plan.
 
-The release is mostly **additive** — no breaking changes are
-required, with the exception of one `#[non_exhaustive]` addition
-on `SessionEvent` ([Plan 51](./51-session-event-anomaly-forwarding.md))
-that breaks exhaustive external `match` blocks. Pre-1.0 acceptable
-and consistent with the project convention recorded in
-[INDEX.md](./INDEX.md).
+**Backward-compatibility policy.** Pre-1.0, flowscope optimises
+for the best possible design over preserving compatibility — when
+the sharper shape is better than the older one, we ship the sharper
+shape and migrate. Consumers (`netring`, `des-rs`) update in lock-
+step; both are mid-migration from 0.1.x → 0.2.x already, so the
+0.2.x → 0.3.0 step is no extra burden.
+
+Concretely for 0.3.0:
+
+- `SessionEvent` gains `#[non_exhaustive]` and a new `Anomaly`
+  variant ([Plan 51](./51-session-event-anomaly-forwarding.md)).
+  Breaks exhaustive external `match` blocks.
+- `FlowSessionDriver` is internally refactored to wrap `FlowDriver`
+  ([Plan 51](./51-session-event-anomaly-forwarding.md)). No public
+  signature changes, but consumers using the type alias / generic
+  shape in places need a recompile.
+- `Reassembler` trait gains a new `high_watermark()` method
+  ([Plan 46](./46-flowstats-snapshots-and-watermark.md)) with a
+  default impl, so external trait impls compile unchanged.
+- New trait additions and new fields on `#[non_exhaustive]`
+  structs (`FlowStats`) are purely additive.
+
+CHANGELOG entries name every break with migration guidance.
 
 ## Status
 
@@ -301,11 +318,13 @@ Each sub-plan ships its own tests. After all sub-plans land:
 1. **`SessionEvent` non_exhaustive churn.** External consumers'
    exhaustive `match` blocks will need a wildcard arm. Pre-1.0;
    acceptable; documented in the CHANGELOG migration paragraph.
-2. **FlowSessionDriver refactor scope creep.** Plan 51 recommends
-   rewiring `FlowSessionDriver` to wrap `FlowDriver` rather than
-   duplicating its anomaly logic. If the refactor proves harder
-   than expected, fall back to replicating the logic (option B
-   in Plan 51) — slightly more code, no API impact.
+2. **FlowSessionDriver refactor.** Plan 51 wires
+   `FlowSessionDriver` to wrap `FlowDriver` instead of
+   duplicating its anomaly logic. This is the right shape — one
+   source of truth for anomaly emission, BufferOverflow
+   synthesis, and reassembler bookkeeping. The refactor is
+   internal-only (no public signature changes); existing tests
+   pin the behaviour.
 3. **`Dedup` performance**. The ahash-based hash + 256-entry
    linear scan should be <1 µs/packet but isn't verified. Plan
    49 calls for a criterion check; if it shows up as a hot spot,

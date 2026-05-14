@@ -114,44 +114,37 @@ Same builder method, same semantics.
 
 ### Clamp logic
 
-At the top of `FlowDriver::track`:
+`Timestamp` already derives `Ord` (verified at
+`src/timestamp.rs:6`), so the clamp collapses to a single `.max()`:
 
 ```rust
 pub fn track(&mut self, view: PacketView<'_>) -> FlowEvents<E::Key> {
-    let view = self.maybe_clamp_ts(view);
+    let view = self.clamp_view(view);
     // ... existing logic uses the clamped view ...
 }
 
-fn maybe_clamp_ts<'a>(&mut self, view: PacketView<'a>) -> PacketView<'a> {
+fn clamp_view<'a>(&mut self, view: PacketView<'a>) -> PacketView<'a> {
     let Some(last) = self.monotonic_ts.as_mut() else {
         return view;
     };
-    let clamped = if view.timestamp > *last {
-        *last = view.timestamp;
-        view.timestamp
-    } else {
-        *last
-    };
-    PacketView::new(view.frame, clamped)
+    *last = (*last).max(view.timestamp);
+    PacketView::new(view.frame, *last)
 }
-```
 
-Same shape for `sweep(now)` — clamp `now` against `monotonic_ts`
-before passing it on:
-
-```rust
 pub fn sweep(&mut self, now: Timestamp) -> Vec<FlowEvent<E::Key>> {
     let now = match self.monotonic_ts.as_mut() {
         Some(last) => {
-            let clamped = now.max(*last);
-            *last = clamped;
-            clamped
+            *last = (*last).max(now);
+            *last
         }
         None => now,
     };
     // ... existing logic uses the clamped `now` ...
 }
 ```
+
+Reading the code: when monotonisation is on, the running max
+updates in place and the clamped value flows downstream.
 
 ---
 

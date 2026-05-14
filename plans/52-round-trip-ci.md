@@ -222,12 +222,50 @@ fn passthrough_interleaved_round_trip() {
 }
 ```
 
+### Proptest variant
+
+Beyond the three hand-written variants above, add a proptest that
+generates random bidirectional TCP sessions and round-trips them.
+This catches edge cases the hand-written tests miss (single-byte
+segments, payload sizes near MTU boundaries, wrap-around-near
+sequence-number corner cases).
+
+```rust
+use proptest::prelude::*;
+
+proptest! {
+    #[test]
+    fn passthrough_random_bidirectional_session(
+        init_chunks in proptest::collection::vec(proptest::collection::vec(any::<u8>(), 0..1500), 0..16),
+        resp_chunks in proptest::collection::vec(proptest::collection::vec(any::<u8>(), 0..1500), 0..16),
+    ) {
+        let mut interleaved: Vec<(&[u8], &[u8])> = Vec::new();
+        for i in 0..init_chunks.len().max(resp_chunks.len()) {
+            let init = init_chunks.get(i).map(Vec::as_slice).unwrap_or(b"");
+            let resp = resp_chunks.get(i).map(Vec::as_slice).unwrap_or(b"");
+            interleaved.push((init, resp));
+        }
+        let (init_seen, resp_seen) = run_round_trip_chunks(&interleaved);
+        let init_expected: Vec<u8> = init_chunks.iter().flatten().copied().collect();
+        let resp_expected: Vec<u8> = resp_chunks.iter().flatten().copied().collect();
+        prop_assert_eq!(init_seen, init_expected);
+        prop_assert_eq!(resp_seen, resp_expected);
+    }
+}
+```
+
+Add `proptest = "1"` to the `dev-dependencies` if not already
+present (it is — used elsewhere in the test suite). Cap iterations
+at the proptest default (256) so CI time stays bounded; bump to
+`PROPTEST_CASES=10000` for stress runs.
+
 ---
 
 ## Acceptance criteria
 
-- [ ] `tests/round_trip.rs` exists with at least three test
-      variants (single-segment, chunked, interleaved).
+- [ ] `tests/round_trip.rs` exists with at least three hand-written
+      variants (single-segment, chunked, interleaved) plus one
+      proptest variant for random bidirectional sessions.
 - [ ] All variants pass on a clean checkout.
 - [ ] `PcapFlowSource::from_reader<R: Read + Seek>` added if not
       already present.
@@ -258,7 +296,8 @@ fn passthrough_interleaved_round_trip() {
 
 ## Effort
 
-- LOC: ~150 (test scaffold + 3 variants + helper).
+- LOC: ~200 (test scaffold + 3 hand-written variants + proptest +
+  shared helper).
 - Time: half a day.
 
 ---
