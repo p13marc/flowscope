@@ -19,18 +19,21 @@ before we switched.
 
 ### Sister-crate roadmap (STALE pending real consumer)
 
-These plans describe artifacts that should ship as separate
-sister crates per [`../docs/DPI_ARCHITECTURE.md`](../docs/DPI_ARCHITECTURE.md).
-All carry STALE headers — they were drafted pre-consolidation
-(when flowscope was a workspace of `netring-flow*` crates) and
-need a rewrite pass before execution. Pick up only when a real
-consumer asks.
+[`../docs/DPI_ARCHITECTURE.md`](../docs/DPI_ARCHITECTURE.md)
+recommends some functionality ships as separate sister crates
+rather than features of flowscope. Only one such plan is
+currently parked here:
 
 | Plan | Goal | Status |
 |------|------|--------|
 | [`21-flow-protolens.md`](./21-flow-protolens.md) | `flowscope-protolens` — protolens bridge as a sister crate | 🛑 stale, deferred |
-| [`32-flow-export.md`](./32-flow-export.md) | `flowscope-export` — NetFlow v9 / IPFIX exporter | 🛑 stale, deferred |
-| [`60-cli-tools.md`](./60-cli-tools.md) | `flowscope-cli` — `flow-summary` + `flow-replay` binaries | 🛑 stale, deferred |
+
+Earlier sister-crate plans (`32-flow-export` for NetFlow/IPFIX
+export and `60-cli-tools` for `flow-summary` / `flow-replay`
+CLIs) were removed — both were pre-consolidation drafts that
+would need a full rewrite before picking up, and neither has a
+real consumer asking. If demand surfaces, write a fresh plan
+against the current codebase.
 
 ### Deferred features
 

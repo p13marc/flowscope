@@ -259,14 +259,10 @@ record; `plans/` is the working backlog.
 ### `plans/` (active backlog)
 
 - `INDEX.md` — backlog index + project conventions.
-- Sister-crate roadmap (STALE pending real consumer ask):
-  - `21-flow-protolens.md` — protolens bridge sister crate.
-  - `32-flow-export.md` — NetFlow / IPFIX exporter sister crate.
-  - `60-cli-tools.md` — `flow-summary` / `flow-replay` CLIs.
-- Deferred features:
-  - `50-deferred-catchup.md` — 50.5 IPv6 fragment reassembly
-    still deferred indefinitely. Other 50.x sub-features
-    already shipped.
+- `21-flow-protolens.md` — protolens bridge sister crate (STALE
+  pre-consolidation draft, pending real consumer ask).
+- `50-deferred-catchup.md` — 50.5 IPv6 fragment reassembly still
+  deferred indefinitely. Other 50.x sub-features already shipped.
 
 Plan numbers 00–04, 12, 20, 22–25, 30–31, 40–42, 45–49, 51–57
 are retired (implementation shipped, file removed). See
