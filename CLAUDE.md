@@ -219,35 +219,51 @@ into the standard observability ecosystem. Both zero-cost when off
   methods in 0.2.0 (purely additive). Future additions stay additive;
   breaking changes need a major bump.
 
-## Plans
+## Docs vs plans
 
-`plans/` (in-repo only — excluded from the published package via
-`Cargo.toml`'s `exclude` field) holds the active backlog plus
-the design / research docs that informed past releases.
+The repo separates **reference docs** from **forward-looking
+plans**:
+
+- **`docs/`** — published as part of the crates.io package.
+  Reference material for users of the library: how to pick an
+  API, what metrics fire, what the architecture looks like,
+  design rationale, consumer-feedback records.
+- **`plans/`** — in-repo only (excluded from the published
+  package via `Cargo.toml`'s `exclude` field). Forward-looking
+  work items only — concrete plans for features that haven't
+  shipped yet.
 
 **Convention**: when an implementation plan ships, **delete the
 plan file** in the same PR series. `git log` is the historical
-record; `plans/` is the working backlog. The previous "keep as
-record" convention accumulated 28+ files before we switched.
+record; `plans/` is the working backlog.
 
-Current contents (after 0.3.0 cleanup):
+### `docs/` (published reference)
+
+- `ARCHITECTURE.md` — high-level architecture overview.
+- `SESSION_GUIDE.md` — picking an API (FlowEvent / Reassembler /
+  `*Factory<H>` / SessionParser / DatagramParser /
+  FlowSessionDriver / FlowDatagramDriver).
+- `OBSERVABILITY.md` — metric vocabulary, cardinality notes,
+  Prometheus / Grafana / tracing wiring.
+- `PERFORMANCE.md` — criterion bench methodology and baseline
+  numbers.
+- `DPI_ARCHITECTURE.md` — SOTA-DPI research and crate-split
+  recommendations (2026).
+- `flow-session-tracking-design.md` — original design rationale
+  for the session-tracking surface.
+- `high-level-features-design.md` — high-level features survey;
+  drove the `Dedup` primitive shape.
+- `feedback-2026-05-14-des-rs.md` — `des-rs` team feedback
+  record that drove the 0.3.0 "production hardening" release.
+
+### `plans/` (active backlog)
 
 - `INDEX.md` — backlog index + project conventions.
-- Design docs (evergreen):
-  - `flow-session-tracking-design.md` — original session-tracking
-    design.
-  - `high-level-features-design.md` — high-level features
-    survey; drove the dedup primitive.
-  - `DPI_ARCHITECTURE.md` — SOTA-DPI research + crate-split
-    recommendations.
-  - `flowscope-feedback-2026-05-14.md` — `des-rs` team feedback
-    that drove the 0.3.0 release.
-- Backlog (sister-crate roadmap, STALE pending real consumer
-  ask):
+- Sister-crate roadmap (STALE pending real consumer ask):
   - `21-flow-protolens.md` — protolens bridge sister crate.
   - `32-flow-export.md` — NetFlow / IPFIX exporter sister crate.
   - `60-cli-tools.md` — `flow-summary` / `flow-replay` CLIs.
-- Backlog (deferred features):
+- Deferred features:
   - `50-deferred-catchup.md` — 50.5 IPv6 fragment reassembly
     still deferred indefinitely. Other 50.x sub-features
     already shipped.
@@ -299,17 +315,17 @@ needs a corresponding re-export under `netring::flow::*`.
 
 - `README.md` — front page (also published as the crates.io readme).
 - `CHANGELOG.md` — release history.
-- `docs/SESSION_GUIDE.md` — how to pick between FlowEvent /
-  Reassembler / *Factory<H> / SessionParser / DatagramParser /
-  Conversation / FlowSessionDriver. Includes migration recipes.
-- `docs/OBSERVABILITY.md` — metric vocabulary, cardinality notes,
-  Prometheus / Grafana sample queries, tracing-subscriber wiring.
+- `docs/` — published reference docs (see [Docs vs plans](#docs-vs-plans)
+  for the full inventory).
 - `Cargo.toml` — package manifest. `exclude = ["plans/"]` keeps
-  internal roadmap docs out of the published package.
+  the backlog out of the published package; `docs/` IS published.
 - `src/lib.rs` — top-level rustdoc + feature/module wiring.
 - `src/session.rs` — the strategic 1.0 abstraction
   (`SessionParser` / `DatagramParser`).
 - `src/session_driver.rs` — `FlowSessionDriver`, the sync mirror of
-  `session_stream`.
+  netring's `session_stream`.
+- `src/datagram_driver.rs` — `FlowDatagramDriver`, the sync mirror
+  of netring's `datagram_stream`.
+- `src/dedup.rs` — content-hash dedup primitive.
 - `src/obs.rs` — metrics + tracing hooks; metric-name constants
   exported here.

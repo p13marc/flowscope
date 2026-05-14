@@ -3,7 +3,7 @@
 A short tour of the layers and how they fit together. For "which API
 do I pick" see [`SESSION_GUIDE.md`](SESSION_GUIDE.md). For the
 state-of-the-art DPI research that informed the design, see
-`plans/DPI_ARCHITECTURE.md` in the repo.
+[`DPI_ARCHITECTURE.md`](DPI_ARCHITECTURE.md).
 
 ## The pipeline
 
@@ -100,8 +100,8 @@ end, `fin()` or `rst()`.
 The default `BufferedReassembler` accumulates in-order bytes and
 drops out-of-order segments (Suricata-style `inline-mode`). Other
 reassemblers can provide gap-filling, retransmit-detection, etc. —
-[`netring-flow`'s old `protolens` bridge example](https://github.com/p13marc/flowscope/blob/master/plans/21-flow-protolens.md)
-showed how to wrap a third-party reassembler.
+custom impls just plug into the `Reassembler` trait and the
+factory pattern that builds them.
 
 `ReassemblerFactory<K>::new_reassembler(&key, side)` builds a fresh
 instance per `(flow, side)`. The factory is shared; the reassembler
@@ -204,7 +204,7 @@ nDPI / Suricata `workers` runmode / Zeek cluster all converge on.
 
 A pipeline-stage architecture (separate threads for capture / classify
 / extract) is anti-pattern for SOTA DPI — see
-`plans/DPI_ARCHITECTURE.md` for the survey.
+[`DPI_ARCHITECTURE.md`](DPI_ARCHITECTURE.md) for the survey.
 
 ## Design constraints
 
@@ -224,7 +224,15 @@ A pipeline-stage architecture (separate threads for capture / classify
 
 - [`SESSION_GUIDE.md`](SESSION_GUIDE.md) — picking the right L7
   parser API for your use case (with migration recipes).
-- [`../README.md`](../README.md) — the front-page intro.
-- `plans/DPI_ARCHITECTURE.md` (in-repo) — full SOTA-DPI research and
-  crate-split recommendations.
-- `plans/INDEX.md` (in-repo) — roadmap and per-plan status.
+- [`OBSERVABILITY.md`](OBSERVABILITY.md) — metric vocabulary and
+  `tracing` event targets.
+- [`PERFORMANCE.md`](PERFORMANCE.md) — bench methodology and
+  baseline numbers.
+- [`DPI_ARCHITECTURE.md`](DPI_ARCHITECTURE.md) — SOTA-DPI research
+  and crate-split recommendations.
+- [`flow-session-tracking-design.md`](flow-session-tracking-design.md) —
+  original design rationale for the session-tracking surface.
+- [`high-level-features-design.md`](high-level-features-design.md) —
+  high-level features survey; drove the `Dedup` primitive.
+- [`../README.md`](../README.md) — front-page intro.
+- `plans/INDEX.md` (in-repo) — active backlog.

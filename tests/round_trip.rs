@@ -6,7 +6,8 @@
 //! verbatim. Catches integration regressions across the
 //! synthesize → pcap → tracker → reassembler → session-driver seam.
 //!
-//! See [`plans/52-round-trip-ci.md`].
+//! Originally specified by plan 52 (now retired; see
+//! the `plan 52:` commits in `git log` for context).
 
 #![cfg(all(
     feature = "pcap",

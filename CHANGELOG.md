@@ -3,13 +3,15 @@
 ## 0.3.0 — Production hardening
 
 Eleven sub-plans driven by external feedback from the `des-rs`
-team ([`plans/flowscope-feedback-2026-05-14.md`](plans/flowscope-feedback-2026-05-14.md))
-plus four planning-review additions. See the umbrella plan at
-[`plans/45-release-0.3.0.md`](plans/45-release-0.3.0.md).
+team ([`docs/feedback-2026-05-14-des-rs.md`](docs/feedback-2026-05-14-des-rs.md))
+plus four planning-review additions. The plans themselves have
+been pruned from `plans/` (shipped → deleted convention); the
+implementation is in `git log` under the `plan NN:` commit
+prefixes.
 
 ### Highlights
 
-- **Live `FlowStats` snapshots** ([Plan 46](plans/46-flowstats-snapshots-and-watermark.md))
+- **Live `FlowStats` snapshots** (Plan 46)
   via `FlowDriver::snapshot_flow_stats()` and
   `FlowSessionDriver::snapshot_flow_stats()`. Lazy iterator
   returning `(K, FlowStats)` with reassembler diagnostics
@@ -20,49 +22,49 @@ plus four planning-review additions. See the umbrella plan at
   occupancy per side). Useful for tuning
   `max_reassembler_buffer`. New
   `flowscope_reassembler_high_watermark_bytes` metric (histogram).
-- **Per-key idle timeouts** ([Plan 47](plans/47-per-key-idle-timeouts.md))
+- **Per-key idle timeouts** (Plan 47)
   via `FlowTracker::set_idle_timeout_fn(F)` and the matching
   `with_idle_timeout_fn(F)` builders on both drivers. Plus
   `FiveTupleKey::either_port(u16) -> bool` helper for the
   canonical port-based override case.
 - **Monotonic timestamps** (opt-in,
-  [Plan 48](plans/48-monotonic-timestamps.md)) via
+  Plan 48) via
   `with_monotonic_timestamps(true)`. Clamps NIC timestamps to a
   running max — useful when downstream consumers want a strictly
   non-decreasing timeline.
-- **Sync-side dedup** ([Plan 49](plans/49-sync-dedup.md))
+- **Sync-side dedup** (Plan 49)
   via the new `flowscope::Dedup` primitive and
   `with_dedup(Dedup::loopback())` builder on both drivers.
   Content-hash + length + time-window match; ~1.2 µs per
   1500-byte frame.
-- **`FlowDatagramDriver`** ([Plan 57](plans/57-datagram-driver.md))
+- **`FlowDatagramDriver`** (Plan 57)
   — sync mirror of netring's `datagram_stream` for UDP-based
   `DatagramParser`s.
 - **`SessionEvent::Anomaly`** forwarding
-  ([Plan 51](plans/51-session-event-anomaly-forwarding.md)) +
+  (Plan 51) +
   `FlowSessionDriver::with_emit_anomalies(true)`. Plus an
   internal refactor: `FlowSessionDriver` now wraps `FlowDriver`
   for single source of truth on anomaly / overflow synthesis.
-- **Parser fallibility** ([Plan 55](plans/55-parser-fallibility.md))
+- **Parser fallibility** (Plan 55)
   via `SessionParser::is_poisoned()` / `poison_reason()` (mirror
   on `DatagramParser`). On poison, the driver synthesises
   `Ended { reason: ParseError }` plus optional
   `Anomaly { kind: SessionParseError, .. }`.
-- **`tracing-messages` sub-feature** ([Plan 56](plans/56-tracing-messages.md))
+- **`tracing-messages` sub-feature** (Plan 56)
   — emit `tracing::trace!` per `SessionEvent::Application`.
   Off by default; targets `flowscope.message`.
-- **Criterion benchmark harness** ([Plan 54](plans/54-criterion-bench-harness.md))
+- **Criterion benchmark harness** (Plan 54)
   under `benches/` with five groups (extractor, tracker,
   reassembler, session_driver, dedup). Documented baselines in
   [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md). Plan 41's
   hot-cache claim verified at ~1.4× monoflow vs 10k-flow
   round-robin.
-- **Round-trip CI fixture** ([Plan 52](plans/52-round-trip-ci.md))
+- **Round-trip CI fixture** (Plan 52)
   — `tests/round_trip.rs` exercises
   synthesize→pcap→PcapFlowSource→FlowSessionDriver→assert
   byte-equality across hand-written + proptest cases.
 - **SessionParser author guide**
-  ([Plan 53](plans/53-session-parser-author-guide.md)) — new
+  (Plan 53) — new
   walkthrough section in `docs/SESSION_GUIDE.md` covering the
   trait contract, partial-buffer pattern, resync strategies,
   and testing approach.
@@ -173,12 +175,12 @@ For external `SessionParser` / `DatagramParser` impls whose
 ## 0.2.0 — Reassembly observability + metrics/tracing hooks
 
 This minor release ships the bundle described in
-[plans/42-reassembly-observability.md](plans/42-reassembly-observability.md):
+Plan 42:
 optional buffer caps on `BufferedReassembler`, end-of-flow reassembly
 diagnostics on `FlowStats`, and a live `FlowEvent::Anomaly` stream.
-It also adds opt-in `metrics` + `tracing` features ([Plan 40](plans/40-observability.md))
+It also adds opt-in `metrics` + `tracing` features (Plan 40)
 that share the same `AnomalyKind` vocabulary, plus a hot-cache
-fast-path on `FlowTracker` ([Plan 41](plans/41-perf-foundations.md)).
+fast-path on `FlowTracker` (Plan 41).
 The motivating consumer is [`des-rs`](https://github.com/p13marc/des-rs)'s
 `tools/des-capture`, which can now drop its hand-rolled
 `TcpStreamTracker` in favour of flowscope.

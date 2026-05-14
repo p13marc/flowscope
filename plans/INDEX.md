@@ -1,36 +1,26 @@
-# plans/ — index
+# plans/ — backlog index
 
-Two kinds of files live here:
+This directory holds **forward-looking work items only** — concrete
+plans for features that haven't shipped yet.
 
-- **Design / research docs** (`*-design.md`, `DPI_ARCHITECTURE.md`,
-  feedback reports). Architecture rationale, prior-art surveys,
-  consumer feedback. Source of truth for *why*.
-- **Backlog plans** (`NN-*.md`, numbered). Each plan is concrete
-  and executable — pick it up, follow it step-by-step, finish.
+Reference material that informs the plans (design rationale,
+research, consumer feedback) lives in [`../docs/`](../docs/),
+which is published as part of the crates.io package.
 
-Plans whose implementation has shipped are **deleted** rather
-than archived in-place. `git log` is the historical record;
-`plans/` is the active backlog. (Previous convention was to
-keep shipped plans as records; we changed to deletion when the
-directory got crowded enough that it stopped being a useful
-working backlog.)
+**Convention**: when an implementation plan ships, **delete the
+plan file** in the same PR series. `git log` is the historical
+record; `plans/` is the working backlog. The previous "keep
+shipped plans as records" convention accumulated 28+ files
+before we switched.
 
 ---
 
-## Design / research docs
+## Backlog
 
-| File | What |
-|------|------|
-| [`flow-session-tracking-design.md`](./flow-session-tracking-design.md) | Original design for the flow / session tracking surface. Approved; mostly implemented. Useful for the *why* behind the trait shapes. |
-| [`high-level-features-design.md`](./high-level-features-design.md) | High-level features survey (loopback dedup, etc.). Drove the `Dedup` primitive shape. |
-| [`DPI_ARCHITECTURE.md`](./DPI_ARCHITECTURE.md) | SOTA-DPI research and crate-split recommendations report (2026). |
-| [`flowscope-feedback-2026-05-14.md`](./flowscope-feedback-2026-05-14.md) | External feedback from the `des-rs` team. Drove the 0.3.0 "production hardening" release. Worth re-reading when the next consumer-feedback cycle starts. |
+### Sister-crate roadmap (STALE pending real consumer)
 
-## Backlog — sister-crate roadmap
-
-These three plans describe artifacts that should ship as separate
-sister crates (`flowscope-protolens`, `flowscope-export`,
-`flowscope-cli`) per [`DPI_ARCHITECTURE.md`](./DPI_ARCHITECTURE.md).
+These plans describe artifacts that should ship as separate
+sister crates per [`../docs/DPI_ARCHITECTURE.md`](../docs/DPI_ARCHITECTURE.md).
 All carry STALE headers — they were drafted pre-consolidation
 (when flowscope was a workspace of `netring-flow*` crates) and
 need a rewrite pass before execution. Pick up only when a real
@@ -42,11 +32,11 @@ consumer asks.
 | [`32-flow-export.md`](./32-flow-export.md) | `flowscope-export` — NetFlow v9 / IPFIX exporter | 🛑 stale, deferred |
 | [`60-cli-tools.md`](./60-cli-tools.md) | `flowscope-cli` — `flow-summary` + `flow-replay` binaries | 🛑 stale, deferred |
 
-## Backlog — deferred features
+### Deferred features
 
 | Plan | Goal | Status |
 |------|------|--------|
-| [`50-deferred-catchup.md`](./50-deferred-catchup.md) | Omnibus of catchup features. 50.1 InnerGre / 50.2 FlowLabel / 50.3 AutoDetectEncap / 50.4 manual_tick / 50.6 broadcast all ✅ shipped. **50.5 IPv6 fragment reassembly** remains deferred indefinitely (no consumer demand yet). |
+| [`50-deferred-catchup.md`](./50-deferred-catchup.md) | Omnibus of catchup features. 50.1 / 50.2 / 50.3 / 50.4 / 50.6 all ✅ shipped. **50.5 IPv6 fragment reassembly** remains deferred indefinitely (no consumer demand yet). |
 
 ---
 
@@ -61,9 +51,9 @@ consumer asks.
 | 50–59 | Deferred-feature catchup |
 | 60–69 | Tooling (CLIs) |
 
-Plan numbers 00–04, 12, 22–25, 30–31, 40–42, 45–49, 51–57 are
-all retired (implementation shipped); new plans pick the lowest
-free number in the appropriate range.
+Plan numbers 00–04, 12, 20, 22–25, 30–31, 40–42, 45–49, 51–57
+are retired (implementation shipped, file removed). New plans
+pick the lowest free number in the appropriate range.
 
 ---
 
@@ -134,6 +124,7 @@ Each `NN-*.md` plan has these sections:
 11. **Effort** — LOC and time estimate
 12. **Provenance** (when applicable) — context that shaped this plan
 
-Update Status as you go. When a plan ships and goes to git
-history, delete the file in the same PR series that lands the
-implementation (or in a follow-up cleanup commit).
+Update Status as you go. When a plan ships, **delete the file in
+the same PR series** that lands the implementation (or in a
+follow-up cleanup commit). The CHANGELOG entry plus the
+`plan NN: …` commit subject are the durable record.
