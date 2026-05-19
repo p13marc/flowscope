@@ -14,7 +14,11 @@ so an offline L7 program is again a single iterator expression.
 
 ## 2. Status
 
-Not started.
+Implemented in the working tree; not yet committed. Per the
+`INDEX.md` convention, delete this file in the PR series that lands
+the change. `SessionIter` / `DatagramIter` + `PcapFlowSource::
+sessions` / `datagrams` shipped; new gated test target
+`tests/pcap_l7_iterators.rs`.
 
 ## 3. Prerequisites
 

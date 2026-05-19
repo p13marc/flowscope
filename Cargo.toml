@@ -183,6 +183,10 @@ required-features = ["pcap", "session", "extractors"]
 name = "round_trip"
 required-features = ["pcap", "session", "reassembler", "extractors", "test-helpers"]
 
+[[test]]
+name = "pcap_l7_iterators"
+required-features = ["pcap", "session", "reassembler", "extractors"]
+
 [[bench]]
 name = "extractor"
 harness = false

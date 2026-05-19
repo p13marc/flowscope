@@ -402,12 +402,17 @@ and emits `SessionEvent` lives in two places:
 |------|--------|-------|
 | Async (tokio) | `cap.flow_stream(...).session_stream(parser)` | `netring` |
 | Sync (no runtime) | `FlowSessionDriver::new(extractor, parser)` | `flowscope` |
+| Sync, offline pcap | `PcapFlowSource::open(path)?.sessions(extractor, parser)` | `flowscope` |
 
-Both produce the same `SessionEvent` stream for the same wire bytes.
-Pick by control flow:
+All three produce the same `SessionEvent` stream for the same wire
+bytes. Pick by control flow:
 
 - **Live capture, tokio app** → netring's `session_stream`.
-- **Offline pcap replay, embedded, CLI tools** → `FlowSessionDriver`.
+- **Offline pcap replay** → `PcapFlowSource::sessions()` (TCP) /
+  `datagrams()` (UDP) — a single iterator, end-of-input flush
+  folded in.
+- **Embedded, custom frame source, manual control** →
+  `FlowSessionDriver` directly.
 
 The sync path is exercised end-to-end by
 `examples/length_prefixed_pcap.rs`, which implements a custom
@@ -431,6 +436,18 @@ for ev in driver.finish() {
 End a sync loop with `driver.finish()`: it sweeps every still-open
 flow to its end (equivalent to `sweep(Timestamp::MAX)`). Forgetting
 it silently drops the last flows.
+
+For offline pcap specifically, `PcapFlowSource::sessions(extractor,
+parser)` collapses the whole loop — including the final `finish()` —
+into one iterator:
+
+```rust,ignore
+for evt in PcapFlowSource::open("trace.pcap")?
+    .sessions(FiveTuple::bidirectional(), MyParser::default())
+{
+    // SessionEvent::Started / Application / Closed — already flushed
+}
+```
 
 `FlowSessionDriver::with_config` honours
 `FlowTrackerConfig::max_reassembler_buffer` and `overflow_policy`

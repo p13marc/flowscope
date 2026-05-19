@@ -31,7 +31,7 @@ the pre-1.0 policy below.
 | [`32-driver-generic-cleanup.md`](./32-driver-generic-cleanup.md) | Remove the `S` user-state param from the drivers; parser-by-value constructors | yes | ✅ Implemented (uncommitted) |
 | [`33-driver-finish.md`](./33-driver-finish.md) | `finish()` on the drivers; public `Timestamp::MAX` | no | ✅ Implemented (uncommitted) |
 | [`34-track-into-packetview.md`](./34-track-into-packetview.md) | `track()` accepts `impl Into<PacketView>` | minor | ✅ Implemented (uncommitted) |
-| [`35-pcap-l7-iterators.md`](./35-pcap-l7-iterators.md) | `PcapFlowSource::sessions` / `datagrams` iterators | no | Not started |
+| [`35-pcap-l7-iterators.md`](./35-pcap-l7-iterators.md) | `PcapFlowSource::sessions` / `datagrams` iterators | no | ✅ Implemented (uncommitted) |
 | [`36-time-aware-parser-traits.md`](./36-time-aware-parser-traits.md) | Timestamp + `on_tick` on `SessionParser` / `DatagramParser` | yes | Not started |
 | [`37-dns-unify.md`](./37-dns-unify.md) | Fold correlation into `DnsUdpParser`; delete `DnsUdpObserver` | yes | Not started |
 

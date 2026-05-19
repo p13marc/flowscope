@@ -3,7 +3,11 @@ use std::io::{BufReader, Read};
 use std::path::Path;
 
 use crate::tracker::FlowEvents;
+#[cfg(all(feature = "session", feature = "reassembler", feature = "extractors"))]
+use crate::{DatagramParser, FlowDatagramDriver};
 use crate::{FlowEvent, FlowExtractor, FlowTracker, PacketView, Timestamp};
+#[cfg(all(feature = "session", feature = "reassembler"))]
+use crate::{FlowSessionDriver, SessionEvent, SessionParser};
 
 use pcap_file::pcap::PcapReader;
 
@@ -92,6 +96,72 @@ impl<R: Read> PcapFlowSource<R> {
             tracker: FlowTracker::new(extractor),
             pending: std::collections::VecDeque::new(),
             sweep_done: false,
+        }
+    }
+
+    /// One-step offline TCP-session pipeline: every packet flows
+    /// through `extractor` + a per-flow `parser`, yielding typed L7
+    /// [`SessionEvent`]s. The end-of-input flush is automatic — when
+    /// the pcap is exhausted the iterator drains every still-open
+    /// flow via [`FlowSessionDriver::finish`].
+    ///
+    /// ```no_run
+    /// use flowscope::extract::FiveTuple;
+    /// use flowscope::pcap::PcapFlowSource;
+    /// use flowscope::{SessionEvent, SessionParser};
+    ///
+    /// #[derive(Default, Clone)]
+    /// struct Echo;
+    /// impl SessionParser for Echo {
+    ///     type Message = Vec<u8>;
+    ///     fn feed_initiator(&mut self, b: &[u8]) -> Vec<Vec<u8>> {
+    ///         vec![b.to_vec()]
+    ///     }
+    ///     fn feed_responder(&mut self, b: &[u8]) -> Vec<Vec<u8>> {
+    ///         vec![b.to_vec()]
+    ///     }
+    /// }
+    ///
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// for evt in PcapFlowSource::open("trace.pcap")?
+    ///     .sessions(FiveTuple::bidirectional(), Echo::default())
+    /// {
+    ///     if let SessionEvent::Application { message, .. } = evt? {
+    ///         println!("{} bytes", message.len());
+    ///     }
+    /// }
+    /// # Ok(()) }
+    /// ```
+    #[cfg(all(feature = "session", feature = "reassembler"))]
+    pub fn sessions<E, P>(self, extractor: E, parser: P) -> SessionIter<R, E, P>
+    where
+        E: FlowExtractor,
+        E::Key: std::hash::Hash + Eq + Clone + Send + 'static,
+        P: SessionParser + Clone + Send + 'static,
+    {
+        SessionIter {
+            views: self.views(),
+            driver: FlowSessionDriver::new(extractor, parser),
+            pending: std::collections::VecDeque::new(),
+            finished: false,
+        }
+    }
+
+    /// One-step offline UDP-datagram pipeline — the
+    /// [`DatagramParser`] mirror of [`Self::sessions`]. The
+    /// end-of-input flush is automatic.
+    #[cfg(all(feature = "session", feature = "reassembler", feature = "extractors"))]
+    pub fn datagrams<E, P>(self, extractor: E, parser: P) -> DatagramIter<R, E, P>
+    where
+        E: FlowExtractor,
+        E::Key: std::hash::Hash + Eq + Clone + Send + 'static,
+        P: DatagramParser + Clone + Send + 'static,
+    {
+        DatagramIter {
+            views: self.views(),
+            driver: FlowDatagramDriver::new(extractor, parser),
+            pending: std::collections::VecDeque::new(),
+            finished: false,
         }
     }
 }
@@ -192,6 +262,111 @@ where
                         // Loop to drain
                     } else {
                         return None;
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Iterator yielding `Result<SessionEvent<E::Key, P::Message>, Error>`.
+///
+/// Produced by [`PcapFlowSource::sessions`]. Drives an internal
+/// [`FlowSessionDriver`] over the pcap stream; after the pcap is
+/// exhausted, one `finish()` flushes every still-open flow.
+#[cfg(all(feature = "session", feature = "reassembler"))]
+pub struct SessionIter<R: Read, E, P>
+where
+    E: FlowExtractor,
+    E::Key: std::hash::Hash + Eq + Clone + Send + 'static,
+    P: SessionParser + Clone + Send + 'static,
+{
+    views: ViewIter<R>,
+    driver: FlowSessionDriver<E, P>,
+    pending: std::collections::VecDeque<SessionEvent<E::Key, P::Message>>,
+    finished: bool,
+}
+
+#[cfg(all(feature = "session", feature = "reassembler"))]
+impl<R: Read, E, P> Iterator for SessionIter<R, E, P>
+where
+    E: FlowExtractor,
+    E::Key: std::hash::Hash + Eq + Clone + Send + 'static,
+    P: SessionParser + Clone + Send + 'static,
+{
+    type Item = Result<SessionEvent<E::Key, P::Message>, Error>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            if let Some(ev) = self.pending.pop_front() {
+                return Some(Ok(ev));
+            }
+            match self.views.next() {
+                Some(Ok(view)) => {
+                    for ev in self.driver.track(&view) {
+                        self.pending.push_back(ev);
+                    }
+                }
+                Some(Err(e)) => return Some(Err(e)),
+                None => {
+                    if self.finished {
+                        return None;
+                    }
+                    self.finished = true;
+                    for ev in self.driver.finish() {
+                        self.pending.push_back(ev);
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Iterator yielding `Result<SessionEvent<E::Key, P::Message>, Error>`.
+///
+/// Produced by [`PcapFlowSource::datagrams`] — the UDP mirror of
+/// [`SessionIter`].
+#[cfg(all(feature = "session", feature = "reassembler", feature = "extractors"))]
+pub struct DatagramIter<R: Read, E, P>
+where
+    E: FlowExtractor,
+    E::Key: std::hash::Hash + Eq + Clone + Send + 'static,
+    P: DatagramParser + Clone + Send + 'static,
+{
+    views: ViewIter<R>,
+    driver: FlowDatagramDriver<E, P>,
+    pending: std::collections::VecDeque<SessionEvent<E::Key, P::Message>>,
+    finished: bool,
+}
+
+#[cfg(all(feature = "session", feature = "reassembler", feature = "extractors"))]
+impl<R: Read, E, P> Iterator for DatagramIter<R, E, P>
+where
+    E: FlowExtractor,
+    E::Key: std::hash::Hash + Eq + Clone + Send + 'static,
+    P: DatagramParser + Clone + Send + 'static,
+{
+    type Item = Result<SessionEvent<E::Key, P::Message>, Error>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            if let Some(ev) = self.pending.pop_front() {
+                return Some(Ok(ev));
+            }
+            match self.views.next() {
+                Some(Ok(view)) => {
+                    for ev in self.driver.track(&view) {
+                        self.pending.push_back(ev);
+                    }
+                }
+                Some(Err(e)) => return Some(Err(e)),
+                None => {
+                    if self.finished {
+                        return None;
+                    }
+                    self.finished = true;
+                    for ev in self.driver.finish() {
+                        self.pending.push_back(ev);
                     }
                 }
             }

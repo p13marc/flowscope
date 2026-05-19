@@ -65,8 +65,30 @@ for evt in PcapFlowSource::open("trace.pcap")?.with_extractor(FiveTuple::bidirec
 # Ok(()) }
 ```
 
-For HTTP / TLS / DNS examples and the typed `SessionParser` / `DatagramParser`
-APIs, see `examples/` and the per-module documentation on docs.rs.
+Typed L7 messages are one iterator away — `sessions()` runs an
+extractor plus a per-flow `SessionParser` over the pcap, with the
+end-of-input flush folded in:
+
+```rust,no_run
+use flowscope::extract::FiveTuple;
+use flowscope::pcap::PcapFlowSource;
+use flowscope::http::HttpParser;
+use flowscope::SessionEvent;
+
+# fn main() -> Result<(), Box<dyn std::error::Error>> {
+for evt in PcapFlowSource::open("trace.pcap")?
+    .sessions(FiveTuple::bidirectional(), HttpParser::default())
+{
+    if let SessionEvent::Application { message, .. } = evt? {
+        println!("{message:?}");
+    }
+}
+# Ok(()) }
+```
+
+`datagrams()` is the UDP mirror. For TLS / DNS and the callback-style
+`*Factory<H>` APIs, see `examples/` and the per-module documentation
+on docs.rs.
 
 ### Custom protocols
 

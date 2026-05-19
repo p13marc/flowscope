@@ -44,6 +44,12 @@ lockstep.
   `&OwnedPacketView` can be passed straight to `track()` — no
   `.as_view()`. Existing `track(packet_view)` calls are unaffected
   (`Into` is reflexive); `OwnedPacketView::as_view()` is retained.
+- **`PcapFlowSource::sessions()` / `datagrams()`** — one-step
+  offline L7 pipelines. `sessions(extractor, parser)` returns an
+  iterator of typed `SessionEvent`s straight from a pcap, with the
+  end-of-input flush folded in; `datagrams()` is the UDP mirror.
+  Brings offline HTTP/TLS/DNS to the one-expression bar that
+  `with_extractor()` already set for `FlowEvent`s.
 
 ## 0.3.0 — Production hardening
 
