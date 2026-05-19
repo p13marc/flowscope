@@ -71,7 +71,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     for view in PcapFlowSource::open(&path)?.views() {
         let view = view?;
         let now = view.timestamp;
-        for _ev in tracker.track(view.as_view()) {}
+        for _ev in tracker.track(&view) {}
         // Sweep unanswered queries roughly once per second of trace time.
         let now_sec = now.to_duration().as_secs() as u32;
         if now_sec > last_sweep_sec {

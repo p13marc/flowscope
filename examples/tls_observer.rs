@@ -43,13 +43,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .ok_or("usage: tls_observer <trace.pcap>")?;
 
     let factory = TlsFactory::with_handler(Logger);
-    let mut driver: FlowDriver<FiveTuple, _, ()> =
-        FlowDriver::new(FiveTuple::bidirectional(), factory);
+    let mut driver = FlowDriver::new(FiveTuple::bidirectional(), factory);
 
     let mut started = 0u64;
     for view in PcapFlowSource::open(&path)?.views() {
         let view = view?;
-        for ev in driver.track(view.as_view()) {
+        for ev in driver.track(&view) {
             if matches!(ev, FlowEvent::Started { .. }) {
                 started += 1;
             }

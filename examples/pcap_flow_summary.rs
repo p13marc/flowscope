@@ -28,13 +28,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut packets = 0usize;
     let mut started = 0usize;
     let mut ended = 0usize;
-    let mut last_seen_ts = Timestamp::default();
 
     while let Some(pkt) = reader.next_packet() {
         let pkt = pkt?;
         packets += 1;
         let ts = Timestamp::new(pkt.timestamp.as_secs() as u32, pkt.timestamp.subsec_nanos());
-        last_seen_ts = ts;
         let view = PacketView::new(&pkt.data, ts);
         for evt in tracker.track(view) {
             match evt {
@@ -62,9 +60,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    // Force the remaining flows to end via a sweep at far-future ts.
-    let far = Timestamp::new(last_seen_ts.sec.saturating_add(86_400), 0);
-    for evt in tracker.sweep(far) {
+    // Force the remaining flows to end with a max-timestamp sweep.
+    for evt in tracker.sweep(Timestamp::MAX) {
         if let FlowEvent::Ended {
             key,
             stats,

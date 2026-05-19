@@ -143,8 +143,7 @@ impl HttpHandler for Logger {
 
 # fn main() -> Result<(), Box<dyn std::error::Error>> {
 let factory = HttpFactory::with_handler(Logger);
-let mut driver: FlowDriver<FiveTuple, _, ()> =
-    FlowDriver::new(FiveTuple::bidirectional(), factory);
+let mut driver = FlowDriver::new(FiveTuple::bidirectional(), factory);
 // drive packets through driver.track(view)
 # Ok(()) }
 ```
@@ -402,7 +401,7 @@ and emits `SessionEvent` lives in two places:
 | Path | Helper | Where |
 |------|--------|-------|
 | Async (tokio) | `cap.flow_stream(...).session_stream(parser)` | `netring` |
-| Sync (no runtime) | `FlowSessionDriver::<_, P>::new(extractor)` | `flowscope` |
+| Sync (no runtime) | `FlowSessionDriver::new(extractor, parser)` | `flowscope` |
 
 Both produce the same `SessionEvent` stream for the same wire bytes.
 Pick by control flow:
@@ -416,13 +415,22 @@ length-prefixed binary protocol parser and runs it against a pcap
 fixture without any runtime dependency.
 
 ```rust,ignore
-let mut driver = FlowSessionDriver::<_, MyParser>::new(FiveTuple::bidirectional());
+let mut driver = FlowSessionDriver::new(FiveTuple::bidirectional(), MyParser::default());
 for view in PcapFlowSource::open("trace.pcap")?.views() {
-    for ev in driver.track(view?.as_view()) {
+    let view = view?;
+    for ev in driver.track(&view) {
         // SessionEvent::Started / Application / Closed
     }
 }
+// End of input — flush every still-open flow.
+for ev in driver.finish() {
+    // SessionEvent::Closed for each remaining flow
+}
 ```
+
+End a sync loop with `driver.finish()`: it sweeps every still-open
+flow to its end (equivalent to `sweep(Timestamp::MAX)`). Forgetting
+it silently drops the last flows.
 
 `FlowSessionDriver::with_config` honours
 `FlowTrackerConfig::max_reassembler_buffer` and `overflow_policy`

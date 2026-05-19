@@ -76,7 +76,8 @@ impl<R: Read> PcapFlowSource<R> {
     ///     config,
     /// );
     /// for view in PcapFlowSource::open("trace.pcap")?.views() {
-    ///     for _evt in tracker.track(view?.as_view()) {
+    ///     let view = view?;
+    ///     for _evt in tracker.track(&view) {
     ///         // process
     ///     }
     /// }
@@ -111,6 +112,14 @@ impl OwnedPacketView {
     }
 }
 
+impl<'a> From<&'a OwnedPacketView> for PacketView<'a> {
+    /// Borrow an [`OwnedPacketView`] as a [`PacketView`] — lets
+    /// `&owned` be passed straight to `track()` without `as_view()`.
+    fn from(owned: &'a OwnedPacketView) -> Self {
+        owned.as_view()
+    }
+}
+
 /// Iterator yielding `Result<OwnedPacketView, Error>`.
 pub struct ViewIter<R: Read> {
     reader: PcapReader<R>,
@@ -137,8 +146,8 @@ impl<R: Read> Iterator for ViewIter<R> {
 /// Iterator yielding `Result<FlowEvent<E::Key>, Error>`.
 ///
 /// Drives an internal [`FlowTracker`] over the pcap stream. After
-/// the underlying pcap is exhausted, runs one final sweep with a
-/// far-future timestamp to flush remaining flows as
+/// the underlying pcap is exhausted, runs one final sweep at
+/// [`Timestamp::MAX`] to flush remaining flows as
 /// [`FlowEvent::Ended { reason: IdleTimeout, .. }`](FlowEvent::Ended).
 pub struct EventIter<R: Read, E: FlowExtractor>
 where
@@ -165,7 +174,7 @@ where
             // Pull the next packet view, push events.
             match self.views.next() {
                 Some(Ok(view)) => {
-                    let evts: FlowEvents<E::Key> = self.tracker.track(view.as_view());
+                    let evts: FlowEvents<E::Key> = self.tracker.track(&view);
                     for ev in evts {
                         self.pending.push_back(ev);
                     }
@@ -173,19 +182,11 @@ where
                 }
                 Some(Err(e)) => return Some(Err(e)),
                 None => {
-                    // Pcap exhausted. Run one final sweep.
+                    // Pcap exhausted. Run one final sweep at the max
+                    // timestamp to flush every remaining flow.
                     if !self.sweep_done {
                         self.sweep_done = true;
-                        // Far-future sweep: 1 day past whatever the
-                        // tracker last saw.
-                        let last_seen_sec = self
-                            .tracker
-                            .flows()
-                            .map(|(_, e)| e.stats.last_seen.sec)
-                            .max()
-                            .unwrap_or(0);
-                        let far = Timestamp::new(last_seen_sec.saturating_add(86_400), 0);
-                        for ev in self.tracker.sweep(far) {
+                        for ev in self.tracker.sweep(Timestamp::MAX) {
                             self.pending.push_back(ev);
                         }
                         // Loop to drain
@@ -195,5 +196,23 @@ where
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Plan 34: `&OwnedPacketView` converts to a `PacketView`, so it
+    /// can be passed straight to `track()` without `as_view()`.
+    #[test]
+    fn owned_view_converts_to_packet_view() {
+        let owned = OwnedPacketView {
+            frame: vec![1, 2, 3, 4],
+            timestamp: Timestamp::new(7, 42),
+        };
+        let pv: PacketView<'_> = (&owned).into();
+        assert_eq!(pv.frame, &[1, 2, 3, 4]);
+        assert_eq!(pv.timestamp, Timestamp::new(7, 42));
     }
 }

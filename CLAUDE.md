@@ -55,7 +55,7 @@ src/
 │                                # snapshot_stats / snapshot_history / forget (0.2.0)
 ├── reassembler.rs               # Reassembler trait + BufferedReassembler
 │                                # buffer cap + OverflowPolicy (plan 42 §1, 0.2.0)
-├── driver.rs                    # FlowDriver<E, F, S>     (sync wrapper)
+├── driver.rs                    # FlowDriver<E, F>        (sync wrapper)
 │                                # diagnostics patch + BufferOverflow synthesis +
 │                                # with_emit_anomalies      (plan 42 §2/§3, 0.2.0)
 ├── session.rs                   # SessionParser / DatagramParser traits + factories + SessionEvent
@@ -160,7 +160,7 @@ Every shipped parser exposes both:
 
 For the typed-stream API, two driver helpers:
 
-- Sync, no runtime: **`FlowSessionDriver<E, P, S>`** in flowscope
+- Sync, no runtime: **`FlowSessionDriver<E, P>`** in flowscope
   (0.2.0).
 - Async tokio: **`flow_stream(...).session_stream(parser)`** in
   netring.

@@ -25,20 +25,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let file = File::open(&path)?;
     let mut reader = PcapReader::new(BufReader::new(file))?;
 
-    let mut driver: FlowDriver<FiveTuple, BufferedReassemblerFactory, ()> = FlowDriver::new(
+    let mut driver = FlowDriver::new(
         FiveTuple::bidirectional(),
         BufferedReassemblerFactory::default(),
     );
 
     let mut packets = 0usize;
     let mut total_payload = 0u64;
-    let mut last_ts = Timestamp::default();
 
     while let Some(pkt) = reader.next_packet() {
         let pkt = pkt?;
         packets += 1;
         let ts = Timestamp::new(pkt.timestamp.as_secs() as u32, pkt.timestamp.subsec_nanos());
-        last_ts = ts;
         let view = PacketView::new(&pkt.data, ts);
         for evt in driver.track(view) {
             match evt {
@@ -63,8 +61,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // Sweep remaining flows.
-    let far = Timestamp::new(last_ts.sec.saturating_add(86_400), 0);
-    for evt in driver.sweep(far) {
+    for evt in driver.finish() {
         if let FlowEvent::Ended {
             key, reason, stats, ..
         } = evt

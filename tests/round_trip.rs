@@ -76,7 +76,7 @@ fn write_pcap(frames: &[(Duration, Vec<u8>)]) -> Vec<u8> {
 /// return the per-side byte concatenations.
 fn round_trip_via_pcap(frames: Vec<(Duration, Vec<u8>)>) -> (Vec<u8>, Vec<u8>) {
     let pcap_bytes = write_pcap(&frames);
-    let mut driver = FlowSessionDriver::<_, PassthroughParser>::new(FiveTuple::bidirectional());
+    let mut driver = FlowSessionDriver::new(FiveTuple::bidirectional(), PassthroughParser);
     let mut init = Vec::new();
     let mut resp = Vec::new();
     let cursor = Cursor::new(pcap_bytes);
@@ -85,7 +85,7 @@ fn round_trip_via_pcap(frames: Vec<(Duration, Vec<u8>)>) -> (Vec<u8>, Vec<u8>) {
         .views()
     {
         let view = view.expect("packet");
-        for ev in driver.track(view.as_view()) {
+        for ev in driver.track(&view) {
             if let SessionEvent::Application {
                 message: (side, bytes),
                 ..

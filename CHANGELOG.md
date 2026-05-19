@@ -1,5 +1,50 @@
 # Changelog
 
+## Unreleased — API ergonomics
+
+Driven by the audit in
+[`plans/API-ERGONOMICS-REVIEW.md`](plans/API-ERGONOMICS-REVIEW.md).
+Pre-1.0 breaking changes; `netring` and other consumers update in
+lockstep.
+
+### Breaking
+
+- **Drivers lose the `S` per-flow-user-state type parameter.**
+  `FlowDriver<E, F, S>` → `FlowDriver<E, F>`,
+  `FlowSessionDriver<E, P, S>` → `FlowSessionDriver<E, P>`,
+  `FlowDatagramDriver<E, P, S>` → `FlowDatagramDriver<E, P>`. The
+  drivers always run their tracker with `S = ()`; per-flow user
+  state remains on `FlowTracker<E, S>` for code that builds the
+  tracker directly. This removes the `<_, ()>` /
+  `<FiveTuple, _, ()>` annotation that type-parameter-default
+  inference forced on every construction site.
+  *Migration:* delete the trailing `, ()` from any explicit driver
+  type; for per-flow user state, use `FlowTracker` directly.
+- **`FlowSessionDriver` / `FlowDatagramDriver` constructors take the
+  parser by value.** `new(extractor)` → `new(extractor, parser)`;
+  `with_config(extractor, config)` → `with_config(extractor,
+  parser, config)`. The parser bound relaxes from `Default + Clone`
+  to just `Clone`, so non-`Default` (config-built) parsers now
+  work.
+  *Migration:* `FlowSessionDriver::<_, P>::new(ext)` →
+  `FlowSessionDriver::new(ext, P::default())`.
+
+### Added
+
+- **`finish()` on all three drivers** — `FlowDriver::finish()`,
+  `FlowSessionDriver::finish()`, `FlowDatagramDriver::finish()`.
+  Sweeps every still-open flow to its end; call once when input is
+  exhausted. Equivalent to `sweep(Timestamp::MAX)` — replaces the
+  ad-hoc "sweep with a far-future timestamp" pattern.
+- **`Timestamp::MAX`** — the maximum representable timestamp
+  (`u32::MAX` seconds), for forcing an end-of-input flush.
+- **`track()` accepts `impl Into<PacketView>`** on `FlowTracker`,
+  `FlowDriver`, `FlowSessionDriver`, and `FlowDatagramDriver`, plus a
+  new `impl From<&OwnedPacketView> for PacketView`. A pcap
+  `&OwnedPacketView` can be passed straight to `track()` — no
+  `.as_view()`. Existing `track(packet_view)` calls are unaffected
+  (`Into` is reflexive); `OwnedPacketView::as_view()` is retained.
+
 ## 0.3.0 — Production hardening
 
 Eleven sub-plans driven by external feedback from the `des-rs`

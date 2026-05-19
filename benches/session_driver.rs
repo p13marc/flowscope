@@ -28,7 +28,7 @@ fn bench_passthrough(c: &mut Criterion) {
     let mut group = c.benchmark_group("session_driver");
     group.throughput(Throughput::Elements(1));
     group.bench_function("passthrough", |b| {
-        let mut d = FlowSessionDriver::<_, NoopParser>::new(FiveTuple::bidirectional());
+        let mut d = FlowSessionDriver::new(FiveTuple::bidirectional(), NoopParser);
         // 3WHS first so the flow is established before benchmarking.
         let mac = [0u8; 6];
         let syn = ipv4_tcp(

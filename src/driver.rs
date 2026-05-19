@@ -45,13 +45,12 @@ where
     }
 }
 
-pub struct FlowDriver<E, F, S = ()>
+pub struct FlowDriver<E, F>
 where
     E: FlowExtractor,
     F: ReassemblerFactory<E::Key>,
-    S: Send + 'static,
 {
-    tracker: FlowTracker<E, S>,
+    tracker: FlowTracker<E, ()>,
     factory: F,
     reassemblers: HashMap<(E::Key, FlowSide), F::Reassembler, RandomState>,
     emit_anomalies: bool,
@@ -63,13 +62,12 @@ where
     monotonic_ts: Option<Timestamp>,
 }
 
-impl<E, F, S> FlowDriver<E, F, S>
+impl<E, F> FlowDriver<E, F>
 where
     E: FlowExtractor,
     F: ReassemblerFactory<E::Key>,
-    S: Default + Send + 'static,
 {
-    /// Construct with default config and `S::default()` per-flow state.
+    /// Construct with default config.
     pub fn new(extractor: E, factory: F) -> Self {
         Self::with_config(extractor, factory, FlowTrackerConfig::default())
     }
@@ -85,14 +83,7 @@ where
             monotonic_ts: None,
         }
     }
-}
 
-impl<E, F, S> FlowDriver<E, F, S>
-where
-    E: FlowExtractor,
-    F: ReassemblerFactory<E::Key>,
-    S: Send + 'static,
-{
     /// Opt in to emitting [`FlowEvent::Anomaly`] for buffer overflows,
     /// out-of-order drops, and tracker eviction pressure. Default:
     /// `false` — no anomaly events emitted; counters still accumulate
@@ -174,7 +165,7 @@ where
     /// Process one packet. Drives the tracker and dispatches TCP
     /// payloads to the factory's reassemblers. Reassemblers are
     /// created on demand and cleaned up on `Ended`.
-    pub fn track(&mut self, view: PacketView<'_>) -> FlowEvents<E::Key> {
+    pub fn track<'v>(&mut self, view: impl Into<PacketView<'v>>) -> FlowEvents<E::Key> {
         let mut events = self.track_pending(view);
         self.finalize(events.as_mut_slice());
         events
@@ -191,7 +182,8 @@ where
     /// Typical use: [`crate::FlowSessionDriver`] calls
     /// `track_pending`, drains buffered bytes from reassemblers, then
     /// calls `finalize`.
-    pub fn track_pending(&mut self, view: PacketView<'_>) -> FlowEvents<E::Key> {
+    pub fn track_pending<'v>(&mut self, view: impl Into<PacketView<'v>>) -> FlowEvents<E::Key> {
+        let view: PacketView<'v> = view.into();
         // Dedup before extraction — duplicates produce no events.
         if let Some(d) = self.dedup.as_mut() {
             if !d.keep(view) {
@@ -245,6 +237,14 @@ where
         let mut events = self.sweep_pending(now);
         self.finalize(events.as_mut_slice());
         events
+    }
+
+    /// Sweep every remaining flow to its end. Call once after the
+    /// last [`track`](Self::track) when input is exhausted —
+    /// equivalent to `sweep(Timestamp::MAX)`. Every still-open flow
+    /// is emitted as [`FlowEvent::Ended`].
+    pub fn finish(&mut self) -> Vec<FlowEvent<E::Key>> {
+        self.sweep(Timestamp::MAX)
     }
 
     /// Lower-level sweep variant. Like [`Self::sweep`] but does NOT
@@ -323,7 +323,7 @@ where
     fn diff_anomaly_state(
         snapshot: AnomalySnapshot<E::Key>,
         reassemblers: &HashMap<(E::Key, FlowSide), F::Reassembler, RandomState>,
-        tracker: &FlowTracker<E, S>,
+        tracker: &FlowTracker<E, ()>,
         ts: Timestamp,
     ) -> Vec<FlowEvent<E::Key>> {
         let mut out = Vec::new();
@@ -388,7 +388,7 @@ where
     fn synthesise_buffer_overflow_ends(
         existing: &[FlowEvent<E::Key>],
         reassemblers: &mut HashMap<(E::Key, FlowSide), F::Reassembler, RandomState>,
-        tracker: &mut FlowTracker<E, S>,
+        tracker: &mut FlowTracker<E, ()>,
     ) -> Vec<FlowEvent<E::Key>> {
         // Collect keys whose reassembler is poisoned.
         let mut poisoned_keys: Vec<E::Key> = Vec::new();
@@ -474,12 +474,12 @@ where
     }
 
     /// Borrow the inner tracker (for stats, introspection).
-    pub fn tracker(&self) -> &FlowTracker<E, S> {
+    pub fn tracker(&self) -> &FlowTracker<E, ()> {
         &self.tracker
     }
 
     /// Borrow the inner tracker mutably.
-    pub fn tracker_mut(&mut self) -> &mut FlowTracker<E, S> {
+    pub fn tracker_mut(&mut self) -> &mut FlowTracker<E, ()> {
         &mut self.tracker
     }
 
@@ -519,10 +519,9 @@ where
     }
 }
 
-impl<E, S> FlowDriver<E, crate::reassembler::BufferedReassemblerFactory, S>
+impl<E> FlowDriver<E, crate::reassembler::BufferedReassemblerFactory>
 where
     E: FlowExtractor,
-    S: Send + 'static,
 {
     /// Drain buffered bytes for the given (key, side) and return
     /// them as a `Vec<u8>`. Returns an empty `Vec` when no
@@ -552,6 +551,49 @@ mod tests {
 
     fn view(frame: &[u8], sec: u32) -> PacketView<'_> {
         PacketView::new(frame, Timestamp::new(sec, 0))
+    }
+
+    /// Plan 32 regression guard: `FlowDriver::new` must be fully
+    /// inferable — no turbofish, no `let` type annotation. If the
+    /// `S` user-state parameter ever creeps back, this stops
+    /// compiling.
+    #[test]
+    fn new_needs_no_type_annotation() {
+        let mut d = FlowDriver::new(
+            FiveTuple::bidirectional(),
+            BufferedReassemblerFactory::default(),
+        );
+        let _ = d.track(view(b"", 0));
+    }
+
+    /// Plan 33: `finish()` ends every still-open flow, and a second
+    /// `finish()` is a no-op.
+    #[test]
+    fn finish_sweeps_open_flows() {
+        let mut d = FlowDriver::new(
+            FiveTuple::bidirectional(),
+            BufferedReassemblerFactory::default(),
+        );
+        let syn = ipv4_tcp(
+            [0; 6],
+            [0; 6],
+            [10, 0, 0, 1],
+            [10, 0, 0, 2],
+            1234,
+            80,
+            1000,
+            0,
+            0x02,
+            b"",
+        );
+        d.track(view(&syn, 0));
+        let ended = d
+            .finish()
+            .into_iter()
+            .filter(|e| matches!(e, FlowEvent::Ended { .. }))
+            .count();
+        assert_eq!(ended, 1, "finish() must end the open flow");
+        assert!(d.finish().is_empty(), "second finish() yields nothing");
     }
 
     #[test]

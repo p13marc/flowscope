@@ -12,6 +12,16 @@ pub struct Timestamp {
 }
 
 impl Timestamp {
+    /// The maximum representable timestamp — `u32::MAX` seconds plus
+    /// the largest valid nanosecond value. Past any real capture
+    /// time; pass to [`sweep`](crate::FlowTracker::sweep), or use
+    /// [`FlowDriver::finish`](crate::FlowDriver::finish), to force
+    /// every live flow to its idle-timeout end.
+    pub const MAX: Timestamp = Timestamp {
+        sec: u32::MAX,
+        nsec: 999_999_999,
+    };
+
     /// Create a new timestamp.
     #[inline]
     pub const fn new(sec: u32, nsec: u32) -> Self {
@@ -106,5 +116,19 @@ mod tests {
         let ts = Timestamp::default();
         assert_eq!(ts.sec, 0);
         assert_eq!(ts.nsec, 0);
+    }
+
+    #[test]
+    fn timestamp_max() {
+        // Greater than any timestamp built from observed values.
+        for &(sec, nsec) in &[
+            (0u32, 0u32),
+            (2_000_000_000, 500),
+            (u32::MAX - 1, 999_999_999),
+        ] {
+            assert!(Timestamp::MAX > Timestamp::new(sec, nsec));
+        }
+        assert_eq!(Timestamp::MAX.sec, u32::MAX);
+        assert_eq!(Timestamp::MAX.nsec, 999_999_999);
     }
 }

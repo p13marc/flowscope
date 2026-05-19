@@ -17,6 +17,26 @@ before we switched.
 
 ## Backlog
 
+### API ergonomics (30–39)
+
+[`API-ERGONOMICS-REVIEW.md`](./API-ERGONOMICS-REVIEW.md) audited the
+public surface against peer crates and found the API is "high-level
+for the demo, mid-level for real work." The six plans below land its
+recommendations. They are sequenced — 32 first, then 33/34 (small,
+independent), then 35, then 36→37. Breaking changes are in scope per
+the pre-1.0 policy below.
+
+| Plan | Goal | Breaking? | Status |
+|------|------|-----------|--------|
+| [`32-driver-generic-cleanup.md`](./32-driver-generic-cleanup.md) | Remove the `S` user-state param from the drivers; parser-by-value constructors | yes | ✅ Implemented (uncommitted) |
+| [`33-driver-finish.md`](./33-driver-finish.md) | `finish()` on the drivers; public `Timestamp::MAX` | no | ✅ Implemented (uncommitted) |
+| [`34-track-into-packetview.md`](./34-track-into-packetview.md) | `track()` accepts `impl Into<PacketView>` | minor | ✅ Implemented (uncommitted) |
+| [`35-pcap-l7-iterators.md`](./35-pcap-l7-iterators.md) | `PcapFlowSource::sessions` / `datagrams` iterators | no | Not started |
+| [`36-time-aware-parser-traits.md`](./36-time-aware-parser-traits.md) | Timestamp + `on_tick` on `SessionParser` / `DatagramParser` | yes | Not started |
+| [`37-dns-unify.md`](./37-dns-unify.md) | Fold correlation into `DnsUdpParser`; delete `DnsUdpObserver` | yes | Not started |
+
+### Sister crates
+
 [`../docs/DPI_ARCHITECTURE.md`](../docs/DPI_ARCHITECTURE.md)
 recommends some functionality ships as separate sister crates
 rather than features of flowscope. Only one such plan is

@@ -37,15 +37,14 @@ fn http_pcap_emits_request_and_response() {
     let handler = CapHandler(captured.clone());
     let factory = HttpFactory::with_handler(handler);
 
-    let mut driver: FlowDriver<FiveTuple, _, ()> =
-        FlowDriver::new(FiveTuple::bidirectional(), factory);
+    let mut driver = FlowDriver::new(FiveTuple::bidirectional(), factory);
 
     let src = PcapFlowSource::from_reader(Cursor::new(HTTP_SESSION)).unwrap();
     let mut last_ts = None;
     for view in src.views() {
         let view = view.unwrap();
         last_ts = Some(view.timestamp);
-        for _ev in driver.track(view.as_view()) {
+        for _ev in driver.track(&view) {
             // lifecycle events are not asserted on here
         }
     }

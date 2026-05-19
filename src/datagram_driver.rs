@@ -23,9 +23,10 @@
 //! }
 //!
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
-//! let mut driver = FlowDatagramDriver::<_, EchoUdp>::new(FiveTuple::bidirectional());
+//! let mut driver = FlowDatagramDriver::new(FiveTuple::bidirectional(), EchoUdp);
 //! for view in PcapFlowSource::open("trace.pcap")?.views() {
-//!     for ev in driver.track(view?.as_view()) {
+//!     let view = view?;
+//!     for ev in driver.track(&view) {
 //!         if let SessionEvent::Application { message, .. } = ev {
 //!             println!("{} bytes", message.len());
 //!         }
@@ -92,47 +93,38 @@ impl<K: Send + 'static> ReassemblerFactory<K> for NoopReassemblerFactory {
 /// Builder methods mirror [`crate::FlowSessionDriver`] so users
 /// running mixed TCP/UDP traffic can pair the two drivers with
 /// identical configuration.
-pub struct FlowDatagramDriver<E, P, S = ()>
+pub struct FlowDatagramDriver<E, P>
 where
     E: FlowExtractor,
     E::Key: Hash + Eq + Clone + Send + 'static,
-    P: DatagramParser + Default + Clone + Send + 'static,
-    S: Send + 'static,
+    P: DatagramParser + Clone + Send + 'static,
 {
-    driver: FlowDriver<E, NoopReassemblerFactory, S>,
+    driver: FlowDriver<E, NoopReassemblerFactory>,
     parser_factory: P,
     parsers: HashMap<E::Key, P, RandomState>,
 }
 
-impl<E, P, S> FlowDatagramDriver<E, P, S>
+impl<E, P> FlowDatagramDriver<E, P>
 where
     E: FlowExtractor,
     E::Key: Hash + Eq + Clone + Send + 'static,
-    P: DatagramParser + Default + Clone + Send + 'static,
-    S: Default + Send + 'static,
+    P: DatagramParser + Clone + Send + 'static,
 {
-    /// Construct with default tracker config.
-    pub fn new(extractor: E) -> Self {
-        Self::with_config(extractor, FlowTrackerConfig::default())
+    /// Construct with default tracker config. `parser` is cloned
+    /// once per flow to give each flow a fresh instance.
+    pub fn new(extractor: E, parser: P) -> Self {
+        Self::with_config(extractor, parser, FlowTrackerConfig::default())
     }
 
     /// Construct with explicit tracker config.
-    pub fn with_config(extractor: E, config: FlowTrackerConfig) -> Self {
+    pub fn with_config(extractor: E, parser: P, config: FlowTrackerConfig) -> Self {
         Self {
             driver: FlowDriver::with_config(extractor, NoopReassemblerFactory, config),
-            parser_factory: P::default(),
+            parser_factory: parser,
             parsers: HashMap::with_hasher(RandomState::new()),
         }
     }
-}
 
-impl<E, P, S> FlowDatagramDriver<E, P, S>
-where
-    E: FlowExtractor,
-    E::Key: Hash + Eq + Clone + Send + 'static,
-    P: DatagramParser + Default + Clone + Send + 'static,
-    S: Send + 'static,
-{
     /// Opt in to forwarding [`SessionEvent::Anomaly`]s.
     pub fn with_emit_anomalies(mut self, enable: bool) -> Self {
         self.driver = self.driver.with_emit_anomalies(enable);
@@ -161,7 +153,11 @@ where
     }
 
     /// Drive one packet. Returns zero or more [`SessionEvent`]s.
-    pub fn track(&mut self, view: PacketView<'_>) -> Vec<SessionEvent<E::Key, P::Message>> {
+    pub fn track<'v>(
+        &mut self,
+        view: impl Into<PacketView<'v>>,
+    ) -> Vec<SessionEvent<E::Key, P::Message>> {
+        let view: PacketView<'v> = view.into();
         // Capture the UDP payload BEFORE FlowDriver consumes the
         // view; otherwise we'd need to re-parse the (potentially
         // dedup-rewritten / monotonised) frame.
@@ -180,13 +176,19 @@ where
         out
     }
 
+    /// Sweep every remaining flow, emitting `Closed` events. Call
+    /// once at end of input — equivalent to `sweep(Timestamp::MAX)`.
+    pub fn finish(&mut self) -> Vec<SessionEvent<E::Key, P::Message>> {
+        self.sweep(Timestamp::MAX)
+    }
+
     /// Borrow the inner tracker.
-    pub fn tracker(&self) -> &FlowTracker<E, S> {
+    pub fn tracker(&self) -> &FlowTracker<E, ()> {
         self.driver.tracker()
     }
 
     /// Borrow the inner tracker mutably.
-    pub fn tracker_mut(&mut self) -> &mut FlowTracker<E, S> {
+    pub fn tracker_mut(&mut self) -> &mut FlowTracker<E, ()> {
         self.driver.tracker_mut()
     }
 
@@ -327,9 +329,24 @@ mod tests {
         }
     }
 
+    /// Plan 33: `finish()` closes every still-open UDP flow.
+    #[test]
+    fn finish_closes_open_flows() {
+        let mut d = FlowDatagramDriver::new(FiveTuple::bidirectional(), EchoUdp);
+        let f = ipv4_udp([10, 0, 0, 1], [10, 0, 0, 2], 1, 53, b"q");
+        d.track(view(&f, 0));
+        let closed = d
+            .finish()
+            .into_iter()
+            .filter(|e| matches!(e, SessionEvent::Closed { .. }))
+            .count();
+        assert_eq!(closed, 1, "finish() must close the open flow");
+        assert!(d.finish().is_empty(), "second finish() yields nothing");
+    }
+
     #[test]
     fn started_and_application_for_udp_packet() {
-        let mut d = FlowDatagramDriver::<_, EchoUdp>::new(FiveTuple::bidirectional());
+        let mut d = FlowDatagramDriver::new(FiveTuple::bidirectional(), EchoUdp);
         let f = ipv4_udp([10, 0, 0, 1], [10, 0, 0, 2], 1, 53, b"query");
         let events = d.track(view(&f, 0));
         assert!(
@@ -352,7 +369,7 @@ mod tests {
             idle_timeout_udp: std::time::Duration::from_secs(1),
             ..FlowTrackerConfig::default()
         };
-        let mut d = FlowDatagramDriver::<_, EchoUdp>::with_config(FiveTuple::bidirectional(), cfg);
+        let mut d = FlowDatagramDriver::with_config(FiveTuple::bidirectional(), EchoUdp, cfg);
         let f = ipv4_udp([10, 0, 0, 1], [10, 0, 0, 2], 1, 53, b"q");
         d.track(view(&f, 0));
         let ended = d.sweep(Timestamp::new(10, 0));
@@ -365,7 +382,7 @@ mod tests {
 
     #[test]
     fn tcp_packets_do_not_fire_application_events() {
-        let mut d = FlowDatagramDriver::<_, EchoUdp>::new(FiveTuple::bidirectional());
+        let mut d = FlowDatagramDriver::new(FiveTuple::bidirectional(), EchoUdp);
         let syn = ipv4_tcp(
             [0; 6],
             [0; 6],
@@ -421,7 +438,8 @@ mod tests {
 
     #[test]
     fn datagram_parser_poison_synthesises_parse_error_closed() {
-        let mut d = FlowDatagramDriver::<_, PoisonAfterBytes>::new(FiveTuple::bidirectional());
+        let mut d =
+            FlowDatagramDriver::new(FiveTuple::bidirectional(), PoisonAfterBytes::default());
         let f = ipv4_udp([10, 0, 0, 1], [10, 0, 0, 2], 1, 53, b"0123456789");
         let events = d.track(view(&f, 0));
         let closed = events.iter().find_map(|e| match e {

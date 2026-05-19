@@ -107,10 +107,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .nth(1)
         .ok_or("usage: length_prefixed_pcap <trace.pcap>")?;
 
-    let mut driver = FlowSessionDriver::<_, LengthPrefixedParser>::new(FiveTuple::bidirectional());
+    let mut driver =
+        FlowSessionDriver::new(FiveTuple::bidirectional(), LengthPrefixedParser::default());
 
     for view in PcapFlowSource::open(&path)?.views() {
-        for ev in driver.track(view?.as_view()) {
+        let view = view?;
+        for ev in driver.track(&view) {
             if let SessionEvent::Application { message, .. } = ev {
                 let arrow = if message.side == FlowSide::Initiator {
                     "→"

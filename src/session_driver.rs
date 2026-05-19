@@ -27,9 +27,10 @@
 //! }
 //!
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
-//! let mut driver = FlowSessionDriver::<_, EchoParser>::new(FiveTuple::bidirectional());
+//! let mut driver = FlowSessionDriver::new(FiveTuple::bidirectional(), EchoParser);
 //! for view in PcapFlowSource::open("trace.pcap")?.views() {
-//!     for ev in driver.track(view?.as_view()) {
+//!     let view = view?;
+//!     for ev in driver.track(&view) {
 //!         match ev {
 //!             SessionEvent::Application { message, .. } => println!("{} bytes", message.len()),
 //!             _ => {}
@@ -80,35 +81,33 @@ fn truncate_reason(s: &str) -> String {
 /// `P` — the session parser; the helper requires `Default + Clone`
 /// so each new flow gets a fresh per-flow instance via clone.
 /// `S` — optional per-flow user state stored on the tracker.
-pub struct FlowSessionDriver<E, P, S = ()>
+pub struct FlowSessionDriver<E, P>
 where
     E: FlowExtractor,
     E::Key: Hash + Eq + Clone + Send + 'static,
-    P: SessionParser + Default + Clone + Send + 'static,
-    S: Send + 'static,
+    P: SessionParser + Clone + Send + 'static,
 {
-    driver: FlowDriver<E, BufferedReassemblerFactory, S>,
+    driver: FlowDriver<E, BufferedReassemblerFactory>,
     parser_factory: P,
     parsers: HashMap<E::Key, P, RandomState>,
 }
 
-impl<E, P, S> FlowSessionDriver<E, P, S>
+impl<E, P> FlowSessionDriver<E, P>
 where
     E: FlowExtractor,
     E::Key: Hash + Eq + Clone + Send + 'static,
-    P: SessionParser + Default + Clone + Send + 'static,
-    S: Default + Send + 'static,
+    P: SessionParser + Clone + Send + 'static,
 {
-    /// Construct with default tracker config and `S::default()`
-    /// per-flow state.
-    pub fn new(extractor: E) -> Self {
-        Self::with_config(extractor, FlowTrackerConfig::default())
+    /// Construct with default tracker config. `parser` is cloned
+    /// once per flow to give each session a fresh instance.
+    pub fn new(extractor: E, parser: P) -> Self {
+        Self::with_config(extractor, parser, FlowTrackerConfig::default())
     }
 
     /// Construct with explicit tracker config. Honours
     /// `config.max_reassembler_buffer` and `config.overflow_policy`
     /// when building per-flow reassemblers.
-    pub fn with_config(extractor: E, config: FlowTrackerConfig) -> Self {
+    pub fn with_config(extractor: E, parser: P, config: FlowTrackerConfig) -> Self {
         let factory = match config.max_reassembler_buffer {
             Some(cap) => BufferedReassemblerFactory::default()
                 .with_max_buffer(cap)
@@ -117,19 +116,11 @@ where
         };
         Self {
             driver: FlowDriver::with_config(extractor, factory, config),
-            parser_factory: P::default(),
+            parser_factory: parser,
             parsers: HashMap::with_hasher(RandomState::new()),
         }
     }
-}
 
-impl<E, P, S> FlowSessionDriver<E, P, S>
-where
-    E: FlowExtractor,
-    E::Key: Hash + Eq + Clone + Send + 'static,
-    P: SessionParser + Default + Clone + Send + 'static,
-    S: Send + 'static,
-{
     /// Opt in to forwarding [`SessionEvent::Anomaly`]s through the
     /// stream. Default: `false`. Mirrors
     /// [`FlowDriver::with_emit_anomalies`].
@@ -171,7 +162,10 @@ where
     }
 
     /// Drive one packet. Returns zero or more [`SessionEvent`]s.
-    pub fn track(&mut self, view: PacketView<'_>) -> Vec<SessionEvent<E::Key, P::Message>> {
+    pub fn track<'v>(
+        &mut self,
+        view: impl Into<PacketView<'v>>,
+    ) -> Vec<SessionEvent<E::Key, P::Message>> {
         let mut flow_events = self.driver.track_pending(view);
         let out = self.translate_events(&flow_events);
         self.driver.finalize(flow_events.as_mut_slice());
@@ -187,13 +181,20 @@ where
         out
     }
 
+    /// Sweep every remaining flow, emitting `Closed` events (and any
+    /// `Application` events the parser flushes on close). Call once
+    /// at end of input — equivalent to `sweep(Timestamp::MAX)`.
+    pub fn finish(&mut self) -> Vec<SessionEvent<E::Key, P::Message>> {
+        self.sweep(Timestamp::MAX)
+    }
+
     /// Borrow the inner tracker (for stats, introspection).
-    pub fn tracker(&self) -> &FlowTracker<E, S> {
+    pub fn tracker(&self) -> &FlowTracker<E, ()> {
         self.driver.tracker()
     }
 
     /// Borrow the inner tracker mutably.
-    pub fn tracker_mut(&mut self) -> &mut FlowTracker<E, S> {
+    pub fn tracker_mut(&mut self) -> &mut FlowTracker<E, ()> {
         self.driver.tracker_mut()
     }
 
@@ -382,6 +383,27 @@ mod tests {
         PacketView::new(frame, Timestamp::new(sec, 0))
     }
 
+    /// Plan 32 guard: the parser bound is `Clone`, not
+    /// `Default + Clone`. A config-built parser with no `Default`
+    /// impl must still be accepted by the constructor.
+    #[test]
+    fn accepts_non_default_parser() {
+        #[derive(Clone)]
+        struct ConfigParser {
+            _limit: usize,
+        }
+        impl SessionParser for ConfigParser {
+            type Message = ();
+            fn feed_initiator(&mut self, _b: &[u8]) -> Vec<()> {
+                Vec::new()
+            }
+            fn feed_responder(&mut self, _b: &[u8]) -> Vec<()> {
+                Vec::new()
+            }
+        }
+        let _d = FlowSessionDriver::new(FiveTuple::bidirectional(), ConfigParser { _limit: 4096 });
+    }
+
     /// Tiny line-oriented parser: emits one Vec<u8> per newline-terminated frame.
     #[derive(Default, Clone)]
     struct LineParser {
@@ -422,9 +444,26 @@ mod tests {
         ]
     }
 
+    /// Plan 33: `finish()` closes every still-open session.
+    #[test]
+    fn finish_closes_open_sessions() {
+        let mut d = FlowSessionDriver::new(FiveTuple::bidirectional(), LineParser::default());
+        let frames = build_3whs();
+        for f in &frames {
+            d.track(view(f, 0));
+        }
+        let closed = d
+            .finish()
+            .into_iter()
+            .filter(|e| matches!(e, SessionEvent::Closed { .. }))
+            .count();
+        assert_eq!(closed, 1, "finish() must close the open session");
+        assert!(d.finish().is_empty(), "second finish() yields nothing");
+    }
+
     #[test]
     fn started_event_emitted_on_first_packet() {
-        let mut d = FlowSessionDriver::<_, LineParser>::new(FiveTuple::bidirectional());
+        let mut d = FlowSessionDriver::new(FiveTuple::bidirectional(), LineParser::default());
         let frames = build_3whs();
         let mut events = Vec::new();
         for f in &frames {
@@ -439,7 +478,7 @@ mod tests {
 
     #[test]
     fn application_events_for_parsed_messages() {
-        let mut d = FlowSessionDriver::<_, LineParser>::new(FiveTuple::bidirectional());
+        let mut d = FlowSessionDriver::new(FiveTuple::bidirectional(), LineParser::default());
         let mut events = Vec::new();
         for f in build_3whs() {
             events.extend(d.track(view(&f, 0)));
@@ -478,7 +517,7 @@ mod tests {
 
     #[test]
     fn closed_event_carries_stats_on_rst() {
-        let mut d = FlowSessionDriver::<_, LineParser>::new(FiveTuple::bidirectional());
+        let mut d = FlowSessionDriver::new(FiveTuple::bidirectional(), LineParser::default());
         let mut events = Vec::new();
         for f in build_3whs() {
             events.extend(d.track(view(&f, 0)));
@@ -517,7 +556,7 @@ mod tests {
         // before the Closed event fires (the FlowDriver finalize
         // path drops the reassembler; FlowSessionDriver drains it
         // first via the track_pending -> drain -> finalize split).
-        let mut d = FlowSessionDriver::<_, LineParser>::new(FiveTuple::bidirectional());
+        let mut d = FlowSessionDriver::new(FiveTuple::bidirectional(), LineParser::default());
         let mut events = Vec::new();
         for f in build_3whs() {
             events.extend(d.track(view(&f, 0)));
@@ -559,7 +598,7 @@ mod tests {
             ..FlowTrackerConfig::default()
         };
         let mut d =
-            FlowSessionDriver::<_, LineParser>::with_config(FiveTuple::bidirectional(), cfg)
+            FlowSessionDriver::with_config(FiveTuple::bidirectional(), LineParser::default(), cfg)
                 .with_emit_anomalies(true);
 
         let mut events = Vec::new();
@@ -604,7 +643,7 @@ mod tests {
             ..FlowTrackerConfig::default()
         };
         let mut d =
-            FlowSessionDriver::<_, LineParser>::with_config(FiveTuple::bidirectional(), cfg);
+            FlowSessionDriver::with_config(FiveTuple::bidirectional(), LineParser::default(), cfg);
         let mut events = Vec::new();
         for f in build_3whs() {
             events.extend(d.track(view(&f, 0)));
@@ -666,7 +705,7 @@ mod tests {
 
     #[test]
     fn parser_poison_synthesises_parse_error_closed() {
-        let mut d = FlowSessionDriver::<_, PoisonAfterBytes>::new(FiveTuple::bidirectional());
+        let mut d = FlowSessionDriver::new(FiveTuple::bidirectional(), PoisonAfterBytes::default());
         let mut events = Vec::new();
         for f in build_3whs() {
             events.extend(d.track(view(&f, 0)));
@@ -698,7 +737,7 @@ mod tests {
 
     #[test]
     fn parser_poison_with_anomalies_emits_parse_error_anomaly() {
-        let mut d = FlowSessionDriver::<_, PoisonAfterBytes>::new(FiveTuple::bidirectional())
+        let mut d = FlowSessionDriver::new(FiveTuple::bidirectional(), PoisonAfterBytes::default())
             .with_emit_anomalies(true);
         let mut events = Vec::new();
         for f in build_3whs() {
@@ -765,7 +804,7 @@ mod tests {
     fn non_poisoning_parser_unaffected_by_poison_path() {
         // LineParser never poisons; existing tests should still
         // produce no ParseError events.
-        let mut d = FlowSessionDriver::<_, LineParser>::new(FiveTuple::bidirectional());
+        let mut d = FlowSessionDriver::new(FiveTuple::bidirectional(), LineParser::default());
         let mut events = Vec::new();
         for f in build_3whs() {
             events.extend(d.track(view(&f, 0)));
@@ -803,7 +842,7 @@ mod tests {
             ..FlowTrackerConfig::default()
         };
         let mut d =
-            FlowSessionDriver::<_, LineParser>::with_config(FiveTuple::bidirectional(), cfg)
+            FlowSessionDriver::with_config(FiveTuple::bidirectional(), LineParser::default(), cfg)
                 .with_emit_anomalies(true);
         let mut events = Vec::new();
         for src_port in [1234u16, 1235, 1236] {

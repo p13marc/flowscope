@@ -52,18 +52,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let path = env::args().nth(1).ok_or("usage: http_log <trace.pcap>")?;
 
     let factory = HttpFactory::with_handler(Logger);
-    let mut driver: FlowDriver<FiveTuple, _, ()> =
-        FlowDriver::new(FiveTuple::bidirectional(), factory);
+    let mut driver = FlowDriver::new(FiveTuple::bidirectional(), factory);
 
     let mut started = 0u64;
     let mut ended = 0u64;
-    let mut last_ts = None;
 
     let src = PcapFlowSource::open(&path)?;
     for view in src.views() {
         let view = view?;
-        last_ts = Some(view.timestamp);
-        for ev in driver.track(view.as_view()) {
+        for ev in driver.track(&view) {
             match ev {
                 FlowEvent::Started { .. } => started += 1,
                 FlowEvent::Ended { .. } => ended += 1,
@@ -71,12 +68,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
     }
-    if let Some(ts) = last_ts {
-        let far = flowscope::Timestamp::new(ts.sec.saturating_add(86_400), 0);
-        for ev in driver.sweep(far) {
-            if matches!(ev, FlowEvent::Ended { .. }) {
-                ended += 1;
-            }
+    for ev in driver.finish() {
+        if matches!(ev, FlowEvent::Ended { .. }) {
+            ended += 1;
         }
     }
 

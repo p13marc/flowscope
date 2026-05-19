@@ -160,7 +160,11 @@ impl<E: FlowExtractor, S: Send + 'static> FlowTracker<E, S> {
     }
 
     /// Process a packet. Returns 0–3 events.
-    pub fn track(&mut self, view: PacketView<'_>) -> FlowEvents<E::Key> {
+    ///
+    /// Accepts anything convertible into a [`PacketView`] — a
+    /// `PacketView` itself, or `&OwnedPacketView` from the `pcap`
+    /// source.
+    pub fn track<'v>(&mut self, view: impl Into<PacketView<'v>>) -> FlowEvents<E::Key> {
         self.track_with_payload(view, |_, _, _, _| {})
     }
 
@@ -176,14 +180,15 @@ impl<E: FlowExtractor, S: Send + 'static> FlowTracker<E, S> {
     /// dispatch) run inline without a second extract pass.
     ///
     /// `payload_cb` is called at most once per packet (TCP only).
-    pub fn track_with_payload<F>(
+    pub fn track_with_payload<'v, F>(
         &mut self,
-        view: PacketView<'_>,
+        view: impl Into<PacketView<'v>>,
         mut payload_cb: F,
     ) -> FlowEvents<E::Key>
     where
         F: FnMut(&E::Key, FlowSide, u32, &[u8]),
     {
+        let view: PacketView<'v> = view.into();
         let mut events: FlowEvents<E::Key> = SmallVec::new();
         let extracted = match self.extractor.extract(view) {
             Some(e) => e,

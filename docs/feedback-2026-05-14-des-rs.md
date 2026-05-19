@@ -249,7 +249,7 @@ than in every downstream tool.
 **Problem.** The async builder chain has
 `flow_stream(...).with_dedup(Dedup::loopback())`. The sync driver
 constructed via
-`FlowSessionDriver::<_, Parser>::with_config(extractor, cfg)`
+`FlowSessionDriver::with_config(extractor, parser, cfg)`
 has no equivalent. For our offline `des-pcap-decode` binary
 processing pcaps captured from `lo`, we'd like to apply the same
 dedup the live path applies, but the sync API doesn't expose
@@ -258,8 +258,9 @@ it.
 **What we'd like:**
 
 ```rust
-let driver = FlowSessionDriver::<_, DesSessionParser>::with_config(
+let driver = FlowSessionDriver::with_config(
     FiveTuple::bidirectional(),
+    DesSessionParser::default(),
     cfg,
 ).with_dedup(Dedup::loopback());
 ```

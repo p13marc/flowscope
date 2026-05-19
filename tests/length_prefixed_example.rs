@@ -78,11 +78,12 @@ fn peek_header(buf: &[u8]) -> Option<(usize, usize)> {
 }
 
 fn collect_messages(path: &str) -> Vec<Record> {
-    let mut driver = FlowSessionDriver::<_, LengthPrefixedParser>::new(FiveTuple::bidirectional());
+    let mut driver =
+        FlowSessionDriver::new(FiveTuple::bidirectional(), LengthPrefixedParser::default());
     let mut messages = Vec::new();
     for view in PcapFlowSource::open(path).expect("open fixture").views() {
         let view = view.expect("read packet");
-        for ev in driver.track(view.as_view()) {
+        for ev in driver.track(&view) {
             if let SessionEvent::Application { message, .. } = ev {
                 messages.push(message);
             }
