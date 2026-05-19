@@ -12,16 +12,16 @@
 //! ```no_run
 //! use flowscope::extract::FiveTuple;
 //! use flowscope::pcap::PcapFlowSource;
-//! use flowscope::{FlowSessionDriver, SessionEvent, SessionParser};
+//! use flowscope::{FlowSessionDriver, SessionEvent, SessionParser, Timestamp};
 //!
 //! #[derive(Default, Clone)]
 //! struct EchoParser;
 //! impl SessionParser for EchoParser {
 //!     type Message = Vec<u8>;
-//!     fn feed_initiator(&mut self, bytes: &[u8]) -> Vec<Vec<u8>> {
+//!     fn feed_initiator(&mut self, bytes: &[u8], _ts: Timestamp) -> Vec<Vec<u8>> {
 //!         vec![bytes.to_vec()]
 //!     }
-//!     fn feed_responder(&mut self, bytes: &[u8]) -> Vec<Vec<u8>> {
+//!     fn feed_responder(&mut self, bytes: &[u8], _ts: Timestamp) -> Vec<Vec<u8>> {
 //!         vec![bytes.to_vec()]
 //!     }
 //! }
@@ -173,10 +173,29 @@ where
     }
 
     /// Run the idle-timeout sweep. Returns any resulting `Closed`
-    /// events plus anomalies emitted during the sweep.
+    /// events plus anomalies emitted during the sweep. Also drives
+    /// each still-live parser's [`SessionParser::on_tick`] hook with
+    /// `now`, emitting any time-driven messages as `Application`
+    /// events attributed to the initiator side.
     pub fn sweep(&mut self, now: Timestamp) -> Vec<SessionEvent<E::Key, P::Message>> {
         let mut flow_events = self.driver.sweep_pending(now);
-        let out = self.translate_events(&flow_events);
+        // Fire `on_tick` on every live parser *before* translating
+        // the swept events — a flow this sweep is about to close
+        // still gets its final tick, and the tick's messages land
+        // ahead of that flow's `Closed`.
+        let mut out: Vec<SessionEvent<E::Key, P::Message>> = Vec::new();
+        for (key, parser) in self.parsers.iter_mut() {
+            for m in parser.on_tick(now) {
+                crate::obs::trace_session_message(FlowSide::Initiator, &m);
+                out.push(SessionEvent::Application {
+                    key: key.clone(),
+                    side: FlowSide::Initiator,
+                    message: m,
+                    ts: now,
+                });
+            }
+        }
+        out.extend(self.translate_events(&flow_events));
         self.driver.finalize(flow_events.as_mut_slice());
         out
     }
@@ -309,8 +328,8 @@ where
                 None => return,
             };
             let messages = match side {
-                FlowSide::Initiator => parser.feed_initiator(&drained),
-                FlowSide::Responder => parser.feed_responder(&drained),
+                FlowSide::Initiator => parser.feed_initiator(&drained, ts),
+                FlowSide::Responder => parser.feed_responder(&drained, ts),
             };
             for m in messages {
                 crate::obs::trace_session_message(side, &m);
@@ -394,10 +413,10 @@ mod tests {
         }
         impl SessionParser for ConfigParser {
             type Message = ();
-            fn feed_initiator(&mut self, _b: &[u8]) -> Vec<()> {
+            fn feed_initiator(&mut self, _b: &[u8], _ts: Timestamp) -> Vec<()> {
                 Vec::new()
             }
-            fn feed_responder(&mut self, _b: &[u8]) -> Vec<()> {
+            fn feed_responder(&mut self, _b: &[u8], _ts: Timestamp) -> Vec<()> {
                 Vec::new()
             }
         }
@@ -414,10 +433,10 @@ mod tests {
     impl SessionParser for LineParser {
         type Message = (FlowSide, Vec<u8>);
 
-        fn feed_initiator(&mut self, bytes: &[u8]) -> Vec<Self::Message> {
+        fn feed_initiator(&mut self, bytes: &[u8], _ts: Timestamp) -> Vec<Self::Message> {
             drain(&mut self.init, bytes, FlowSide::Initiator)
         }
-        fn feed_responder(&mut self, bytes: &[u8]) -> Vec<Self::Message> {
+        fn feed_responder(&mut self, bytes: &[u8], _ts: Timestamp) -> Vec<Self::Message> {
             drain(&mut self.resp, bytes, FlowSide::Responder)
         }
     }
@@ -459,6 +478,41 @@ mod tests {
             .count();
         assert_eq!(closed, 1, "finish() must close the open session");
         assert!(d.finish().is_empty(), "second finish() yields nothing");
+    }
+
+    /// Plan 36: `on_tick` fires on `sweep` / `finish` for live
+    /// flows — including a flow the sweep is about to close.
+    #[test]
+    fn on_tick_fires_on_sweep_and_finish() {
+        #[derive(Default, Clone)]
+        struct TickParser;
+        impl SessionParser for TickParser {
+            type Message = u8;
+            fn feed_initiator(&mut self, _b: &[u8], _ts: Timestamp) -> Vec<u8> {
+                Vec::new()
+            }
+            fn feed_responder(&mut self, _b: &[u8], _ts: Timestamp) -> Vec<u8> {
+                Vec::new()
+            }
+            fn on_tick(&mut self, _now: Timestamp) -> Vec<u8> {
+                vec![42]
+            }
+        }
+        let mut d = FlowSessionDriver::new(FiveTuple::bidirectional(), TickParser);
+        for f in &build_3whs() {
+            d.track(view(f, 0));
+        }
+        let count = |evs: Vec<SessionEvent<_, u8>>| {
+            evs.iter()
+                .filter(|e| matches!(e, SessionEvent::Application { message: 42, .. }))
+                .count()
+        };
+        // A non-closing sweep fires on_tick for the live flow.
+        assert_eq!(count(d.sweep(Timestamp::new(1, 0))), 1);
+        // finish() closes the flow but still drives a final on_tick.
+        assert_eq!(count(d.finish()), 1);
+        // No flows remain → no further ticks.
+        assert_eq!(count(d.sweep(Timestamp::new(99, 0))), 0);
     }
 
     #[test]
@@ -681,14 +735,14 @@ mod tests {
 
     impl SessionParser for PoisonAfterBytes {
         type Message = Vec<u8>;
-        fn feed_initiator(&mut self, bytes: &[u8]) -> Vec<Vec<u8>> {
+        fn feed_initiator(&mut self, bytes: &[u8], _ts: Timestamp) -> Vec<Vec<u8>> {
             self.init_bytes += bytes.len();
             if self.init_bytes > 5 {
                 self.poisoned = true;
             }
             vec![bytes.to_vec()]
         }
-        fn feed_responder(&mut self, bytes: &[u8]) -> Vec<Vec<u8>> {
+        fn feed_responder(&mut self, bytes: &[u8], _ts: Timestamp) -> Vec<Vec<u8>> {
             vec![bytes.to_vec()]
         }
         fn is_poisoned(&self) -> bool {

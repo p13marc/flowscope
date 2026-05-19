@@ -14,7 +14,7 @@
 
 use flowscope::extract::FiveTuple;
 use flowscope::pcap::PcapFlowSource;
-use flowscope::{FlowSessionDriver, FlowSide, SessionEvent, SessionParser};
+use flowscope::{FlowSessionDriver, FlowSide, SessionEvent, SessionParser, Timestamp};
 
 const MARKER_2: &[u8] = b"PFX2,";
 const MARKER_4: &[u8] = b"PFX4,";
@@ -36,10 +36,10 @@ struct LengthPrefixedParser {
 
 impl SessionParser for LengthPrefixedParser {
     type Message = Record;
-    fn feed_initiator(&mut self, bytes: &[u8]) -> Vec<Record> {
+    fn feed_initiator(&mut self, bytes: &[u8], _ts: Timestamp) -> Vec<Record> {
         drain(&mut self.init_buf, bytes, FlowSide::Initiator)
     }
-    fn feed_responder(&mut self, bytes: &[u8]) -> Vec<Record> {
+    fn feed_responder(&mut self, bytes: &[u8], _ts: Timestamp) -> Vec<Record> {
         drain(&mut self.resp_buf, bytes, FlowSide::Responder)
     }
 }
@@ -135,7 +135,7 @@ fn handles_split_headers_and_bodies() {
     let mut parser = LengthPrefixedParser::default();
     let mut out = Vec::new();
     for byte in &payload {
-        out.extend(parser.feed_initiator(std::slice::from_ref(byte)));
+        out.extend(parser.feed_initiator(std::slice::from_ref(byte), Timestamp::default()));
     }
     assert_eq!(out.len(), 5);
     for (i, m) in out.iter().enumerate() {
@@ -149,12 +149,20 @@ fn parser_stalls_on_unknown_marker() {
     // The example's recovery policy is "stall the parser" rather
     // than "drop a byte and resync" — verify that contract.
     let mut parser = LengthPrefixedParser::default();
-    assert!(parser.feed_initiator(b"GARBAGE-NOT-PFX").is_empty());
+    assert!(
+        parser
+            .feed_initiator(b"GARBAGE-NOT-PFX", Timestamp::default())
+            .is_empty()
+    );
     // A subsequent valid frame is invisible until the parser resyncs
     // (which this minimal example does not do).
     let mut tail = Vec::new();
     tail.extend_from_slice(MARKER_2);
     tail.extend_from_slice(&3u16.to_be_bytes());
     tail.extend_from_slice(b"abc");
-    assert!(parser.feed_initiator(&tail).is_empty());
+    assert!(
+        parser
+            .feed_initiator(&tail, Timestamp::default())
+            .is_empty()
+    );
 }

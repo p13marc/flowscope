@@ -6,7 +6,7 @@
 //! to get an async iterator of TLS events instead of a callback
 //! handler.
 
-use crate::SessionParser;
+use crate::{SessionParser, Timestamp};
 
 use super::parser::{self, DirState, ParseOutput};
 use super::types::{TlsAlert, TlsClientHello, TlsConfig, TlsServerHello};
@@ -106,7 +106,7 @@ impl TlsParser {
 impl SessionParser for TlsParser {
     type Message = TlsMessage;
 
-    fn feed_initiator(&mut self, bytes: &[u8]) -> Vec<TlsMessage> {
+    fn feed_initiator(&mut self, bytes: &[u8], _ts: Timestamp) -> Vec<TlsMessage> {
         if bytes.is_empty() || matches!(self.init_state, DirState::Encrypted | DirState::Desynced) {
             return Vec::new();
         }
@@ -122,7 +122,7 @@ impl SessionParser for TlsParser {
         out
     }
 
-    fn feed_responder(&mut self, bytes: &[u8]) -> Vec<TlsMessage> {
+    fn feed_responder(&mut self, bytes: &[u8], _ts: Timestamp) -> Vec<TlsMessage> {
         if bytes.is_empty() || matches!(self.resp_state, DirState::Encrypted | DirState::Desynced) {
             return Vec::new();
         }
@@ -190,7 +190,7 @@ mod tests {
     fn parses_client_hello() {
         let mut p = TlsParser::default();
         let bytes = build_client_hello_record();
-        let messages = p.feed_initiator(&bytes);
+        let messages = p.feed_initiator(&bytes, Timestamp::default());
         assert!(
             messages
                 .iter()
@@ -206,7 +206,7 @@ mod tests {
         // Feed one byte at a time.
         let mut all_msgs = Vec::new();
         for chunk in bytes.chunks(1) {
-            all_msgs.extend(p.feed_initiator(chunk));
+            all_msgs.extend(p.feed_initiator(chunk, Timestamp::default()));
         }
         assert!(
             all_msgs
@@ -220,7 +220,7 @@ mod tests {
     fn rst_clears_state() {
         let mut p = TlsParser::default();
         // Feed a partial record; nothing should emit.
-        p.feed_initiator(&[0x16, 0x03, 0x01, 0x00]); // partial record header
+        p.feed_initiator(&[0x16, 0x03, 0x01, 0x00], Timestamp::default()); // partial record header
         p.rst_initiator();
         assert!(p.init_buf.is_empty());
         assert_eq!(p.init_state, DirState::Reading);
@@ -229,8 +229,8 @@ mod tests {
     #[test]
     fn empty_feed_returns_empty() {
         let mut p = TlsParser::default();
-        assert!(p.feed_initiator(&[]).is_empty());
-        assert!(p.feed_responder(&[]).is_empty());
+        assert!(p.feed_initiator(&[], Timestamp::default()).is_empty());
+        assert!(p.feed_responder(&[], Timestamp::default()).is_empty());
     }
 
     // Touch private types so cargo doesn't flag them.

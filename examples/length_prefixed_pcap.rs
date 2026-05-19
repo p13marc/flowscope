@@ -26,7 +26,7 @@
 
 use flowscope::extract::FiveTuple;
 use flowscope::pcap::PcapFlowSource;
-use flowscope::{FlowSessionDriver, FlowSide, SessionEvent, SessionParser};
+use flowscope::{FlowSessionDriver, FlowSide, SessionEvent, SessionParser, Timestamp};
 use std::env;
 
 const MARKER_2: &[u8] = b"PFX2,";
@@ -52,10 +52,10 @@ pub struct LengthPrefixedParser {
 impl SessionParser for LengthPrefixedParser {
     type Message = Record;
 
-    fn feed_initiator(&mut self, bytes: &[u8]) -> Vec<Record> {
+    fn feed_initiator(&mut self, bytes: &[u8], _ts: Timestamp) -> Vec<Record> {
         Self::drain(&mut self.init_buf, bytes, FlowSide::Initiator)
     }
-    fn feed_responder(&mut self, bytes: &[u8]) -> Vec<Record> {
+    fn feed_responder(&mut self, bytes: &[u8], _ts: Timestamp) -> Vec<Record> {
         Self::drain(&mut self.resp_buf, bytes, FlowSide::Responder)
     }
 }

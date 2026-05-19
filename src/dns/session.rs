@@ -22,7 +22,7 @@
 //!   EDNS(0) option decoding (the OPT pseudo-record falls into
 //!   `Other`).
 
-use crate::SessionParser;
+use crate::{SessionParser, Timestamp};
 
 use super::datagram::DnsMessage;
 use super::parser::{DnsParseResult, parse_message};
@@ -76,7 +76,7 @@ impl DnsTcpParser {
 impl SessionParser for DnsTcpParser {
     type Message = DnsMessage;
 
-    fn feed_initiator(&mut self, bytes: &[u8]) -> Vec<DnsMessage> {
+    fn feed_initiator(&mut self, bytes: &[u8], _ts: Timestamp) -> Vec<DnsMessage> {
         if bytes.is_empty() {
             return Vec::new();
         }
@@ -84,7 +84,7 @@ impl SessionParser for DnsTcpParser {
         Self::drain(&mut self.init_buf)
     }
 
-    fn feed_responder(&mut self, bytes: &[u8]) -> Vec<DnsMessage> {
+    fn feed_responder(&mut self, bytes: &[u8], _ts: Timestamp) -> Vec<DnsMessage> {
         if bytes.is_empty() {
             return Vec::new();
         }
@@ -132,7 +132,7 @@ mod tests {
     fn parses_one_query() {
         let mut p = DnsTcpParser::default();
         let bytes = build_a_query_tcp(0x1234, "example.com");
-        let msgs = p.feed_initiator(&bytes);
+        let msgs = p.feed_initiator(&bytes, Timestamp::default());
         assert_eq!(msgs.len(), 1);
         match &msgs[0] {
             DnsMessage::Query(q) => assert_eq!(q.transaction_id, 0x1234),
@@ -147,7 +147,7 @@ mod tests {
         bytes.extend_from_slice(&build_a_query_tcp(1, "a.example"));
         bytes.extend_from_slice(&build_a_query_tcp(2, "b.example"));
         bytes.extend_from_slice(&build_a_query_tcp(3, "c.example"));
-        let msgs = p.feed_initiator(&bytes);
+        let msgs = p.feed_initiator(&bytes, Timestamp::default());
         assert_eq!(msgs.len(), 3);
     }
 
@@ -158,7 +158,7 @@ mod tests {
         // Feed one byte at a time.
         let mut all = Vec::new();
         for chunk in bytes.chunks(1) {
-            all.extend(p.feed_initiator(chunk));
+            all.extend(p.feed_initiator(chunk, Timestamp::default()));
         }
         assert_eq!(all.len(), 1);
         match &all[0] {
@@ -172,9 +172,12 @@ mod tests {
         let mut p = DnsTcpParser::default();
         let bytes = build_a_query_tcp(7, "prefix.split");
         // Feed first byte alone (incomplete length prefix).
-        assert!(p.feed_initiator(&bytes[..1]).is_empty());
+        assert!(
+            p.feed_initiator(&bytes[..1], Timestamp::default())
+                .is_empty()
+        );
         // Feed everything else — should emit one Query.
-        let msgs = p.feed_initiator(&bytes[1..]);
+        let msgs = p.feed_initiator(&bytes[1..], Timestamp::default());
         assert_eq!(msgs.len(), 1);
     }
 
@@ -188,7 +191,7 @@ mod tests {
         bytes.extend_from_slice(&[0xff; 12]);
         // Then a valid query.
         bytes.extend_from_slice(&build_a_query_tcp(99, "valid.after"));
-        let msgs = p.feed_initiator(&bytes);
+        let msgs = p.feed_initiator(&bytes, Timestamp::default());
         // Malformed first frame is dropped; valid second emits.
         assert_eq!(msgs.len(), 1);
         match &msgs[0] {
@@ -202,7 +205,10 @@ mod tests {
         let mut p = DnsTcpParser::default();
         let bytes = build_a_query_tcp(1, "partial.example");
         // Feed half — nothing emits.
-        assert!(p.feed_initiator(&bytes[..bytes.len() / 2]).is_empty());
+        assert!(
+            p.feed_initiator(&bytes[..bytes.len() / 2], Timestamp::default())
+                .is_empty()
+        );
         p.rst_initiator();
         assert!(p.init_buf.is_empty());
     }
@@ -210,8 +216,8 @@ mod tests {
     #[test]
     fn empty_feed_returns_empty() {
         let mut p = DnsTcpParser::default();
-        assert!(p.feed_initiator(&[]).is_empty());
-        assert!(p.feed_responder(&[]).is_empty());
+        assert!(p.feed_initiator(&[], Timestamp::default()).is_empty());
+        assert!(p.feed_responder(&[], Timestamp::default()).is_empty());
     }
 
     #[test]
@@ -222,7 +228,7 @@ mod tests {
         let mut f = DnsTcpParser::default();
         let mut p: DnsTcpParser = SessionParserFactory::<()>::new_parser(&mut f, &());
         let bytes = build_a_query_tcp(7, "auto.factory");
-        let msgs = p.feed_initiator(&bytes);
+        let msgs = p.feed_initiator(&bytes, Timestamp::default());
         assert_eq!(msgs.len(), 1);
     }
 }

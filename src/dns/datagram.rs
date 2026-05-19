@@ -5,7 +5,7 @@
 //! async iterator API. For the callback-style "tap on top of an
 //! existing extractor" integration, see [`crate::dns::DnsUdpObserver`].
 
-use crate::{DatagramParser, FlowSide};
+use crate::{DatagramParser, FlowSide, Timestamp};
 
 use super::parser::{DnsParseResult, parse_message};
 use super::types::{DnsQuery, DnsResponse};
@@ -26,7 +26,7 @@ pub struct DnsUdpParser;
 impl DatagramParser for DnsUdpParser {
     type Message = DnsMessage;
 
-    fn parse(&mut self, payload: &[u8], _side: FlowSide) -> Vec<DnsMessage> {
+    fn parse(&mut self, payload: &[u8], _side: FlowSide, _ts: Timestamp) -> Vec<DnsMessage> {
         match parse_message(payload) {
             Ok(DnsParseResult::Query(q)) => vec![DnsMessage::Query(q)],
             Ok(DnsParseResult::Response(r)) => vec![DnsMessage::Response(r)],
@@ -61,7 +61,7 @@ mod tests {
     fn parses_query() {
         let mut p = DnsUdpParser;
         let bytes = build_a_query(0xabcd, "example.com");
-        let msgs = p.parse(&bytes, FlowSide::Initiator);
+        let msgs = p.parse(&bytes, FlowSide::Initiator, Timestamp::default());
         assert_eq!(msgs.len(), 1);
         match &msgs[0] {
             DnsMessage::Query(q) => assert_eq!(q.transaction_id, 0xabcd),
@@ -72,7 +72,7 @@ mod tests {
     #[test]
     fn malformed_returns_empty() {
         let mut p = DnsUdpParser;
-        let msgs = p.parse(b"\x00", FlowSide::Initiator);
+        let msgs = p.parse(b"\x00", FlowSide::Initiator, Timestamp::default());
         assert!(msgs.is_empty());
     }
 }

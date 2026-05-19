@@ -11,13 +11,13 @@
 //! ```no_run
 //! use flowscope::extract::FiveTuple;
 //! use flowscope::pcap::PcapFlowSource;
-//! use flowscope::{DatagramParser, FlowDatagramDriver, FlowSide, SessionEvent};
+//! use flowscope::{DatagramParser, FlowDatagramDriver, FlowSide, SessionEvent, Timestamp};
 //!
 //! #[derive(Default, Clone)]
 //! struct EchoUdp;
 //! impl DatagramParser for EchoUdp {
 //!     type Message = Vec<u8>;
-//!     fn parse(&mut self, payload: &[u8], _side: FlowSide) -> Vec<Vec<u8>> {
+//!     fn parse(&mut self, payload: &[u8], _side: FlowSide, _ts: Timestamp) -> Vec<Vec<u8>> {
 //!         vec![payload.to_vec()]
 //!     }
 //! }
@@ -168,10 +168,28 @@ where
         out
     }
 
-    /// Run the idle-timeout sweep.
+    /// Run the idle-timeout sweep. Also drives each still-live
+    /// parser's [`DatagramParser::on_tick`] hook with `now`, emitting
+    /// any time-driven messages as initiator-side `Application`
+    /// events.
     pub fn sweep(&mut self, now: Timestamp) -> Vec<SessionEvent<E::Key, P::Message>> {
         let mut flow_events = self.driver.sweep_pending(now);
-        let out = self.translate_events(&flow_events, None);
+        // Fire `on_tick` on every live parser *before* translating
+        // the swept events, so a flow this sweep closes still gets
+        // its final tick ahead of its `Closed` event.
+        let mut out: Vec<SessionEvent<E::Key, P::Message>> = Vec::new();
+        for (key, parser) in self.parsers.iter_mut() {
+            for m in parser.on_tick(now) {
+                crate::obs::trace_session_message(FlowSide::Initiator, &m);
+                out.push(SessionEvent::Application {
+                    key: key.clone(),
+                    side: FlowSide::Initiator,
+                    message: m,
+                    ts: now,
+                });
+            }
+        }
+        out.extend(self.translate_events(&flow_events, None));
         self.driver.finalize(flow_events.as_mut_slice());
         out
     }
@@ -227,7 +245,7 @@ where
                     let Some(parser) = self.parsers.get_mut(key) else {
                         continue;
                     };
-                    let messages = parser.parse(payload, *side);
+                    let messages = parser.parse(payload, *side, *ts);
                     for m in messages {
                         crate::obs::trace_session_message(*side, &m);
                         out.push(SessionEvent::Application {
@@ -324,7 +342,7 @@ mod tests {
     struct EchoUdp;
     impl DatagramParser for EchoUdp {
         type Message = (FlowSide, Vec<u8>);
-        fn parse(&mut self, payload: &[u8], side: FlowSide) -> Vec<Self::Message> {
+        fn parse(&mut self, payload: &[u8], side: FlowSide, _ts: Timestamp) -> Vec<Self::Message> {
             vec![(side, payload.to_vec())]
         }
     }
@@ -342,6 +360,35 @@ mod tests {
             .count();
         assert_eq!(closed, 1, "finish() must close the open flow");
         assert!(d.finish().is_empty(), "second finish() yields nothing");
+    }
+
+    /// Plan 36: `on_tick` fires on `finish` for a live UDP flow,
+    /// before that flow's `Closed`.
+    #[test]
+    fn on_tick_fires_on_finish() {
+        #[derive(Default, Clone)]
+        struct TickParser;
+        impl DatagramParser for TickParser {
+            type Message = u8;
+            fn parse(&mut self, _p: &[u8], _s: FlowSide, _ts: Timestamp) -> Vec<u8> {
+                Vec::new()
+            }
+            fn on_tick(&mut self, _now: Timestamp) -> Vec<u8> {
+                vec![7]
+            }
+        }
+        let mut d = FlowDatagramDriver::new(FiveTuple::bidirectional(), TickParser);
+        let f = ipv4_udp([10, 0, 0, 1], [10, 0, 0, 2], 1, 53, b"q");
+        d.track(view(&f, 0));
+        let count = |evs: Vec<SessionEvent<_, u8>>| {
+            evs.iter()
+                .filter(|e| matches!(e, SessionEvent::Application { message: 7, .. }))
+                .count()
+        };
+        // finish() closes the UDP flow but drives a final on_tick.
+        assert_eq!(count(d.finish()), 1);
+        // No flows remain → no further ticks.
+        assert_eq!(count(d.sweep(Timestamp::new(99, 0))), 0);
     }
 
     #[test]
@@ -417,7 +464,7 @@ mod tests {
     }
     impl DatagramParser for PoisonAfterBytes {
         type Message = ();
-        fn parse(&mut self, payload: &[u8], _side: FlowSide) -> Vec<()> {
+        fn parse(&mut self, payload: &[u8], _side: FlowSide, _ts: Timestamp) -> Vec<()> {
             self.seen += payload.len();
             if self.seen > 5 {
                 self.poisoned = true;

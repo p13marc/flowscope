@@ -23,8 +23,8 @@ use proptest::prelude::*;
 #[cfg(feature = "http")]
 mod http_props {
     use super::*;
-    use flowscope::SessionParser;
     use flowscope::http::{HttpMessage, HttpParser};
+    use flowscope::{SessionParser, Timestamp};
 
     fn build_request(method: &str, path: &str, body: &[u8]) -> Vec<u8> {
         let mut v = Vec::new();
@@ -56,12 +56,12 @@ mod http_props {
 
             // One-shot feed.
             let mut p1 = HttpParser::default();
-            let m1 = p1.feed_initiator(&bytes);
+            let m1 = p1.feed_initiator(&bytes, Timestamp::default());
 
             // Two-chunk feed.
             let mut p2 = HttpParser::default();
-            let mut m2 = p2.feed_initiator(&bytes[..split]);
-            m2.extend(p2.feed_initiator(&bytes[split..]));
+            let mut m2 = p2.feed_initiator(&bytes[..split], Timestamp::default());
+            m2.extend(p2.feed_initiator(&bytes[split..], Timestamp::default()));
 
             prop_assert_eq!(count_requests(&m1), 1);
             prop_assert_eq!(count_requests(&m2), 1);
@@ -76,7 +76,7 @@ mod http_props {
                 bytes.extend_from_slice(&build_request("GET", &format!("/p{i}"), b""));
             }
             let mut p = HttpParser::default();
-            let msgs = p.feed_initiator(&bytes);
+            let msgs = p.feed_initiator(&bytes, Timestamp::default());
             prop_assert_eq!(count_requests(&msgs), n);
         }
 
@@ -84,8 +84,8 @@ mod http_props {
         fn no_panic_on_random_bytes(bytes in prop::collection::vec(any::<u8>(), 0..512)) {
             let mut p = HttpParser::default();
             // The contract is "don't panic", not "parse anything".
-            let _ = p.feed_initiator(&bytes);
-            let _ = p.feed_responder(&bytes);
+            let _ = p.feed_initiator(&bytes, Timestamp::default());
+            let _ = p.feed_responder(&bytes, Timestamp::default());
             p.rst_initiator();
             p.rst_responder();
         }
@@ -97,8 +97,8 @@ mod http_props {
 #[cfg(feature = "tls")]
 mod tls_props {
     use super::*;
-    use flowscope::SessionParser;
     use flowscope::tls::{TlsMessage, TlsParser};
+    use flowscope::{SessionParser, Timestamp};
 
     fn build_client_hello() -> Vec<u8> {
         let mut ch_body = Vec::new();
@@ -140,11 +140,11 @@ mod tls_props {
             let split = split_at.min(bytes.len().saturating_sub(1)).max(1);
 
             let mut p1 = TlsParser::default();
-            let m1 = p1.feed_initiator(&bytes);
+            let m1 = p1.feed_initiator(&bytes, Timestamp::default());
 
             let mut p2 = TlsParser::default();
-            let mut m2 = p2.feed_initiator(&bytes[..split]);
-            m2.extend(p2.feed_initiator(&bytes[split..]));
+            let mut m2 = p2.feed_initiator(&bytes[..split], Timestamp::default());
+            m2.extend(p2.feed_initiator(&bytes[split..], Timestamp::default()));
 
             prop_assert_eq!(count_client_hello(&m1), 1);
             prop_assert_eq!(count_client_hello(&m2), 1);
@@ -153,8 +153,8 @@ mod tls_props {
         #[test]
         fn no_panic_on_random_bytes(bytes in prop::collection::vec(any::<u8>(), 0..512)) {
             let mut p = TlsParser::default();
-            let _ = p.feed_initiator(&bytes);
-            let _ = p.feed_responder(&bytes);
+            let _ = p.feed_initiator(&bytes, Timestamp::default());
+            let _ = p.feed_responder(&bytes, Timestamp::default());
             p.rst_initiator();
             p.rst_responder();
         }
@@ -168,6 +168,7 @@ mod dns_udp_props {
     use super::*;
     use flowscope::DatagramParser;
     use flowscope::FlowSide;
+    use flowscope::Timestamp;
     use flowscope::dns::{DnsMessage, DnsUdpParser};
 
     fn build_a_query(tx_id: u16, qname: &str) -> Vec<u8> {
@@ -193,7 +194,7 @@ mod dns_udp_props {
         fn random_tx_id_round_trips(tx_id in any::<u16>()) {
             let bytes = build_a_query(tx_id, "example.com");
             let mut p = DnsUdpParser;
-            let msgs = p.parse(&bytes, FlowSide::Initiator);
+            let msgs = p.parse(&bytes, FlowSide::Initiator, Timestamp::default());
             prop_assert_eq!(msgs.len(), 1);
             match &msgs[0] {
                 DnsMessage::Query(q) => prop_assert_eq!(q.transaction_id, tx_id),
@@ -204,8 +205,8 @@ mod dns_udp_props {
         #[test]
         fn no_panic_on_random_bytes(bytes in prop::collection::vec(any::<u8>(), 0..256)) {
             let mut p = DnsUdpParser;
-            let _ = p.parse(&bytes, FlowSide::Initiator);
-            let _ = p.parse(&bytes, FlowSide::Responder);
+            let _ = p.parse(&bytes, FlowSide::Initiator, Timestamp::default());
+            let _ = p.parse(&bytes, FlowSide::Responder, Timestamp::default());
         }
     }
 }
@@ -215,8 +216,8 @@ mod dns_udp_props {
 #[cfg(feature = "dns")]
 mod dns_tcp_props {
     use super::*;
-    use flowscope::SessionParser;
     use flowscope::dns::{DnsMessage, DnsTcpParser};
+    use flowscope::{SessionParser, Timestamp};
 
     fn build_a_query_tcp(tx_id: u16, qname: &str) -> Vec<u8> {
         let mut body = Vec::new();
@@ -262,11 +263,11 @@ mod dns_tcp_props {
             let split = split_at.min(bytes.len().saturating_sub(1)).max(1);
 
             let mut p1 = DnsTcpParser::default();
-            let m1 = p1.feed_initiator(&bytes);
+            let m1 = p1.feed_initiator(&bytes, Timestamp::default());
 
             let mut p2 = DnsTcpParser::default();
-            let mut m2 = p2.feed_initiator(&bytes[..split]);
-            m2.extend(p2.feed_initiator(&bytes[split..]));
+            let mut m2 = p2.feed_initiator(&bytes[..split], Timestamp::default());
+            m2.extend(p2.feed_initiator(&bytes[split..], Timestamp::default()));
 
             prop_assert_eq!(count_queries(&m1), n);
             prop_assert_eq!(count_queries(&m2), n);
@@ -284,7 +285,7 @@ mod dns_tcp_props {
             let mut p = DnsTcpParser::default();
             let mut all = Vec::new();
             for chunk in bytes.chunks(1) {
-                all.extend(p.feed_initiator(chunk));
+                all.extend(p.feed_initiator(chunk, Timestamp::default()));
             }
             prop_assert_eq!(count_queries(&all), n);
         }
@@ -292,8 +293,8 @@ mod dns_tcp_props {
         #[test]
         fn no_panic_on_random_bytes(bytes in prop::collection::vec(any::<u8>(), 0..512)) {
             let mut p = DnsTcpParser::default();
-            let _ = p.feed_initiator(&bytes);
-            let _ = p.feed_responder(&bytes);
+            let _ = p.feed_initiator(&bytes, Timestamp::default());
+            let _ = p.feed_responder(&bytes, Timestamp::default());
             p.rst_initiator();
             p.rst_responder();
         }
@@ -311,7 +312,7 @@ mod dns_tcp_props {
             bytes.extend_from_slice(&build_a_query_tcp(99, "valid.after"));
 
             let mut p = DnsTcpParser::default();
-            let msgs = p.feed_initiator(&bytes);
+            let msgs = p.feed_initiator(&bytes, Timestamp::default());
             prop_assert_eq!(count_queries(&msgs), 1);
         }
     }

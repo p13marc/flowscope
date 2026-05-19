@@ -23,7 +23,7 @@ use std::time::Duration;
 use flowscope::extract::FiveTuple;
 use flowscope::extract::parse::test_frames::ipv4_tcp;
 use flowscope::pcap::PcapFlowSource;
-use flowscope::{FlowSessionDriver, FlowSide, SessionEvent, SessionParser};
+use flowscope::{FlowSessionDriver, FlowSide, SessionEvent, SessionParser, Timestamp};
 
 use pcap_file::DataLink;
 use pcap_file::pcap::{PcapHeader, PcapPacket, PcapWriter};
@@ -36,10 +36,10 @@ struct PassthroughParser;
 
 impl SessionParser for PassthroughParser {
     type Message = (FlowSide, Vec<u8>);
-    fn feed_initiator(&mut self, bytes: &[u8]) -> Vec<Self::Message> {
+    fn feed_initiator(&mut self, bytes: &[u8], _ts: Timestamp) -> Vec<Self::Message> {
         vec![(FlowSide::Initiator, bytes.to_vec())]
     }
-    fn feed_responder(&mut self, bytes: &[u8]) -> Vec<Self::Message> {
+    fn feed_responder(&mut self, bytes: &[u8], _ts: Timestamp) -> Vec<Self::Message> {
         vec![(FlowSide::Responder, bytes.to_vec())]
     }
 }

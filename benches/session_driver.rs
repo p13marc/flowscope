@@ -16,10 +16,10 @@ use flowscope::{FlowSessionDriver, FlowSide, PacketView, SessionParser, Timestam
 struct NoopParser;
 impl SessionParser for NoopParser {
     type Message = ();
-    fn feed_initiator(&mut self, _b: &[u8]) -> Vec<()> {
+    fn feed_initiator(&mut self, _b: &[u8], _ts: Timestamp) -> Vec<()> {
         Vec::new()
     }
-    fn feed_responder(&mut self, _b: &[u8]) -> Vec<()> {
+    fn feed_responder(&mut self, _b: &[u8], _ts: Timestamp) -> Vec<()> {
         Vec::new()
     }
 }

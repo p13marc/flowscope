@@ -6,7 +6,7 @@
 //! get an async iterator of HTTP messages instead of a callback
 //! handler.
 
-use crate::SessionParser;
+use crate::{SessionParser, Timestamp};
 
 use super::parser::{self, DirState, ParseOutput};
 use super::types::{HttpConfig, HttpRequest, HttpResponse};
@@ -75,7 +75,7 @@ impl HttpParser {
 impl SessionParser for HttpParser {
     type Message = HttpMessage;
 
-    fn feed_initiator(&mut self, bytes: &[u8]) -> Vec<HttpMessage> {
+    fn feed_initiator(&mut self, bytes: &[u8], _ts: Timestamp) -> Vec<HttpMessage> {
         if bytes.is_empty() {
             return Vec::new();
         }
@@ -83,7 +83,7 @@ impl SessionParser for HttpParser {
         Self::drain(&mut self.init_state, &mut self.init_buf, true, &self.config)
     }
 
-    fn feed_responder(&mut self, bytes: &[u8]) -> Vec<HttpMessage> {
+    fn feed_responder(&mut self, bytes: &[u8], _ts: Timestamp) -> Vec<HttpMessage> {
         if bytes.is_empty() {
             return Vec::new();
         }
@@ -131,7 +131,7 @@ mod tests {
     fn parses_full_request_then_response() {
         let mut p = HttpParser::default();
         let req = b"GET /index.html HTTP/1.1\r\nHost: example.com\r\n\r\n";
-        let m = p.feed_initiator(req);
+        let m = p.feed_initiator(req, Timestamp::default());
         assert_eq!(m.len(), 1);
         match &m[0] {
             HttpMessage::Request(r) => {
@@ -142,7 +142,7 @@ mod tests {
         }
 
         let resp = b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhello";
-        let m = p.feed_responder(resp);
+        let m = p.feed_responder(resp, Timestamp::default());
         assert_eq!(m.len(), 1);
         match &m[0] {
             HttpMessage::Response(r) => {
@@ -156,9 +156,9 @@ mod tests {
     #[test]
     fn split_segments_concatenate() {
         let mut p = HttpParser::default();
-        let m = p.feed_initiator(b"GET /a HTTP/1.1\r\nHo");
+        let m = p.feed_initiator(b"GET /a HTTP/1.1\r\nHo", Timestamp::default());
         assert!(m.is_empty());
-        let m = p.feed_initiator(b"st: x\r\n\r\n");
+        let m = p.feed_initiator(b"st: x\r\n\r\n", Timestamp::default());
         assert_eq!(m.len(), 1);
     }
 
@@ -166,7 +166,7 @@ mod tests {
     fn pipelined_requests() {
         let mut p = HttpParser::default();
         let pipelined = b"GET /a HTTP/1.1\r\n\r\nGET /b HTTP/1.1\r\n\r\n";
-        let m = p.feed_initiator(pipelined);
+        let m = p.feed_initiator(pipelined, Timestamp::default());
         assert_eq!(m.len(), 2);
     }
 
@@ -175,9 +175,9 @@ mod tests {
         let mut p = HttpParser::default();
         // Connection: close response with no Content-Length → UntilEof.
         let h = b"HTTP/1.1 200 OK\r\nConnection: close\r\n\r\nhel";
-        let m = p.feed_responder(h);
+        let m = p.feed_responder(h, Timestamp::default());
         assert!(m.is_empty()); // body still pending
-        let m = p.feed_responder(b"lo");
+        let m = p.feed_responder(b"lo", Timestamp::default());
         assert!(m.is_empty());
         let m = p.fin_responder();
         assert_eq!(m.len(), 1);

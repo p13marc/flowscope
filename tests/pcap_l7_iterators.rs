@@ -8,7 +8,7 @@ use std::io::Cursor;
 
 use flowscope::extract::FiveTuple;
 use flowscope::pcap::PcapFlowSource;
-use flowscope::{DatagramParser, FlowSide, SessionEvent, SessionParser};
+use flowscope::{DatagramParser, FlowSide, SessionEvent, SessionParser, Timestamp};
 
 const HTTP_SESSION: &[u8] = include_bytes!("data/http_session.pcap");
 const DNS_QUERIES: &[u8] = include_bytes!("data/dns_queries.pcap");
@@ -29,10 +29,10 @@ const EMPTY_PCAP: [u8; 24] = [
 struct ByteCounter;
 impl SessionParser for ByteCounter {
     type Message = usize;
-    fn feed_initiator(&mut self, b: &[u8]) -> Vec<usize> {
+    fn feed_initiator(&mut self, b: &[u8], _ts: Timestamp) -> Vec<usize> {
         vec![b.len()]
     }
-    fn feed_responder(&mut self, b: &[u8]) -> Vec<usize> {
+    fn feed_responder(&mut self, b: &[u8], _ts: Timestamp) -> Vec<usize> {
         vec![b.len()]
     }
 }
@@ -42,7 +42,7 @@ impl SessionParser for ByteCounter {
 struct DgramSizer;
 impl DatagramParser for DgramSizer {
     type Message = usize;
-    fn parse(&mut self, payload: &[u8], _side: FlowSide) -> Vec<usize> {
+    fn parse(&mut self, payload: &[u8], _side: FlowSide, _ts: Timestamp) -> Vec<usize> {
         vec![payload.len()]
     }
 }

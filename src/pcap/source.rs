@@ -108,16 +108,16 @@ impl<R: Read> PcapFlowSource<R> {
     /// ```no_run
     /// use flowscope::extract::FiveTuple;
     /// use flowscope::pcap::PcapFlowSource;
-    /// use flowscope::{SessionEvent, SessionParser};
+    /// use flowscope::{SessionEvent, SessionParser, Timestamp};
     ///
     /// #[derive(Default, Clone)]
     /// struct Echo;
     /// impl SessionParser for Echo {
     ///     type Message = Vec<u8>;
-    ///     fn feed_initiator(&mut self, b: &[u8]) -> Vec<Vec<u8>> {
+    ///     fn feed_initiator(&mut self, b: &[u8], _ts: Timestamp) -> Vec<Vec<u8>> {
     ///         vec![b.to_vec()]
     ///     }
-    ///     fn feed_responder(&mut self, b: &[u8]) -> Vec<Vec<u8>> {
+    ///     fn feed_responder(&mut self, b: &[u8], _ts: Timestamp) -> Vec<Vec<u8>> {
     ///         vec![b.to_vec()]
     ///     }
     /// }

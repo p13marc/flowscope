@@ -28,8 +28,22 @@ lockstep.
   work.
   *Migration:* `FlowSessionDriver::<_, P>::new(ext)` →
   `FlowSessionDriver::new(ext, P::default())`.
+- **`SessionParser` / `DatagramParser` data methods take a
+  timestamp.** `feed_initiator` / `feed_responder` / `parse` gain a
+  `ts: Timestamp` parameter — the observed time of the carrying
+  packet — so stateful parsers can timestamp their messages and do
+  time-driven correlation.
+  *Migration:* add `_ts: Timestamp` (or `ts` if you use it) to every
+  `feed_*` / `parse` implementation.
 
 ### Added
+
+- **`SessionParser::on_tick` / `DatagramParser::on_tick`** — a
+  defaulted periodic hook the drivers call on every `sweep` /
+  `finish`, for every live parser (including one a sweep is about to
+  close). Lets a parser emit time-driven messages — timeouts,
+  unanswered requests — attributed to the initiator side. Default:
+  no-op, so existing parsers are unaffected.
 
 - **`finish()` on all three drivers** — `FlowDriver::finish()`,
   `FlowSessionDriver::finish()`, `FlowDatagramDriver::finish()`.

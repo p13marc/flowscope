@@ -22,7 +22,12 @@ time-dependent parser (timing analysis, idle detection).
 
 ## 2. Status
 
-Not started.
+Implemented in the working tree; not yet committed. Per the
+`INDEX.md` convention, delete this file in the PR series that lands
+the change. `feed_*` / `parse` carry `ts`; both traits gained a
+defaulted `on_tick`; drivers fire `on_tick` on `sweep` / `finish`
+before translating swept events (so a flow being closed still gets
+a final tick). `netring` needs a lockstep update — see §10.
 
 ## 3. Prerequisites
 

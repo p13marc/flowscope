@@ -95,7 +95,7 @@ let mut tracker: FlowTracker<_, ()> =
 ### Custom protocol via `SessionParser`
 
 ```rust,no_run
-use flowscope::{FlowSide, SessionParser};
+use flowscope::{FlowSide, SessionParser, Timestamp};
 
 #[derive(Default, Clone)]
 struct LineParser {
@@ -106,7 +106,7 @@ struct LineParser {
 impl SessionParser for LineParser {
     type Message = (FlowSide, String);
 
-    fn feed_initiator(&mut self, bytes: &[u8]) -> Vec<Self::Message> {
+    fn feed_initiator(&mut self, bytes: &[u8], _ts: Timestamp) -> Vec<Self::Message> {
         self.init_buf.extend_from_slice(bytes);
         let mut out = Vec::new();
         while let Some(nl) = self.init_buf.iter().position(|&b| b == b'\n') {
@@ -116,7 +116,7 @@ impl SessionParser for LineParser {
         out
     }
 
-    fn feed_responder(&mut self, bytes: &[u8]) -> Vec<Self::Message> {
+    fn feed_responder(&mut self, bytes: &[u8], _ts: Timestamp) -> Vec<Self::Message> {
         self.resp_buf.extend_from_slice(bytes);
         let mut out = Vec::new();
         while let Some(nl) = self.resp_buf.iter().position(|&b| b == b'\n') {
@@ -265,11 +265,11 @@ impl Reassembler for MyReass {
 struct MyParser { init: Vec<u8>, resp: Vec<u8> }
 impl SessionParser for MyParser {
     type Message = MyMsg;
-    fn feed_initiator(&mut self, bytes: &[u8]) -> Vec<MyMsg> {
+    fn feed_initiator(&mut self, bytes: &[u8], _ts: Timestamp) -> Vec<MyMsg> {
         self.init.extend_from_slice(bytes);
         // … parse, return messages directly
     }
-    fn feed_responder(&mut self, bytes: &[u8]) -> Vec<MyMsg> { /* mirror */ }
+    fn feed_responder(&mut self, bytes: &[u8], _ts: Timestamp) -> Vec<MyMsg> { /* mirror */ }
 }
 ```
 
@@ -300,8 +300,9 @@ This is the worked walkthrough that the
 
 | Method | When called | Driver guarantees | Parser responsibilities |
 |--------|-------------|-------------------|--------------------------|
-| `feed_initiator(bytes)` | Per packet on the initiator side | `bytes` is 1..N bytes, never empty. Calls are serialised — never concurrent. Subsequent calls deliver bytes in TCP-sequence order (reassembler ensures this). | Buffer partial frames in `&mut self`. Return only complete decoded messages. Don't assume `bytes` is aligned to a frame boundary. |
-| `feed_responder(bytes)` | Mirror of initiator | Same | Same |
+| `feed_initiator(bytes, ts)` | Per packet on the initiator side | `bytes` is 1..N bytes, never empty; `ts` is the carrying packet's observed time. Calls are serialised — never concurrent. Subsequent calls deliver bytes in TCP-sequence order (reassembler ensures this). | Buffer partial frames in `&mut self`. Return only complete decoded messages. Don't assume `bytes` is aligned to a frame boundary. |
+| `feed_responder(bytes, ts)` | Mirror of initiator | Same | Same |
+| `on_tick(now) -> Vec<Message>` (0.4.0) | On every `sweep` / `finish`, for every live parser | Fires before the flow's `Closed` if the same sweep closes it | Optional. Emit time-driven messages (timeouts, unanswered requests); output is attributed to the initiator side. Default returns an empty `Vec`. |
 | `fin_initiator() -> Vec<Message>` | Initiator-side stream closes cleanly (FIN observed) | Called once per flow; not after `rst_initiator` | Flush any in-flight decodable state and return it. Drop partial / undecodable buffers silently. Default impl returns an empty `Vec`. |
 | `fin_responder() -> Vec<Message>` | Mirror | Same | Same |
 | `rst_initiator()` | Initiator-side aborts (RST, eviction, buffer-overflow, or parse-error tear-down) | Called once per flow; not after `fin_initiator` | Drop in-flight buffers. **Don't** flush — the truncation is unrecoverable. Default impl is a no-op. |
@@ -321,11 +322,11 @@ struct MyParser {
 impl SessionParser for MyParser {
     type Message = MyMessage;
 
-    fn feed_initiator(&mut self, bytes: &[u8]) -> Vec<Self::Message> {
+    fn feed_initiator(&mut self, bytes: &[u8], _ts: Timestamp) -> Vec<Self::Message> {
         self.init_buf.extend_from_slice(bytes);
         drain(&mut self.init_buf, FlowSide::Initiator)
     }
-    fn feed_responder(&mut self, bytes: &[u8]) -> Vec<Self::Message> {
+    fn feed_responder(&mut self, bytes: &[u8], _ts: Timestamp) -> Vec<Self::Message> {
         self.resp_buf.extend_from_slice(bytes);
         drain(&mut self.resp_buf, FlowSide::Responder)
     }
@@ -375,7 +376,7 @@ fn handles_partial_chunks() {
     let mut parser = MyParser::default();
     let mut out = Vec::new();
     for byte in wire_bytes {
-        out.extend(parser.feed_initiator(std::slice::from_ref(byte)));
+        out.extend(parser.feed_initiator(std::slice::from_ref(byte), Timestamp::default()));
     }
     assert_eq!(out, expected_messages);
 }
@@ -556,29 +557,38 @@ with the `metrics` feature (Plan 40, future release): the same
 
 ## Trait stability
 
-The `SessionParser` / `DatagramParser` trait shape locked in
-flowscope 0.1 phase 2 (commit `cc24a0f`). Across the four shipped
-parsers (HTTP, TLS, DNS-UDP, DNS-TCP) plus 11 splitting-invariance
-proptests, the shape has been validated. Future additions are
-**additive** (new methods with default implementations); breaking
-changes will require a major bump.
+The `SessionParser` / `DatagramParser` trait shape is validated
+across the four shipped parsers (HTTP, TLS, DNS-UDP, DNS-TCP) plus
+11 splitting-invariance proptests. In 0.4.0 the data methods
+(`feed_initiator` / `feed_responder` / `parse`) gained a
+`ts: Timestamp` parameter and both traits gained a defaulted
+`on_tick` hook — a one-time pre-1.0 break (migration: add a
+`_ts: Timestamp` argument to your `feed_*` / `parse` signatures).
+Post-1.0, additions stay **additive** (new methods with default
+implementations); breaking changes require a major bump.
 
 ## Concrete trait shape, for reference
 
 ```rust,ignore
 pub trait SessionParser: Send + 'static {
-    type Message: Send + 'static;
-    fn feed_initiator(&mut self, bytes: &[u8]) -> Vec<Self::Message>;
-    fn feed_responder(&mut self, bytes: &[u8]) -> Vec<Self::Message>;
+    type Message: Send + std::fmt::Debug + 'static;
+    fn feed_initiator(&mut self, bytes: &[u8], ts: Timestamp) -> Vec<Self::Message>;
+    fn feed_responder(&mut self, bytes: &[u8], ts: Timestamp) -> Vec<Self::Message>;
     fn fin_initiator(&mut self) -> Vec<Self::Message> { Vec::new() }
     fn fin_responder(&mut self) -> Vec<Self::Message> { Vec::new() }
     fn rst_initiator(&mut self) {}
     fn rst_responder(&mut self) {}
+    fn on_tick(&mut self, _now: Timestamp) -> Vec<Self::Message> { Vec::new() }
+    fn is_poisoned(&self) -> bool { false }
+    fn poison_reason(&self) -> Option<&str> { None }
 }
 
 pub trait DatagramParser: Send + 'static {
-    type Message: Send + 'static;
-    fn parse(&mut self, payload: &[u8], side: FlowSide) -> Vec<Self::Message>;
+    type Message: Send + std::fmt::Debug + 'static;
+    fn parse(&mut self, payload: &[u8], side: FlowSide, ts: Timestamp) -> Vec<Self::Message>;
+    fn on_tick(&mut self, _now: Timestamp) -> Vec<Self::Message> { Vec::new() }
+    fn is_poisoned(&self) -> bool { false }
+    fn poison_reason(&self) -> Option<&str> { None }
 }
 ```
 
