@@ -3,11 +3,12 @@
 **Date:** 2026-05-18
 **Scope:** Public API surface — is the crate user-friendly? Is the
 API high-level enough?
-**Status:** Triaged into plans `32`–`37` (see §5). The findings
-below are the rationale; the plan files carry the mechanical detail.
-**Backward compatibility:** breaking changes are *in scope* for this
-review. Pre-1.0 policy (`INDEX.md`) allows it; `netring` and `des-rs`
-update in lockstep, CHANGELOG carries migration recipes.
+**Status:** Shipped. All six findings landed as the `plan 32-34` …
+`plan 37` commits (see §5 and `CHANGELOG.md`). This document is kept
+as the rationale record for that work.
+**Backward compatibility:** breaking changes were *in scope*. Pre-1.0
+policy allows it; `netring` updates in lockstep, `CHANGELOG.md`
+carries the migration recipes.
 
 ---
 
@@ -345,31 +346,26 @@ block F1–F5 on it.
 
 ---
 
-## 5. Recommended plan-of-record
+## 5. Plan-of-record (shipped)
 
-Triaged into six plan files. F5 split into two — the trait
-capability (36) and its DNS consumer (37) — because each is
-independently reviewable and shippable.
+The six findings shipped as the plans below — F5 split into two, the
+trait capability (36) and its DNS consumer (37). The plan files have
+been deleted per the repo convention (shipped plans → removed; `git
+log` and `CHANGELOG.md` are the durable record).
 
-| Plan | Finding | Change | Breaking? | Effort |
+| Plan | Finding | Change | Breaking? | Commit |
 |------|---------|--------|-----------|--------|
-| [`32`](./32-driver-generic-cleanup.md) | F1 | Remove `S` from drivers; parser-by-value constructors | yes | M |
-| [`33`](./33-driver-finish.md) | F3 | `finish()` on all drivers; public `Timestamp::MAX` | no | S |
-| [`34`](./34-track-into-packetview.md) | F4 | `track` takes `impl Into<PacketView>` | minor | S |
-| [`35`](./35-pcap-l7-iterators.md) | F2 | `PcapFlowSource::sessions` / `datagrams` iterators | no | M |
-| [`36`](./36-time-aware-parser-traits.md) | F5 | `ts` param + `on_tick` on the parser traits | yes | L |
-| [`37`](./37-dns-unify.md) | F5 | Fold correlation into `DnsUdpParser`; drop `DnsUdpObserver` | yes | M |
+| 32 | F1 | Remove `S` from drivers; parser-by-value constructors | yes | `plan 32-34` |
+| 33 | F3 | `finish()` on all drivers; public `Timestamp::MAX` | no | `plan 32-34` |
+| 34 | F4 | `track` takes `impl Into<PacketView>` | minor | `plan 32-34` |
+| 35 | F2 | `PcapFlowSource::sessions` / `datagrams` iterators | no | `plan 35` |
+| 36 | F5 | `ts` param + `on_tick` on the parser traits | yes | `plan 36` |
+| 37 | F5 | Fold correlation into `DnsUdpParser`; drop `DnsUdpObserver` | yes | `plan 37` |
 
-Land 32 first (it is the prerequisite for 35 and de-noises the
-driver signatures the other plans edit). 33 and 34 are small,
-independent, and high-friction-per-user — land them next. 35 needs
-32+33. 36→37 are the "make DNS consistent" pair and come last; 37
-depends on 36.
-
-**Acceptance bar** for the series: all 5 examples lose every
-generic-parameter annotation and the `86_400` hack, and an offline
-L7 program is a single iterator expression — matching the README
-quick-start's bar for the `FlowEvent` path.
+**Acceptance bar** (met): all 5 examples lost every generic-parameter
+annotation and the `86_400` hack, and an offline L7 program is a
+single iterator expression — matching the README quick-start's bar
+for the `FlowEvent` path.
 
 ---
 

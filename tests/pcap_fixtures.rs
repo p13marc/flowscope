@@ -18,20 +18,17 @@ fn drive_tracker_to_completion(raw: &[u8]) -> Vec<FlowEvent<flowscope::extract::
     let mut reader = PcapReader::new(Cursor::new(raw)).expect("PcapReader::new");
     let mut tracker = FlowTracker::<FiveTuple>::new(FiveTuple::bidirectional());
     let mut events = Vec::new();
-    let mut last_ts = Timestamp::default();
 
     while let Some(pkt) = reader.next_packet() {
         let pkt = pkt.expect("read packet");
         let ts = Timestamp::new(pkt.timestamp.as_secs() as u32, pkt.timestamp.subsec_nanos());
-        last_ts = ts;
         let view = PacketView::new(&pkt.data, ts);
         events.extend(tracker.track(view));
     }
 
-    // Force any lingering flows to end via a far-future sweep so
+    // Force any lingering flows to end with a max-timestamp sweep so
     // tests can assert on Ended events for unfinished flows.
-    let far = Timestamp::new(last_ts.sec.saturating_add(86_400), 0);
-    events.extend(tracker.sweep(far));
+    events.extend(tracker.sweep(Timestamp::MAX));
     events
 }
 

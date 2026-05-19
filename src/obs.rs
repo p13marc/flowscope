@@ -225,7 +225,15 @@ pub(crate) fn trace_anomaly(_kind: &AnomalyKind) {}
 
 // ── per-message tracing (Plan 56) ─────────────────────────────────
 
-#[cfg(all(feature = "tracing-messages", feature = "session"))]
+// Gated on `reassembler` as well as `session`: the only callers are
+// the session / datagram drivers, both of which require
+// `reassembler`. Without that gate `--features dns` (session but no
+// reassembler) compiles the stub with no caller — a dead-code warning.
+#[cfg(all(
+    feature = "tracing-messages",
+    feature = "reassembler",
+    feature = "session"
+))]
 pub(crate) fn trace_session_message<M: std::fmt::Debug>(side: crate::event::FlowSide, msg: &M) {
     tracing::trace!(
         target: "flowscope.message",
@@ -235,6 +243,10 @@ pub(crate) fn trace_session_message<M: std::fmt::Debug>(side: crate::event::Flow
     );
 }
 
-#[cfg(all(not(feature = "tracing-messages"), feature = "session"))]
+#[cfg(all(
+    not(feature = "tracing-messages"),
+    feature = "reassembler",
+    feature = "session"
+))]
 #[inline(always)]
 pub(crate) fn trace_session_message<M>(_side: crate::event::FlowSide, _msg: &M) {}

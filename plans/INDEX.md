@@ -17,25 +17,9 @@ before we switched.
 
 ## Backlog
 
-### API ergonomics (30–39)
-
-[`API-ERGONOMICS-REVIEW.md`](./API-ERGONOMICS-REVIEW.md) audited the
-public surface against peer crates and found the API is "high-level
-for the demo, mid-level for real work." The six plans below land its
-recommendations. They are sequenced — 32 first, then 33/34 (small,
-independent), then 35, then 36→37. Breaking changes are in scope per
-the pre-1.0 policy below.
-
-| Plan | Goal | Breaking? | Status |
-|------|------|-----------|--------|
-| [`32-driver-generic-cleanup.md`](./32-driver-generic-cleanup.md) | Remove the `S` user-state param from the drivers; parser-by-value constructors | yes | ✅ Implemented (uncommitted) |
-| [`33-driver-finish.md`](./33-driver-finish.md) | `finish()` on the drivers; public `Timestamp::MAX` | no | ✅ Implemented (uncommitted) |
-| [`34-track-into-packetview.md`](./34-track-into-packetview.md) | `track()` accepts `impl Into<PacketView>` | minor | ✅ Implemented (uncommitted) |
-| [`35-pcap-l7-iterators.md`](./35-pcap-l7-iterators.md) | `PcapFlowSource::sessions` / `datagrams` iterators | no | ✅ Implemented (uncommitted) |
-| [`36-time-aware-parser-traits.md`](./36-time-aware-parser-traits.md) | Timestamp + `on_tick` on `SessionParser` / `DatagramParser` | yes | ✅ Implemented (uncommitted) |
-| [`37-dns-unify.md`](./37-dns-unify.md) | Fold correlation into `DnsUdpParser`; delete `DnsUdpObserver` | yes | ✅ Implemented (uncommitted) |
-
-### Sister crates
+The 30–39 API-ergonomics series (plans 32–37) has shipped; the audit
+that drove it is kept at
+[`../docs/API-ERGONOMICS-REVIEW.md`](../docs/API-ERGONOMICS-REVIEW.md).
 
 [`../docs/DPI_ARCHITECTURE.md`](../docs/DPI_ARCHITECTURE.md)
 recommends some functionality ships as separate sister crates
@@ -83,7 +67,7 @@ pre-consolidation and would need full rewrites.
 | 50–59 | Deferred-feature catchup |
 | 60–69 | Tooling (CLIs) |
 
-Plan numbers 00–04, 12, 20, 22–25, 30–31, 40–42, 45–49, 51–57
+Plan numbers 00–04, 12, 20, 22–25, 30–37, 40–42, 45–49, 51–57
 are retired (implementation shipped, file removed). New plans
 pick the lowest free number in the appropriate range.
 

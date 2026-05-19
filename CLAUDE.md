@@ -256,6 +256,8 @@ record; `plans/` is the working backlog.
   drove the `Dedup` primitive shape.
 - `feedback-2026-05-14-des-rs.md` — `des-rs` team feedback
   record that drove the 0.3.0 "production hardening" release.
+- `API-ERGONOMICS-REVIEW.md` — public-API audit that drove the
+  0.4.0 ergonomics release (plans 32–37).
 
 ### `plans/` (active backlog)
 
@@ -266,7 +268,7 @@ record; `plans/` is the working backlog.
 - `21-flow-protolens.md` — protolens bridge sister crate (STALE
   pre-consolidation draft, pending real consumer ask).
 
-Plan numbers 00–04, 12, 20, 22–25, 30–31, 40–42, 45–49, 51–57
+Plan numbers 00–04, 12, 20, 22–25, 30–37, 40–42, 45–49, 51–57
 are retired (implementation shipped, file removed). See
 [`plans/INDEX.md`](plans/INDEX.md) for the numbering scheme used
 by new plans.

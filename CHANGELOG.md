@@ -3,7 +3,7 @@
 ## Unreleased — API ergonomics
 
 Driven by the audit in
-[`plans/API-ERGONOMICS-REVIEW.md`](plans/API-ERGONOMICS-REVIEW.md).
+[`docs/API-ERGONOMICS-REVIEW.md`](docs/API-ERGONOMICS-REVIEW.md).
 Pre-1.0 breaking changes; `netring` and other consumers update in
 lockstep.
 
