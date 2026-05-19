@@ -125,17 +125,18 @@ The `*Factory<K>` companion traits build per-flow parsers; any
 
 ### Module bridges
 
-The shipped protocol modules each provide both API shapes:
+The shipped protocol modules provide the typed-stream shape; HTTP
+and TLS additionally provide a callback factory:
 
 | Protocol | Callback (`*Factory<H>`)        | Stream (`SessionParser`/`DatagramParser`) |
 |----------|---------------------------------|---------------------------------|
 | HTTP/1.x | `HttpFactory<H>`                 | `HttpParser`                    |
 | TLS      | `TlsFactory<H>`                  | `TlsParser`                     |
-| DNS UDP  | `DnsUdpObserver<E, H>`           | `DnsUdpParser`                  |
+| DNS UDP  | —                               | `DnsUdpParser` (optional correlation) |
 | DNS TCP  | (use `Reassembler` directly)     | `DnsTcpParser` (length-framed)  |
 
-Both API shapes produce the same events for the same wire bytes;
-choose by control flow.
+Where both shapes exist they produce the same events for the same
+wire bytes; choose by control flow.
 
 ## Tokio integration
 

@@ -16,7 +16,16 @@ variant, and **deletes `DnsUdpObserver`** and its now-orphaned
 
 ## 2. Status
 
-Not started.
+Implemented in the working tree; not yet committed. Per the
+`INDEX.md` convention, delete this file in the PR series that lands
+the change. `DnsUdpParser` now holds an optional `Correlator`;
+`DnsUdpObserver`, `peek_udp`, and the `DnsHandler` trait are gone;
+`DnsMessage` is `#[non_exhaustive]` with an `Unanswered` variant;
+`examples/dns_log.rs` is rewritten onto `PcapFlowSource::datagrams`.
+Note: `cargo build --no-default-features --features dns` emits a
+pre-existing `dead_code` warning for `obs::trace_session_message`
+(its only callers are the `reassembler`-gated drivers; `dns` does
+not pull `reassembler`) — not introduced here, not caught by CI.
 
 ## 3. Prerequisites
 

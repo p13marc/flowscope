@@ -35,6 +35,22 @@ lockstep.
   time-driven correlation.
   *Migration:* add `_ts: Timestamp` (or `ts` if you use it) to every
   `feed_*` / `parse` implementation.
+- **DNS-over-UDP unified on `DnsUdpParser`; `DnsUdpObserver` and the
+  `DnsHandler` trait are removed.** `DnsUdpParser` is now a struct —
+  construct it via `DnsUdpParser::new()` / `::with_correlation()` /
+  `::with_config()`, not the bare `DnsUdpParser` literal.
+  `with_correlation()` folds in the query/response correlation the
+  observer used to own: `DnsResponse::elapsed` carries RTT, and
+  `on_tick` emits the new `DnsMessage::Unanswered` variant.
+  `DnsMessage` is now `#[non_exhaustive]`.
+  *Migration:* replace `DnsUdpObserver` + `FlowTracker` + the
+  hand-rolled `sweep_unanswered` timer with
+  `FlowDatagramDriver::new(extractor, DnsUdpParser::with_correlation())`
+  — or `PcapFlowSource::datagrams(...)` for offline pcap. The
+  `DnsHandler` callbacks (`on_query` / `on_response` /
+  `on_unanswered`) become `DnsMessage::{Query, Response,
+  Unanswered}` match arms; periodic `sweep()` / `finish()` drives
+  `on_tick`.
 
 ### Added
 

@@ -193,7 +193,7 @@ mod dns_udp_props {
         #[test]
         fn random_tx_id_round_trips(tx_id in any::<u16>()) {
             let bytes = build_a_query(tx_id, "example.com");
-            let mut p = DnsUdpParser;
+            let mut p = DnsUdpParser::new();
             let msgs = p.parse(&bytes, FlowSide::Initiator, Timestamp::default());
             prop_assert_eq!(msgs.len(), 1);
             match &msgs[0] {
@@ -204,7 +204,7 @@ mod dns_udp_props {
 
         #[test]
         fn no_panic_on_random_bytes(bytes in prop::collection::vec(any::<u8>(), 0..256)) {
-            let mut p = DnsUdpParser;
+            let mut p = DnsUdpParser::new();
             let _ = p.parse(&bytes, FlowSide::Initiator, Timestamp::default());
             let _ = p.parse(&bytes, FlowSide::Responder, Timestamp::default());
         }

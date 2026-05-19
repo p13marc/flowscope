@@ -1,19 +1,19 @@
-//! Passive DNS observer (UDP/53).
+//! Passive DNS parsing (UDP/53).
 //!
 //! Parses DNS query/response messages observed in UDP/53 traffic.
-//! Two integration shapes:
 //!
-//! - [`DnsUdpObserver`] — callback-style tap that wraps an inner
-//!   [`FlowExtractor`](crate::FlowExtractor) and fires
-//!   [`DnsHandler`] events as a side effect of extraction.
-//! - [`DnsUdpParser`] — typed message stream impl of
-//!   [`DatagramParser`](crate::DatagramParser). Pair with
-//!   `datagram_stream(...)` from `netring`.
+//! [`DnsUdpParser`] is the integration point — a
+//! [`DatagramParser`](crate::DatagramParser) impl yielding a typed
+//! [`DnsMessage`] stream. Pair it with [`crate::FlowDatagramDriver`],
+//! [`PcapFlowSource::datagrams`](crate::pcap::PcapFlowSource::datagrams),
+//! or netring's `datagram_stream`. With correlation enabled
+//! ([`DnsUdpParser::with_correlation`]) it matches responses to
+//! queries — round-trip time lands in `DnsResponse::elapsed`, and
+//! `on_tick` emits [`DnsMessage::Unanswered`] for queries that time
+//! out. The [`Correlator`] is also public for advanced
+//! custom-scoped correlation.
 //!
-//! Both pair with the [`Correlator`] for query/response RTT
-//! matching by 16-bit transaction ID, scoped per flow key.
-//!
-//! # Quick start (parser only)
+//! # Quick start (stateless message parsing)
 //!
 //! ```no_run
 //! use flowscope::dns::{parse_message, DnsParseResult};
@@ -38,14 +38,12 @@
 
 mod correlator;
 mod datagram;
-mod observer;
 mod parser;
 mod session;
 mod types;
 
 pub use correlator::Correlator;
 pub use datagram::{DnsMessage, DnsUdpParser};
-pub use observer::DnsUdpObserver;
 pub use parser::{DnsParseResult, parse_message, parse_message_at};
 pub use session::DnsTcpParser;
 pub use types::*;

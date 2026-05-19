@@ -78,11 +78,10 @@ src/
 │   └── types.rs                 # TlsClientHello / TlsServerHello / TlsAlert / TlsHandler
 ├── dns/                         # `dns` feature
 │   ├── parser.rs                # parse_message / parse_message_at (simple-dns-based)
-│   ├── correlator.rs            # Correlator<S> — per-flow query/response matching
-│   ├── observer.rs              # DnsUdpObserver — extractor-tap callback API
-│   ├── datagram.rs              # DnsUdpParser (DatagramParser, plan 31)
+│   ├── correlator.rs            # Correlator<S> — query/response matching
+│   ├── datagram.rs              # DnsUdpParser (DatagramParser; correlating, plan 37)
 │   ├── session.rs               # DnsTcpParser (SessionParser, RFC 1035 §4.2.2 framing)
-│   └── types.rs                 # DnsQuery / DnsResponse / DnsRdata / DnsConfig / DnsHandler
+│   └── types.rs                 # DnsQuery / DnsResponse / DnsRdata / DnsConfig
 └── pcap/                        # `pcap` feature
     └── source.rs                # PcapFlowSource — offline replay
 ```
@@ -150,13 +149,15 @@ cargo doc --all-features --no-deps
 
 ### Two API shapes for L7 parsing — sync / async parity
 
-Every shipped parser exposes both:
+L7 parsers expose the typed-stream shape; HTTP and TLS additionally
+expose a callback factory:
 
 - **`*Factory<H>`** — callback handler trait (`HttpHandler`,
-  `TlsHandler`, `DnsHandler`). Callback-driven. Pair with a sync
-  `FlowDriver` or netring's `with_async_reassembler`.
+  `TlsHandler`). Callback-driven. Pair with a sync `FlowDriver` or
+  netring's `with_async_reassembler`.
 - **`SessionParser` / `DatagramParser`** — typed message stream.
-  `feed_initiator` / `feed_responder` return `Vec<Self::Message>`.
+  `feed_initiator` / `feed_responder` / `parse` return
+  `Vec<Self::Message>`; both traits have a defaulted `on_tick`.
 
 For the typed-stream API, two driver helpers:
 

@@ -33,7 +33,7 @@ the pre-1.0 policy below.
 | [`34-track-into-packetview.md`](./34-track-into-packetview.md) | `track()` accepts `impl Into<PacketView>` | minor | ✅ Implemented (uncommitted) |
 | [`35-pcap-l7-iterators.md`](./35-pcap-l7-iterators.md) | `PcapFlowSource::sessions` / `datagrams` iterators | no | ✅ Implemented (uncommitted) |
 | [`36-time-aware-parser-traits.md`](./36-time-aware-parser-traits.md) | Timestamp + `on_tick` on `SessionParser` / `DatagramParser` | yes | ✅ Implemented (uncommitted) |
-| [`37-dns-unify.md`](./37-dns-unify.md) | Fold correlation into `DnsUdpParser`; delete `DnsUdpObserver` | yes | Not started |
+| [`37-dns-unify.md`](./37-dns-unify.md) | Fold correlation into `DnsUdpParser`; delete `DnsUdpObserver` | yes | ✅ Implemented (uncommitted) |
 
 ### Sister crates
 

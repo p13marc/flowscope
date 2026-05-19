@@ -134,16 +134,8 @@ impl DnsFlags {
     }
 }
 
-/// User implements this to receive parsed DNS events.
-pub trait DnsHandler: Send + Sync + 'static {
-    fn on_query(&self, _q: &DnsQuery) {}
-    fn on_response(&self, _r: &DnsResponse) {}
-    /// Called by [`crate::dns::Correlator::sweep`] for queries that
-    /// timed out without a matching response.
-    fn on_unanswered(&self, _q: &DnsQuery) {}
-}
-
-/// Tunables for the DNS observer.
+/// Tunables for DNS query/response correlation
+/// ([`crate::dns::Correlator`], [`crate::dns::DnsUdpParser::with_config`]).
 #[derive(Debug, Clone)]
 pub struct DnsConfig {
     /// How long to wait for a response before flagging as unanswered.

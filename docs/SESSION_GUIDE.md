@@ -59,10 +59,11 @@ suit async iteration with backpressure.
 
 3. **Are you running synchronously? (no tokio, embedded, offline
    pcap)**
-   → Use the callback-style factory: `HttpFactory<H>`,
-   `TlsFactory<H>`, or `DnsUdpObserver`. Drive packets through
-   `FlowDriver` (sync) and you'll get callback invocations on
-   parsed events.
+   → For HTTP/TLS, use the callback-style factory (`HttpFactory<H>`
+   / `TlsFactory<H>`) driven through `FlowDriver`. For typed L7
+   messages — including DNS — use `FlowSessionDriver` /
+   `FlowDatagramDriver`, or `PcapFlowSource::sessions()` /
+   `datagrams()` for offline pcap.
 
 4. **Are you running asynchronously and want to `for await msg in
    stream` on typed L7 messages?**

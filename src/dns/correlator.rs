@@ -18,7 +18,10 @@ use super::types::{DnsConfig, DnsQuery};
 ///
 /// `S` is the scope type — usually a flow key. Use `()` to correlate
 /// all queries in one global pool (works only when transaction IDs
-/// don't collide across flows).
+/// don't collide across flows — e.g. a per-flow [`DnsUdpParser`]).
+///
+/// [`DnsUdpParser`]: crate::dns::DnsUdpParser
+#[derive(Debug, Clone)]
 pub struct Correlator<S: Eq + Hash + Clone> {
     pending: HashMap<(S, u16), DnsQuery, RandomState>,
     config: DnsConfig,
