@@ -286,7 +286,8 @@ For the next `cargo publish` of flowscope:
 7. `cargo machete` no unused deps.
 8. `cargo publish --dry-run` packages and verifies.
 9. `cargo publish`.
-10. Tag the release in git: `git tag v0.x.y && git push origin v0.x.y`.
+10. Tag the release in git: `git tag 0.x.y && git push origin 0.x.y`
+    (no `v` prefix — matches the 0.1.0 / 0.2.0 / 0.3.0 / 0.4.0 tags).
 
 ## Relationship to netring
 
