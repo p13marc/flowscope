@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased — API ergonomics
+## 0.4.0 — API ergonomics (2026-05-20)
 
 Driven by the audit in
 [`docs/API-ERGONOMICS-REVIEW.md`](docs/API-ERGONOMICS-REVIEW.md).
