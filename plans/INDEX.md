@@ -17,9 +17,40 @@ before we switched.
 
 ## Backlog
 
-The 30–39 API-ergonomics series (plans 32–37) has shipped; the audit
+The 0.4 API-ergonomics series (plans 32–37) has shipped; the audit
 that drove it is kept at
 [`../docs/API-ERGONOMICS-REVIEW.md`](../docs/API-ERGONOMICS-REVIEW.md).
+
+### API ergonomics — 0.5 cycle
+
+Driven by [`../docs/feedback-2026-05-22-netring.md`](../docs/feedback-2026-05-22-netring.md)
+(integration feedback from netring 0.14.0). Plan-of-record at
+[`../docs/0.5-PLAN-OF-RECORD.md`](../docs/0.5-PLAN-OF-RECORD.md) —
+notably §3 documents the substantive disagreement with the netring
+author's "lean toward option B" on plan 38.
+
+| Plan | Goal | Breaking? | Status |
+|------|------|-----------|--------|
+| [`38-driver-state-restore.md`](./38-driver-state-restore.md) | Restore `S` on the drivers via split constructors (reverses plan 32 option B) | yes | Not started |
+| [`39-tracker-convenience.md`](./39-tracker-convenience.md) | `FlowTracker::finish()` + `sweep_with_parsers` / `sweep_with_datagram_parsers` | no | Not started |
+| [`43-anomaly-event-split.md`](./43-anomaly-event-split.md) | Split `Anomaly { key: Option<K> }` into `FlowAnomaly` + `TrackerAnomaly` on both `FlowEvent` and `SessionEvent` | yes | Not started |
+| [`44-reassembler-watermark-threshold.md`](./44-reassembler-watermark-threshold.md) | `BufferedReassembler::with_high_watermark_threshold` + `AnomalyKind::ReassemblerHighWatermark` | no | Not started |
+| [`50-as-packet-view.md`](./50-as-packet-view.md) | `AsPacketView` trait + blanket `From<&T>` for `PacketView` | minor | Not started |
+| [`58-driver-factory-ctor.md`](./58-driver-factory-ctor.md) | `FlowSessionDriver::with_factory` / `FlowDatagramDriver::with_factory` (prereq: 38) | no | Not started |
+| [`59-test-helpers-parsers.md`](./59-test-helpers-parsers.md) | `flowscope::test_helpers::{NoopSessionParser, NoopDatagramParser, EchoSessionParser}` | no | Not started |
+| [`60-l7-umbrella-and-doc-note.md`](./60-l7-umbrella-and-doc-note.md) | `l7` umbrella feature; intra-doc-link recipe for re-exporters | no | Not started |
+| [`61-feature-matrix-ci.md`](./61-feature-matrix-ci.md) | Partial-feature CI matrix (catches latent cfg dead-code) | no | Not started |
+
+Deferred from the feedback:
+- **#2 `FlowTracker::with_auto_sweep(interval)`** — packet-clock
+  auto-sweep for live/offline parity; needs its own RFC (interaction
+  with out-of-order timestamps, return-channel for implicit-sweep
+  events, monotonic-timestamps prerequisite).
+- **#10 `SessionParser::is_done()`** — declined pending a real
+  motivating case; HTTP/1.0 `Connection: close` (the example
+  use case) already triggers natural FIN-based close.
+
+### Sister crates
 
 [`../docs/DPI_ARCHITECTURE.md`](../docs/DPI_ARCHITECTURE.md)
 recommends some functionality ships as separate sister crates

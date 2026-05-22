@@ -258,6 +258,11 @@ record; `plans/` is the working backlog.
   record that drove the 0.3.0 "production hardening" release.
 - `API-ERGONOMICS-REVIEW.md` — public-API audit that drove the
   0.4.0 ergonomics release (plans 32–37).
+- `feedback-2026-05-22-netring.md` — `netring` integration
+  feedback after the 0.4 bump; source for the 0.5 cycle.
+- `0.5-PLAN-OF-RECORD.md` — synthesis of the netring feedback
+  into the 0.5 plan series (plans 38, 39, 43, 44, 50, 58, 59,
+  60, 61); §3 documents where we disagreed with the author.
 
 ### `plans/` (active backlog)
 
