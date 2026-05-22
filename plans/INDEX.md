@@ -35,9 +35,9 @@ author's "lean toward option B" on plan 38.
 | [`39-tracker-convenience.md`](./39-tracker-convenience.md) | `FlowTracker::finish()` + `sweep_with_parsers` / `sweep_with_datagram_parsers` | no | ✅ Implemented (uncommitted) |
 | [`43-anomaly-event-split.md`](./43-anomaly-event-split.md) | Split `Anomaly { key: Option<K> }` into `FlowAnomaly` + `TrackerAnomaly` on both `FlowEvent` and `SessionEvent` | yes | Not started |
 | [`44-reassembler-watermark-threshold.md`](./44-reassembler-watermark-threshold.md) | `BufferedReassembler::with_high_watermark_threshold` + `AnomalyKind::ReassemblerHighWatermark` | no | Not started |
-| [`50-as-packet-view.md`](./50-as-packet-view.md) | `AsPacketView` trait + blanket `From<&T>` for `PacketView` | minor | Not started |
+| [`50-as-packet-view.md`](./50-as-packet-view.md) | `AsPacketView` trait + blanket `From<&T>` for `PacketView` | minor | ✅ Implemented (uncommitted) |
 | [`58-driver-factory-ctor.md`](./58-driver-factory-ctor.md) | `FlowSessionDriver::with_factory` / `FlowDatagramDriver::with_factory` (prereq: 38) | no | Not started |
-| [`59-test-helpers-parsers.md`](./59-test-helpers-parsers.md) | `flowscope::test_helpers::{NoopSessionParser, NoopDatagramParser, EchoSessionParser}` | no | Not started |
+| [`59-test-helpers-parsers.md`](./59-test-helpers-parsers.md) | `flowscope::test_helpers::{NoopSessionParser, NoopDatagramParser, EchoSessionParser}` | no | ✅ Implemented (uncommitted) |
 | [`60-l7-umbrella-and-doc-note.md`](./60-l7-umbrella-and-doc-note.md) | `l7` umbrella feature; intra-doc-link recipe for re-exporters | no | ✅ Implemented (uncommitted) |
 | [`61-feature-matrix-ci.md`](./61-feature-matrix-ci.md) | Partial-feature CI matrix (catches latent cfg dead-code) | no | ✅ Implemented (uncommitted) |
 

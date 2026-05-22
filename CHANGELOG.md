@@ -48,6 +48,29 @@ Pre-1.0 breaking changes; `netring` updates in lockstep.
 - **CI feature-matrix** (internal): the workflow now runs
   library-only build + clippy across six partial-feature
   combinations to catch latent cfg dead-code at PR time.
+- **`AsPacketView` trait + blanket `From<&T>` impl for
+  `PacketView`** (plan 50). Foreign owned-packet types (netring's
+  `OwnedPacket`, pcap-rs `Packet`, anything else) opt in with three
+  lines and feed `tracker.track(&owned)` directly. Generalises 0.4's
+  explicit `From<&OwnedPacketView>` (which is now an
+  `AsPacketView` impl, going through the blanket). Existing call
+  sites continue to compile via the blanket.
+- **`flowscope::test_helpers::{NoopSessionParser,
+  NoopDatagramParser, EchoSessionParser}`** (plan 59), under the
+  existing `test-helpers` feature. Absorbs trait-shape evolution
+  for downstream test crates: every minor that touches the parser
+  trait shape no longer needs a sweep of hand-rolled noop stubs in
+  consumer code.
+
+### Breaking (minor)
+
+- The explicit `impl From<&OwnedPacketView> for PacketView` from
+  0.4 is removed in favour of `impl AsPacketView for OwnedPacketView`
+  + the new blanket `impl<T: AsPacketView> From<&T> for
+  PacketView<'_>` (plan 50). Existing `tracker.track(&owned)`
+  calls go through the blanket and are unaffected. Only callers
+  that named the explicit `From` impl by path are affected
+  (extremely unlikely outside flowscope's own internals).
 
 ## 0.4.0 — API ergonomics (2026-05-20)
 

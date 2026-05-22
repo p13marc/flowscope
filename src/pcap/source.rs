@@ -182,11 +182,12 @@ impl OwnedPacketView {
     }
 }
 
-impl<'a> From<&'a OwnedPacketView> for PacketView<'a> {
-    /// Borrow an [`OwnedPacketView`] as a [`PacketView`] — lets
+impl crate::AsPacketView for OwnedPacketView {
+    /// Borrow an [`OwnedPacketView`] as a [`PacketView`] — combined
+    /// with the blanket `From<&T: AsPacketView> for PacketView`, lets
     /// `&owned` be passed straight to `track()` without `as_view()`.
-    fn from(owned: &'a OwnedPacketView) -> Self {
-        owned.as_view()
+    fn as_packet_view(&self) -> PacketView<'_> {
+        self.as_view()
     }
 }
 

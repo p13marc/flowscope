@@ -107,8 +107,13 @@ pub mod pcap;
 #[cfg(feature = "tls")]
 pub mod tls;
 
+/// Parser stubs for downstream test crates. Gated by the
+/// `test-helpers` feature; not for production use.
+#[cfg(all(feature = "session", any(test, feature = "test-helpers")))]
+pub mod test_helpers;
+
 pub use timestamp::Timestamp;
-pub use view::PacketView;
+pub use view::{AsPacketView, PacketView};
 
 #[cfg(feature = "tracker")]
 pub use dedup::Dedup;

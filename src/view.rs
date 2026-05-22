@@ -47,6 +47,40 @@ impl<'a> PacketView<'a> {
     }
 }
 
+/// One-method trait letting any owned-packet type produce a
+/// borrowed [`PacketView`]. Combined with `track(impl
+/// Into<PacketView<'_>>)`, it lets foreign packet types be passed
+/// straight to `tracker.track(&owned)` / `driver.track(&owned)`.
+///
+/// Implementing for your own type is three lines:
+///
+/// ```
+/// use flowscope::{AsPacketView, PacketView, Timestamp};
+///
+/// struct MyPacket {
+///     bytes: Vec<u8>,
+///     ts: Timestamp,
+/// }
+///
+/// impl AsPacketView for MyPacket {
+///     fn as_packet_view(&self) -> PacketView<'_> {
+///         PacketView::new(&self.bytes, self.ts)
+///     }
+/// }
+/// ```
+pub trait AsPacketView {
+    fn as_packet_view(&self) -> PacketView<'_>;
+}
+
+/// Blanket conversion from any reference to an `AsPacketView` type
+/// into a borrowed `PacketView`. Lets `&owned` satisfy the
+/// `impl Into<PacketView<'_>>` argument of `track()`.
+impl<'a, T: AsPacketView + ?Sized> From<&'a T> for PacketView<'a> {
+    fn from(t: &'a T) -> Self {
+        t.as_packet_view()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -67,5 +101,38 @@ mod tests {
         let w = v.with_frame(&inner);
         assert_eq!(w.frame, &inner);
         assert_eq!(w.timestamp, Timestamp::new(7, 0));
+    }
+
+    /// Plan 50: an arbitrary type implementing `AsPacketView`
+    /// converts to `PacketView` via the blanket `From` impl.
+    #[test]
+    fn as_packet_view_blanket_works() {
+        struct MyPacket {
+            bytes: Vec<u8>,
+            ts: Timestamp,
+        }
+        impl AsPacketView for MyPacket {
+            fn as_packet_view(&self) -> PacketView<'_> {
+                PacketView::new(&self.bytes, self.ts)
+            }
+        }
+        let pkt = MyPacket {
+            bytes: vec![1, 2, 3, 4],
+            ts: Timestamp::new(42, 0),
+        };
+        // Via the trait method.
+        let v = pkt.as_packet_view();
+        assert_eq!(v.frame, &[1, 2, 3, 4]);
+        assert_eq!(v.timestamp, Timestamp::new(42, 0));
+        // Via the blanket From impl.
+        let v: PacketView<'_> = (&pkt).into();
+        assert_eq!(v.frame, &[1, 2, 3, 4]);
+        // Trait-object compatibility (`?Sized`).
+        let boxed: Box<dyn AsPacketView> = Box::new(MyPacket {
+            bytes: vec![9],
+            ts: Timestamp::new(1, 0),
+        });
+        let v = boxed.as_packet_view();
+        assert_eq!(v.frame, &[9]);
     }
 }
