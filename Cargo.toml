@@ -78,6 +78,10 @@ tls = ["reassembler", "session", "dep:tls-parser", "dep:bytes"]
 ja3 = ["tls", "dep:md-5", "dep:hex"]
 dns = ["extractors", "tracker", "session", "dep:simple-dns"]
 
+# Umbrella: enable every shipped L7 protocol parser at once. Strict
+# subset of `full` (no `pcap`, no observability).
+l7 = ["http", "tls", "dns"]
+
 # pcap source adapter (offline replay).
 pcap = ["extractors", "tracker", "dep:pcap-file"]
 

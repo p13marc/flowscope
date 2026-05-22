@@ -456,6 +456,36 @@ for evt in PcapFlowSource::open("trace.pcap")?
 automatically — buffer caps and overflow policies (Plan 42) work
 identically across sync and async.
 
+### Per-flow user state (0.5)
+
+`FlowSessionDriver` (and `FlowDatagramDriver`, `FlowDriver`) carry
+an optional third type parameter `S` for per-flow user state,
+defaulting to `()`. The common-case constructors (`new`,
+`with_config`) live on a pinned `impl<E, P> FlowSessionDriver<E, P,
+()>` block, so call sites that don't need state require no type
+annotation. Three additional constructors target the stateful path:
+
+| Constructor | When to use |
+|-------------|-------------|
+| `with_state(extractor, parser)` | `S: Default`; state is `S::default()` per flow |
+| `with_state_and_config(extractor, parser, config)` | same + explicit `FlowTrackerConfig` |
+| `with_state_init(extractor, parser, |key| -> S)` | derive state from the flow key |
+| `with_state_init_and_config(extractor, parser, config, init)` | same + explicit config |
+
+```rust,ignore
+let mut driver: FlowSessionDriver<_, _, MyPerFlowState> =
+    FlowSessionDriver::with_state_init(
+        FiveTuple::bidirectional(),
+        MyParser::default(),
+        |key: &FiveTupleKey| MyPerFlowState::from_key(key),
+    );
+// driver.tracker_mut() now returns &mut FlowTracker<E, MyPerFlowState>
+// — read/mutate the state through the tracker's per-flow accessors.
+```
+
+The same split (`with_state`, `with_state_init`, …) is on
+`FlowDriver` and `FlowDatagramDriver`.
+
 ## Reassembly health (0.2.0)
 
 Every `FlowEvent::Ended` now carries reassembly diagnostics in its

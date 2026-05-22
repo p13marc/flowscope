@@ -73,49 +73,131 @@ fn truncate_reason(s: &str) -> String {
     owned
 }
 
+/// Build a `BufferedReassemblerFactory` honouring the tracker
+/// config's `max_reassembler_buffer` / `overflow_policy` fields.
+/// Factored out so all four `FlowSessionDriver` constructors share
+/// the wiring.
+fn build_reassembler_factory(config: &FlowTrackerConfig) -> BufferedReassemblerFactory {
+    match config.max_reassembler_buffer {
+        Some(cap) => BufferedReassemblerFactory::default()
+            .with_max_buffer(cap)
+            .with_overflow_policy(config.overflow_policy),
+        None => BufferedReassemblerFactory::default(),
+    }
+}
+
 /// Sync session-event driver. Wraps a [`FlowDriver`] with
 /// [`BufferedReassemblerFactory`] and adds per-flow
 /// [`SessionParser`] dispatch.
 ///
-/// `E` — the flow extractor.
-/// `P` — the session parser; the helper requires `Default + Clone`
-/// so each new flow gets a fresh per-flow instance via clone.
-/// `S` — optional per-flow user state stored on the tracker.
-pub struct FlowSessionDriver<E, P>
+/// Type parameters:
+/// - `E` — the flow extractor.
+/// - `P` — the session parser; `P: Clone` is required so the driver
+///   can mint per-flow instances by cloning a template (use
+///   [`Self::new`]). The bound is dropped on the factory-based
+///   constructor (see plan 58).
+/// - `S` — optional per-flow user state, defaulting to `()`. Use
+///   [`Self::new`] / [`Self::with_config`] for `S = ()` (no
+///   annotation required); use [`Self::with_state`] /
+///   [`Self::with_state_init`] when per-flow state is needed.
+pub struct FlowSessionDriver<E, P, S = ()>
 where
     E: FlowExtractor,
     E::Key: Hash + Eq + Clone + Send + 'static,
     P: SessionParser + Clone + Send + 'static,
+    S: Send + 'static,
 {
-    driver: FlowDriver<E, BufferedReassemblerFactory>,
+    driver: FlowDriver<E, BufferedReassemblerFactory, S>,
     parser_factory: P,
     parsers: HashMap<E::Key, P, RandomState>,
 }
 
-impl<E, P> FlowSessionDriver<E, P>
+// Common path — `S = ()`. Constructors pinned so call sites need no
+// type annotation.
+impl<E, P> FlowSessionDriver<E, P, ()>
 where
     E: FlowExtractor,
     E::Key: Hash + Eq + Clone + Send + 'static,
     P: SessionParser + Clone + Send + 'static,
 {
-    /// Construct with default tracker config. `parser` is cloned
-    /// once per flow to give each session a fresh instance.
+    /// Construct with default tracker config and `S = ()`. `parser`
+    /// is cloned once per flow to give each session a fresh instance.
     pub fn new(extractor: E, parser: P) -> Self {
         Self::with_config(extractor, parser, FlowTrackerConfig::default())
     }
 
-    /// Construct with explicit tracker config. Honours
+    /// Construct with explicit tracker config and `S = ()`. Honours
     /// `config.max_reassembler_buffer` and `config.overflow_policy`
     /// when building per-flow reassemblers.
     pub fn with_config(extractor: E, parser: P, config: FlowTrackerConfig) -> Self {
-        let factory = match config.max_reassembler_buffer {
-            Some(cap) => BufferedReassemblerFactory::default()
-                .with_max_buffer(cap)
-                .with_overflow_policy(config.overflow_policy),
-            None => BufferedReassemblerFactory::default(),
-        };
+        let factory = build_reassembler_factory(&config);
         Self {
             driver: FlowDriver::with_config(extractor, factory, config),
+            parser_factory: parser,
+            parsers: HashMap::with_hasher(RandomState::new()),
+        }
+    }
+}
+
+// Stateful path — `S: Default`.
+impl<E, P, S> FlowSessionDriver<E, P, S>
+where
+    E: FlowExtractor,
+    E::Key: Hash + Eq + Clone + Send + 'static,
+    P: SessionParser + Clone + Send + 'static,
+    S: Default + Send + 'static,
+{
+    /// Construct with default tracker config and per-flow state
+    /// initialised via `S::default()`.
+    pub fn with_state(extractor: E, parser: P) -> Self {
+        Self::with_state_and_config(extractor, parser, FlowTrackerConfig::default())
+    }
+
+    /// Construct with explicit tracker config and per-flow state
+    /// initialised via `S::default()`.
+    pub fn with_state_and_config(extractor: E, parser: P, config: FlowTrackerConfig) -> Self {
+        let factory = build_reassembler_factory(&config);
+        Self {
+            driver: FlowDriver::with_state_and_config(extractor, factory, config),
+            parser_factory: parser,
+            parsers: HashMap::with_hasher(RandomState::new()),
+        }
+    }
+}
+
+// Generic path — `S: Send + 'static` only. Custom state init +
+// every non-construction method.
+impl<E, P, S> FlowSessionDriver<E, P, S>
+where
+    E: FlowExtractor,
+    E::Key: Hash + Eq + Clone + Send + 'static,
+    P: SessionParser + Clone + Send + 'static,
+    S: Send + 'static,
+{
+    /// Construct with default tracker config and a custom per-flow
+    /// state initialiser. Use when `S` isn't `Default` or when state
+    /// should be derived from the flow key.
+    pub fn with_state_init<G>(extractor: E, parser: P, init: G) -> Self
+    where
+        G: FnMut(&E::Key) -> S + Send + 'static,
+    {
+        Self::with_state_init_and_config(extractor, parser, FlowTrackerConfig::default(), init)
+    }
+
+    /// Construct with explicit tracker config and a custom per-flow
+    /// state initialiser.
+    pub fn with_state_init_and_config<G>(
+        extractor: E,
+        parser: P,
+        config: FlowTrackerConfig,
+        init: G,
+    ) -> Self
+    where
+        G: FnMut(&E::Key) -> S + Send + 'static,
+    {
+        let factory = build_reassembler_factory(&config);
+        Self {
+            driver: FlowDriver::with_state_init_and_config(extractor, factory, config, init),
             parser_factory: parser,
             parsers: HashMap::with_hasher(RandomState::new()),
         }
@@ -208,12 +290,12 @@ where
     }
 
     /// Borrow the inner tracker (for stats, introspection).
-    pub fn tracker(&self) -> &FlowTracker<E, ()> {
+    pub fn tracker(&self) -> &FlowTracker<E, S> {
         self.driver.tracker()
     }
 
     /// Borrow the inner tracker mutably.
-    pub fn tracker_mut(&mut self) -> &mut FlowTracker<E, ()> {
+    pub fn tracker_mut(&mut self) -> &mut FlowTracker<E, S> {
         self.driver.tracker_mut()
     }
 
@@ -421,6 +503,32 @@ mod tests {
             }
         }
         let _d = FlowSessionDriver::new(FiveTuple::bidirectional(), ConfigParser { _limit: 4096 });
+    }
+
+    /// Plan 38: `FlowSessionDriver::with_state_init` threads `S`
+    /// through to the inner tracker.
+    #[test]
+    fn with_state_init_threads_s() {
+        #[derive(Debug)]
+        #[allow(dead_code)]
+        struct MyState(u64);
+        let d: FlowSessionDriver<_, _, MyState> = FlowSessionDriver::with_state_init(
+            FiveTuple::bidirectional(),
+            LineParser::default(),
+            |_key| MyState(7),
+        );
+        let _: &FlowTracker<FiveTuple, MyState> = d.tracker();
+    }
+
+    /// Plan 38: `with_state` works for any `S: Default` parser.
+    #[test]
+    fn with_state_uses_default() {
+        #[derive(Debug, Default)]
+        #[allow(dead_code)]
+        struct Counter(u32);
+        let d: FlowSessionDriver<_, _, Counter> =
+            FlowSessionDriver::with_state(FiveTuple::bidirectional(), LineParser::default());
+        let _: &FlowTracker<FiveTuple, Counter> = d.tracker();
     }
 
     /// Tiny line-oriented parser: emits one Vec<u8> per newline-terminated frame.

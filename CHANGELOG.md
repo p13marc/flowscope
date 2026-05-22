@@ -1,5 +1,54 @@
 # Changelog
 
+## Unreleased — 0.5 cycle
+
+Driven by [`docs/feedback-2026-05-22-netring.md`](docs/feedback-2026-05-22-netring.md)
+(netring 0.14.0 integration feedback) — synthesis in
+[`docs/0.5-PLAN-OF-RECORD.md`](docs/0.5-PLAN-OF-RECORD.md).
+Pre-1.0 breaking changes; `netring` updates in lockstep.
+
+### Breaking
+
+- **Drivers regain the `S` per-flow-user-state type parameter
+  (partial reversal of plan 32).** `FlowDriver<E, F>` →
+  `FlowDriver<E, F, S = ()>`; same on `FlowSessionDriver` and
+  `FlowDatagramDriver`. Existing call sites are **unchanged**: the
+  common `new` / `with_config` constructors live on a pinned
+  `impl<E, F> FlowDriver<E, F, ()>` block, so inference picks
+  `S = ()` without an annotation. Advanced consumers (notably
+  `netring`) can now drop their custom driver clones — every
+  per-flow-state use case goes through the drivers again. New
+  constructors: `with_state`, `with_state_and_config` (for
+  `S: Default`), and `with_state_init`, `with_state_init_and_config`
+  (custom init via `FnMut(&E::Key) -> S`). `tracker()` /
+  `tracker_mut()` return `&FlowTracker<E, S>` again.
+  *Migration:* code that explicitly named `FlowDriver<E, F>` /
+  `FlowSessionDriver<E, P>` / `FlowDatagramDriver<E, P>` should
+  either stay the same (the `S = ()` default kicks in) or be
+  written explicitly as `FlowDriver<E, F, ()>`. Code that wants
+  per-flow state switches from a hand-rolled `FlowTracker` + parser
+  dispatch to the appropriate `with_state*` constructor.
+
+### Added
+
+- **`FlowTracker::finish()`** — `sweep(Timestamp::MAX)` under a
+  readable name. Plan 33 added `finish()` to the drivers; plan 39
+  brings the tracker to parity.
+- **`FlowTracker::sweep_with_parsers`** and
+  **`sweep_with_datagram_parsers`** — bake the on_tick choreography
+  from the drivers into reusable helpers. Direct-tracker consumers
+  (multi-stream wrappers, future custom drivers) drop their
+  hand-rolled "sweep → on_tick → translate ended" boilerplate.
+  Callback-shaped (`FnMut(&K, FlowSide, P::Message, Timestamp)`);
+  per-flow parser map stays caller-owned for full construction-
+  policy flexibility.
+- **`l7` umbrella feature** — `flowscope = { version = "0.5",
+  features = ["l7"] }` enables `http` + `tls` + `dns` together.
+  Strict subset of `full` (no `pcap`, no observability).
+- **CI feature-matrix** (internal): the workflow now runs
+  library-only build + clippy across six partial-feature
+  combinations to catch latent cfg dead-code at PR time.
+
 ## 0.4.0 — API ergonomics (2026-05-20)
 
 Driven by the audit in

@@ -42,7 +42,8 @@ Protocol parsers (each behind its own feature):
 | `ja3`   | [JA3](https://github.com/salesforce/ja3) client fingerprinting (sub-feature of `tls`) |
 | `dns`   | DNS message parser, per-flow query/response correlator. UDP via `DnsUdpParser` (`DatagramParser`); TCP via `DnsTcpParser` (`SessionParser`, RFC 1035 §4.2.2 length-framed) |
 | `pcap`  | pcap file source for offline replay |
-| `full`  | All of the above |
+| `l7`    | Umbrella: enables `http` + `tls` + `dns` together |
+| `full`  | All of the above (incl. `ja3`, `pcap`, observability) |
 
 ## Quick start
 

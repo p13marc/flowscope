@@ -45,12 +45,13 @@ where
     }
 }
 
-pub struct FlowDriver<E, F>
+pub struct FlowDriver<E, F, S = ()>
 where
     E: FlowExtractor,
     F: ReassemblerFactory<E::Key>,
+    S: Send + 'static,
 {
-    tracker: FlowTracker<E, ()>,
+    tracker: FlowTracker<E, S>,
     factory: F,
     reassemblers: HashMap<(E::Key, FlowSide), F::Reassembler, RandomState>,
     emit_anomalies: bool,
@@ -62,20 +63,94 @@ where
     monotonic_ts: Option<Timestamp>,
 }
 
-impl<E, F> FlowDriver<E, F>
+// Common path — `S = ()`. Constructors live on this pinned impl
+// block so call sites need no type annotation for the (vastly
+// common) "no per-flow user state" case.
+impl<E, F> FlowDriver<E, F, ()>
 where
     E: FlowExtractor,
     F: ReassemblerFactory<E::Key>,
 {
-    /// Construct with default config.
+    /// Construct with default config and `S = ()` (no per-flow user
+    /// state). Annotation-free.
     pub fn new(extractor: E, factory: F) -> Self {
         Self::with_config(extractor, factory, FlowTrackerConfig::default())
     }
 
-    /// Construct with explicit config.
+    /// Construct with explicit config and `S = ()`.
     pub fn with_config(extractor: E, factory: F, config: FlowTrackerConfig) -> Self {
         Self {
             tracker: FlowTracker::with_config(extractor, config),
+            factory,
+            reassemblers: HashMap::with_hasher(RandomState::new()),
+            emit_anomalies: false,
+            dedup: None,
+            monotonic_ts: None,
+        }
+    }
+}
+
+// Stateful path — `S: Default`. Convenience for the common case
+// where per-flow state can be built without knowing the key.
+impl<E, F, S> FlowDriver<E, F, S>
+where
+    E: FlowExtractor,
+    F: ReassemblerFactory<E::Key>,
+    S: Default + Send + 'static,
+{
+    /// Construct with default config and per-flow state initialised
+    /// via `S::default()`.
+    pub fn with_state(extractor: E, factory: F) -> Self {
+        Self::with_state_and_config(extractor, factory, FlowTrackerConfig::default())
+    }
+
+    /// Construct with explicit config and per-flow state initialised
+    /// via `S::default()`.
+    pub fn with_state_and_config(extractor: E, factory: F, config: FlowTrackerConfig) -> Self {
+        Self {
+            tracker: FlowTracker::with_config(extractor, config),
+            factory,
+            reassemblers: HashMap::with_hasher(RandomState::new()),
+            emit_anomalies: false,
+            dedup: None,
+            monotonic_ts: None,
+        }
+    }
+}
+
+// Generic path — `S: Send + 'static` only. Covers parsers whose
+// state isn't `Default` or that want to derive state from the flow
+// key. All non-construction methods live on this block so they
+// apply to every `S`.
+impl<E, F, S> FlowDriver<E, F, S>
+where
+    E: FlowExtractor,
+    F: ReassemblerFactory<E::Key>,
+    S: Send + 'static,
+{
+    /// Construct with default config and a custom per-flow state
+    /// initialiser. Use when `S` isn't `Default` or when state
+    /// should be derived from the flow key.
+    pub fn with_state_init<G>(extractor: E, factory: F, init: G) -> Self
+    where
+        G: FnMut(&E::Key) -> S + Send + 'static,
+    {
+        Self::with_state_init_and_config(extractor, factory, FlowTrackerConfig::default(), init)
+    }
+
+    /// Construct with explicit config and a custom per-flow state
+    /// initialiser.
+    pub fn with_state_init_and_config<G>(
+        extractor: E,
+        factory: F,
+        config: FlowTrackerConfig,
+        init: G,
+    ) -> Self
+    where
+        G: FnMut(&E::Key) -> S + Send + 'static,
+    {
+        Self {
+            tracker: FlowTracker::with_config_and_state(extractor, config, init),
             factory,
             reassemblers: HashMap::with_hasher(RandomState::new()),
             emit_anomalies: false,
@@ -323,7 +398,7 @@ where
     fn diff_anomaly_state(
         snapshot: AnomalySnapshot<E::Key>,
         reassemblers: &HashMap<(E::Key, FlowSide), F::Reassembler, RandomState>,
-        tracker: &FlowTracker<E, ()>,
+        tracker: &FlowTracker<E, S>,
         ts: Timestamp,
     ) -> Vec<FlowEvent<E::Key>> {
         let mut out = Vec::new();
@@ -388,7 +463,7 @@ where
     fn synthesise_buffer_overflow_ends(
         existing: &[FlowEvent<E::Key>],
         reassemblers: &mut HashMap<(E::Key, FlowSide), F::Reassembler, RandomState>,
-        tracker: &mut FlowTracker<E, ()>,
+        tracker: &mut FlowTracker<E, S>,
     ) -> Vec<FlowEvent<E::Key>> {
         // Collect keys whose reassembler is poisoned.
         let mut poisoned_keys: Vec<E::Key> = Vec::new();
@@ -474,12 +549,12 @@ where
     }
 
     /// Borrow the inner tracker (for stats, introspection).
-    pub fn tracker(&self) -> &FlowTracker<E, ()> {
+    pub fn tracker(&self) -> &FlowTracker<E, S> {
         &self.tracker
     }
 
     /// Borrow the inner tracker mutably.
-    pub fn tracker_mut(&mut self) -> &mut FlowTracker<E, ()> {
+    pub fn tracker_mut(&mut self) -> &mut FlowTracker<E, S> {
         &mut self.tracker
     }
 
@@ -519,9 +594,10 @@ where
     }
 }
 
-impl<E> FlowDriver<E, crate::reassembler::BufferedReassemblerFactory>
+impl<E, S> FlowDriver<E, crate::reassembler::BufferedReassemblerFactory, S>
 where
     E: FlowExtractor,
+    S: Send + 'static,
 {
     /// Drain buffered bytes for the given (key, side) and return
     /// them as a `Vec<u8>`. Returns an empty `Vec` when no
@@ -554,9 +630,10 @@ mod tests {
     }
 
     /// Plan 32 regression guard: `FlowDriver::new` must be fully
-    /// inferable — no turbofish, no `let` type annotation. If the
-    /// `S` user-state parameter ever creeps back, this stops
-    /// compiling.
+    /// inferable — no turbofish, no `let` type annotation. Plan 38
+    /// restored the `S = ()` parameter via a split-ctor design; this
+    /// guard still passes because the `new` ctor lives on the pinned
+    /// `impl<E, F> FlowDriver<E, F, ()>` block.
     #[test]
     fn new_needs_no_type_annotation() {
         let mut d = FlowDriver::new(
@@ -564,6 +641,36 @@ mod tests {
             BufferedReassemblerFactory::default(),
         );
         let _ = d.track(view(b"", 0));
+    }
+
+    /// Plan 38: `FlowDriver::with_state_init` carries `S` through
+    /// to the inner tracker.
+    #[test]
+    fn with_state_init_threads_s() {
+        #[derive(Debug, PartialEq)]
+        #[allow(dead_code)]
+        struct MyState(u64);
+        let mut d: FlowDriver<_, _, MyState> = FlowDriver::with_state_init(
+            FiveTuple::bidirectional(),
+            BufferedReassemblerFactory::default(),
+            |_key| MyState(7),
+        );
+        let _ = d.track(view(b"", 0));
+        // tracker() returns &FlowTracker<E, MyState>, not <E, ()>.
+        let _tracker: &crate::FlowTracker<FiveTuple, MyState> = d.tracker();
+    }
+
+    /// Plan 38: `with_state` works for any `S: Default`.
+    #[test]
+    fn with_state_uses_default() {
+        #[derive(Debug, Default)]
+        #[allow(dead_code)]
+        struct Counter(u32);
+        let d: FlowDriver<_, _, Counter> = FlowDriver::with_state(
+            FiveTuple::bidirectional(),
+            BufferedReassemblerFactory::default(),
+        );
+        let _tracker: &crate::FlowTracker<FiveTuple, Counter> = d.tracker();
     }
 
     /// Plan 33: `finish()` ends every still-open flow, and a second

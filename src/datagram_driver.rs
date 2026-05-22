@@ -92,34 +92,104 @@ impl<K: Send + 'static> ReassemblerFactory<K> for NoopReassemblerFactory {
 ///
 /// Builder methods mirror [`crate::FlowSessionDriver`] so users
 /// running mixed TCP/UDP traffic can pair the two drivers with
-/// identical configuration.
-pub struct FlowDatagramDriver<E, P>
+/// identical configuration. `S` defaults to `()`; use
+/// [`Self::with_state`] / [`Self::with_state_init`] for per-flow
+/// user state.
+pub struct FlowDatagramDriver<E, P, S = ()>
 where
     E: FlowExtractor,
     E::Key: Hash + Eq + Clone + Send + 'static,
     P: DatagramParser + Clone + Send + 'static,
+    S: Send + 'static,
 {
-    driver: FlowDriver<E, NoopReassemblerFactory>,
+    driver: FlowDriver<E, NoopReassemblerFactory, S>,
     parser_factory: P,
     parsers: HashMap<E::Key, P, RandomState>,
 }
 
-impl<E, P> FlowDatagramDriver<E, P>
+// Common path — `S = ()`, annotation-free.
+impl<E, P> FlowDatagramDriver<E, P, ()>
 where
     E: FlowExtractor,
     E::Key: Hash + Eq + Clone + Send + 'static,
     P: DatagramParser + Clone + Send + 'static,
 {
-    /// Construct with default tracker config. `parser` is cloned
-    /// once per flow to give each flow a fresh instance.
+    /// Construct with default tracker config and `S = ()`. `parser`
+    /// is cloned once per flow to give each flow a fresh instance.
     pub fn new(extractor: E, parser: P) -> Self {
         Self::with_config(extractor, parser, FlowTrackerConfig::default())
     }
 
-    /// Construct with explicit tracker config.
+    /// Construct with explicit tracker config and `S = ()`.
     pub fn with_config(extractor: E, parser: P, config: FlowTrackerConfig) -> Self {
         Self {
             driver: FlowDriver::with_config(extractor, NoopReassemblerFactory, config),
+            parser_factory: parser,
+            parsers: HashMap::with_hasher(RandomState::new()),
+        }
+    }
+}
+
+// Stateful path — `S: Default`.
+impl<E, P, S> FlowDatagramDriver<E, P, S>
+where
+    E: FlowExtractor,
+    E::Key: Hash + Eq + Clone + Send + 'static,
+    P: DatagramParser + Clone + Send + 'static,
+    S: Default + Send + 'static,
+{
+    /// Construct with default tracker config and per-flow state
+    /// initialised via `S::default()`.
+    pub fn with_state(extractor: E, parser: P) -> Self {
+        Self::with_state_and_config(extractor, parser, FlowTrackerConfig::default())
+    }
+
+    /// Construct with explicit tracker config and per-flow state
+    /// initialised via `S::default()`.
+    pub fn with_state_and_config(extractor: E, parser: P, config: FlowTrackerConfig) -> Self {
+        Self {
+            driver: FlowDriver::with_state_and_config(extractor, NoopReassemblerFactory, config),
+            parser_factory: parser,
+            parsers: HashMap::with_hasher(RandomState::new()),
+        }
+    }
+}
+
+// Generic path — `S: Send + 'static` only.
+impl<E, P, S> FlowDatagramDriver<E, P, S>
+where
+    E: FlowExtractor,
+    E::Key: Hash + Eq + Clone + Send + 'static,
+    P: DatagramParser + Clone + Send + 'static,
+    S: Send + 'static,
+{
+    /// Construct with default tracker config and a custom per-flow
+    /// state initialiser.
+    pub fn with_state_init<G>(extractor: E, parser: P, init: G) -> Self
+    where
+        G: FnMut(&E::Key) -> S + Send + 'static,
+    {
+        Self::with_state_init_and_config(extractor, parser, FlowTrackerConfig::default(), init)
+    }
+
+    /// Construct with explicit tracker config and a custom per-flow
+    /// state initialiser.
+    pub fn with_state_init_and_config<G>(
+        extractor: E,
+        parser: P,
+        config: FlowTrackerConfig,
+        init: G,
+    ) -> Self
+    where
+        G: FnMut(&E::Key) -> S + Send + 'static,
+    {
+        Self {
+            driver: FlowDriver::with_state_init_and_config(
+                extractor,
+                NoopReassemblerFactory,
+                config,
+                init,
+            ),
             parser_factory: parser,
             parsers: HashMap::with_hasher(RandomState::new()),
         }
@@ -201,12 +271,12 @@ where
     }
 
     /// Borrow the inner tracker.
-    pub fn tracker(&self) -> &FlowTracker<E, ()> {
+    pub fn tracker(&self) -> &FlowTracker<E, S> {
         self.driver.tracker()
     }
 
     /// Borrow the inner tracker mutably.
-    pub fn tracker_mut(&mut self) -> &mut FlowTracker<E, ()> {
+    pub fn tracker_mut(&mut self) -> &mut FlowTracker<E, S> {
         self.driver.tracker_mut()
     }
 
@@ -345,6 +415,19 @@ mod tests {
         fn parse(&mut self, payload: &[u8], side: FlowSide, _ts: Timestamp) -> Vec<Self::Message> {
             vec![(side, payload.to_vec())]
         }
+    }
+
+    /// Plan 38: `FlowDatagramDriver::with_state_init` threads `S`.
+    #[test]
+    fn with_state_init_threads_s() {
+        #[derive(Debug)]
+        #[allow(dead_code)]
+        struct MyState(u64);
+        let d: FlowDatagramDriver<_, _, MyState> =
+            FlowDatagramDriver::with_state_init(FiveTuple::bidirectional(), EchoUdp, |_key| {
+                MyState(7)
+            });
+        let _: &FlowTracker<FiveTuple, MyState> = d.tracker();
     }
 
     /// Plan 33: `finish()` closes every still-open UDP flow.

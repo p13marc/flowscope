@@ -28,3 +28,27 @@ jobs:
       run: cargo doc --all-features --no-deps
       env:
         RUSTDOCFLAGS: -D warnings
+
+  feature-matrix:
+    # Library-only build + clippy across a small matrix of partial-
+    # feature combinations so latent cfg-gate dead-code issues in
+    # `src/` fail at PR time, not when a user enables an unusual
+    # combo. Test code is intentionally not included: it assumes
+    # `--all-features` and is covered by the `build` job above.
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        features:
+          - ""                  # default features only
+          - "pcap"              # offline source, no L7
+          - "dns"               # gate for obs::trace_session_message
+          - "http,tls"
+          - "metrics,tracing"
+          - "l7,pcap"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build (--no-default-features --features "${{ matrix.features }}")
+        run: cargo build --no-default-features --features "${{ matrix.features }}"
+      - name: Clippy (--no-default-features --features "${{ matrix.features }}")
+        run: cargo clippy --no-default-features --features "${{ matrix.features }}" -- -D warnings

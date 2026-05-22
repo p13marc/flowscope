@@ -31,15 +31,15 @@ author's "lean toward option B" on plan 38.
 
 | Plan | Goal | Breaking? | Status |
 |------|------|-----------|--------|
-| [`38-driver-state-restore.md`](./38-driver-state-restore.md) | Restore `S` on the drivers via split constructors (reverses plan 32 option B) | yes | Not started |
-| [`39-tracker-convenience.md`](./39-tracker-convenience.md) | `FlowTracker::finish()` + `sweep_with_parsers` / `sweep_with_datagram_parsers` | no | Not started |
+| [`38-driver-state-restore.md`](./38-driver-state-restore.md) | Restore `S` on the drivers via split constructors (reverses plan 32 option B) | yes | ✅ Implemented (uncommitted) |
+| [`39-tracker-convenience.md`](./39-tracker-convenience.md) | `FlowTracker::finish()` + `sweep_with_parsers` / `sweep_with_datagram_parsers` | no | ✅ Implemented (uncommitted) |
 | [`43-anomaly-event-split.md`](./43-anomaly-event-split.md) | Split `Anomaly { key: Option<K> }` into `FlowAnomaly` + `TrackerAnomaly` on both `FlowEvent` and `SessionEvent` | yes | Not started |
 | [`44-reassembler-watermark-threshold.md`](./44-reassembler-watermark-threshold.md) | `BufferedReassembler::with_high_watermark_threshold` + `AnomalyKind::ReassemblerHighWatermark` | no | Not started |
 | [`50-as-packet-view.md`](./50-as-packet-view.md) | `AsPacketView` trait + blanket `From<&T>` for `PacketView` | minor | Not started |
 | [`58-driver-factory-ctor.md`](./58-driver-factory-ctor.md) | `FlowSessionDriver::with_factory` / `FlowDatagramDriver::with_factory` (prereq: 38) | no | Not started |
 | [`59-test-helpers-parsers.md`](./59-test-helpers-parsers.md) | `flowscope::test_helpers::{NoopSessionParser, NoopDatagramParser, EchoSessionParser}` | no | Not started |
-| [`60-l7-umbrella-and-doc-note.md`](./60-l7-umbrella-and-doc-note.md) | `l7` umbrella feature; intra-doc-link recipe for re-exporters | no | Not started |
-| [`61-feature-matrix-ci.md`](./61-feature-matrix-ci.md) | Partial-feature CI matrix (catches latent cfg dead-code) | no | Not started |
+| [`60-l7-umbrella-and-doc-note.md`](./60-l7-umbrella-and-doc-note.md) | `l7` umbrella feature; intra-doc-link recipe for re-exporters | no | ✅ Implemented (uncommitted) |
+| [`61-feature-matrix-ci.md`](./61-feature-matrix-ci.md) | Partial-feature CI matrix (catches latent cfg dead-code) | no | ✅ Implemented (uncommitted) |
 
 Deferred from the feedback:
 - **#2 `FlowTracker::with_auto_sweep(interval)`** — packet-clock

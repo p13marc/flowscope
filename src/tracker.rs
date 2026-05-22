@@ -429,6 +429,108 @@ impl<E: FlowExtractor, S: Send + 'static> FlowTracker<E, S> {
         ended
     }
 
+    /// End-of-input flush. Equivalent to `sweep(Timestamp::MAX)`.
+    /// Every still-open flow exceeds its idle threshold against
+    /// this anchor and emits its terminal `Ended` event.
+    pub fn finish(&mut self) -> Vec<FlowEvent<E::Key>> {
+        self.sweep(Timestamp::MAX)
+    }
+
+    /// Run a sweep, driving `on_tick` on every live parser
+    /// **before** the swept events land. Mirrors the choreography
+    /// that `FlowSessionDriver::sweep` does internally, so
+    /// direct-tracker consumers don't have to spell it out.
+    ///
+    /// `parsers` is the caller-owned per-flow parser map (lets the
+    /// caller control construction policy — clone, factory, plus
+    /// per-flow user state via `S`). `on_message` is invoked for
+    /// each emitted L7 message; see the contract below.
+    ///
+    /// # Callback contract
+    ///
+    /// `on_message(key, side, msg, ts)` fires for:
+    /// - **Tick output** — `(&K, FlowSide::Initiator, msg, now)`
+    ///   from `parser.on_tick(now)`. By convention all tick output
+    ///   is attributed to the initiator side.
+    /// - **Fin flush output** — `(&K, side, msg, ended_ts)` from
+    ///   `parser.fin_initiator()` / `fin_responder()` on flows that
+    ///   end in this sweep. `ended_ts` is the flow's `last_seen`.
+    ///
+    /// Ordering: all `on_tick` callbacks fire before any swept
+    /// flow's fin-flush callbacks fire. Both fire before that
+    /// flow's `Ended` event lands in the returned vector. Parsers
+    /// for ending flows are removed from `parsers` automatically.
+    #[cfg(feature = "session")]
+    pub fn sweep_with_parsers<P, F, H>(
+        &mut self,
+        now: Timestamp,
+        parsers: &mut std::collections::HashMap<E::Key, P, H>,
+        mut on_message: F,
+    ) -> Vec<FlowEvent<E::Key>>
+    where
+        P: crate::SessionParser,
+        F: FnMut(&E::Key, FlowSide, P::Message, Timestamp),
+        H: std::hash::BuildHasher,
+    {
+        // 1. on_tick on every live parser, BEFORE the sweep — so a
+        //    flow about to be closed by this sweep still gets its
+        //    final tick (and the tick's messages land ahead of its
+        //    Closed).
+        for (key, parser) in parsers.iter_mut() {
+            for msg in parser.on_tick(now) {
+                on_message(key, FlowSide::Initiator, msg, now);
+            }
+        }
+        // 2. Sweep idle flows.
+        let events = self.sweep(now);
+        // 3. For each ended flow with a parser, flush fin output
+        //    and remove the parser.
+        for ev in &events {
+            if let FlowEvent::Ended { key, stats, .. } = ev {
+                if let Some(mut parser) = parsers.remove(key) {
+                    let ended_ts = stats.last_seen;
+                    for msg in parser.fin_initiator() {
+                        on_message(key, FlowSide::Initiator, msg, ended_ts);
+                    }
+                    for msg in parser.fin_responder() {
+                        on_message(key, FlowSide::Responder, msg, ended_ts);
+                    }
+                }
+            }
+        }
+        events
+    }
+
+    /// Datagram-parser mirror of [`Self::sweep_with_parsers`].
+    /// `DatagramParser` has no `fin_*` so the callback fires only
+    /// from `on_tick`. Parsers for ending flows are still removed
+    /// from `parsers`.
+    #[cfg(feature = "session")]
+    pub fn sweep_with_datagram_parsers<P, F, H>(
+        &mut self,
+        now: Timestamp,
+        parsers: &mut std::collections::HashMap<E::Key, P, H>,
+        mut on_message: F,
+    ) -> Vec<FlowEvent<E::Key>>
+    where
+        P: crate::DatagramParser,
+        F: FnMut(&E::Key, FlowSide, P::Message, Timestamp),
+        H: std::hash::BuildHasher,
+    {
+        for (key, parser) in parsers.iter_mut() {
+            for msg in parser.on_tick(now) {
+                on_message(key, FlowSide::Initiator, msg, now);
+            }
+        }
+        let events = self.sweep(now);
+        for ev in &events {
+            if let FlowEvent::Ended { key, .. } = ev {
+                parsers.remove(key);
+            }
+        }
+        events
+    }
+
     /// Peek at a flow's entry without affecting LRU order.
     pub fn get(&self, key: &E::Key) -> Option<&FlowEntry<S>> {
         self.flows.peek(key)
@@ -1017,5 +1119,109 @@ mod tests {
         assert!(key.either_port(1234));
         assert!(key.either_port(80));
         assert!(!key.either_port(443));
+    }
+
+    /// Plan 39: `finish()` is a one-liner for `sweep(Timestamp::MAX)`.
+    #[test]
+    fn finish_sweeps_all_open_flows() {
+        let mut t = FlowTracker::<FiveTuple>::new(FiveTuple::bidirectional());
+        let f = ipv4_udp([10, 0, 0, 1], [10, 0, 0, 2], 1234, 53, b"hi");
+        t.track(view(&f, 0));
+        let ended = t.finish();
+        assert_eq!(ended.len(), 1);
+        assert!(matches!(ended[0], FlowEvent::Ended { .. }));
+        // Second call sees no flows.
+        assert!(t.finish().is_empty());
+    }
+
+    #[cfg(feature = "session")]
+    #[test]
+    fn sweep_with_parsers_fires_on_tick_then_fin() {
+        use crate::{FlowSide, SessionParser, Timestamp};
+        use std::collections::HashMap;
+
+        #[derive(Default, Clone)]
+        struct TickParser;
+        impl SessionParser for TickParser {
+            type Message = &'static str;
+            fn feed_initiator(&mut self, _b: &[u8], _ts: Timestamp) -> Vec<&'static str> {
+                Vec::new()
+            }
+            fn feed_responder(&mut self, _b: &[u8], _ts: Timestamp) -> Vec<&'static str> {
+                Vec::new()
+            }
+            fn on_tick(&mut self, _now: Timestamp) -> Vec<&'static str> {
+                vec!["tick"]
+            }
+            fn fin_initiator(&mut self) -> Vec<&'static str> {
+                vec!["fin-i"]
+            }
+        }
+
+        let mut t = FlowTracker::<FiveTuple>::new(FiveTuple::bidirectional());
+        let f = ipv4_udp([10, 0, 0, 1], [10, 0, 0, 2], 1234, 53, b"hi");
+        t.track(view(&f, 0));
+
+        let mut parsers: HashMap<_, TickParser> = HashMap::new();
+        for (k, _) in t.flows() {
+            parsers.insert(*k, TickParser);
+        }
+
+        let mut observed: Vec<(FlowSide, &'static str)> = Vec::new();
+        let ended = t.sweep_with_parsers(Timestamp::MAX, &mut parsers, |_k, side, msg, _ts| {
+            observed.push((side, msg));
+        });
+
+        // The flow ended (Timestamp::MAX = idle blown out).
+        assert_eq!(ended.len(), 1);
+        // Both tick (Initiator) and fin-i (Initiator) fired; ordering
+        // is tick before fin.
+        assert_eq!(
+            observed,
+            vec![
+                (FlowSide::Initiator, "tick"),
+                (FlowSide::Initiator, "fin-i"),
+            ]
+        );
+        // Parser removed from the map.
+        assert!(parsers.is_empty());
+    }
+
+    #[cfg(feature = "session")]
+    #[test]
+    fn sweep_with_datagram_parsers_fires_on_tick_and_removes_parser() {
+        use crate::{DatagramParser, FlowSide, Timestamp};
+        use std::collections::HashMap;
+
+        #[derive(Default, Clone)]
+        struct TickParser;
+        impl DatagramParser for TickParser {
+            type Message = u8;
+            fn parse(&mut self, _payload: &[u8], _side: FlowSide, _ts: Timestamp) -> Vec<u8> {
+                Vec::new()
+            }
+            fn on_tick(&mut self, _now: Timestamp) -> Vec<u8> {
+                vec![7]
+            }
+        }
+
+        let mut t = FlowTracker::<FiveTuple>::new(FiveTuple::bidirectional());
+        let f = ipv4_udp([10, 0, 0, 1], [10, 0, 0, 2], 1234, 53, b"hi");
+        t.track(view(&f, 0));
+
+        let mut parsers: HashMap<_, TickParser> = HashMap::new();
+        for (k, _) in t.flows() {
+            parsers.insert(*k, TickParser);
+        }
+
+        let mut observed: Vec<u8> = Vec::new();
+        let ended =
+            t.sweep_with_datagram_parsers(Timestamp::MAX, &mut parsers, |_k, _side, msg, _ts| {
+                observed.push(msg)
+            });
+
+        assert_eq!(ended.len(), 1);
+        assert_eq!(observed, vec![7]);
+        assert!(parsers.is_empty());
     }
 }

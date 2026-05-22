@@ -55,7 +55,7 @@ src/
 │                                # snapshot_stats / snapshot_history / forget (0.2.0)
 ├── reassembler.rs               # Reassembler trait + BufferedReassembler
 │                                # buffer cap + OverflowPolicy (plan 42 §1, 0.2.0)
-├── driver.rs                    # FlowDriver<E, F>        (sync wrapper)
+├── driver.rs                    # FlowDriver<E, F, S = ()> (sync wrapper)
 │                                # diagnostics patch + BufferOverflow synthesis +
 │                                # with_emit_anomalies      (plan 42 §2/§3, 0.2.0)
 ├── session.rs                   # SessionParser / DatagramParser traits + factories + SessionEvent
@@ -161,8 +161,8 @@ expose a callback factory:
 
 For the typed-stream API, two driver helpers:
 
-- Sync, no runtime: **`FlowSessionDriver<E, P>`** in flowscope
-  (0.2.0).
+- Sync, no runtime: **`FlowSessionDriver<E, P, S = ()>`** in
+  flowscope (0.2.0; `S` restored in 0.5 — see plan 38).
 - Async tokio: **`flow_stream(...).session_stream(parser)`** in
   netring.
 
@@ -293,6 +293,21 @@ For the next `cargo publish` of flowscope:
 9. `cargo publish`.
 10. Tag the release in git: `git tag 0.x.y && git push origin 0.x.y`
     (no `v` prefix — matches the 0.1.0 / 0.2.0 / 0.3.0 / 0.4.0 tags).
+
+## Intra-doc links for re-exporters
+
+When a downstream crate re-exports `flowscope` types, the obvious
+`[FlowSessionDriver](flowscope::FlowSessionDriver)` style triggers
+rustdoc's `redundant_explicit_links` lint — path resolution flows
+through the re-export, so the explicit target equals what rustdoc
+would resolve `[FlowSessionDriver]` to anyway. Write the bare form
+instead:
+
+```rust
+//! See [`FlowSessionDriver`] for the sync session-event driver.
+```
+
+This saves every re-exporter the same 5-minute debug session.
 
 ## Relationship to netring
 
