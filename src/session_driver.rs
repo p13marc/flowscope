@@ -77,6 +77,10 @@ fn truncate_reason(s: &str) -> String {
 /// config's `max_reassembler_buffer` / `overflow_policy` fields.
 /// Factored out so all four `FlowSessionDriver` constructors share
 /// the wiring.
+/// Boxed per-flow parser factory closure. Each new flow gets its
+/// parser by calling this on the flow's key.
+type ParserFactory<K, P> = Box<dyn FnMut(&K) -> P + Send>;
+
 fn build_reassembler_factory(config: &FlowTrackerConfig) -> BufferedReassemblerFactory {
     let mut f = BufferedReassemblerFactory::default();
     if let Some(cap) = config.max_reassembler_buffer {
@@ -108,16 +112,20 @@ pub struct FlowSessionDriver<E, P, S = ()>
 where
     E: FlowExtractor,
     E::Key: Hash + Eq + Clone + Send + 'static,
-    P: SessionParser + Clone + Send + 'static,
+    P: SessionParser + Send + 'static,
     S: Send + 'static,
 {
     driver: FlowDriver<E, BufferedReassemblerFactory, S>,
-    parser_factory: P,
+    /// Per-flow parser constructor. Built either by wrapping a
+    /// template parser in a move closure (`new` / `with_state*`) or
+    /// from a caller-supplied `FnMut` (`with_factory*`).
+    parser_factory: ParserFactory<E::Key, P>,
     parsers: HashMap<E::Key, P, RandomState>,
 }
 
-// Common path — `S = ()`. Constructors pinned so call sites need no
-// type annotation.
+// Template-parser path — `S = ()` and `P: Clone`. Constructors
+// pinned so common-case call sites need no type annotation. The
+// template is cloned once per new flow.
 impl<E, P> FlowSessionDriver<E, P, ()>
 where
     E: FlowExtractor,
@@ -134,16 +142,50 @@ where
     /// `config.max_reassembler_buffer` and `config.overflow_policy`
     /// when building per-flow reassemblers.
     pub fn with_config(extractor: E, parser: P, config: FlowTrackerConfig) -> Self {
-        let factory = build_reassembler_factory(&config);
+        let reassembler = build_reassembler_factory(&config);
         Self {
-            driver: FlowDriver::with_config(extractor, factory, config),
-            parser_factory: parser,
+            driver: FlowDriver::with_config(extractor, reassembler, config),
+            parser_factory: Box::new(move |_key| parser.clone()),
             parsers: HashMap::with_hasher(RandomState::new()),
         }
     }
 }
 
-// Stateful path — `S: Default`.
+// Factory path — `S = ()`. `P` doesn't need `Clone`; each flow's
+// parser is minted by the caller-supplied closure. Use for parsers
+// with expensive setup (compiled regex sets, ML model weights, …)
+// where you'd rather share state via `Arc` than clone a template.
+impl<E, P> FlowSessionDriver<E, P, ()>
+where
+    E: FlowExtractor,
+    E::Key: Hash + Eq + Clone + Send + 'static,
+    P: SessionParser + Send + 'static,
+{
+    /// Construct with default tracker config and a per-flow parser
+    /// factory closure. Drops the `P: Clone` requirement of [`Self::new`].
+    pub fn with_factory<F>(extractor: E, factory: F) -> Self
+    where
+        F: FnMut(&E::Key) -> P + Send + 'static,
+    {
+        Self::with_factory_and_config(extractor, factory, FlowTrackerConfig::default())
+    }
+
+    /// Construct with explicit tracker config and a per-flow parser
+    /// factory closure.
+    pub fn with_factory_and_config<F>(extractor: E, factory: F, config: FlowTrackerConfig) -> Self
+    where
+        F: FnMut(&E::Key) -> P + Send + 'static,
+    {
+        let reassembler = build_reassembler_factory(&config);
+        Self {
+            driver: FlowDriver::with_config(extractor, reassembler, config),
+            parser_factory: Box::new(factory),
+            parsers: HashMap::with_hasher(RandomState::new()),
+        }
+    }
+}
+
+// Stateful template-parser path — `S: Default`, `P: Clone`.
 impl<E, P, S> FlowSessionDriver<E, P, S>
 where
     E: FlowExtractor,
@@ -160,17 +202,19 @@ where
     /// Construct with explicit tracker config and per-flow state
     /// initialised via `S::default()`.
     pub fn with_state_and_config(extractor: E, parser: P, config: FlowTrackerConfig) -> Self {
-        let factory = build_reassembler_factory(&config);
+        let reassembler = build_reassembler_factory(&config);
         Self {
-            driver: FlowDriver::with_state_and_config(extractor, factory, config),
-            parser_factory: parser,
+            driver: FlowDriver::with_state_and_config(extractor, reassembler, config),
+            parser_factory: Box::new(move |_key| parser.clone()),
             parsers: HashMap::with_hasher(RandomState::new()),
         }
     }
 }
 
 // Generic path — `S: Send + 'static` only. Custom state init +
-// every non-construction method.
+// every non-construction method. `P: Clone` for the
+// template-parser stateful ctors; the factory variants live on
+// the impl block below.
 impl<E, P, S> FlowSessionDriver<E, P, S>
 where
     E: FlowExtractor,
@@ -199,14 +243,73 @@ where
     where
         G: FnMut(&E::Key) -> S + Send + 'static,
     {
-        let factory = build_reassembler_factory(&config);
+        let reassembler = build_reassembler_factory(&config);
         Self {
-            driver: FlowDriver::with_state_init_and_config(extractor, factory, config, init),
-            parser_factory: parser,
+            driver: FlowDriver::with_state_init_and_config(extractor, reassembler, config, init),
+            parser_factory: Box::new(move |_key| parser.clone()),
             parsers: HashMap::with_hasher(RandomState::new()),
         }
     }
+}
 
+// Stateful factory path — `S: Send + 'static`, no `P: Clone`.
+impl<E, P, S> FlowSessionDriver<E, P, S>
+where
+    E: FlowExtractor,
+    E::Key: Hash + Eq + Clone + Send + 'static,
+    P: SessionParser + Send + 'static,
+    S: Send + 'static,
+{
+    /// Construct with default tracker config, a per-flow parser
+    /// factory, and a custom per-flow state initialiser.
+    pub fn with_state_factory<FP, FS>(extractor: E, parser_factory: FP, state_init: FS) -> Self
+    where
+        FP: FnMut(&E::Key) -> P + Send + 'static,
+        FS: FnMut(&E::Key) -> S + Send + 'static,
+    {
+        Self::with_state_factory_and_config(
+            extractor,
+            parser_factory,
+            state_init,
+            FlowTrackerConfig::default(),
+        )
+    }
+
+    /// Construct with explicit tracker config, a per-flow parser
+    /// factory, and a custom per-flow state initialiser.
+    pub fn with_state_factory_and_config<FP, FS>(
+        extractor: E,
+        parser_factory: FP,
+        state_init: FS,
+        config: FlowTrackerConfig,
+    ) -> Self
+    where
+        FP: FnMut(&E::Key) -> P + Send + 'static,
+        FS: FnMut(&E::Key) -> S + Send + 'static,
+    {
+        let reassembler = build_reassembler_factory(&config);
+        Self {
+            driver: FlowDriver::with_state_init_and_config(
+                extractor,
+                reassembler,
+                config,
+                state_init,
+            ),
+            parser_factory: Box::new(parser_factory),
+            parsers: HashMap::with_hasher(RandomState::new()),
+        }
+    }
+}
+
+// All non-construction methods — apply to every `S` and every
+// parser-source variant (no `P: Clone` bound).
+impl<E, P, S> FlowSessionDriver<E, P, S>
+where
+    E: FlowExtractor,
+    E::Key: Hash + Eq + Clone + Send + 'static,
+    P: SessionParser + Send + 'static,
+    S: Send + 'static,
+{
     /// Opt in to forwarding [`SessionEvent::FlowAnomaly`] /
     /// [`SessionEvent::TrackerAnomaly`] events through the
     /// stream. Default: `false`. Mirrors
@@ -327,7 +430,7 @@ where
                 FlowEvent::Started { key, ts, .. } => {
                     self.parsers
                         .entry(key.clone())
-                        .or_insert_with(|| self.parser_factory.clone());
+                        .or_insert_with_key(|k| (self.parser_factory)(k));
                     out.push(SessionEvent::Started {
                         key: key.clone(),
                         ts: *ts,
@@ -529,6 +632,32 @@ mod tests {
             |_key| MyState(7),
         );
         let _: &FlowTracker<FiveTuple, MyState> = d.tracker();
+    }
+
+    /// Plan 58: `with_factory` works with a `!Clone` parser.
+    #[test]
+    fn with_factory_accepts_non_clone_parser() {
+        // A parser that owns a *non-Clone* resource (`Box<u32>` —
+        // just a stand-in for a real expensive-setup type).
+        struct ExpensiveParser {
+            _heavy: Box<u32>,
+        }
+        impl SessionParser for ExpensiveParser {
+            type Message = ();
+            fn feed_initiator(&mut self, _b: &[u8], _ts: Timestamp) -> Vec<()> {
+                Vec::new()
+            }
+            fn feed_responder(&mut self, _b: &[u8], _ts: Timestamp) -> Vec<()> {
+                Vec::new()
+            }
+        }
+        // Wouldn't compile with FlowSessionDriver::new (needs Clone).
+        let mut d =
+            FlowSessionDriver::with_factory(FiveTuple::bidirectional(), |_k: &_| ExpensiveParser {
+                _heavy: Box::new(42),
+            });
+        // Drive a packet to make sure the factory is callable.
+        let _ = d.track(view(b"", 0));
     }
 
     /// Plan 38: `with_state` works for any `S: Default` parser.

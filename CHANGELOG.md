@@ -98,6 +98,15 @@ Pre-1.0 breaking changes; `netring` updates in lockstep.
   defaulted `bytes_in_flight`, `high_watermark_crossings`, and
   `high_watermark_threshold` accessors (third-party impls
   unaffected).
+- **`FlowSessionDriver::with_factory` /
+  `FlowSessionDriver::with_state_factory` (and the
+  `*_and_config` variants); same on `FlowDatagramDriver`** (plan
+  58). Accept an `FnMut(&E::Key) -> P` closure per flow instead of
+  cloning a template. Drops the `P: Clone` bound when constructed
+  via the factory path — useful for parsers with expensive setup
+  (compiled regex sets, ML model weights, big cipher tables) where
+  the heavy state is shared via `Arc` and the per-flow handle is
+  cheap. Existing `new` / `with_state*` ctors are unchanged.
 
 ## 0.4.0 — API ergonomics (2026-05-20)
 
