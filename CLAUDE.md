@@ -275,10 +275,10 @@ record; `plans/` is the working backlog.
 - `21-flow-protolens.md` — protolens bridge sister crate (STALE
   pre-consolidation draft, pending real consumer ask).
 
-Plan numbers 00–04, 12, 20, 22–25, 30–37, 40–42, 45–49, 51–57
-are retired (implementation shipped, file removed). See
-[`plans/INDEX.md`](plans/INDEX.md) for the numbering scheme used
-by new plans.
+Plan numbers 00–04, 12, 20, 22–25, 30–61 (everything except 21,
+which is parked) are retired (implementation shipped, file
+removed). See [`plans/INDEX.md`](plans/INDEX.md) for the
+numbering scheme used by new plans.
 
 ## Pre-publish checklist
 

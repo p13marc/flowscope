@@ -21,27 +21,14 @@ The 0.4 API-ergonomics series (plans 32–37) has shipped; the audit
 that drove it is kept at
 [`../docs/API-ERGONOMICS-REVIEW.md`](../docs/API-ERGONOMICS-REVIEW.md).
 
-### API ergonomics — 0.5 cycle
+The 0.5 API-ergonomics series (plans 38, 39, 43, 44, 50, 58, 59, 60,
+61) has shipped; the integration feedback that drove it is kept at
+[`../docs/feedback-2026-05-22-netring.md`](../docs/feedback-2026-05-22-netring.md)
+and the plan-of-record (including §3's documented disagreement with
+the netring author's "lean toward option B" on plan 38) is at
+[`../docs/0.5-PLAN-OF-RECORD.md`](../docs/0.5-PLAN-OF-RECORD.md).
 
-Driven by [`../docs/feedback-2026-05-22-netring.md`](../docs/feedback-2026-05-22-netring.md)
-(integration feedback from netring 0.14.0). Plan-of-record at
-[`../docs/0.5-PLAN-OF-RECORD.md`](../docs/0.5-PLAN-OF-RECORD.md) —
-notably §3 documents the substantive disagreement with the netring
-author's "lean toward option B" on plan 38.
-
-| Plan | Goal | Breaking? | Status |
-|------|------|-----------|--------|
-| [`38-driver-state-restore.md`](./38-driver-state-restore.md) | Restore `S` on the drivers via split constructors (reverses plan 32 option B) | yes | ✅ Implemented (uncommitted) |
-| [`39-tracker-convenience.md`](./39-tracker-convenience.md) | `FlowTracker::finish()` + `sweep_with_parsers` / `sweep_with_datagram_parsers` | no | ✅ Implemented (uncommitted) |
-| [`43-anomaly-event-split.md`](./43-anomaly-event-split.md) | Split `Anomaly { key: Option<K> }` into `FlowAnomaly` + `TrackerAnomaly` on both `FlowEvent` and `SessionEvent` | yes | ✅ Implemented (uncommitted) |
-| [`44-reassembler-watermark-threshold.md`](./44-reassembler-watermark-threshold.md) | `BufferedReassembler::with_high_watermark_threshold` + `AnomalyKind::ReassemblerHighWatermark` | no | ✅ Implemented (uncommitted) |
-| [`50-as-packet-view.md`](./50-as-packet-view.md) | `AsPacketView` trait + blanket `From<&T>` for `PacketView` | minor | ✅ Implemented (uncommitted) |
-| [`58-driver-factory-ctor.md`](./58-driver-factory-ctor.md) | `FlowSessionDriver::with_factory` / `FlowDatagramDriver::with_factory` (prereq: 38) | no | ✅ Implemented (uncommitted) |
-| [`59-test-helpers-parsers.md`](./59-test-helpers-parsers.md) | `flowscope::test_helpers::{NoopSessionParser, NoopDatagramParser, EchoSessionParser}` | no | ✅ Implemented (uncommitted) |
-| [`60-l7-umbrella-and-doc-note.md`](./60-l7-umbrella-and-doc-note.md) | `l7` umbrella feature; intra-doc-link recipe for re-exporters | no | ✅ Implemented (uncommitted) |
-| [`61-feature-matrix-ci.md`](./61-feature-matrix-ci.md) | Partial-feature CI matrix (catches latent cfg dead-code) | no | ✅ Implemented (uncommitted) |
-
-Deferred from the feedback:
+Two items from the feedback are deferred rather than implemented:
 - **#2 `FlowTracker::with_auto_sweep(interval)`** — packet-clock
   auto-sweep for live/offline parity; needs its own RFC (interaction
   with out-of-order timestamps, return-channel for implicit-sweep
@@ -98,9 +85,10 @@ pre-consolidation and would need full rewrites.
 | 50–59 | Deferred-feature catchup |
 | 60–69 | Tooling (CLIs) |
 
-Plan numbers 00–04, 12, 20, 22–25, 30–37, 40–42, 45–49, 51–57
-are retired (implementation shipped, file removed). New plans
-pick the lowest free number in the appropriate range.
+Plan numbers 00–04, 12, 20, 22–25, 30–61 (everything except 21,
+which is parked) are retired (implementation shipped, file
+removed). New plans pick the lowest free number in the
+appropriate range.
 
 ---
 
