@@ -136,7 +136,7 @@ impl FlowState {
 }
 
 /// Live, in-flight anomaly classifications. Carried by
-/// [`FlowEvent::Anomaly`].
+/// [`FlowEvent::FlowAnomaly`] / [`FlowEvent::TrackerAnomaly`].
 ///
 /// `#[non_exhaustive]` so future kinds are unconditionally additive.
 /// Custom protocol parsers should not emit anomalies here — pipe
@@ -178,6 +178,22 @@ pub enum AnomalyKind {
         side: FlowSide,
         reason: Option<String>,
     },
+
+    /// Reassembler buffer occupancy just crossed the configured
+    /// threshold of its cap (see
+    /// [`crate::BufferedReassembler::with_high_watermark_threshold`]).
+    /// Debounced: one event per below→above transition; occupancy
+    /// must drop back below to re-arm.
+    ///
+    /// `bytes` is occupancy at the moment of the crossing; `cap` is
+    /// the configured `max_buffer`; `threshold_pct` is the
+    /// configured threshold percent (e.g. `80`).
+    ReassemblerHighWatermark {
+        side: FlowSide,
+        bytes: u64,
+        cap: u64,
+        threshold_pct: u8,
+    },
 }
 
 /// Events emitted by the tracker.
@@ -188,7 +204,11 @@ pub enum AnomalyKind {
 /// same flow produce a single `Packet` event each. TCP-aware events
 /// (`Established`, `StateChange`) fire only when the extractor
 /// supplied [`crate::TcpInfo`].
+///
+/// `#[non_exhaustive]` since 0.5 — future variants are additive;
+/// match with a trailing `_ => {}` arm for forward-compatibility.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum FlowEvent<K> {
     /// First packet of a new flow.
     Started {
@@ -226,33 +246,48 @@ pub enum FlowEvent<K> {
         history: HistoryString,
     },
 
-    /// Live, in-flight anomaly. The flow is still alive (use
-    /// `Ended` for end-of-life events). Opt-in: emitted only when
-    /// [`crate::FlowDriver::with_emit_anomalies`] is `true`.
-    ///
-    /// `key` is `None` for tracker-global anomalies (e.g.
-    /// [`AnomalyKind::FlowTableEvictionPressure`]); `Some(key)` for
-    /// per-flow anomalies.
-    Anomaly {
-        key: Option<K>,
+    /// Live, in-flight per-flow anomaly. The flow is still alive
+    /// (use `Ended` for end-of-life events). Opt-in: emitted only
+    /// when [`crate::FlowDriver::with_emit_anomalies`] is `true`.
+    FlowAnomaly {
+        key: K,
         kind: AnomalyKind,
         ts: Timestamp,
     },
+
+    /// Live, in-flight tracker-global anomaly (e.g.
+    /// [`AnomalyKind::FlowTableEvictionPressure`]) — not tied to a
+    /// specific flow. Opt-in like [`Self::FlowAnomaly`].
+    TrackerAnomaly { kind: AnomalyKind, ts: Timestamp },
 }
 
 impl<K> FlowEvent<K> {
     /// Borrow the key without moving it. Useful for filter combinators.
     ///
-    /// Returns `None` for tracker-global [`FlowEvent::Anomaly`] events
-    /// that don't belong to a single flow.
+    /// Returns `None` for tracker-global events that don't belong to
+    /// a single flow (today: [`Self::TrackerAnomaly`]).
     pub fn key(&self) -> Option<&K> {
         match self {
             FlowEvent::Started { key, .. }
             | FlowEvent::Packet { key, .. }
             | FlowEvent::Established { key, .. }
             | FlowEvent::StateChange { key, .. }
-            | FlowEvent::Ended { key, .. } => Some(key),
-            FlowEvent::Anomaly { key, .. } => key.as_ref(),
+            | FlowEvent::Ended { key, .. }
+            | FlowEvent::FlowAnomaly { key, .. } => Some(key),
+            FlowEvent::TrackerAnomaly { .. } => None,
+        }
+    }
+
+    /// Borrow the anomaly kind if this event is an anomaly (either
+    /// per-flow or tracker-global). Returns `None` for the
+    /// non-anomaly variants. Convenient for drivers and observers
+    /// that route on the kind regardless of per-flow vs global.
+    pub fn anomaly_kind(&self) -> Option<&AnomalyKind> {
+        match self {
+            FlowEvent::FlowAnomaly { kind, .. } | FlowEvent::TrackerAnomaly { kind, .. } => {
+                Some(kind)
+            }
+            _ => None,
         }
     }
 }
@@ -284,8 +319,7 @@ mod tests {
 
     #[test]
     fn flow_event_key_returns_none_for_global_anomaly() {
-        let evt: FlowEvent<u32> = FlowEvent::Anomaly {
-            key: None,
+        let evt: FlowEvent<u32> = FlowEvent::TrackerAnomaly {
             kind: AnomalyKind::FlowTableEvictionPressure {
                 evicted_in_tick: 1,
                 evicted_total: 42,
@@ -293,12 +327,13 @@ mod tests {
             ts: Timestamp::default(),
         };
         assert!(evt.key().is_none());
+        assert!(evt.anomaly_kind().is_some());
     }
 
     #[test]
     fn flow_event_key_returns_some_for_per_flow_anomaly() {
-        let evt: FlowEvent<u32> = FlowEvent::Anomaly {
-            key: Some(7),
+        let evt: FlowEvent<u32> = FlowEvent::FlowAnomaly {
+            key: 7,
             kind: AnomalyKind::OutOfOrderSegment {
                 side: FlowSide::Initiator,
                 count: 3,

@@ -195,7 +195,8 @@ where
         }
     }
 
-    /// Opt in to forwarding [`SessionEvent::Anomaly`]s.
+    /// Opt in to forwarding [`SessionEvent::FlowAnomaly`] /
+    /// [`SessionEvent::TrackerAnomaly`] events.
     pub fn with_emit_anomalies(mut self, enable: bool) -> Self {
         self.driver = self.driver.with_emit_anomalies(enable);
         self
@@ -341,9 +342,15 @@ where
                         stats: stats.clone(),
                     });
                 }
-                FlowEvent::Anomaly { key, kind, ts } => {
-                    out.push(SessionEvent::Anomaly {
+                FlowEvent::FlowAnomaly { key, kind, ts } => {
+                    out.push(SessionEvent::FlowAnomaly {
                         key: key.clone(),
+                        kind: kind.clone(),
+                        ts: *ts,
+                    });
+                }
+                FlowEvent::TrackerAnomaly { kind, ts } => {
+                    out.push(SessionEvent::TrackerAnomaly {
                         kind: kind.clone(),
                         ts: *ts,
                     });
@@ -365,8 +372,8 @@ where
         out: &mut Vec<SessionEvent<E::Key, P::Message>>,
     ) {
         if self.driver.emits_anomalies() {
-            out.push(SessionEvent::Anomaly {
-                key: Some(key.clone()),
+            out.push(SessionEvent::FlowAnomaly {
+                key: key.clone(),
                 kind: AnomalyKind::SessionParseError { side, reason },
                 ts,
             });

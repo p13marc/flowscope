@@ -67,6 +67,32 @@ pub trait Reassembler: Send + 'static {
     fn high_watermark(&self) -> u64 {
         0
     }
+
+    /// Bytes currently buffered, awaiting parser consumption.
+    /// Default: `0`. Mirrors the contract of [`Self::high_watermark`]
+    /// — only meaningful for impls that actually buffer bytes.
+    fn bytes_in_flight(&self) -> u64 {
+        0
+    }
+
+    /// Running count of below→above transitions of the configured
+    /// high-watermark threshold (see [`BufferedReassembler::
+    /// with_high_watermark_threshold`]). Default: `0`. The driver
+    /// uses per-tick deltas of this counter to emit
+    /// [`crate::AnomalyKind::ReassemblerHighWatermark`] events
+    /// without spamming on repeated above-threshold ticks.
+    fn high_watermark_crossings(&self) -> u64 {
+        0
+    }
+
+    /// `Some((cap, percent))` when a high-watermark threshold is
+    /// configured; `None` otherwise. Lets the driver enrich
+    /// [`crate::AnomalyKind::ReassemblerHighWatermark`] events with
+    /// the cap and threshold percent at emission time. Default:
+    /// `None`.
+    fn high_watermark_threshold(&self) -> Option<(u64, u8)> {
+        None
+    }
 }
 
 /// Build a [`Reassembler`] for a brand-new session, given its key
@@ -97,6 +123,15 @@ pub struct BufferedReassembler {
     overflow_policy: OverflowPolicy,
     poisoned: bool,
     high_watermark: u64,
+    /// Threshold (% of `max_buffer`) above which a
+    /// `ReassemblerHighWatermark` anomaly fires. `None` = off.
+    high_watermark_threshold_pct: Option<u8>,
+    /// `true` when occupancy is currently at or above the
+    /// configured threshold. Cleared when occupancy falls back
+    /// below, so a second crossing re-arms the event.
+    above_threshold: bool,
+    /// Running count of below→above transitions.
+    high_watermark_crossings: u64,
 }
 
 impl BufferedReassembler {
@@ -123,11 +158,30 @@ impl BufferedReassembler {
         self
     }
 
+    /// Fire a [`crate::AnomalyKind::ReassemblerHighWatermark`]
+    /// anomaly when buffer occupancy crosses `percent` % of
+    /// `max_buffer` from below — once per crossing (debounced;
+    /// occupancy must drop back below before the next event
+    /// re-arms). Default: off.
+    ///
+    /// No effect unless [`with_max_buffer`](Self::with_max_buffer)
+    /// is also set. Values outside `1..=100` are clamped.
+    pub fn with_high_watermark_threshold(mut self, percent: u8) -> Self {
+        self.high_watermark_threshold_pct = Some(percent.clamp(1, 100));
+        self
+    }
+
     /// Drain accumulated in-order bytes, leaving the buffer empty.
     /// `expected_seq` is preserved so subsequent in-order segments
-    /// keep accumulating.
+    /// keep accumulating. Also re-arms the high-watermark threshold
+    /// (if configured): once drained, the next time occupancy
+    /// climbs back above the threshold counts as a fresh crossing.
     pub fn take(&mut self) -> Vec<u8> {
-        std::mem::take(&mut self.buffer)
+        let bytes = std::mem::take(&mut self.buffer);
+        // Drain → definitely below threshold → re-arm the
+        // below→above edge detector.
+        self.above_threshold = false;
+        bytes
     }
 
     /// Number of segments dropped because they were out of order.
@@ -212,6 +266,26 @@ impl BufferedReassembler {
         if len > self.high_watermark {
             self.high_watermark = len;
         }
+        // High-watermark threshold edge detection.
+        if let (Some(pct), Some(cap)) = (self.high_watermark_threshold_pct, self.max_buffer) {
+            let trigger = (cap as u64).saturating_mul(pct as u64) / 100;
+            if len >= trigger {
+                if !self.above_threshold {
+                    self.above_threshold = true;
+                    self.high_watermark_crossings = self.high_watermark_crossings.saturating_add(1);
+                }
+            } else {
+                self.above_threshold = false;
+            }
+        }
+    }
+}
+
+impl BufferedReassembler {
+    /// Running count of below→above transitions of the configured
+    /// high-watermark threshold. Zero when no threshold is set.
+    pub fn high_watermark_crossings(&self) -> u64 {
+        self.high_watermark_crossings
     }
 }
 
@@ -253,6 +327,21 @@ impl Reassembler for BufferedReassembler {
     fn high_watermark(&self) -> u64 {
         Self::high_watermark(self)
     }
+
+    fn bytes_in_flight(&self) -> u64 {
+        self.buffer.len() as u64
+    }
+
+    fn high_watermark_crossings(&self) -> u64 {
+        Self::high_watermark_crossings(self)
+    }
+
+    fn high_watermark_threshold(&self) -> Option<(u64, u8)> {
+        match (self.max_buffer, self.high_watermark_threshold_pct) {
+            (Some(cap), Some(pct)) => Some((cap as u64, pct)),
+            _ => None,
+        }
+    }
 }
 
 /// Default factory that builds a fresh [`BufferedReassembler`] per
@@ -267,6 +356,7 @@ impl Reassembler for BufferedReassembler {
 pub struct BufferedReassemblerFactory {
     max_buffer: Option<usize>,
     overflow_policy: OverflowPolicy,
+    high_watermark_threshold_pct: Option<u8>,
 }
 
 impl BufferedReassemblerFactory {
@@ -283,6 +373,14 @@ impl BufferedReassemblerFactory {
         self.overflow_policy = policy;
         self
     }
+
+    /// Apply the same high-watermark threshold (% of `max_buffer`)
+    /// to every reassembler this factory creates. See
+    /// [`BufferedReassembler::with_high_watermark_threshold`].
+    pub fn with_high_watermark_threshold(mut self, percent: u8) -> Self {
+        self.high_watermark_threshold_pct = Some(percent.clamp(1, 100));
+        self
+    }
 }
 
 impl<K: Send + 'static> ReassemblerFactory<K> for BufferedReassemblerFactory {
@@ -294,6 +392,9 @@ impl<K: Send + 'static> ReassemblerFactory<K> for BufferedReassemblerFactory {
             r = r
                 .with_max_buffer(cap)
                 .with_overflow_policy(self.overflow_policy);
+        }
+        if let Some(pct) = self.high_watermark_threshold_pct {
+            r = r.with_high_watermark_threshold(pct);
         }
         r
     }
@@ -504,5 +605,68 @@ mod tests {
         // Post-poison segments are no-ops; watermark stays.
         r.segment(160, &[b'c'; 10]);
         assert_eq!(r.high_watermark(), 80);
+    }
+
+    /// Plan 44: threshold off by default — no crossings.
+    #[test]
+    fn high_watermark_threshold_off_by_default() {
+        let mut r = BufferedReassembler::new().with_max_buffer(100);
+        r.segment(0, &[b'a'; 95]);
+        assert_eq!(r.high_watermark_crossings(), 0);
+    }
+
+    /// Plan 44: threshold crossing fires once per below→above
+    /// transition (debounced).
+    #[test]
+    fn high_watermark_threshold_crosses_once() {
+        let mut r = BufferedReassembler::new()
+            .with_max_buffer(100)
+            .with_high_watermark_threshold(80);
+        // Below threshold — no crossing yet.
+        r.segment(0, &[b'a'; 50]);
+        assert_eq!(r.high_watermark_crossings(), 0);
+        // Cross to 90 (>= 80% of 100) — first crossing.
+        r.segment(50, &[b'b'; 40]);
+        assert_eq!(r.high_watermark_crossings(), 1);
+        // Stay above — no new crossing (debounce).
+        r.segment(90, &[b'c'; 5]);
+        assert_eq!(r.high_watermark_crossings(), 1);
+        // Drain back below threshold.
+        let _ = r.take();
+        // Re-cross by feeding new bytes — second crossing.
+        r.segment(95, &[b'd'; 85]);
+        assert_eq!(r.high_watermark_crossings(), 2);
+    }
+
+    /// Plan 44: `high_watermark_threshold()` surfaces the config so
+    /// the driver can enrich the anomaly event.
+    #[test]
+    fn high_watermark_threshold_info_visible_via_trait() {
+        use super::Reassembler;
+        let r = BufferedReassembler::new()
+            .with_max_buffer(200)
+            .with_high_watermark_threshold(75);
+        assert_eq!(r.high_watermark_threshold(), Some((200, 75)));
+        // Without max_buffer the threshold is inert (None).
+        let r2 = BufferedReassembler::new().with_high_watermark_threshold(75);
+        assert_eq!(r2.high_watermark_threshold(), None);
+        // And `bytes_in_flight` matches actual buffered length.
+        let mut r3 = BufferedReassembler::new().with_max_buffer(100);
+        r3.segment(0, &[b'x'; 42]);
+        assert_eq!(r3.bytes_in_flight(), 42);
+    }
+
+    /// Percent values outside `1..=100` are clamped.
+    #[test]
+    fn high_watermark_threshold_percent_clamped() {
+        use super::Reassembler;
+        let r = BufferedReassembler::new()
+            .with_max_buffer(100)
+            .with_high_watermark_threshold(0);
+        assert_eq!(r.high_watermark_threshold(), Some((100, 1)));
+        let r = BufferedReassembler::new()
+            .with_max_buffer(100)
+            .with_high_watermark_threshold(200);
+        assert_eq!(r.high_watermark_threshold(), Some((100, 100)));
     }
 }

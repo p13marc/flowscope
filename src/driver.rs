@@ -25,11 +25,20 @@ use crate::view::PacketView;
 /// Snapshot of per-reassembler diagnostic counters + tracker
 /// eviction total at the start of a tick. Compared against the
 /// post-tick state to coalesce anomaly events.
+/// Per-reassembler diagnostic counters captured at snapshot time.
+/// Diff against post-tick values to derive per-tick anomaly events.
+#[derive(Clone, Copy, Default)]
+struct ReassemblerCounters {
+    dropped: u64,
+    oversize: u64,
+    crossings: u64,
+}
+
 struct AnomalySnapshot<K>
 where
     K: Eq + std::hash::Hash + Clone,
 {
-    per_side: HashMap<(K, FlowSide), (u64, u64), RandomState>,
+    per_side: HashMap<(K, FlowSide), ReassemblerCounters, RandomState>,
     evicted_total: u64,
 }
 
@@ -159,7 +168,8 @@ where
         }
     }
 
-    /// Opt in to emitting [`FlowEvent::Anomaly`] for buffer overflows,
+    /// Opt in to emitting [`FlowEvent::FlowAnomaly`] /
+    /// [`FlowEvent::TrackerAnomaly`] for buffer overflows,
     /// out-of-order drops, and tracker eviction pressure. Default:
     /// `false` — no anomaly events emitted; counters still accumulate
     /// in [`crate::FlowStats`].
@@ -287,7 +297,7 @@ where
         if self.emit_anomalies {
             let anomalies = Self::diff_anomaly_state(snapshot, reassemblers, &self.tracker, ts);
             for a in anomalies {
-                if let FlowEvent::Anomaly { kind, .. } = &a {
+                if let Some(kind) = a.anomaly_kind() {
                     crate::obs::record_anomaly(kind);
                     crate::obs::trace_anomaly(kind);
                 }
@@ -335,7 +345,7 @@ where
             let anomalies =
                 Self::diff_anomaly_state(snapshot, &self.reassemblers, &self.tracker, now);
             for a in &anomalies {
-                if let FlowEvent::Anomaly { kind, .. } = a {
+                if let Some(kind) = a.anomaly_kind() {
                     crate::obs::record_anomaly(kind);
                     crate::obs::trace_anomaly(kind);
                 }
@@ -378,12 +388,16 @@ where
         if !self.emit_anomalies {
             return AnomalySnapshot::default();
         }
-        let mut per_side: HashMap<(E::Key, FlowSide), (u64, u64), RandomState> =
+        let mut per_side: HashMap<(E::Key, FlowSide), ReassemblerCounters, RandomState> =
             HashMap::with_hasher(RandomState::new());
         for ((key, side), r) in &self.reassemblers {
             per_side.insert(
                 (key.clone(), *side),
-                (r.dropped_segments(), r.bytes_dropped_oversize()),
+                ReassemblerCounters {
+                    dropped: r.dropped_segments(),
+                    oversize: r.bytes_dropped_oversize(),
+                    crossings: r.high_watermark_crossings(),
+                },
             );
         }
         AnomalySnapshot {
@@ -408,10 +422,15 @@ where
                 .per_side
                 .get(&(key.clone(), *side))
                 .copied()
-                .unwrap_or((0, 0));
-            let cur = (r.dropped_segments(), r.bytes_dropped_oversize());
-            let dropped_delta = cur.0.saturating_sub(prev.0);
-            let oversize_delta = cur.1.saturating_sub(prev.1);
+                .unwrap_or_default();
+            let cur = ReassemblerCounters {
+                dropped: r.dropped_segments(),
+                oversize: r.bytes_dropped_oversize(),
+                crossings: r.high_watermark_crossings(),
+            };
+            let dropped_delta = cur.dropped.saturating_sub(prev.dropped);
+            let oversize_delta = cur.oversize.saturating_sub(prev.oversize);
+            let crossing_delta = cur.crossings.saturating_sub(prev.crossings);
             if oversize_delta > 0 {
                 // Look up the policy via the tracker config; falls
                 // back to the default (SlidingWindow) when unset.
@@ -420,8 +439,8 @@ where
                 } else {
                     OverflowPolicy::SlidingWindow
                 };
-                out.push(FlowEvent::Anomaly {
-                    key: Some(key.clone()),
+                out.push(FlowEvent::FlowAnomaly {
+                    key: key.clone(),
                     kind: AnomalyKind::BufferOverflow {
                         side: *side,
                         bytes: oversize_delta,
@@ -431,8 +450,8 @@ where
                 });
             }
             if dropped_delta > 0 {
-                out.push(FlowEvent::Anomaly {
-                    key: Some(key.clone()),
+                out.push(FlowEvent::FlowAnomaly {
+                    key: key.clone(),
                     kind: AnomalyKind::OutOfOrderSegment {
                         side: *side,
                         count: dropped_delta,
@@ -440,13 +459,29 @@ where
                     ts,
                 });
             }
+            if crossing_delta > 0 {
+                // Threshold must be configured for crossings to
+                // ever increment. Pull cap + pct from the
+                // reassembler to enrich the anomaly payload.
+                if let Some((cap, threshold_pct)) = r.high_watermark_threshold() {
+                    out.push(FlowEvent::FlowAnomaly {
+                        key: key.clone(),
+                        kind: AnomalyKind::ReassemblerHighWatermark {
+                            side: *side,
+                            bytes: r.bytes_in_flight(),
+                            cap,
+                            threshold_pct,
+                        },
+                        ts,
+                    });
+                }
+            }
         }
         // Tracker-global eviction pressure.
         let evicted_total = tracker.stats().flows_evicted;
         let evicted_delta = evicted_total.saturating_sub(snapshot.evicted_total);
         if evicted_delta > 0 {
-            out.push(FlowEvent::Anomaly {
-                key: None,
+            out.push(FlowEvent::TrackerAnomaly {
                 kind: AnomalyKind::FlowTableEvictionPressure {
                     evicted_in_tick: evicted_delta,
                     evicted_total,
@@ -957,7 +992,7 @@ mod tests {
             .filter(|e| {
                 matches!(
                     e,
-                    FlowEvent::Anomaly {
+                    FlowEvent::FlowAnomaly {
                         kind: AnomalyKind::BufferOverflow { .. },
                         ..
                     }
@@ -970,7 +1005,7 @@ mod tests {
             "expected exactly one BufferOverflow anomaly"
         );
         match anomalies[0] {
-            FlowEvent::Anomaly {
+            FlowEvent::FlowAnomaly {
                 kind:
                     AnomalyKind::BufferOverflow {
                         side,
@@ -993,9 +1028,7 @@ mod tests {
         let mut d = FlowDriver::<_, _>::new(FiveTuple::bidirectional(), factory);
         let events = drive_simple_tcp_with_data(&mut d);
         assert!(
-            !events
-                .iter()
-                .any(|e| matches!(e, FlowEvent::Anomaly { .. })),
+            !events.iter().any(|e| e.anomaly_kind().is_some()),
             "expected no anomaly events when emit_anomalies is off"
         );
     }
@@ -1013,7 +1046,7 @@ mod tests {
             .find(|e| {
                 matches!(
                     e,
-                    FlowEvent::Anomaly {
+                    FlowEvent::FlowAnomaly {
                         kind: AnomalyKind::BufferOverflow { .. },
                         ..
                     }
@@ -1021,11 +1054,51 @@ mod tests {
             })
             .expect("expected a BufferOverflow anomaly");
         match anomaly {
-            FlowEvent::Anomaly {
+            FlowEvent::FlowAnomaly {
                 kind: AnomalyKind::BufferOverflow { policy, .. },
                 ..
             } => {
                 assert_eq!(*policy, OverflowPolicy::DropFlow);
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    /// Plan 44: the `ReassemblerHighWatermark` anomaly fires from
+    /// the driver when occupancy crosses the configured threshold.
+    #[test]
+    fn anomaly_event_for_reassembler_high_watermark() {
+        // Cap=128, threshold=50% → fires at 64 bytes occupancy.
+        let factory = BufferedReassemblerFactory::default()
+            .with_max_buffer(128)
+            .with_high_watermark_threshold(50);
+        let mut d =
+            FlowDriver::<_, _>::new(FiveTuple::bidirectional(), factory).with_emit_anomalies(true);
+        let events = drive_simple_tcp_with_data(&mut d);
+        let crossing = events.iter().find(|e| {
+            matches!(
+                e,
+                FlowEvent::FlowAnomaly {
+                    kind: AnomalyKind::ReassemblerHighWatermark { .. },
+                    ..
+                }
+            )
+        });
+        let crossing = crossing.expect("expected a ReassemblerHighWatermark anomaly");
+        match crossing {
+            FlowEvent::FlowAnomaly {
+                kind:
+                    AnomalyKind::ReassemblerHighWatermark {
+                        bytes,
+                        cap,
+                        threshold_pct,
+                        ..
+                    },
+                ..
+            } => {
+                assert_eq!(*cap, 128);
+                assert_eq!(*threshold_pct, 50);
+                assert!(*bytes >= 64, "occupancy at crossing was {bytes}, want ≥64");
             }
             _ => unreachable!(),
         }
@@ -1065,7 +1138,7 @@ mod tests {
             .filter(|e| {
                 matches!(
                     e,
-                    FlowEvent::Anomaly {
+                    FlowEvent::TrackerAnomaly {
                         kind: AnomalyKind::FlowTableEvictionPressure { .. },
                         ..
                     }
@@ -1074,18 +1147,18 @@ mod tests {
             .collect();
         assert_eq!(pressure.len(), 1, "expected one eviction-pressure anomaly");
         match pressure[0] {
-            FlowEvent::Anomaly {
+            FlowEvent::TrackerAnomaly {
                 kind:
                     AnomalyKind::FlowTableEvictionPressure {
                         evicted_in_tick,
                         evicted_total,
                     },
-                key,
                 ..
             } => {
                 assert_eq!(*evicted_in_tick, 1);
                 assert_eq!(*evicted_total, 1);
-                assert!(key.is_none());
+                // TrackerAnomaly carries no key — its absence in the
+                // destructure pattern is the assertion.
             }
             _ => unreachable!(),
         }

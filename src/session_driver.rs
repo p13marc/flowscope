@@ -78,12 +78,16 @@ fn truncate_reason(s: &str) -> String {
 /// Factored out so all four `FlowSessionDriver` constructors share
 /// the wiring.
 fn build_reassembler_factory(config: &FlowTrackerConfig) -> BufferedReassemblerFactory {
-    match config.max_reassembler_buffer {
-        Some(cap) => BufferedReassemblerFactory::default()
+    let mut f = BufferedReassemblerFactory::default();
+    if let Some(cap) = config.max_reassembler_buffer {
+        f = f
             .with_max_buffer(cap)
-            .with_overflow_policy(config.overflow_policy),
-        None => BufferedReassemblerFactory::default(),
+            .with_overflow_policy(config.overflow_policy);
     }
+    if let Some(pct) = config.reassembler_high_watermark_pct {
+        f = f.with_high_watermark_threshold(pct);
+    }
+    f
 }
 
 /// Sync session-event driver. Wraps a [`FlowDriver`] with
@@ -203,7 +207,8 @@ where
         }
     }
 
-    /// Opt in to forwarding [`SessionEvent::Anomaly`]s through the
+    /// Opt in to forwarding [`SessionEvent::FlowAnomaly`] /
+    /// [`SessionEvent::TrackerAnomaly`] events through the
     /// stream. Default: `false`. Mirrors
     /// [`FlowDriver::with_emit_anomalies`].
     ///
@@ -374,9 +379,15 @@ where
                         stats: stats.clone(),
                     });
                 }
-                FlowEvent::Anomaly { key, kind, ts } => {
-                    out.push(SessionEvent::Anomaly {
+                FlowEvent::FlowAnomaly { key, kind, ts } => {
+                    out.push(SessionEvent::FlowAnomaly {
                         key: key.clone(),
+                        kind: kind.clone(),
+                        ts: *ts,
+                    });
+                }
+                FlowEvent::TrackerAnomaly { kind, ts } => {
+                    out.push(SessionEvent::TrackerAnomaly {
                         kind: kind.clone(),
                         ts: *ts,
                     });
@@ -446,8 +457,8 @@ where
         out: &mut Vec<SessionEvent<E::Key, P::Message>>,
     ) {
         if self.driver.emits_anomalies() {
-            out.push(SessionEvent::Anomaly {
-                key: Some(key.clone()),
+            out.push(SessionEvent::FlowAnomaly {
+                key: key.clone(),
                 kind: AnomalyKind::SessionParseError {
                     side,
                     reason: reason.clone(),
@@ -786,7 +797,7 @@ mod tests {
         let buffer_overflow = events.iter().find(|e| {
             matches!(
                 e,
-                SessionEvent::Anomaly {
+                SessionEvent::FlowAnomaly {
                     kind: AnomalyKind::BufferOverflow { .. },
                     ..
                 }
@@ -826,9 +837,7 @@ mod tests {
         );
         events.extend(d.track(view(&data, 0)));
         assert!(
-            !events
-                .iter()
-                .any(|e| matches!(e, SessionEvent::Anomaly { .. })),
+            !events.iter().any(|e| e.anomaly_kind().is_some()),
             "expected no anomaly events when emit_anomalies is off"
         );
     }
@@ -925,7 +934,7 @@ mod tests {
             .find(|(_, e)| {
                 matches!(
                     e,
-                    SessionEvent::Anomaly {
+                    SessionEvent::FlowAnomaly {
                         kind: AnomalyKind::SessionParseError { .. },
                         ..
                     }
@@ -950,7 +959,7 @@ mod tests {
         );
         // Reason string is forwarded + truncated.
         match &events[anomaly_idx] {
-            SessionEvent::Anomaly {
+            SessionEvent::FlowAnomaly {
                 kind: AnomalyKind::SessionParseError { reason, side },
                 ..
             } => {
@@ -1025,7 +1034,7 @@ mod tests {
         let pressure = events.iter().find(|e| {
             matches!(
                 e,
-                SessionEvent::Anomaly {
+                SessionEvent::TrackerAnomaly {
                     kind: AnomalyKind::FlowTableEvictionPressure { .. },
                     ..
                 }
@@ -1033,15 +1042,15 @@ mod tests {
         });
         let pressure = pressure.expect("expected an eviction-pressure anomaly");
         match pressure {
-            SessionEvent::Anomaly {
-                key,
+            SessionEvent::TrackerAnomaly {
                 kind:
                     AnomalyKind::FlowTableEvictionPressure {
                         evicted_in_tick, ..
                     },
                 ..
             } => {
-                assert!(key.is_none());
+                // TrackerAnomaly carries no key — its absence in the
+                // destructure pattern is the assertion.
                 assert_eq!(*evicted_in_tick, 1);
             }
             _ => unreachable!(),

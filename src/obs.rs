@@ -99,6 +99,7 @@ fn anomaly_label(kind: &AnomalyKind) -> &'static str {
         AnomalyKind::OutOfOrderSegment { .. } => "ooo_segment",
         AnomalyKind::FlowTableEvictionPressure { .. } => "flow_table_eviction",
         AnomalyKind::SessionParseError { .. } => "parse_error",
+        AnomalyKind::ReassemblerHighWatermark { .. } => "reassembler_high_watermark",
     }
 }
 

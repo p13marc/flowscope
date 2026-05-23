@@ -28,6 +28,19 @@ Pre-1.0 breaking changes; `netring` updates in lockstep.
   written explicitly as `FlowDriver<E, F, ()>`. Code that wants
   per-flow state switches from a hand-rolled `FlowTracker` + parser
   dispatch to the appropriate `with_state*` constructor.
+- **`Anomaly { key: Option<K> }` split into `FlowAnomaly` +
+  `TrackerAnomaly` on both `FlowEvent` and `SessionEvent`** (plan
+  43). Per-flow anomalies (`BufferOverflow`, `OutOfOrderSegment`,
+  `SessionParseError`, `ReassemblerHighWatermark`) land in
+  `FlowAnomaly { key, kind, ts }`; tracker-global anomalies
+  (`FlowTableEvictionPressure`) land in `TrackerAnomaly { kind, ts }`.
+  Removes the `if let Some(k) = key` plumbing from every consumer.
+  `FlowEvent` gains `#[non_exhaustive]` (was missing); both events
+  gain a defaulted `anomaly_kind()` accessor for kind-only routing.
+  *Migration:* replace `SessionEvent::Anomaly { key: Some(k), kind,
+  ts } => …` with `SessionEvent::FlowAnomaly { key, kind, ts } =>
+  …`, and `Anomaly { key: None, .. }` with `TrackerAnomaly { kind,
+  ts }`.
 
 ### Added
 
@@ -71,6 +84,20 @@ Pre-1.0 breaking changes; `netring` updates in lockstep.
   calls go through the blanket and are unaffected. Only callers
   that named the explicit `From` impl by path are affected
   (extremely unlikely outside flowscope's own internals).
+
+### Added (continued)
+
+- **`AnomalyKind::ReassemblerHighWatermark { side, bytes, cap,
+  threshold_pct }`** plus `BufferedReassembler::with_high_watermark_threshold(percent)`
+  and the matching `BufferedReassemblerFactory` /
+  `FlowTrackerConfig::reassembler_high_watermark_pct` knobs (plan
+  44). Fires a `FlowAnomaly` once per below→above transition of
+  the configured cap percentage (debounced; re-arms after the
+  buffer drains below). Lets operators see cap pressure building
+  before `BufferOverflow` bites. `Reassembler` trait grows
+  defaulted `bytes_in_flight`, `high_watermark_crossings`, and
+  `high_watermark_threshold` accessors (third-party impls
+  unaffected).
 
 ## 0.4.0 — API ergonomics (2026-05-20)
 

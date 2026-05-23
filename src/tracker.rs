@@ -75,6 +75,13 @@ pub struct FlowTrackerConfig {
     /// Companion to [`max_reassembler_buffer`](Self::max_reassembler_buffer);
     /// no effect unless that field is `Some`.
     pub overflow_policy: crate::event::OverflowPolicy,
+    /// Hint to the default [`crate::BufferedReassemblerFactory`]
+    /// when used via [`crate::FlowSessionDriver::with_config`] /
+    /// `FlowDatagramDriver::with_config`: fire a
+    /// [`crate::AnomalyKind::ReassemblerHighWatermark`] anomaly
+    /// when buffer occupancy crosses this percent of
+    /// `max_reassembler_buffer`. `None` = off.
+    pub reassembler_high_watermark_pct: Option<u8>,
 }
 
 impl Default for FlowTrackerConfig {
@@ -88,6 +95,7 @@ impl Default for FlowTrackerConfig {
             sweep_interval: Duration::from_secs(1),
             max_reassembler_buffer: None,
             overflow_policy: crate::event::OverflowPolicy::SlidingWindow,
+            reassembler_high_watermark_pct: None,
         }
     }
 }

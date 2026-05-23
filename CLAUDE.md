@@ -182,7 +182,8 @@ overflow policies:
 `FlowStats` carries per-side reassembly diagnostics
 (`reassembly_dropped_ooo_*`, `reassembly_bytes_dropped_oversize_*`)
 on every `Ended` event. For live signal, `FlowDriver::with_emit_anomalies(true)`
-emits `FlowEvent::Anomaly { kind: AnomalyKind::… }` events inline,
+emits `FlowEvent::FlowAnomaly { key, kind: AnomalyKind::… }` and
+`FlowEvent::TrackerAnomaly { kind, .. }` events inline,
 coalesced per (flow, side, kind) per tick.
 
 ### Observability features (0.2.0)
@@ -211,7 +212,8 @@ into the standard observability ecosystem. Both zero-cost when off
   do not rely on struct-literal construction from outside the crate.
   All future additions are additive.
 - **Single vocabulary across event stream and metrics.** `AnomalyKind`
-  is the source of truth for both `FlowEvent::Anomaly` and the
+  is the source of truth for both `FlowEvent::FlowAnomaly` /
+  `TrackerAnomaly` carriers and the
   `flowscope_anomalies_total` metric labels. Adding a variant
   requires adding the corresponding metric label arm in
   `src/obs.rs::anomaly_label`.
@@ -326,7 +328,8 @@ non-optional dep. Specifically:
 - The 0.2.0 `FlowEvent::key()` signature change (`&K` → `Option<&K>`)
   needs a matching netring update if netring's adapters call
   `event.key()`.
-- `FlowEvent::Anomaly` and `EndReason::BufferOverflow` flow through
+- `FlowEvent::FlowAnomaly` / `TrackerAnomaly` and
+  `EndReason::BufferOverflow` flow through
   the async adapters verbatim — no netring changes needed for those.
 
 If you add a new public API in flowscope, consider whether netring

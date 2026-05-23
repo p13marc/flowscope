@@ -36,7 +36,7 @@ by default).
 | `flowscope_flow_duration_seconds` | histogram | — | Per-flow duration on `Ended` |
 | `flowscope_flow_packets` | histogram | — | Per-flow packet count on `Ended` |
 | `flowscope_flow_bytes` | histogram | — | Per-flow byte total on `Ended` |
-| `flowscope_anomalies_total` | counter | `kind` (`buffer_overflow` / `ooo_segment` / `flow_table_eviction`) | Every `FlowEvent::Anomaly` |
+| `flowscope_anomalies_total` | counter | `kind` (`buffer_overflow` / `ooo_segment` / `flow_table_eviction` / `parse_error` / `reassembler_high_watermark`) | Every `FlowEvent::FlowAnomaly` / `TrackerAnomaly` |
 | `flowscope_reassembly_dropped_ooo_total` | counter | `side` | Out-of-order TCP segment drops |
 | `flowscope_reassembly_bytes_dropped_oversize_total` | counter | `side` | Bytes dropped due to per-side buffer cap |
 
@@ -160,7 +160,7 @@ Per-packet tracing is **not** wired up. If you need it, you can
 attach a custom subscriber that watches `flowscope.flow` and
 correlates with packet-level data from your capture layer.
 
-## Coordinating with `FlowEvent::Anomaly`
+## Coordinating with `FlowEvent::FlowAnomaly` / `TrackerAnomaly`
 
 The `flowscope_anomalies_total` counter and `flowscope.anomaly`
 trace events share the same vocabulary as the

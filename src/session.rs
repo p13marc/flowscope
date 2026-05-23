@@ -143,7 +143,7 @@ pub trait SessionParser: Send + 'static {
     /// returns `true`. Default: `None`.
     ///
     /// The driver truncates to ~256 bytes when forwarding via
-    /// [`crate::SessionEvent::Anomaly`].
+    /// [`crate::SessionEvent::FlowAnomaly`].
     fn poison_reason(&self) -> Option<&str> {
         None
     }
@@ -244,17 +244,34 @@ pub enum SessionEvent<K, M> {
         reason: EndReason,
         stats: FlowStats,
     },
-    /// Live, in-flight anomaly forwarded from
-    /// [`crate::FlowEvent::Anomaly`]. Emitted only when the
+    /// Live, in-flight per-flow anomaly forwarded from
+    /// [`crate::FlowEvent::FlowAnomaly`]. Emitted only when the
     /// owning driver has `with_emit_anomalies(true)` set.
-    ///
-    /// `key` is `None` for tracker-global anomalies (e.g.
-    /// [`AnomalyKind::FlowTableEvictionPressure`]).
-    Anomaly {
-        key: Option<K>,
+    FlowAnomaly {
+        key: K,
         kind: AnomalyKind,
         ts: Timestamp,
     },
+
+    /// Live, in-flight tracker-global anomaly forwarded from
+    /// [`crate::FlowEvent::TrackerAnomaly`] (e.g.
+    /// [`AnomalyKind::FlowTableEvictionPressure`]). Opt-in like
+    /// [`Self::FlowAnomaly`].
+    TrackerAnomaly { kind: AnomalyKind, ts: Timestamp },
+}
+
+impl<K, M> SessionEvent<K, M> {
+    /// Borrow the anomaly kind if this event is an anomaly (either
+    /// per-flow or tracker-global). Returns `None` for the
+    /// non-anomaly variants.
+    pub fn anomaly_kind(&self) -> Option<&AnomalyKind> {
+        match self {
+            SessionEvent::FlowAnomaly { kind, .. } | SessionEvent::TrackerAnomaly { kind, .. } => {
+                Some(kind)
+            }
+            _ => None,
+        }
+    }
 }
 
 #[cfg(test)]

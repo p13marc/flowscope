@@ -309,7 +309,7 @@ This is the worked walkthrough that the
 | `rst_initiator()` | Initiator-side aborts (RST, eviction, buffer-overflow, or parse-error tear-down) | Called once per flow; not after `fin_initiator` | Drop in-flight buffers. **Don't** flush — the truncation is unrecoverable. Default impl is a no-op. |
 | `rst_responder()` | Mirror | Same | Same |
 | `is_poisoned() -> bool` (0.3.0) | After every `feed_*` / `fin_*` call | `false` means "keep going" | Return `true` once you've hit an unrecoverable error (desynced framing, invalid magic that won't appear later). The driver then tears the flow down with `EndReason::ParseError` and drops your parser slot. Default returns `false`. |
-| `poison_reason() -> Option<&str>` (0.3.0) | After `is_poisoned()` returns `true` | Consulted once | Optional human-readable reason; truncated to ~256 bytes when forwarded via `SessionEvent::Anomaly`. |
+| `poison_reason() -> Option<&str>` (0.3.0) | After `is_poisoned()` returns `true` | Consulted once | Optional human-readable reason; truncated to ~256 bytes when forwarded via `SessionEvent::FlowAnomaly`. |
 
 ### The canonical partial-buffer pattern
 
@@ -348,7 +348,7 @@ Key rules:
 
 ### Resync after bytes dropped
 
-When `FlowStats.reassembly_bytes_dropped_oversize_* > 0` on an `Ended` event (or `FlowEvent::Anomaly { kind: BufferOverflow, .. }` fires inline), your parser's buffer is no longer contiguous with the wire. Three recovery strategies, in increasing order of parser-side cost:
+When `FlowStats.reassembly_bytes_dropped_oversize_* > 0` on an `Ended` event (or `FlowEvent::FlowAnomaly { kind: BufferOverflow, .. }` fires inline), your parser's buffer is no longer contiguous with the wire. Three recovery strategies, in increasing order of parser-side cost:
 
 1. **Use `OverflowPolicy::DropFlow`** (recommended for framed binary protocols). The driver tears the flow down on first overflow with `EndReason::BufferOverflow`; the parser never sees a desynced continuation. See [Recovery after buffer cap](#recovery-after-buffer-cap).
 2. **Marker re-scan** for protocols with a fixed-length marker prefix (HTTP `\r\n\r\n`, PSMSG-style framing). Walk the buffer looking for the next marker, discard everything before it.
@@ -360,7 +360,7 @@ For per-message errors (one bad message but the rest of the stream is fine), jus
 
 For flow-level errors (the parser's internal state is corrupted past recovery), set `is_poisoned() -> true` after you detect it. The driver then:
 
-1. Optionally emits `SessionEvent::Anomaly { kind: SessionParseError { side, reason } }` (when `with_emit_anomalies(true)`).
+1. Optionally emits `SessionEvent::FlowAnomaly { kind: SessionParseError { side, reason } }` (when `with_emit_anomalies(true)`).
 2. Synthesises `SessionEvent::Closed { reason: EndReason::ParseError }`.
 3. Calls `rst_initiator` / `rst_responder` on your parser, then drops the slot.
 
@@ -568,8 +568,9 @@ let mut driver = FlowDriver::new(FiveTuple::bidirectional(), factory)
     .with_emit_anomalies(true);
 ```
 
-The driver then emits `FlowEvent::Anomaly { kind, .. }` events
-inline, coalesced per (flow, side, kind) per tick:
+The driver then emits `FlowEvent::FlowAnomaly { key, kind, .. }`
+(per-flow) and `FlowEvent::TrackerAnomaly { kind, .. }` (tracker-
+global) events inline, coalesced per (flow, side, kind) per tick:
 
 | `AnomalyKind` | Fires when | Carries |
 |---------------|-----------|---------|
