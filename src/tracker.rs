@@ -587,6 +587,7 @@ impl<E: FlowExtractor, S: Send + 'static> FlowTracker<E, S> {
     /// Update the `last_tick_at` timestamp for a live flow. Used by
     /// the driver after emitting a [`FlowEvent::Tick`]. Returns
     /// `false` when the key is unknown.
+    #[cfg(feature = "reassembler")]
     pub(crate) fn mark_ticked(&mut self, key: &E::Key, now: Timestamp) -> bool {
         if let Some(entry) = self.flows.peek_mut(key) {
             entry.last_tick_at = Some(now);
