@@ -147,6 +147,10 @@ impl SessionParser for TlsParser {
         self.resp_buf.clear();
         self.resp_state = DirState::Reading;
     }
+
+    fn parser_kind(&self) -> &'static str {
+        "tls"
+    }
 }
 
 #[cfg(test)]

@@ -185,6 +185,7 @@ where
         // ahead of that flow's `Closed`.
         let mut out: Vec<SessionEvent<E::Key, P::Message>> = Vec::new();
         for (key, parser) in self.parsers.iter_mut() {
+            let kind = parser.parser_kind();
             for m in parser.on_tick(now) {
                 crate::obs::trace_session_message(FlowSide::Initiator, &m);
                 out.push(SessionEvent::Application {
@@ -192,6 +193,7 @@ where
                     side: FlowSide::Initiator,
                     message: m,
                     ts: now,
+                    parser_kind: kind,
                 });
             }
         }
@@ -258,6 +260,7 @@ where
                     let ts = stats.last_seen;
                     self.drain_into_parser(key, ts, &mut out);
                     if let Some(mut parser) = self.parsers.remove(key) {
+                        let kind = parser.parser_kind();
                         match reason {
                             EndReason::Fin | EndReason::IdleTimeout => {
                                 for m in parser.fin_initiator() {
@@ -266,6 +269,7 @@ where
                                         side: FlowSide::Initiator,
                                         message: m,
                                         ts,
+                                        parser_kind: kind,
                                     });
                                 }
                                 for m in parser.fin_responder() {
@@ -274,6 +278,7 @@ where
                                         side: FlowSide::Responder,
                                         message: m,
                                         ts,
+                                        parser_kind: kind,
                                     });
                                 }
                             }
@@ -334,6 +339,7 @@ where
                 Some(p) => p,
                 None => return,
             };
+            let kind = parser.parser_kind();
             let messages = match side {
                 FlowSide::Initiator => parser.feed_initiator(&drained, ts),
                 FlowSide::Responder => parser.feed_responder(&drained, ts),
@@ -345,6 +351,7 @@ where
                     side,
                     message: m,
                     ts,
+                    parser_kind: kind,
                 });
             }
             // Plan 55: check is_poisoned() after every feed_*. If
@@ -945,6 +952,81 @@ mod tests {
             }
             _ => unreachable!(),
         }
+    }
+
+    #[test]
+    fn parser_kind_threaded_into_application_events() {
+        // Custom parser with a non-default parser_kind. Drive a flow
+        // through the session driver; every `Application` event must
+        // carry the parser's kind verbatim.
+        #[derive(Default, Clone)]
+        struct KindedParser;
+        impl SessionParser for KindedParser {
+            type Message = u8;
+            fn feed_initiator(&mut self, _b: &[u8], _ts: Timestamp) -> Vec<u8> {
+                vec![1]
+            }
+            fn feed_responder(&mut self, _b: &[u8], _ts: Timestamp) -> Vec<u8> {
+                vec![2]
+            }
+            fn parser_kind(&self) -> &'static str {
+                "kinded"
+            }
+        }
+        let mut d = FlowSessionDriver::new(FiveTuple::bidirectional(), KindedParser);
+        let mac = [0u8; 6];
+        let ip_a = [10, 0, 0, 1];
+        let ip_b = [10, 0, 0, 2];
+        // 3WHS + initiator data.
+        let frames = [
+            ipv4_tcp(mac, mac, ip_a, ip_b, 1234, 80, 1000, 0, 0x02, b""),
+            ipv4_tcp(mac, mac, ip_b, ip_a, 80, 1234, 5000, 1001, 0x12, b""),
+            ipv4_tcp(mac, mac, ip_a, ip_b, 1234, 80, 1001, 5001, 0x10, b""),
+            ipv4_tcp(mac, mac, ip_a, ip_b, 1234, 80, 1001, 5001, 0x18, b"x"),
+        ];
+        let mut events = Vec::new();
+        for f in &frames {
+            events.extend(d.track(view(f, 0)));
+        }
+        let app: Vec<_> = events
+            .iter()
+            .filter_map(|e| match e {
+                SessionEvent::Application { parser_kind, .. } => Some(*parser_kind),
+                _ => None,
+            })
+            .collect();
+        assert!(!app.is_empty(), "expected at least one Application event");
+        for k in app {
+            assert_eq!(k, "kinded");
+        }
+    }
+
+    #[test]
+    fn default_parser_kind_is_empty() {
+        #[derive(Default, Clone)]
+        struct Noop;
+        impl SessionParser for Noop {
+            type Message = u8;
+            fn feed_initiator(&mut self, _b: &[u8], _ts: Timestamp) -> Vec<u8> {
+                Vec::new()
+            }
+            fn feed_responder(&mut self, _b: &[u8], _ts: Timestamp) -> Vec<u8> {
+                Vec::new()
+            }
+        }
+        assert_eq!(Noop.parser_kind(), "");
+    }
+
+    #[test]
+    fn shipped_http_tls_dns_parser_kinds() {
+        use crate::DatagramParser as _;
+        use crate::dns::{DnsTcpParser, DnsUdpParser};
+        use crate::http::HttpParser;
+        use crate::tls::TlsParser;
+        assert_eq!(HttpParser::default().parser_kind(), "http/1");
+        assert_eq!(TlsParser::default().parser_kind(), "tls");
+        assert_eq!(DnsTcpParser::default().parser_kind(), "dns-tcp");
+        assert_eq!(DnsUdpParser::default().parser_kind(), "dns-udp");
     }
 
     #[test]

@@ -147,6 +147,26 @@ pub trait SessionParser: Send + 'static {
     fn poison_reason(&self) -> Option<&str> {
         None
     }
+
+    /// Identifier for this parser, threaded into
+    /// [`crate::SessionEvent::Application::parser_kind`]. New in
+    /// 0.5.0.
+    ///
+    /// Use a stable, label-safe identifier — operators route
+    /// metrics on this string. Convention:
+    ///
+    /// - Lowercase, ASCII, snake-case or slash-separated
+    ///   (`http/1`, `dns-udp`, `rtp`, `length-prefixed`).
+    /// - Stable for the lifetime of the parser instance.
+    /// - Default: `""` (no kind set).
+    ///
+    /// `&'static str` rather than `Cow` so the value can flow into
+    /// `metrics::counter!` labels without allocation. Parsers
+    /// needing a dynamic kind should bake it into
+    /// [`Self::Message`].
+    fn parser_kind(&self) -> &'static str {
+        ""
+    }
 }
 
 /// Builds a fresh [`SessionParser`] per session. Modeled on
@@ -199,6 +219,11 @@ pub trait DatagramParser: Send + 'static {
     fn poison_reason(&self) -> Option<&str> {
         None
     }
+
+    /// See [`SessionParser::parser_kind`]. Default `""`.
+    fn parser_kind(&self) -> &'static str {
+        ""
+    }
 }
 
 /// Builds a fresh [`DatagramParser`] per session.
@@ -235,6 +260,11 @@ pub enum SessionEvent<K, M> {
         side: FlowSide,
         message: M,
         ts: Timestamp,
+        /// Identifier of the parser that produced this message —
+        /// the value returned by [`SessionParser::parser_kind`] (or
+        /// [`DatagramParser::parser_kind`] for UDP). New in 0.5.0.
+        /// `""` when the parser doesn't override the default.
+        parser_kind: &'static str,
     },
     /// Session ended (FIN/RST/idle/eviction). Any messages the
     /// parser flushed on close arrive as `Application` events

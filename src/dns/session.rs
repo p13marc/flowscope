@@ -99,6 +99,10 @@ impl SessionParser for DnsTcpParser {
     fn rst_responder(&mut self) {
         self.resp_buf.clear();
     }
+
+    fn parser_kind(&self) -> &'static str {
+        "dns-tcp"
+    }
 }
 
 #[cfg(test)]

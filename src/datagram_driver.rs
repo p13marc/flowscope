@@ -179,6 +179,7 @@ where
         // its final tick ahead of its `Closed` event.
         let mut out: Vec<SessionEvent<E::Key, P::Message>> = Vec::new();
         for (key, parser) in self.parsers.iter_mut() {
+            let kind = parser.parser_kind();
             for m in parser.on_tick(now) {
                 crate::obs::trace_session_message(FlowSide::Initiator, &m);
                 out.push(SessionEvent::Application {
@@ -186,6 +187,7 @@ where
                     side: FlowSide::Initiator,
                     message: m,
                     ts: now,
+                    parser_kind: kind,
                 });
             }
         }
@@ -245,6 +247,7 @@ where
                     let Some(parser) = self.parsers.get_mut(key) else {
                         continue;
                     };
+                    let kind = parser.parser_kind();
                     let messages = parser.parse(payload, *side, *ts);
                     for m in messages {
                         crate::obs::trace_session_message(*side, &m);
@@ -253,6 +256,7 @@ where
                             side: *side,
                             message: m,
                             ts: *ts,
+                            parser_kind: kind,
                         });
                     }
                     // Plan 55 — parser poison check.

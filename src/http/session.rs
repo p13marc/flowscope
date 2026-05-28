@@ -121,6 +121,10 @@ impl SessionParser for HttpParser {
         self.resp_buf.clear();
         self.resp_state = DirState::Headers;
     }
+
+    fn parser_kind(&self) -> &'static str {
+        "http/1"
+    }
 }
 
 #[cfg(test)]

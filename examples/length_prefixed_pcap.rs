@@ -58,6 +58,10 @@ impl SessionParser for LengthPrefixedParser {
     fn feed_responder(&mut self, bytes: &[u8], _ts: Timestamp) -> Vec<Record> {
         Self::drain(&mut self.resp_buf, bytes, FlowSide::Responder)
     }
+
+    fn parser_kind(&self) -> &'static str {
+        "length-prefixed"
+    }
 }
 
 impl LengthPrefixedParser {
