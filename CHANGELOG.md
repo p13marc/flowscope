@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.5.0 — TCP rich diagnostics, periodic ticks, parser kinds (unreleased)
+## 0.5.0 — TCP rich diagnostics, periodic ticks, parser kinds (2026-05-28)
 
 Driven by the
 [`simple-nms` upstream wishlist](docs/feedback-2026-08-11-simple-nms.md);

@@ -20,11 +20,24 @@ the core.
 
 ## Implementation Status
 
-**0.3.0 published** (crates.io). 172 lib + integration tests, 11
-parser proptests, additional tracker + round-trip proptests.
-Zero clippy warnings, zero rustdoc warnings, fmt-clean.
-Five criterion bench groups under `benches/` with baseline
-numbers in `docs/PERFORMANCE.md`.
+**0.5.0** — TCP rich diagnostics, periodic ticks, parser
+identity. Driven by the simple-nms upstream wishlist
+(2026-08-11). 203 lib + integration tests, 11 parser
+proptests, tracker + round-trip proptests. Zero clippy
+warnings, zero rustdoc warnings, fmt-clean. Five criterion
+bench groups under `benches/` with baseline numbers in
+`docs/PERFORMANCE.md`.
+
+0.5.0 shipped: `Reassembler::segment(ts)` + `retransmits()` /
+`on_duplicate` accessors, `BufferedReassembler` retransmit
+classification (wrap-aware seq-space), `AnomalyKind::Retransmitted
+Segment`, `FlowStats::retransmits_*`, `TcpInfo::window` +
+`#[non_exhaustive]`, opt-in periodic `FlowEvent::Tick` /
+`SessionEvent::FlowTick`, `SessionParser::parser_kind` /
+`DatagramParser::parser_kind` threaded into Application events,
+SESSION_GUIDE rich-state pattern (doc-only response to F1.4).
+Also fixes a latent timing bug where reassembly-diagnostic
+metrics fired with zero values on natural flow ends.
 
 ### Modules
 
@@ -256,6 +269,9 @@ record; `plans/` is the working backlog.
   drove the `Dedup` primitive shape.
 - `feedback-2026-05-14-des-rs.md` — `des-rs` team feedback
   record that drove the 0.3.0 "production hardening" release.
+- `feedback-2026-08-11-simple-nms.md` — `simple-nms` upstream
+  wishlist that drove the 0.5.0 release (plans 70–73 shipped,
+  plan 74 RFC-only deferred to 0.6.0+).
 - `API-ERGONOMICS-REVIEW.md` — public-API audit that drove the
   0.4.0 ergonomics release (plans 32–37).
 
@@ -267,9 +283,12 @@ record; `plans/` is the working backlog.
   CLIs, IPv6 fragment reassembly).
 - `21-flow-protolens.md` — protolens bridge sister crate (STALE
   pre-consolidation draft, pending real consumer ask).
+- `74-rfc-ooo-reassembly.md` — RFC for OOO TCP reassembly
+  (`SegmentBufferReassembler`); implementation deferred to
+  0.6.0+ pending consumer + maintainer agreement.
 
-Plan numbers 00–04, 12, 20, 22–25, 30–37, 40–42, 45–49, 51–57
-are retired (implementation shipped, file removed). See
+Plan numbers 00–04, 12, 20, 22–25, 30–37, 40–42, 45–49, 51–57,
+70–73 are retired (implementation shipped, file removed). See
 [`plans/INDEX.md`](plans/INDEX.md) for the numbering scheme used
 by new plans.
 
@@ -287,7 +306,8 @@ For the next `cargo publish` of flowscope:
 8. `cargo publish --dry-run` packages and verifies.
 9. `cargo publish`.
 10. Tag the release in git: `git tag 0.x.y && git push origin 0.x.y`
-    (no `v` prefix — matches the 0.1.0 / 0.2.0 / 0.3.0 / 0.4.0 tags).
+    (no `v` prefix — matches the 0.1.0 / 0.2.0 / 0.3.0 / 0.4.0 /
+    0.5.0 tags).
 
 ## Relationship to netring
 
