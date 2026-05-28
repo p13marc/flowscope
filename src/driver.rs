@@ -5,6 +5,7 @@
 //! The async equivalent lives in `netring`'s `FlowStream::with_async_reassembler`.
 
 use std::collections::HashMap;
+use std::time::Duration;
 
 use ahash::RandomState;
 
@@ -232,7 +233,56 @@ where
             events.push(ev);
         }
 
+        // Periodic flow ticks (Plan 71). Opt-in via
+        // `FlowTrackerConfig::flow_tick_interval`. Emitted after
+        // anomaly + BufferOverflow synthesis so consumers see the
+        // tick AFTER any anomalies / ends for the same packet.
+        if let Some(interval) = self.tracker.config().flow_tick_interval {
+            self.emit_ticks(&mut events, ts, interval);
+        }
+
         events
+    }
+
+    /// Walk live flows; for any whose `last_tick_at` is past-due,
+    /// emit a [`FlowEvent::Tick`] carrying a patched [`FlowStats`]
+    /// snapshot and mark the flow as ticked.
+    fn emit_ticks(&mut self, events: &mut FlowEvents<E::Key>, now: Timestamp, interval: Duration) {
+        // Collect (key, stats) pairs first to release the tracker
+        // borrow before calling mark_ticked.
+        let mut to_tick: Vec<(E::Key, crate::FlowStats)> = Vec::new();
+        for (key, entry) in self.tracker.flows() {
+            let due = match entry.last_tick_at {
+                None => true,
+                Some(last) => now.saturating_sub(last) >= interval,
+            };
+            if !due {
+                continue;
+            }
+            let mut stats = entry.stats.clone();
+            if let Some(r) = self.reassemblers.get(&(key.clone(), FlowSide::Initiator)) {
+                stats.reassembly_dropped_ooo_initiator = r.dropped_segments();
+                stats.reassembly_bytes_dropped_oversize_initiator = r.bytes_dropped_oversize();
+                stats.reassembler_high_watermark_initiator = r.high_watermark();
+                stats.retransmits_initiator = r.retransmits();
+            }
+            if let Some(r) = self.reassemblers.get(&(key.clone(), FlowSide::Responder)) {
+                stats.reassembly_dropped_ooo_responder = r.dropped_segments();
+                stats.reassembly_bytes_dropped_oversize_responder = r.bytes_dropped_oversize();
+                stats.reassembler_high_watermark_responder = r.high_watermark();
+                stats.retransmits_responder = r.retransmits();
+            }
+            to_tick.push((key.clone(), stats));
+        }
+        for (key, stats) in to_tick {
+            self.tracker.mark_ticked(&key, now);
+            crate::obs::record_flow_tick(&stats);
+            events.push(FlowEvent::Tick {
+                key,
+                stats,
+                ts: now,
+            });
+        }
     }
 
     /// Run the idle-timeout sweep and clean up reassemblers for
@@ -1350,6 +1400,119 @@ mod tests {
                 }
             )),
             "expected no RetransmittedSegment anomaly on a clean flow"
+        );
+    }
+
+    #[test]
+    fn no_ticks_when_interval_unset() {
+        let mut d = FlowDriver::<_, _>::new(
+            FiveTuple::bidirectional(),
+            BufferedReassemblerFactory::default(),
+        );
+        let f = crate::extract::parse::test_frames::ipv4_udp(
+            [10, 0, 0, 1],
+            [10, 0, 0, 2],
+            1,
+            2,
+            b"x",
+        );
+        let events = d.track(view(&f, 0));
+        assert!(!events.iter().any(|e| matches!(e, FlowEvent::Tick { .. })));
+    }
+
+    #[test]
+    fn first_packet_fires_tick_when_enabled() {
+        let cfg = FlowTrackerConfig {
+            flow_tick_interval: Some(Duration::from_secs(10)),
+            ..FlowTrackerConfig::default()
+        };
+        let mut d = FlowDriver::<_, _>::with_config(
+            FiveTuple::bidirectional(),
+            BufferedReassemblerFactory::default(),
+            cfg,
+        );
+        let f = crate::extract::parse::test_frames::ipv4_udp(
+            [10, 0, 0, 1],
+            [10, 0, 0, 2],
+            1,
+            2,
+            b"x",
+        );
+        let events = d.track(view(&f, 0));
+        assert!(
+            events.iter().any(|e| matches!(e, FlowEvent::Tick { .. })),
+            "first packet should emit initial tick, got: {:?}",
+            events
+        );
+    }
+
+    #[test]
+    fn tick_interval_respected() {
+        let cfg = FlowTrackerConfig {
+            flow_tick_interval: Some(Duration::from_secs(10)),
+            ..FlowTrackerConfig::default()
+        };
+        let mut d = FlowDriver::<_, _>::with_config(
+            FiveTuple::bidirectional(),
+            BufferedReassemblerFactory::default(),
+            cfg,
+        );
+        let f = crate::extract::parse::test_frames::ipv4_udp(
+            [10, 0, 0, 1],
+            [10, 0, 0, 2],
+            1,
+            2,
+            b"x",
+        );
+        // First packet at t=0 fires the initial tick.
+        let _initial = d.track(view(&f, 0));
+        // At t=5s the interval hasn't elapsed.
+        let ev_5s = d.track(view(&f, 5));
+        // At t=15s it has.
+        let ev_15s = d.track(view(&f, 15));
+        assert!(
+            !ev_5s.iter().any(|e| matches!(e, FlowEvent::Tick { .. })),
+            "no tick before interval elapsed"
+        );
+        assert!(
+            ev_15s.iter().any(|e| matches!(e, FlowEvent::Tick { .. })),
+            "tick after interval elapsed"
+        );
+    }
+
+    #[test]
+    fn tick_carries_full_stats_including_reassembler_diagnostics() {
+        let cfg = FlowTrackerConfig {
+            flow_tick_interval: Some(Duration::from_secs(1)),
+            ..FlowTrackerConfig::default()
+        };
+        let factory = BufferedReassemblerFactory::default().with_max_buffer(64);
+        let mut d = FlowDriver::<_, _>::with_config(FiveTuple::bidirectional(), factory, cfg);
+        let mac = [0u8; 6];
+        let ip_a = [10, 0, 0, 1];
+        let ip_b = [10, 0, 0, 2];
+        let payload = vec![b'A'; 200];
+        let frames = [
+            ipv4_tcp(mac, mac, ip_a, ip_b, 1234, 80, 1000, 0, 0x02, b""),
+            ipv4_tcp(mac, mac, ip_b, ip_a, 80, 1234, 5000, 1001, 0x12, b""),
+            ipv4_tcp(mac, mac, ip_a, ip_b, 1234, 80, 1001, 5001, 0x10, b""),
+            ipv4_tcp(mac, mac, ip_a, ip_b, 1234, 80, 1001, 5001, 0x18, &payload),
+        ];
+        let mut last_tick_stats = None;
+        for (i, f) in frames.iter().enumerate() {
+            for ev in d.track(view(f, i as u32 + 10)) {
+                if let FlowEvent::Tick { stats, .. } = ev {
+                    last_tick_stats = Some(stats);
+                }
+            }
+        }
+        let stats = last_tick_stats.expect("at least one Tick should fire");
+        // 200 bytes pushed into a 64-byte cap → 136 dropped via
+        // SlidingWindow.
+        assert!(
+            stats.reassembly_bytes_dropped_oversize_initiator > 0,
+            "tick stats should surface oversize bytes, got {:?}",
+            stats
         );
     }
 

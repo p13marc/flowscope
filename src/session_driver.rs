@@ -299,6 +299,13 @@ where
                         ts: *ts,
                     });
                 }
+                FlowEvent::Tick { key, stats, ts } => {
+                    out.push(SessionEvent::FlowTick {
+                        key: key.clone(),
+                        stats: stats.clone(),
+                        ts: *ts,
+                    });
+                }
                 FlowEvent::Established { .. } | FlowEvent::StateChange { .. } => {
                     // TCP-machine internal transitions; not surfaced
                     // to SessionEvent.
@@ -938,5 +945,35 @@ mod tests {
             }
             _ => unreachable!(),
         }
+    }
+
+    #[test]
+    fn session_driver_forwards_tick_as_flow_tick() {
+        let cfg = FlowTrackerConfig {
+            flow_tick_interval: Some(std::time::Duration::from_secs(10)),
+            ..FlowTrackerConfig::default()
+        };
+        let mut d =
+            FlowSessionDriver::with_config(FiveTuple::bidirectional(), LineParser::default(), cfg);
+        let syn = ipv4_tcp(
+            [0; 6],
+            [0; 6],
+            [10, 0, 0, 1],
+            [10, 0, 0, 2],
+            1234,
+            80,
+            1000,
+            0,
+            0x02,
+            b"",
+        );
+        let events = d.track(view(&syn, 0));
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, SessionEvent::FlowTick { .. })),
+            "first packet should emit initial FlowTick, got: {:?}",
+            events
+        );
     }
 }

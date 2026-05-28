@@ -249,6 +249,23 @@ pub enum FlowEvent<K> {
         kind: AnomalyKind,
         ts: Timestamp,
     },
+
+    /// Periodic [`FlowStats`] snapshot for a live flow. Emitted
+    /// only when
+    /// [`crate::FlowTrackerConfig::flow_tick_interval`] is `Some`.
+    /// New in 0.5.0.
+    ///
+    /// `stats` is an owned clone — consumers can keep it past the
+    /// next `track()` call. Reassembly diagnostic fields (OOO drops,
+    /// oversize bytes, watermark, retransmits) are patched in just
+    /// like on `Ended`, so each tick is a self-contained snapshot.
+    /// Tick timing is driven by packet timestamps; a silent flow
+    /// emits no ticks.
+    Tick {
+        key: K,
+        stats: FlowStats,
+        ts: Timestamp,
+    },
 }
 
 impl<K> FlowEvent<K> {
@@ -262,7 +279,8 @@ impl<K> FlowEvent<K> {
             | FlowEvent::Packet { key, .. }
             | FlowEvent::Established { key, .. }
             | FlowEvent::StateChange { key, .. }
-            | FlowEvent::Ended { key, .. } => Some(key),
+            | FlowEvent::Ended { key, .. }
+            | FlowEvent::Tick { key, .. } => Some(key),
             FlowEvent::Anomaly { key, .. } => key.as_ref(),
         }
     }

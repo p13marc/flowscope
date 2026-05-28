@@ -74,6 +74,11 @@ pub const METRIC_REASSEMBLER_HIGH_WATERMARK: &str = "flowscope_reassembler_high_
 /// `flowscope_retransmits_total{side=...}` — cumulative TCP segment
 /// retransmits classified by the per-side reassembler.
 pub const METRIC_RETRANSMITS: &str = "flowscope_retransmits_total";
+/// `flowscope_flow_ticks_total` — total [`crate::FlowEvent::Tick`]
+/// events emitted across all flows. Fires once per tick per live
+/// flow when [`crate::FlowTrackerConfig::flow_tick_interval`] is
+/// `Some`.
+pub const METRIC_FLOW_TICKS: &str = "flowscope_flow_ticks_total";
 
 #[cfg(feature = "metrics")]
 fn l4_label(l4: Option<L4Proto>) -> &'static str {
@@ -176,6 +181,17 @@ pub(crate) fn record_reassembly_diagnostics(stats: &FlowStats) {
 #[cfg(all(not(feature = "metrics"), feature = "reassembler"))]
 #[inline(always)]
 pub(crate) fn record_reassembly_diagnostics(_stats: &FlowStats) {}
+
+/// Increment the per-tick counter. Called by [`crate::FlowDriver`]
+/// each time it emits a [`crate::FlowEvent::Tick`].
+#[cfg(all(feature = "metrics", feature = "reassembler"))]
+pub(crate) fn record_flow_tick(_stats: &FlowStats) {
+    metrics::counter!(METRIC_FLOW_TICKS).increment(1);
+}
+
+#[cfg(all(not(feature = "metrics"), feature = "reassembler"))]
+#[inline(always)]
+pub(crate) fn record_flow_tick(_stats: &FlowStats) {}
 
 #[cfg(feature = "metrics")]
 pub(crate) fn record_packet_unmatched() {

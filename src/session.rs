@@ -255,6 +255,15 @@ pub enum SessionEvent<K, M> {
         kind: AnomalyKind,
         ts: Timestamp,
     },
+    /// Periodic [`FlowStats`] snapshot forwarded from
+    /// [`crate::FlowEvent::Tick`]. Emitted when the underlying
+    /// [`crate::FlowTrackerConfig::flow_tick_interval`] is `Some`.
+    /// New in 0.5.0.
+    FlowTick {
+        key: K,
+        stats: FlowStats,
+        ts: Timestamp,
+    },
 }
 
 #[cfg(test)]

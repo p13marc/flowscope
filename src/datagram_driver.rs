@@ -278,6 +278,13 @@ where
                         ts: *ts,
                     });
                 }
+                FlowEvent::Tick { key, stats, ts } => {
+                    out.push(SessionEvent::FlowTick {
+                        key: key.clone(),
+                        stats: stats.clone(),
+                        ts: *ts,
+                    });
+                }
                 FlowEvent::Established { .. } | FlowEvent::StateChange { .. } => {
                     // TCP-only events; ignored.
                 }
