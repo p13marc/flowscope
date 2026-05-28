@@ -78,6 +78,18 @@ use crate::timestamp::Timestamp;
 /// Backpressure flows from the consuming `Stream` back to the
 /// kernel ring once the per-flow message buffer fills up — see
 /// the `netring::SessionStream` adapter.
+///
+/// # Per-flow rich state
+///
+/// For consumers that maintain per-flow user state updated by BOTH
+/// the reassembler and the parser — TCP rich stats, application-
+/// level counters, middleware state machines — keep that state on
+/// [`crate::FlowEntry::user`] (typed via the `S` parameter on
+/// [`crate::FlowSessionDriver`]) and update it from your event
+/// loop after `track()`. The pattern is documented in
+/// `docs/SESSION_GUIDE.md` → "Updating per-flow state from parser
+/// messages." Avoid piping `&mut S` through `feed_*` — it would
+/// ripple a generic parameter through every shipped parser.
 pub trait SessionParser: Send + 'static {
     /// L7 message produced by this parser.
     ///
@@ -147,6 +159,26 @@ pub trait SessionParser: Send + 'static {
     fn poison_reason(&self) -> Option<&str> {
         None
     }
+
+    /// Identifier for this parser, threaded into
+    /// [`crate::SessionEvent::Application::parser_kind`]. New in
+    /// 0.5.0.
+    ///
+    /// Use a stable, label-safe identifier — operators route
+    /// metrics on this string. Convention:
+    ///
+    /// - Lowercase, ASCII, snake-case or slash-separated
+    ///   (`http/1`, `dns-udp`, `rtp`, `length-prefixed`).
+    /// - Stable for the lifetime of the parser instance.
+    /// - Default: `""` (no kind set).
+    ///
+    /// `&'static str` rather than `Cow` so the value can flow into
+    /// `metrics::counter!` labels without allocation. Parsers
+    /// needing a dynamic kind should bake it into
+    /// [`Self::Message`].
+    fn parser_kind(&self) -> &'static str {
+        ""
+    }
 }
 
 /// Builds a fresh [`SessionParser`] per session. Modeled on
@@ -199,6 +231,11 @@ pub trait DatagramParser: Send + 'static {
     fn poison_reason(&self) -> Option<&str> {
         None
     }
+
+    /// See [`SessionParser::parser_kind`]. Default `""`.
+    fn parser_kind(&self) -> &'static str {
+        ""
+    }
 }
 
 /// Builds a fresh [`DatagramParser`] per session.
@@ -235,6 +272,11 @@ pub enum SessionEvent<K, M> {
         side: FlowSide,
         message: M,
         ts: Timestamp,
+        /// Identifier of the parser that produced this message —
+        /// the value returned by [`SessionParser::parser_kind`] (or
+        /// [`DatagramParser::parser_kind`] for UDP). New in 0.5.0.
+        /// `""` when the parser doesn't override the default.
+        parser_kind: &'static str,
     },
     /// Session ended (FIN/RST/idle/eviction). Any messages the
     /// parser flushed on close arrive as `Application` events
@@ -258,6 +300,16 @@ pub enum SessionEvent<K, M> {
     /// [`AnomalyKind::FlowTableEvictionPressure`]). Opt-in like
     /// [`Self::FlowAnomaly`].
     TrackerAnomaly { kind: AnomalyKind, ts: Timestamp },
+
+    /// Periodic [`FlowStats`] snapshot forwarded from
+    /// [`crate::FlowEvent::Tick`]. Emitted when the underlying
+    /// [`crate::FlowTrackerConfig::flow_tick_interval`] is `Some`.
+    /// New in 0.5.0.
+    FlowTick {
+        key: K,
+        stats: FlowStats,
+        ts: Timestamp,
+    },
 }
 
 impl<K, M> SessionEvent<K, M> {

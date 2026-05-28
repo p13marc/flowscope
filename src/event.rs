@@ -96,6 +96,12 @@ pub struct FlowStats {
     /// snapshot accessors. Zero when no reassembler was attached.
     pub reassembler_high_watermark_initiator: u64,
     pub reassembler_high_watermark_responder: u64,
+    /// New in 0.5.0: per-side count of TCP segments classified as
+    /// retransmits by the per-side reassembler. Populated by
+    /// [`crate::FlowDriver`] on `Ended`. See
+    /// [`crate::Reassembler::retransmits`].
+    pub retransmits_initiator: u64,
+    pub retransmits_responder: u64,
 }
 
 /// Lifecycle state of a flow as tracked by [`crate::FlowTracker`].
@@ -179,8 +185,14 @@ pub enum AnomalyKind {
         reason: Option<String>,
     },
 
-    /// Reassembler buffer occupancy just crossed the configured
-    /// threshold of its cap (see
+    /// New in 0.5.0. Reassembler classified one or more TCP
+    /// segments as retransmits during this tick. Coalesced — at
+    /// most one anomaly per (flow, side) per tick, with `count`
+    /// summing the delta of [`crate::Reassembler::retransmits`].
+    RetransmittedSegment { side: FlowSide, count: u64 },
+
+    /// New in 0.6.0. Reassembler buffer occupancy just crossed the
+    /// configured threshold of its cap (see
     /// [`crate::BufferedReassembler::with_high_watermark_threshold`]).
     /// Debounced: one event per below→above transition; occupancy
     /// must drop back below to re-arm.
@@ -259,6 +271,23 @@ pub enum FlowEvent<K> {
     /// [`AnomalyKind::FlowTableEvictionPressure`]) — not tied to a
     /// specific flow. Opt-in like [`Self::FlowAnomaly`].
     TrackerAnomaly { kind: AnomalyKind, ts: Timestamp },
+
+    /// Periodic [`FlowStats`] snapshot for a live flow. Emitted
+    /// only when
+    /// [`crate::FlowTrackerConfig::flow_tick_interval`] is `Some`.
+    /// New in 0.5.0.
+    ///
+    /// `stats` is an owned clone — consumers can keep it past the
+    /// next `track()` call. Reassembly diagnostic fields (OOO drops,
+    /// oversize bytes, watermark, retransmits) are patched in just
+    /// like on `Ended`, so each tick is a self-contained snapshot.
+    /// Tick timing is driven by packet timestamps; a silent flow
+    /// emits no ticks.
+    Tick {
+        key: K,
+        stats: FlowStats,
+        ts: Timestamp,
+    },
 }
 
 impl<K> FlowEvent<K> {
@@ -273,7 +302,8 @@ impl<K> FlowEvent<K> {
             | FlowEvent::Established { key, .. }
             | FlowEvent::StateChange { key, .. }
             | FlowEvent::Ended { key, .. }
-            | FlowEvent::FlowAnomaly { key, .. } => Some(key),
+            | FlowEvent::FlowAnomaly { key, .. }
+            | FlowEvent::Tick { key, .. } => Some(key),
             FlowEvent::TrackerAnomaly { .. } => None,
         }
     }

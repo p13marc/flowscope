@@ -5,7 +5,7 @@
 //!     cargo bench --bench reassembler --features reassembler
 
 use criterion::{Criterion, black_box, criterion_group, criterion_main};
-use flowscope::{BufferedReassembler, OverflowPolicy, Reassembler};
+use flowscope::{BufferedReassembler, OverflowPolicy, Reassembler, Timestamp};
 
 fn bench_in_order_1500_uncapped(c: &mut Criterion) {
     let payload = vec![0u8; 1500];
@@ -13,7 +13,7 @@ fn bench_in_order_1500_uncapped(c: &mut Criterion) {
         let mut r = BufferedReassembler::new();
         let mut seq = 0u32;
         b.iter(|| {
-            r.segment(seq, &payload);
+            r.segment(seq, &payload, Timestamp::default());
             seq = seq.wrapping_add(payload.len() as u32);
             // Drain periodically to keep the buffer bounded without
             // forcing reallocation on every iteration.
@@ -30,7 +30,7 @@ fn bench_in_order_1500_capped_1m(c: &mut Criterion) {
         let mut r = BufferedReassembler::new().with_max_buffer(1 << 20);
         let mut seq = 0u32;
         b.iter(|| {
-            r.segment(seq, &payload);
+            r.segment(seq, &payload, Timestamp::default());
             seq = seq.wrapping_add(payload.len() as u32);
             if r.buffered_len() > (1 << 19) {
                 black_box(r.take());
@@ -47,7 +47,7 @@ fn bench_sliding_window_overflow(c: &mut Criterion) {
         let mut r = BufferedReassembler::new().with_max_buffer(100);
         let mut seq = 0u32;
         b.iter(|| {
-            r.segment(seq, &payload);
+            r.segment(seq, &payload, Timestamp::default());
             seq = seq.wrapping_add(payload.len() as u32);
         })
     });
@@ -58,10 +58,10 @@ fn bench_ooo_drops(c: &mut Criterion) {
     c.bench_function("reassembler/ooo_drops", |b| {
         let mut r = BufferedReassembler::new();
         // Prime with one in-order segment to set expected_seq.
-        r.segment(0, &payload);
+        r.segment(0, &payload, Timestamp::default());
         b.iter(|| {
             // Always OOO — seq is far from expected.
-            r.segment(1_000_000, &payload);
+            r.segment(1_000_000, &payload, Timestamp::default());
             black_box(r.dropped_segments());
         })
     });
@@ -76,11 +76,11 @@ fn bench_drop_flow_idle(c: &mut Criterion) {
             .with_max_buffer(100)
             .with_overflow_policy(OverflowPolicy::DropFlow);
         // Trigger the poison once up-front.
-        r.segment(0, &payload);
+        r.segment(0, &payload, Timestamp::default());
         assert!(r.is_poisoned());
         let mut seq = 1500u32;
         b.iter(|| {
-            r.segment(seq, &payload);
+            r.segment(seq, &payload, Timestamp::default());
             seq = seq.wrapping_add(payload.len() as u32);
         })
     });

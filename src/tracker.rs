@@ -37,6 +37,10 @@ pub struct FlowEntry<S> {
     pub(crate) initiator_orientation: Orientation,
     /// L4 protocol seen on first packet (drives idle-timeout choice).
     pub(crate) l4: Option<L4Proto>,
+    /// Last time the driver emitted a [`FlowEvent::Tick`] for this
+    /// flow. `None` until the first tick fires. Only used when
+    /// [`FlowTrackerConfig::flow_tick_interval`] is `Some`.
+    pub last_tick_at: Option<Timestamp>,
 }
 
 impl<S> FlowEntry<S> {
@@ -82,6 +86,16 @@ pub struct FlowTrackerConfig {
     /// when buffer occupancy crosses this percent of
     /// `max_reassembler_buffer`. `None` = off.
     pub reassembler_high_watermark_pct: Option<u8>,
+    /// New in 0.5.0. When `Some(d)`, the driver emits one
+    /// [`FlowEvent::Tick`] per live flow whenever
+    /// `view.timestamp - last_tick_at >= d`. `None` (default) — no
+    /// tick events emitted.
+    ///
+    /// Tick timing is driven by packet arrivals — a flow that goes
+    /// silent between ticks emits no ticks during the silence.
+    /// Idle detection still belongs to
+    /// [`FlowTracker::sweep`] / idle-timeout machinery.
+    pub flow_tick_interval: Option<Duration>,
 }
 
 impl Default for FlowTrackerConfig {
@@ -96,6 +110,7 @@ impl Default for FlowTrackerConfig {
             max_reassembler_buffer: None,
             overflow_policy: crate::event::OverflowPolicy::SlidingWindow,
             reassembler_high_watermark_pct: None,
+            flow_tick_interval: None,
         }
     }
 }
@@ -238,6 +253,7 @@ impl<E: FlowExtractor, S: Send + 'static> FlowTracker<E, S> {
                 user,
                 initiator_orientation: orientation,
                 l4,
+                last_tick_at: None,
             };
 
             // Insert with LRU. Returns the evicted entry if at capacity.
@@ -566,6 +582,18 @@ impl<E: FlowExtractor, S: Send + 'static> FlowTracker<E, S> {
     /// poisons mid-flow.
     pub fn snapshot_stats(&self, key: &E::Key) -> Option<FlowStats> {
         self.flows.peek(key).map(|e| e.stats.clone())
+    }
+
+    /// Update the `last_tick_at` timestamp for a live flow. Used by
+    /// the driver after emitting a [`FlowEvent::Tick`]. Returns
+    /// `false` when the key is unknown.
+    pub(crate) fn mark_ticked(&mut self, key: &E::Key, now: Timestamp) -> bool {
+        if let Some(entry) = self.flows.peek_mut(key) {
+            entry.last_tick_at = Some(now);
+            true
+        } else {
+            false
+        }
     }
 
     /// Iterate `(&key, &FlowStats)` for every live flow without

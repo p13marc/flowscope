@@ -95,7 +95,7 @@ impl<H: TlsHandler> TlsReassembler<H> {
 }
 
 impl<H: TlsHandler> Reassembler for TlsReassembler<H> {
-    fn segment(&mut self, _seq: u32, payload: &[u8]) {
+    fn segment(&mut self, _seq: u32, payload: &[u8], _ts: crate::Timestamp) {
         if payload.is_empty() {
             return;
         }

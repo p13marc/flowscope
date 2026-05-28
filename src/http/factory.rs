@@ -82,7 +82,7 @@ impl<H: HttpHandler> HttpReassembler<H> {
 }
 
 impl<H: HttpHandler> Reassembler for HttpReassembler<H> {
-    fn segment(&mut self, _seq: u32, payload: &[u8]) {
+    fn segment(&mut self, _seq: u32, payload: &[u8], _ts: crate::Timestamp) {
         if payload.is_empty() {
             return;
         }

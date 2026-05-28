@@ -21,21 +21,47 @@ The 0.4 API-ergonomics series (plans 32–37) has shipped; the audit
 that drove it is kept at
 [`../docs/API-ERGONOMICS-REVIEW.md`](../docs/API-ERGONOMICS-REVIEW.md).
 
-The 0.5 API-ergonomics series (plans 38, 39, 43, 44, 50, 58, 59, 60,
-61) has shipped; the integration feedback that drove it is kept at
-[`../docs/feedback-2026-05-22-netring.md`](../docs/feedback-2026-05-22-netring.md)
-and the plan-of-record (including §3's documented disagreement with
-the netring author's "lean toward option B" on plan 38) is at
-[`../docs/0.5-PLAN-OF-RECORD.md`](../docs/0.5-PLAN-OF-RECORD.md).
+The 0.5.0 release (plans 70–73, simple-nms wishlist) shipped from
+its own series in parallel; the 0.6 API-ergonomics series (plans
+38, 39, 43, 44, 50, 58, 59, 60, 61) shipped on top of it. Two
+feedback streams drove the two series:
 
-Two items from the feedback are deferred rather than implemented:
-- **#2 `FlowTracker::with_auto_sweep(interval)`** — packet-clock
-  auto-sweep for live/offline parity; needs its own RFC (interaction
-  with out-of-order timestamps, return-channel for implicit-sweep
-  events, monotonic-timestamps prerequisite).
-- **#10 `SessionParser::is_done()`** — declined pending a real
-  motivating case; HTTP/1.0 `Connection: close` (the example
+- [`../docs/feedback-2026-05-22-netring.md`](../docs/feedback-2026-05-22-netring.md) +
+  [`../docs/0.6-PLAN-OF-RECORD.md`](../docs/0.6-PLAN-OF-RECORD.md)
+  (§3 documents the substantive disagreement with the netring
+  author's "lean toward option B" on plan 38).
+- [`../docs/feedback-2026-08-11-simple-nms.md`](../docs/feedback-2026-08-11-simple-nms.md)
+  (drove the 0.5.0 release — TCP rich diagnostics, FlowTick,
+  parser_kind).
+
+### Pending (0.7.0+)
+
+| Plan | Goal | Status |
+|------|------|--------|
+| [`74-rfc-ooo-reassembly.md`](./74-rfc-ooo-reassembly.md) | RFC scope for OOO TCP reassembly with hole-fill (F2.4). | 📝 RFC only — invites consumer + maintainer agreement before implementation |
+
+Deferred from the two feedback streams (recorded so a future ask
+doesn't get re-litigated):
+
+- **#2 `FlowTracker::with_auto_sweep(interval)`** (netring) —
+  packet-clock auto-sweep for live/offline parity; needs its own
+  RFC (interaction with out-of-order timestamps, return-channel for
+  implicit-sweep events, monotonic-timestamps prerequisite).
+- **#10 `SessionParser::is_done()`** (netring) — declined pending a
+  real motivating case; HTTP/1.0 `Connection: close` (the example
   use case) already triggers natural FIN-based close.
+- **F1.4** (simple-nms) — parser `&mut S` API change addressed via
+  the SESSION_GUIDE consumer-loop pattern instead of plumbing a
+  generic through every parser.
+- **F1.6** (simple-nms) — lazy iterator return; declined twice,
+  will not reconsider without a third consumer + reproducer.
+- **F2.1 / F2.2 / F2.3** (simple-nms) — built-in RTP / HTTP/2 /
+  RTPS parsers; accept consumer-led upstream PRs after their
+  parsers stabilise.
+- **F3.1** (simple-nms) — TLS 1.3 0-RTT, small follow-up if a
+  consumer asks.
+- **F3.2** (simple-nms) — IP fragment reassembly, deferred
+  indefinitely per `docs/ARCHITECTURE.md` known limitations.
 
 ### Sister crates
 
@@ -84,11 +110,13 @@ pre-consolidation and would need full rewrites.
 | 40–49 | Observability + performance |
 | 50–59 | Deferred-feature catchup |
 | 60–69 | Tooling (CLIs) |
+| 70–79 | 0.5.0 production-hardening v2 (simple-nms wishlist) |
 
-Plan numbers 00–04, 12, 20, 22–25, 30–61 (everything except 21,
-which is parked) are retired (implementation shipped, file
-removed). New plans pick the lowest free number in the
-appropriate range.
+Plan numbers 00–04, 12, 20, 22–25, 30–61, 70–73 (everything except
+21 and 74, which are parked) are retired (implementation shipped,
+file removed). New plans pick the lowest free number in the
+appropriate range — the 0.5.0 series used 70+ to keep the active
+set visually distinct from the retired numbers.
 
 ---
 

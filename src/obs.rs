@@ -24,9 +24,10 @@
 //! | `flowscope_flow_duration_seconds` | histogram | — |
 //! | `flowscope_flow_packets` | histogram | — |
 //! | `flowscope_flow_bytes` | histogram | — |
-//! | `flowscope_anomalies_total` | counter | `kind` (`buffer_overflow`/`ooo_segment`/`flow_table_eviction`) |
+//! | `flowscope_anomalies_total` | counter | `kind` (`buffer_overflow`/`ooo_segment`/`flow_table_eviction`/`parse_error`/`retransmit`/`reassembler_high_watermark`) |
 //! | `flowscope_reassembly_dropped_ooo_total` | counter | `side` |
 //! | `flowscope_reassembly_bytes_dropped_oversize_total` | counter | `side` |
+//! | `flowscope_retransmits_total` | counter | `side` |
 //!
 //! # Cardinality
 //!
@@ -70,6 +71,14 @@ pub const METRIC_REASSEMBLY_BYTES_DROPPED_OVERSIZE: &str =
 /// `flowscope_reassembler_high_watermark_bytes{side=...}` —
 /// histogram of peak buffer occupancy per ended flow.
 pub const METRIC_REASSEMBLER_HIGH_WATERMARK: &str = "flowscope_reassembler_high_watermark_bytes";
+/// `flowscope_retransmits_total{side=...}` — cumulative TCP segment
+/// retransmits classified by the per-side reassembler.
+pub const METRIC_RETRANSMITS: &str = "flowscope_retransmits_total";
+/// `flowscope_flow_ticks_total` — total [`crate::FlowEvent::Tick`]
+/// events emitted across all flows. Fires once per tick per live
+/// flow when [`crate::FlowTrackerConfig::flow_tick_interval`] is
+/// `Some`.
+pub const METRIC_FLOW_TICKS: &str = "flowscope_flow_ticks_total";
 
 #[cfg(feature = "metrics")]
 fn l4_label(l4: Option<L4Proto>) -> &'static str {
@@ -99,6 +108,7 @@ fn anomaly_label(kind: &AnomalyKind) -> &'static str {
         AnomalyKind::OutOfOrderSegment { .. } => "ooo_segment",
         AnomalyKind::FlowTableEvictionPressure { .. } => "flow_table_eviction",
         AnomalyKind::SessionParseError { .. } => "parse_error",
+        AnomalyKind::RetransmittedSegment { .. } => "retransmit",
         AnomalyKind::ReassemblerHighWatermark { .. } => "reassembler_high_watermark",
     }
 }
@@ -121,6 +131,20 @@ pub(crate) fn record_flow_ended(reason: EndReason, stats: &FlowStats) {
         .record((stats.packets_initiator + stats.packets_responder) as f64);
     metrics::histogram!(METRIC_FLOW_BYTES)
         .record((stats.bytes_initiator + stats.bytes_responder) as f64);
+    // NOTE: reassembly diagnostics are emitted separately by
+    // [`record_reassembly_diagnostics`]. The tracker calls
+    // `record_flow_ended` with unpatched stats; the driver fills in
+    // reassembler-derived fields after the fact and then calls
+    // [`record_reassembly_diagnostics`].
+}
+
+/// Emit reassembly-diagnostic metrics after the driver has patched
+/// per-side reassembler counters into `stats`. Split from
+/// [`record_flow_ended`] because the tracker calls the latter from
+/// inside `track_with_payload`/`sweep` *before* the driver gets a
+/// chance to patch reassembler-derived fields.
+#[cfg(all(feature = "metrics", feature = "reassembler"))]
+pub(crate) fn record_reassembly_diagnostics(stats: &FlowStats) {
     if stats.reassembly_dropped_ooo_initiator > 0 {
         metrics::counter!(METRIC_REASSEMBLY_DROPPED_OOO, "side" => "initiator")
             .increment(stats.reassembly_dropped_ooo_initiator);
@@ -145,7 +169,30 @@ pub(crate) fn record_flow_ended(reason: EndReason, stats: &FlowStats) {
         metrics::histogram!(METRIC_REASSEMBLER_HIGH_WATERMARK, "side" => "responder")
             .record(stats.reassembler_high_watermark_responder as f64);
     }
+    if stats.retransmits_initiator > 0 {
+        metrics::counter!(METRIC_RETRANSMITS, "side" => "initiator")
+            .increment(stats.retransmits_initiator);
+    }
+    if stats.retransmits_responder > 0 {
+        metrics::counter!(METRIC_RETRANSMITS, "side" => "responder")
+            .increment(stats.retransmits_responder);
+    }
 }
+
+#[cfg(all(not(feature = "metrics"), feature = "reassembler"))]
+#[inline(always)]
+pub(crate) fn record_reassembly_diagnostics(_stats: &FlowStats) {}
+
+/// Increment the per-tick counter. Called by [`crate::FlowDriver`]
+/// each time it emits a [`crate::FlowEvent::Tick`].
+#[cfg(all(feature = "metrics", feature = "reassembler"))]
+pub(crate) fn record_flow_tick(_stats: &FlowStats) {
+    metrics::counter!(METRIC_FLOW_TICKS).increment(1);
+}
+
+#[cfg(all(not(feature = "metrics"), feature = "reassembler"))]
+#[inline(always)]
+pub(crate) fn record_flow_tick(_stats: &FlowStats) {}
 
 #[cfg(feature = "metrics")]
 pub(crate) fn record_packet_unmatched() {

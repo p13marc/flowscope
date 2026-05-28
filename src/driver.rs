@@ -5,6 +5,7 @@
 //! The async equivalent lives in `netring`'s `FlowStream::with_async_reassembler`.
 
 use std::collections::HashMap;
+use std::time::Duration;
 
 use ahash::RandomState;
 
@@ -32,6 +33,7 @@ struct ReassemblerCounters {
     dropped: u64,
     oversize: u64,
     crossings: u64,
+    retransmits: u64,
 }
 
 struct AnomalySnapshot<K>
@@ -288,7 +290,7 @@ where
                 let r = reassemblers
                     .entry((key.clone(), side))
                     .or_insert_with(|| factory.new_reassembler(key, side));
-                r.segment(seq, payload);
+                r.segment(seq, payload, ts);
             });
 
         // Emit anomaly events (per-tick coalesced) before synthesising
@@ -313,7 +315,56 @@ where
             events.push(ev);
         }
 
+        // Periodic flow ticks (Plan 71). Opt-in via
+        // `FlowTrackerConfig::flow_tick_interval`. Emitted after
+        // anomaly + BufferOverflow synthesis so consumers see the
+        // tick AFTER any anomalies / ends for the same packet.
+        if let Some(interval) = self.tracker.config().flow_tick_interval {
+            self.emit_ticks(&mut events, ts, interval);
+        }
+
         events
+    }
+
+    /// Walk live flows; for any whose `last_tick_at` is past-due,
+    /// emit a [`FlowEvent::Tick`] carrying a patched [`FlowStats`]
+    /// snapshot and mark the flow as ticked.
+    fn emit_ticks(&mut self, events: &mut FlowEvents<E::Key>, now: Timestamp, interval: Duration) {
+        // Collect (key, stats) pairs first to release the tracker
+        // borrow before calling mark_ticked.
+        let mut to_tick: Vec<(E::Key, crate::FlowStats)> = Vec::new();
+        for (key, entry) in self.tracker.flows() {
+            let due = match entry.last_tick_at {
+                None => true,
+                Some(last) => now.saturating_sub(last) >= interval,
+            };
+            if !due {
+                continue;
+            }
+            let mut stats = entry.stats.clone();
+            if let Some(r) = self.reassemblers.get(&(key.clone(), FlowSide::Initiator)) {
+                stats.reassembly_dropped_ooo_initiator = r.dropped_segments();
+                stats.reassembly_bytes_dropped_oversize_initiator = r.bytes_dropped_oversize();
+                stats.reassembler_high_watermark_initiator = r.high_watermark();
+                stats.retransmits_initiator = r.retransmits();
+            }
+            if let Some(r) = self.reassemblers.get(&(key.clone(), FlowSide::Responder)) {
+                stats.reassembly_dropped_ooo_responder = r.dropped_segments();
+                stats.reassembly_bytes_dropped_oversize_responder = r.bytes_dropped_oversize();
+                stats.reassembler_high_watermark_responder = r.high_watermark();
+                stats.retransmits_responder = r.retransmits();
+            }
+            to_tick.push((key.clone(), stats));
+        }
+        for (key, stats) in to_tick {
+            self.tracker.mark_ticked(&key, now);
+            crate::obs::record_flow_tick(&stats);
+            events.push(FlowEvent::Tick {
+                key,
+                stats,
+                ts: now,
+            });
+        }
     }
 
     /// Run the idle-timeout sweep and clean up reassemblers for
@@ -397,6 +448,7 @@ where
                     dropped: r.dropped_segments(),
                     oversize: r.bytes_dropped_oversize(),
                     crossings: r.high_watermark_crossings(),
+                    retransmits: r.retransmits(),
                 },
             );
         }
@@ -427,10 +479,12 @@ where
                 dropped: r.dropped_segments(),
                 oversize: r.bytes_dropped_oversize(),
                 crossings: r.high_watermark_crossings(),
+                retransmits: r.retransmits(),
             };
             let dropped_delta = cur.dropped.saturating_sub(prev.dropped);
             let oversize_delta = cur.oversize.saturating_sub(prev.oversize);
             let crossing_delta = cur.crossings.saturating_sub(prev.crossings);
+            let retransmit_delta = cur.retransmits.saturating_sub(prev.retransmits);
             if oversize_delta > 0 {
                 // Look up the policy via the tracker config; falls
                 // back to the default (SlidingWindow) when unset.
@@ -475,6 +529,16 @@ where
                         ts,
                     });
                 }
+            }
+            if retransmit_delta > 0 {
+                out.push(FlowEvent::FlowAnomaly {
+                    key: key.clone(),
+                    kind: AnomalyKind::RetransmittedSegment {
+                        side: *side,
+                        count: retransmit_delta,
+                    },
+                    ts,
+                });
             }
         }
         // Tracker-global eviction pressure.
@@ -558,16 +622,19 @@ where
                         let dropped = r.dropped_segments();
                         let oversize = r.bytes_dropped_oversize();
                         let watermark = r.high_watermark();
+                        let retransmits = r.retransmits();
                         match side {
                             FlowSide::Initiator => {
                                 stats.reassembly_dropped_ooo_initiator = dropped;
                                 stats.reassembly_bytes_dropped_oversize_initiator = oversize;
                                 stats.reassembler_high_watermark_initiator = watermark;
+                                stats.retransmits_initiator = retransmits;
                             }
                             FlowSide::Responder => {
                                 stats.reassembly_dropped_ooo_responder = dropped;
                                 stats.reassembly_bytes_dropped_oversize_responder = oversize;
                                 stats.reassembler_high_watermark_responder = watermark;
+                                stats.retransmits_responder = retransmits;
                             }
                         }
                         match reason {
@@ -579,6 +646,12 @@ where
                         }
                     }
                 }
+                // Emit reassembly-diagnostic metrics post-patch.
+                // `record_flow_ended` already fired from inside the
+                // tracker (or from `synthesise_buffer_overflow_ends`)
+                // with unpatched stats; this pass surfaces the
+                // reassembler-derived fields once they're filled in.
+                crate::obs::record_reassembly_diagnostics(stats);
             }
         }
     }
@@ -618,11 +691,13 @@ where
                 stats.reassembly_dropped_ooo_initiator = r.dropped_segments();
                 stats.reassembly_bytes_dropped_oversize_initiator = r.bytes_dropped_oversize();
                 stats.reassembler_high_watermark_initiator = r.high_watermark();
+                stats.retransmits_initiator = r.retransmits();
             }
             if let Some(r) = self.reassemblers.get(&(key.clone(), FlowSide::Responder)) {
                 stats.reassembly_dropped_ooo_responder = r.dropped_segments();
                 stats.reassembly_bytes_dropped_oversize_responder = r.bytes_dropped_oversize();
                 stats.reassembler_high_watermark_responder = r.high_watermark();
+                stats.retransmits_responder = r.retransmits();
             }
             (key.clone(), stats)
         })
@@ -1391,5 +1466,233 @@ mod tests {
             "stats: {:?}",
             ended.1
         );
+    }
+
+    /// 3WHS + initiator data + retransmit of the same data + RST.
+    /// Drives a single flow where the second data segment is a true
+    /// retransmit (`seq + len <= expected_seq`).
+    fn drive_tcp_with_retransmit<F>(
+        driver: &mut FlowDriver<FiveTuple, F>,
+    ) -> Vec<FlowEvent<crate::extract::FiveTupleKey>>
+    where
+        F: ReassemblerFactory<crate::extract::FiveTupleKey>,
+    {
+        let mac = [0u8; 6];
+        let ip_a = [10, 0, 0, 1];
+        let ip_b = [10, 0, 0, 2];
+        let syn = ipv4_tcp(mac, mac, ip_a, ip_b, 1234, 80, 1000, 0, 0x02, b"");
+        let synack = ipv4_tcp(mac, mac, ip_b, ip_a, 80, 1234, 5000, 1001, 0x12, b"");
+        let ack = ipv4_tcp(mac, mac, ip_a, ip_b, 1234, 80, 1001, 5001, 0x10, b"");
+        let payload = b"GET / HTTP/1.1\r\n\r\n";
+        let data = ipv4_tcp(mac, mac, ip_a, ip_b, 1234, 80, 1001, 5001, 0x18, payload);
+        // Retransmit: same seq, same payload.
+        let retx = ipv4_tcp(mac, mac, ip_a, ip_b, 1234, 80, 1001, 5001, 0x18, payload);
+        let rst = ipv4_tcp(
+            mac,
+            mac,
+            ip_a,
+            ip_b,
+            1234,
+            80,
+            1001 + payload.len() as u32,
+            5001,
+            0x04,
+            b"",
+        );
+
+        let mut events = Vec::new();
+        for (i, f) in [&syn, &synack, &ack, &data, &retx, &rst].iter().enumerate() {
+            events.extend(driver.track(view(f, i as u32)));
+        }
+        events
+    }
+
+    #[test]
+    fn ended_event_carries_retransmit_count() {
+        let mut d = FlowDriver::<_, _>::new(
+            FiveTuple::bidirectional(),
+            BufferedReassemblerFactory::default(),
+        );
+        let events = drive_tcp_with_retransmit(&mut d);
+        let stats = events
+            .into_iter()
+            .find_map(|e| match e {
+                FlowEvent::Ended { stats, .. } => Some(stats),
+                _ => None,
+            })
+            .expect("an Ended event");
+        assert_eq!(stats.retransmits_initiator, 1);
+        assert_eq!(stats.retransmits_responder, 0);
+    }
+
+    #[test]
+    fn retransmit_anomaly_emitted_on_duplicate_segment() {
+        let mut d = FlowDriver::<_, _>::new(
+            FiveTuple::bidirectional(),
+            BufferedReassemblerFactory::default(),
+        )
+        .with_emit_anomalies(true);
+        let events = drive_tcp_with_retransmit(&mut d);
+        let anomalies: Vec<_> = events
+            .iter()
+            .filter_map(|e| match e {
+                FlowEvent::FlowAnomaly {
+                    kind: AnomalyKind::RetransmittedSegment { side, count },
+                    ..
+                } => Some((*side, *count)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            anomalies.len(),
+            1,
+            "expected exactly one RetransmittedSegment anomaly, got {anomalies:?}"
+        );
+        assert_eq!(anomalies[0], (FlowSide::Initiator, 1));
+    }
+
+    #[test]
+    fn no_retransmit_anomaly_for_clean_flow() {
+        let mut d = FlowDriver::<_, _>::new(
+            FiveTuple::bidirectional(),
+            BufferedReassemblerFactory::default(),
+        )
+        .with_emit_anomalies(true);
+        let events = drive_simple_tcp_with_data(&mut d);
+        assert!(
+            !events.iter().any(|e| matches!(
+                e,
+                FlowEvent::FlowAnomaly {
+                    kind: AnomalyKind::RetransmittedSegment { .. },
+                    ..
+                }
+            )),
+            "expected no RetransmittedSegment anomaly on a clean flow"
+        );
+    }
+
+    #[test]
+    fn no_ticks_when_interval_unset() {
+        let mut d = FlowDriver::<_, _>::new(
+            FiveTuple::bidirectional(),
+            BufferedReassemblerFactory::default(),
+        );
+        let f =
+            crate::extract::parse::test_frames::ipv4_udp([10, 0, 0, 1], [10, 0, 0, 2], 1, 2, b"x");
+        let events = d.track(view(&f, 0));
+        assert!(!events.iter().any(|e| matches!(e, FlowEvent::Tick { .. })));
+    }
+
+    #[test]
+    fn first_packet_fires_tick_when_enabled() {
+        let cfg = FlowTrackerConfig {
+            flow_tick_interval: Some(Duration::from_secs(10)),
+            ..FlowTrackerConfig::default()
+        };
+        let mut d = FlowDriver::<_, _>::with_config(
+            FiveTuple::bidirectional(),
+            BufferedReassemblerFactory::default(),
+            cfg,
+        );
+        let f =
+            crate::extract::parse::test_frames::ipv4_udp([10, 0, 0, 1], [10, 0, 0, 2], 1, 2, b"x");
+        let events = d.track(view(&f, 0));
+        assert!(
+            events.iter().any(|e| matches!(e, FlowEvent::Tick { .. })),
+            "first packet should emit initial tick, got: {:?}",
+            events
+        );
+    }
+
+    #[test]
+    fn tick_interval_respected() {
+        let cfg = FlowTrackerConfig {
+            flow_tick_interval: Some(Duration::from_secs(10)),
+            ..FlowTrackerConfig::default()
+        };
+        let mut d = FlowDriver::<_, _>::with_config(
+            FiveTuple::bidirectional(),
+            BufferedReassemblerFactory::default(),
+            cfg,
+        );
+        let f =
+            crate::extract::parse::test_frames::ipv4_udp([10, 0, 0, 1], [10, 0, 0, 2], 1, 2, b"x");
+        // First packet at t=0 fires the initial tick.
+        let _initial = d.track(view(&f, 0));
+        // At t=5s the interval hasn't elapsed.
+        let ev_5s = d.track(view(&f, 5));
+        // At t=15s it has.
+        let ev_15s = d.track(view(&f, 15));
+        assert!(
+            !ev_5s.iter().any(|e| matches!(e, FlowEvent::Tick { .. })),
+            "no tick before interval elapsed"
+        );
+        assert!(
+            ev_15s.iter().any(|e| matches!(e, FlowEvent::Tick { .. })),
+            "tick after interval elapsed"
+        );
+    }
+
+    #[test]
+    fn tick_carries_full_stats_including_reassembler_diagnostics() {
+        let cfg = FlowTrackerConfig {
+            flow_tick_interval: Some(Duration::from_secs(1)),
+            ..FlowTrackerConfig::default()
+        };
+        let factory = BufferedReassemblerFactory::default().with_max_buffer(64);
+        let mut d = FlowDriver::<_, _>::with_config(FiveTuple::bidirectional(), factory, cfg);
+        let mac = [0u8; 6];
+        let ip_a = [10, 0, 0, 1];
+        let ip_b = [10, 0, 0, 2];
+        let payload = vec![b'A'; 200];
+        let frames = [
+            ipv4_tcp(mac, mac, ip_a, ip_b, 1234, 80, 1000, 0, 0x02, b""),
+            ipv4_tcp(mac, mac, ip_b, ip_a, 80, 1234, 5000, 1001, 0x12, b""),
+            ipv4_tcp(mac, mac, ip_a, ip_b, 1234, 80, 1001, 5001, 0x10, b""),
+            ipv4_tcp(mac, mac, ip_a, ip_b, 1234, 80, 1001, 5001, 0x18, &payload),
+        ];
+        let mut last_tick_stats = None;
+        for (i, f) in frames.iter().enumerate() {
+            for ev in d.track(view(f, i as u32 + 10)) {
+                if let FlowEvent::Tick { stats, .. } = ev {
+                    last_tick_stats = Some(stats);
+                }
+            }
+        }
+        let stats = last_tick_stats.expect("at least one Tick should fire");
+        // 200 bytes pushed into a 64-byte cap → 136 dropped via
+        // SlidingWindow.
+        assert!(
+            stats.reassembly_bytes_dropped_oversize_initiator > 0,
+            "tick stats should surface oversize bytes, got {:?}",
+            stats
+        );
+    }
+
+    #[test]
+    fn snapshot_flow_stats_surfaces_live_retransmits() {
+        let mut d = FlowDriver::<_, _>::new(
+            FiveTuple::bidirectional(),
+            BufferedReassemblerFactory::default(),
+        );
+        // 3WHS + initiator data + retransmit, but NO RST — flow still live.
+        let mac = [0u8; 6];
+        let ip_a = [10, 0, 0, 1];
+        let ip_b = [10, 0, 0, 2];
+        let syn = ipv4_tcp(mac, mac, ip_a, ip_b, 1234, 80, 1000, 0, 0x02, b"");
+        let synack = ipv4_tcp(mac, mac, ip_b, ip_a, 80, 1234, 5000, 1001, 0x12, b"");
+        let ack = ipv4_tcp(mac, mac, ip_a, ip_b, 1234, 80, 1001, 5001, 0x10, b"");
+        let data = ipv4_tcp(mac, mac, ip_a, ip_b, 1234, 80, 1001, 5001, 0x18, b"hi");
+        let retx = ipv4_tcp(mac, mac, ip_a, ip_b, 1234, 80, 1001, 5001, 0x18, b"hi");
+        for f in [&syn, &synack, &ack, &data, &retx] {
+            d.track(view(f, 0));
+        }
+        let mut found = false;
+        for (_k, stats) in d.snapshot_flow_stats() {
+            if stats.retransmits_initiator == 1 {
+                found = true;
+            }
+        }
+        assert!(found, "live snapshot should surface 1 initiator retransmit");
     }
 }

@@ -103,6 +103,10 @@ impl DatagramParser for DnsUdpParser {
             None => Vec::new(),
         }
     }
+
+    fn parser_kind(&self) -> &'static str {
+        "dns-udp"
+    }
 }
 
 #[cfg(test)]
