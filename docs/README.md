@@ -26,3 +26,4 @@ package. For forward-looking work items, see
 | File | What |
 |------|------|
 | [`feedback-2026-05-14-des-rs.md`](feedback-2026-05-14-des-rs.md) | External feedback from the `des-rs` team after migrating onto 0.2.0. Drove the 0.3.0 "production hardening" release (11 sub-plans). Worth re-reading when the next consumer-feedback cycle starts. |
+| [`feedback-2026-08-11-simple-nms.md`](feedback-2026-08-11-simple-nms.md) | Upstream wishlist from the `simple-nms` team after migrating onto 0.4.0. Drives the 0.5.0 release plan (plans 70–74). Cross-confirms several `des-rs` requests; the periodic-tick item now has two-consumer demand. |
