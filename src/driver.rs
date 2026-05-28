@@ -1330,10 +1330,7 @@ mod tests {
         );
 
         let mut events = Vec::new();
-        for (i, f) in [&syn, &synack, &ack, &data, &retx, &rst]
-            .iter()
-            .enumerate()
-        {
+        for (i, f) in [&syn, &synack, &ack, &data, &retx, &rst].iter().enumerate() {
             events.extend(driver.track(view(f, i as u32)));
         }
         events
@@ -1409,13 +1406,8 @@ mod tests {
             FiveTuple::bidirectional(),
             BufferedReassemblerFactory::default(),
         );
-        let f = crate::extract::parse::test_frames::ipv4_udp(
-            [10, 0, 0, 1],
-            [10, 0, 0, 2],
-            1,
-            2,
-            b"x",
-        );
+        let f =
+            crate::extract::parse::test_frames::ipv4_udp([10, 0, 0, 1], [10, 0, 0, 2], 1, 2, b"x");
         let events = d.track(view(&f, 0));
         assert!(!events.iter().any(|e| matches!(e, FlowEvent::Tick { .. })));
     }
@@ -1431,13 +1423,8 @@ mod tests {
             BufferedReassemblerFactory::default(),
             cfg,
         );
-        let f = crate::extract::parse::test_frames::ipv4_udp(
-            [10, 0, 0, 1],
-            [10, 0, 0, 2],
-            1,
-            2,
-            b"x",
-        );
+        let f =
+            crate::extract::parse::test_frames::ipv4_udp([10, 0, 0, 1], [10, 0, 0, 2], 1, 2, b"x");
         let events = d.track(view(&f, 0));
         assert!(
             events.iter().any(|e| matches!(e, FlowEvent::Tick { .. })),
@@ -1457,13 +1444,8 @@ mod tests {
             BufferedReassemblerFactory::default(),
             cfg,
         );
-        let f = crate::extract::parse::test_frames::ipv4_udp(
-            [10, 0, 0, 1],
-            [10, 0, 0, 2],
-            1,
-            2,
-            b"x",
-        );
+        let f =
+            crate::extract::parse::test_frames::ipv4_udp([10, 0, 0, 1], [10, 0, 0, 2], 1, 2, b"x");
         // First packet at t=0 fires the initial tick.
         let _initial = d.track(view(&f, 0));
         // At t=5s the interval hasn't elapsed.

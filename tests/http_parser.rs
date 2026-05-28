@@ -51,7 +51,11 @@ fn build(
 #[test]
 fn simple_get_request() {
     let (mut r, captured) = build(FlowSide::Initiator);
-    r.segment(0, b"GET /index.html HTTP/1.1\r\nHost: example.com\r\n\r\n", Timestamp::default());
+    r.segment(
+        0,
+        b"GET /index.html HTTP/1.1\r\nHost: example.com\r\n\r\n",
+        Timestamp::default(),
+    );
     let c = captured.lock().unwrap();
     assert_eq!(c.reqs.len(), 1);
     assert_eq!(c.reqs[0].method, "GET");
@@ -62,9 +66,21 @@ fn simple_get_request() {
 #[test]
 fn pipelined_requests() {
     let (mut r, captured) = build(FlowSide::Initiator);
-    r.segment(0, b"GET /a HTTP/1.1\r\nHost: x\r\n\r\n", Timestamp::default());
-    r.segment(0, b"GET /b HTTP/1.1\r\nHost: x\r\n\r\n", Timestamp::default());
-    r.segment(0, b"GET /c HTTP/1.1\r\nHost: x\r\n\r\n", Timestamp::default());
+    r.segment(
+        0,
+        b"GET /a HTTP/1.1\r\nHost: x\r\n\r\n",
+        Timestamp::default(),
+    );
+    r.segment(
+        0,
+        b"GET /b HTTP/1.1\r\nHost: x\r\n\r\n",
+        Timestamp::default(),
+    );
+    r.segment(
+        0,
+        b"GET /c HTTP/1.1\r\nHost: x\r\n\r\n",
+        Timestamp::default(),
+    );
     let c = captured.lock().unwrap();
     assert_eq!(c.reqs.len(), 3);
     assert_eq!(c.reqs[0].path, "/a");
@@ -97,7 +113,11 @@ fn split_across_segments() {
 #[test]
 fn body_split_across_segments() {
     let (mut r, captured) = build(FlowSide::Responder);
-    r.segment(0, b"HTTP/1.1 200 OK\r\nContent-Length: 13\r\n\r\nHello", Timestamp::default());
+    r.segment(
+        0,
+        b"HTTP/1.1 200 OK\r\nContent-Length: 13\r\n\r\nHello",
+        Timestamp::default(),
+    );
     {
         let c = captured.lock().unwrap();
         assert!(c.resps.is_empty(), "should wait for full body");
@@ -111,7 +131,11 @@ fn body_split_across_segments() {
 #[test]
 fn connection_close_body_extends_to_fin() {
     let (mut r, captured) = build(FlowSide::Responder);
-    r.segment(0, b"HTTP/1.0 200 OK\r\nConnection: close\r\n\r\n", Timestamp::default());
+    r.segment(
+        0,
+        b"HTTP/1.0 200 OK\r\nConnection: close\r\n\r\n",
+        Timestamp::default(),
+    );
     r.segment(0, b"hello", Timestamp::default());
     {
         let c = captured.lock().unwrap();
@@ -128,7 +152,11 @@ fn connection_close_body_extends_to_fin() {
 fn malformed_doesnt_panic() {
     let (mut r, _captured) = build(FlowSide::Initiator);
     // Garbage.
-    r.segment(0, b"\xff\xff\xffNOT HTTP\xff\xff\r\n\r\n", Timestamp::default());
+    r.segment(
+        0,
+        b"\xff\xff\xffNOT HTTP\xff\xff\r\n\r\n",
+        Timestamp::default(),
+    );
     // Should not panic; reassembler enters Desynced.
     r.fin();
 }
