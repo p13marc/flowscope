@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased — 0.6 cycle
+## 0.6.0 — Driver state restore, anomaly split, watermark threshold (2026-05-23)
 
 Driven by [`docs/feedback-2026-05-22-netring.md`](docs/feedback-2026-05-22-netring.md)
 (netring 0.14.0 integration feedback) — synthesis in
