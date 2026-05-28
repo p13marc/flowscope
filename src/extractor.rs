@@ -95,7 +95,12 @@ pub enum L4Proto {
 ///
 /// Filled by built-in extractors. Decoupled from frame layout so
 /// downstream tracker / reassembler logic doesn't need to re-parse.
+///
+/// `#[non_exhaustive]` since 0.5.0 — additive field changes are
+/// unconditionally non-breaking. External consumers read fields by
+/// name; internal constructors use struct-literal syntax.
 #[derive(Debug, Clone, Copy)]
+#[non_exhaustive]
 pub struct TcpInfo {
     /// Decoded TCP flags.
     pub flags: TcpFlags,
@@ -108,6 +113,12 @@ pub struct TcpInfo {
     pub payload_offset: usize,
     /// Number of payload bytes (zero for pure SYN/ACK/FIN).
     pub payload_len: usize,
+    /// TCP receive window from the header (host byte order). Not
+    /// scaled — the SYN/SYN-ACK window-scale option is per-flow and
+    /// not currently tracked. Consumers wanting the effective window
+    /// should pair this with their own wscale tracking until a
+    /// per-flow `wscale` lands.
+    pub window: u16,
 }
 
 bitflags! {
@@ -149,6 +160,7 @@ mod tests {
                 ack: 0,
                 payload_offset: 54,
                 payload_len: 0,
+                window: 8192,
             }),
         };
         let cloned = e.clone();

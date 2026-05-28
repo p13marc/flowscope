@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex};
 use flowscope::tls::{
     TlsAlert, TlsClientHello, TlsFactory, TlsHandler, TlsServerHello, TlsVersion,
 };
-use flowscope::{FlowSide, Reassembler, ReassemblerFactory};
+use flowscope::{FlowSide, Reassembler, ReassemblerFactory, Timestamp};
 
 #[derive(Default, Clone)]
 struct Captured {
@@ -146,7 +146,7 @@ fn alert_record(level: u8, desc: u8) -> Vec<u8> {
 fn parses_client_hello_with_sni() {
     let (mut r, captured) = make_reassembler(FlowSide::Initiator);
     let bytes = client_hello_with_sni("example.com");
-    r.segment(0, &bytes);
+    r.segment(0, &bytes, Timestamp::default());
     let c = captured.lock().unwrap();
     assert_eq!(c.client_hellos.len(), 1);
     assert_eq!(c.client_hellos[0].sni.as_deref(), Some("example.com"));
@@ -158,7 +158,7 @@ fn parses_client_hello_with_sni() {
 fn parses_server_hello() {
     let (mut r, captured) = make_reassembler(FlowSide::Responder);
     let bytes = server_hello();
-    r.segment(0, &bytes);
+    r.segment(0, &bytes, Timestamp::default());
     let c = captured.lock().unwrap();
     assert_eq!(c.server_hellos.len(), 1);
     assert_eq!(c.server_hellos[0].cipher_suite, 0x1301);
@@ -169,7 +169,7 @@ fn parses_server_hello() {
 fn parses_alert() {
     let (mut r, captured) = make_reassembler(FlowSide::Initiator);
     let bytes = alert_record(2, 40); // fatal handshake_failure
-    r.segment(0, &bytes);
+    r.segment(0, &bytes, Timestamp::default());
     let c = captured.lock().unwrap();
     assert_eq!(c.alerts.len(), 1);
     assert_eq!(c.alerts[0].description, 40);
@@ -180,12 +180,12 @@ fn record_split_across_segments() {
     let (mut r, captured) = make_reassembler(FlowSide::Initiator);
     let bytes = client_hello_with_sni("example.com");
     let mid = bytes.len() / 2;
-    r.segment(0, &bytes[..mid]);
+    r.segment(0, &bytes[..mid], Timestamp::default());
     {
         let c = captured.lock().unwrap();
         assert!(c.client_hellos.is_empty(), "should wait for full record");
     }
-    r.segment(0, &bytes[mid..]);
+    r.segment(0, &bytes[mid..], Timestamp::default());
     let c = captured.lock().unwrap();
     assert_eq!(c.client_hellos.len(), 1);
     assert_eq!(c.client_hellos[0].sni.as_deref(), Some("example.com"));
@@ -201,7 +201,7 @@ fn change_cipher_spec_stops_parsing() {
     // ChangeCipherSpec record: content_type=20, payload=0x01
     combined.extend_from_slice(&record(20, 0x0303, &[0x01]));
     combined.extend_from_slice(&server_hello());
-    r.segment(0, &combined);
+    r.segment(0, &combined, Timestamp::default());
     let c = captured.lock().unwrap();
     // Only the first ServerHello should be parsed.
     assert_eq!(c.server_hellos.len(), 1);
@@ -214,7 +214,7 @@ fn malformed_doesnt_panic() {
     // isn't a valid ClientHello.
     let mut bad = vec![22u8, 0x03, 0x03, 0x00, 0x10];
     bad.extend_from_slice(&[0xff; 16]);
-    r.segment(0, &bad);
+    r.segment(0, &bad, Timestamp::default());
     // Should not panic; reassembler enters Desynced.
 }
 
@@ -254,7 +254,7 @@ fn ja3_fires_when_enabled() {
     );
     let mut r = factory.new_reassembler(&(), FlowSide::Initiator);
     let bytes = client_hello_with_sni("example.com");
-    r.segment(0, &bytes);
+    r.segment(0, &bytes, Timestamp::default());
     let v = cap.ja3s.lock().unwrap();
     assert_eq!(v.len(), 1);
     assert!(!v[0].0.is_empty(), "expected non-empty hash");

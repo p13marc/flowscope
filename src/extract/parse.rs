@@ -38,6 +38,7 @@ pub(crate) struct ParsedTcp {
     /// Offset into the original frame where the TCP payload starts.
     pub payload_offset: usize,
     pub payload_len: usize,
+    pub window: u16,
 }
 
 pub(crate) struct ParsedUdp {
@@ -135,6 +136,7 @@ fn parse_from_sliced<'a>(
                 ack: tcp.acknowledgment_number(),
                 payload_offset,
                 payload_len: payload.len(),
+                window: tcp.window_size(),
             }))
         }
         Some(etherparse::TransportSlice::Udp(udp)) => {

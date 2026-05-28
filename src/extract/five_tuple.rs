@@ -99,6 +99,7 @@ pub(crate) fn extract_from_parsed(
                 ack: t.ack,
                 payload_offset: t.payload_offset,
                 payload_len: t.payload_len,
+                window: t.window,
             }),
         ),
         Some(ParsedL4::Udp(u)) => (u.src_port, u.dst_port, L4Proto::Udp, None),

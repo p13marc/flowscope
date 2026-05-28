@@ -96,6 +96,12 @@ pub struct FlowStats {
     /// snapshot accessors. Zero when no reassembler was attached.
     pub reassembler_high_watermark_initiator: u64,
     pub reassembler_high_watermark_responder: u64,
+    /// New in 0.5.0: per-side count of TCP segments classified as
+    /// retransmits by the per-side reassembler. Populated by
+    /// [`crate::FlowDriver`] on `Ended`. See
+    /// [`crate::Reassembler::retransmits`].
+    pub retransmits_initiator: u64,
+    pub retransmits_responder: u64,
 }
 
 /// Lifecycle state of a flow as tracked by [`crate::FlowTracker`].
@@ -178,6 +184,11 @@ pub enum AnomalyKind {
         side: FlowSide,
         reason: Option<String>,
     },
+    /// New in 0.5.0. Reassembler classified one or more TCP
+    /// segments as retransmits during this tick. Coalesced — at
+    /// most one anomaly per (flow, side) per tick, with `count`
+    /// summing the delta of [`crate::Reassembler::retransmits`].
+    RetransmittedSegment { side: FlowSide, count: u64 },
 }
 
 /// Events emitted by the tracker.

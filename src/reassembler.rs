@@ -8,6 +8,7 @@
 //! For tokio users with backpressure needs, see `netring`'s
 //! `AsyncReassembler` and `channel_factory`.
 
+use crate::Timestamp;
 use crate::event::{FlowSide, OverflowPolicy};
 
 /// Receives TCP segments for one direction of one session. Sync —
@@ -17,8 +18,16 @@ pub trait Reassembler: Send + 'static {
     /// New segment arrived in this direction.
     ///
     /// `payload` borrows from the underlying frame — copy if you
-    /// need it after returning.
-    fn segment(&mut self, seq: u32, payload: &[u8]);
+    /// need it after returning. `ts` is the kernel/source timestamp
+    /// of the packet carrying the segment; custom reassemblers can
+    /// use it for RTT estimation, staleness tracking, etc.
+    ///
+    /// **Breaking change in 0.5.0:** the `ts` parameter is new (was
+    /// just `seq, payload`). Existing impls need a one-line
+    /// signature update; the default [`BufferedReassembler`] uses
+    /// `ts` only when forwarding a duplicate segment via
+    /// [`on_duplicate`](Self::on_duplicate).
+    fn segment(&mut self, seq: u32, payload: &[u8], ts: Timestamp);
 
     /// FIN observed in this direction. Default: no-op.
     fn fin(&mut self) {}
@@ -33,7 +42,10 @@ pub trait Reassembler: Send + 'static {
     /// A default-zero return means "this implementation doesn't
     /// track that counter," not "the counter is zero." Custom
     /// reassemblers may surface their own drop accounting via this
-    /// method.
+    /// method. Distinct from [`retransmits`](Self::retransmits) —
+    /// out-of-order means the segment carries bytes the reassembler
+    /// hasn't yet seen; a retransmit re-delivers already-accounted
+    /// bytes.
     fn dropped_segments(&self) -> u64 {
         0
     }
@@ -67,6 +79,26 @@ pub trait Reassembler: Send + 'static {
     fn high_watermark(&self) -> u64 {
         0
     }
+
+    /// Number of TCP segments classified as retransmits — re-deliveries
+    /// of bytes the reassembler has already accounted for
+    /// (`seq + len <= expected_seq`). New in 0.5.0; default `0`.
+    ///
+    /// A default-zero return means "this implementation doesn't
+    /// classify duplicates," not "no retransmits occurred." The
+    /// built-in [`BufferedReassembler`] populates this; custom
+    /// reassemblers may override.
+    fn retransmits(&self) -> u64 {
+        0
+    }
+
+    /// Hook called when a segment is classified as a retransmit
+    /// rather than appended to the buffer. Default no-op. Custom
+    /// reassemblers can use this to drive RTT estimators,
+    /// retransmit-rate metrics, etc. Called by
+    /// [`BufferedReassembler`] for each classified retransmit; not
+    /// called for fresh or OOO segments.
+    fn on_duplicate(&mut self, _seq: u32, _payload: &[u8], _ts: Timestamp) {}
 }
 
 /// Build a [`Reassembler`] for a brand-new session, given its key
@@ -97,6 +129,7 @@ pub struct BufferedReassembler {
     overflow_policy: OverflowPolicy,
     poisoned: bool,
     high_watermark: u64,
+    retransmits: u64,
 }
 
 impl BufferedReassembler {
@@ -163,6 +196,15 @@ impl BufferedReassembler {
         self.high_watermark
     }
 
+    /// Number of TCP segments classified as retransmits on this
+    /// side — `seq + len <= expected_seq`. Distinct from
+    /// [`dropped_segments`](Self::dropped_segments), which counts
+    /// strictly-out-of-order segments ahead of `expected_seq`.
+    /// New in 0.5.0.
+    pub fn retransmits(&self) -> u64 {
+        self.retransmits
+    }
+
     fn append_with_cap(&mut self, payload: &[u8]) {
         let Some(cap) = self.max_buffer else {
             self.buffer.extend_from_slice(payload);
@@ -216,7 +258,7 @@ impl BufferedReassembler {
 }
 
 impl Reassembler for BufferedReassembler {
-    fn segment(&mut self, seq: u32, payload: &[u8]) {
+    fn segment(&mut self, seq: u32, payload: &[u8], ts: Timestamp) {
         if payload.is_empty() {
             return;
         }
@@ -232,8 +274,28 @@ impl Reassembler for BufferedReassembler {
                 self.expected_seq = Some(seq.wrapping_add(payload.len() as u32));
                 self.append_with_cap(payload);
             }
-            Some(_) => {
-                self.dropped_segments += 1;
+            Some(exp) => {
+                // Classify against `expected_seq` in wrap-aware
+                // sequence-space. A segment whose end is at-or-before
+                // `exp` is a retransmit (already accounted for); a
+                // segment strictly past `exp` is out-of-order.
+                // Partial overlap (`seq < exp < seq+len`) is
+                // classified as a retransmit because
+                // `BufferedReassembler` doesn't gap-fill; users who
+                // need byte-exact accounting want a custom
+                // reassembler or [`SegmentBufferReassembler`] when
+                // Plan 74 lands.
+                let end = seq.wrapping_add(payload.len() as u32);
+                if seq_lte(end, exp) {
+                    self.retransmits += 1;
+                    self.on_duplicate(seq, payload, ts);
+                } else if seq_lt(seq, exp) {
+                    // Partial overlap — count as retransmit.
+                    self.retransmits += 1;
+                    self.on_duplicate(seq, payload, ts);
+                } else {
+                    self.dropped_segments += 1;
+                }
             }
         }
     }
@@ -253,6 +315,24 @@ impl Reassembler for BufferedReassembler {
     fn high_watermark(&self) -> u64 {
         Self::high_watermark(self)
     }
+
+    fn retransmits(&self) -> u64 {
+        Self::retransmits(self)
+    }
+}
+
+/// `a < b` in TCP sequence-space (wrap-aware). Treats `a` and `b`
+/// as `u32` sequence numbers; differences exceeding 2^31 are
+/// interpreted as backward via two's-complement.
+#[inline]
+fn seq_lt(a: u32, b: u32) -> bool {
+    (a.wrapping_sub(b) as i32) < 0
+}
+
+/// `a <= b` in TCP sequence-space.
+#[inline]
+fn seq_lte(a: u32, b: u32) -> bool {
+    a == b || seq_lt(a, b)
 }
 
 /// Default factory that builds a fresh [`BufferedReassembler`] per
@@ -306,9 +386,9 @@ mod tests {
     #[test]
     fn in_order_concatenates() {
         let mut r = BufferedReassembler::new();
-        r.segment(100, b"abc");
-        r.segment(103, b"def");
-        r.segment(106, b"gh");
+        r.segment(100, b"abc", Timestamp::default());
+        r.segment(103, b"def", Timestamp::default());
+        r.segment(106, b"gh", Timestamp::default());
         assert_eq!(r.take(), b"abcdefgh");
         assert_eq!(r.dropped_segments(), 0);
     }
@@ -316,8 +396,8 @@ mod tests {
     #[test]
     fn ooo_dropped() {
         let mut r = BufferedReassembler::new();
-        r.segment(100, b"hello"); // expect_next = 105
-        r.segment(110, b"world"); // out of order — dropped
+        r.segment(100, b"hello", Timestamp::default()); // expect_next = 105
+        r.segment(110, b"world", Timestamp::default()); // out of order — dropped
         assert_eq!(r.take(), b"hello");
         assert_eq!(r.dropped_segments(), 1);
     }
@@ -325,12 +405,12 @@ mod tests {
     #[test]
     fn take_resets_buffer_only() {
         let mut r = BufferedReassembler::new();
-        r.segment(0, b"abc"); // expect_next = 3
+        r.segment(0, b"abc", Timestamp::default()); // expect_next = 3
         let drained = r.take();
         assert_eq!(drained, b"abc");
         assert_eq!(r.buffered_len(), 0);
         // Subsequent in-order segment continues from where we were.
-        r.segment(3, b"def");
+        r.segment(3, b"def", Timestamp::default());
         assert_eq!(r.take(), b"def");
         assert_eq!(r.dropped_segments(), 0);
     }
@@ -338,7 +418,7 @@ mod tests {
     #[test]
     fn empty_payload_ignored() {
         let mut r = BufferedReassembler::new();
-        r.segment(0, b"");
+        r.segment(0, b"", Timestamp::default());
         assert_eq!(r.expected_seq, None);
         assert_eq!(r.dropped_segments(), 0);
     }
@@ -348,8 +428,8 @@ mod tests {
         let mut f = BufferedReassemblerFactory::default();
         let mut r1: BufferedReassembler = f.new_reassembler(&42u32, FlowSide::Initiator);
         let mut r2: BufferedReassembler = f.new_reassembler(&42u32, FlowSide::Responder);
-        r1.segment(0, b"x");
-        r2.segment(0, b"y");
+        r1.segment(0, b"x", Timestamp::default());
+        r2.segment(0, b"y", Timestamp::default());
         assert_eq!(r1.take(), b"x");
         assert_eq!(r2.take(), b"y");
     }
@@ -365,7 +445,7 @@ mod tests {
     #[test]
     fn cap_unbounded_by_default() {
         let mut r = BufferedReassembler::new();
-        r.segment(0, &[0u8; 10_000]);
+        r.segment(0, &[0u8; 10_000], Timestamp::default());
         assert_eq!(r.buffered_len(), 10_000);
         assert_eq!(r.bytes_dropped_oversize(), 0);
         assert!(!r.is_poisoned());
@@ -374,10 +454,10 @@ mod tests {
     #[test]
     fn cap_drops_oldest_on_overflow_sliding_window() {
         let mut r = BufferedReassembler::new().with_max_buffer(100);
-        r.segment(0, &[b'a'; 80]);
+        r.segment(0, &[b'a'; 80], Timestamp::default());
         // Next segment is in-order (seq = 80, len = 80) — would push
         // buffer to 160; cap is 100 so 60 oldest 'a's get dropped.
-        r.segment(80, &[b'b'; 80]);
+        r.segment(80, &[b'b'; 80], Timestamp::default());
         assert_eq!(r.buffered_len(), 100);
         assert_eq!(r.bytes_dropped_oversize(), 60);
         let drained = r.take();
@@ -389,7 +469,7 @@ mod tests {
     fn cap_payload_bigger_than_cap_keeps_tail() {
         let mut r = BufferedReassembler::new().with_max_buffer(50);
         let payload: Vec<u8> = (0u8..100).collect();
-        r.segment(0, &payload);
+        r.segment(0, &payload, Timestamp::default());
         assert_eq!(r.buffered_len(), 50);
         assert_eq!(r.bytes_dropped_oversize(), 50);
         assert_eq!(r.take(), (50u8..100).collect::<Vec<u8>>());
@@ -398,8 +478,8 @@ mod tests {
     #[test]
     fn cap_skips_ooo_segments_without_changing_overflow_counter() {
         let mut r = BufferedReassembler::new().with_max_buffer(100);
-        r.segment(0, &[b'a'; 80]);
-        r.segment(200, &[b'b'; 80]); // OOO — dropped via existing path
+        r.segment(0, &[b'a'; 80], Timestamp::default());
+        r.segment(200, &[b'b'; 80], Timestamp::default()); // OOO — dropped via existing path
         assert_eq!(r.dropped_segments(), 1);
         assert_eq!(r.bytes_dropped_oversize(), 0);
         assert_eq!(r.buffered_len(), 80);
@@ -408,10 +488,10 @@ mod tests {
     #[test]
     fn cap_take_resets_buffer_but_not_counters() {
         let mut r = BufferedReassembler::new().with_max_buffer(100);
-        r.segment(0, &[b'a'; 80]);
-        r.segment(80, &[b'b'; 80]); // bytes_dropped_oversize += 60
+        r.segment(0, &[b'a'; 80], Timestamp::default());
+        r.segment(80, &[b'b'; 80], Timestamp::default()); // bytes_dropped_oversize += 60
         let _ = r.take();
-        r.segment(160, &[b'c'; 80]); // buf = 80
+        r.segment(160, &[b'c'; 80], Timestamp::default()); // buf = 80
         assert_eq!(r.buffered_len(), 80);
         assert_eq!(r.bytes_dropped_oversize(), 60);
         assert_eq!(r.dropped_segments(), 0);
@@ -422,14 +502,14 @@ mod tests {
         let mut r = BufferedReassembler::new()
             .with_max_buffer(100)
             .with_overflow_policy(OverflowPolicy::DropFlow);
-        r.segment(0, &[b'a'; 80]);
+        r.segment(0, &[b'a'; 80], Timestamp::default());
         assert!(!r.is_poisoned());
-        r.segment(80, &[b'b'; 80]); // would overflow → poison
+        r.segment(80, &[b'b'; 80], Timestamp::default()); // would overflow → poison
         assert!(r.is_poisoned());
         assert_eq!(r.bytes_dropped_oversize(), 80);
         assert_eq!(r.buffered_len(), 0);
         // Subsequent segments are no-ops.
-        r.segment(160, &[b'c'; 10]);
+        r.segment(160, &[b'c'; 10], Timestamp::default());
         assert_eq!(r.buffered_len(), 0);
         assert_eq!(r.bytes_dropped_oversize(), 80);
     }
@@ -439,8 +519,8 @@ mod tests {
         let mut r = BufferedReassembler::new()
             .with_max_buffer(100)
             .with_overflow_policy(OverflowPolicy::DropFlow);
-        r.segment(0, &[b'a'; 50]);
-        r.segment(50, &[b'b'; 50]); // exactly at cap — no poison
+        r.segment(0, &[b'a'; 50], Timestamp::default());
+        r.segment(50, &[b'b'; 50], Timestamp::default()); // exactly at cap — no poison
         assert!(!r.is_poisoned());
         assert_eq!(r.buffered_len(), 100);
         assert_eq!(r.bytes_dropped_oversize(), 0);
@@ -452,7 +532,7 @@ mod tests {
             .with_max_buffer(64)
             .with_overflow_policy(OverflowPolicy::DropFlow);
         let mut r: BufferedReassembler = f.new_reassembler(&0u32, FlowSide::Initiator);
-        r.segment(0, &[0u8; 100]);
+        r.segment(0, &[0u8; 100], Timestamp::default());
         assert!(r.is_poisoned());
     }
 
@@ -460,7 +540,7 @@ mod tests {
     fn factory_default_unbounded() {
         let mut f = BufferedReassemblerFactory::default();
         let mut r: BufferedReassembler = f.new_reassembler(&0u32, FlowSide::Initiator);
-        r.segment(0, &[0u8; 10_000]);
+        r.segment(0, &[0u8; 10_000], Timestamp::default());
         assert_eq!(r.buffered_len(), 10_000);
         assert!(!r.is_poisoned());
     }
@@ -468,14 +548,14 @@ mod tests {
     #[test]
     fn high_watermark_tracks_peak_buffer_unbounded() {
         let mut r = BufferedReassembler::new();
-        r.segment(0, &[b'a'; 50]);
+        r.segment(0, &[b'a'; 50], Timestamp::default());
         assert_eq!(r.high_watermark(), 50);
         let _ = r.take(); // drains buffer but does NOT reset watermark
         assert_eq!(r.high_watermark(), 50);
-        r.segment(50, &[b'b'; 20]);
+        r.segment(50, &[b'b'; 20], Timestamp::default());
         assert_eq!(r.high_watermark(), 50, "buffer is now 20 < 50; unchanged");
         let _ = r.take();
-        r.segment(70, &[b'c'; 100]);
+        r.segment(70, &[b'c'; 100], Timestamp::default());
         assert_eq!(r.high_watermark(), 100);
     }
 
@@ -485,9 +565,9 @@ mod tests {
         // Push 80 more: 60 dropped from front, buffer ends at 100,
         // watermark bumps to 100.
         let mut r = BufferedReassembler::new().with_max_buffer(100);
-        r.segment(0, &[b'a'; 80]);
+        r.segment(0, &[b'a'; 80], Timestamp::default());
         assert_eq!(r.high_watermark(), 80);
-        r.segment(80, &[b'b'; 80]);
+        r.segment(80, &[b'b'; 80], Timestamp::default());
         assert_eq!(r.high_watermark(), 100);
     }
 
@@ -496,13 +576,97 @@ mod tests {
         let mut r = BufferedReassembler::new()
             .with_max_buffer(100)
             .with_overflow_policy(OverflowPolicy::DropFlow);
-        r.segment(0, &[b'a'; 80]);
+        r.segment(0, &[b'a'; 80], Timestamp::default());
         assert_eq!(r.high_watermark(), 80);
-        r.segment(80, &[b'b'; 80]); // poisons; buffer cleared
+        r.segment(80, &[b'b'; 80], Timestamp::default()); // poisons; buffer cleared
         assert!(r.is_poisoned());
         assert_eq!(r.high_watermark(), 80);
         // Post-poison segments are no-ops; watermark stays.
-        r.segment(160, &[b'c'; 10]);
+        r.segment(160, &[b'c'; 10], Timestamp::default());
         assert_eq!(r.high_watermark(), 80);
+    }
+
+    #[test]
+    fn exact_retransmit_classified_as_retransmit_not_ooo() {
+        let mut r = BufferedReassembler::new();
+        r.segment(0, b"hello", Timestamp::new(1, 0));
+        r.segment(0, b"hello", Timestamp::new(2, 0)); // exact retransmit
+        assert_eq!(r.retransmits(), 1);
+        assert_eq!(r.dropped_segments(), 0);
+        assert_eq!(r.buffered_len(), 5);
+        assert_eq!(r.take(), b"hello");
+    }
+
+    #[test]
+    fn partial_overlap_classified_as_retransmit() {
+        let mut r = BufferedReassembler::new();
+        r.segment(0, b"hello", Timestamp::new(1, 0)); // exp = 5
+        r.segment(3, b"lo", Timestamp::new(2, 0)); // ends at 5 — already accounted
+        assert_eq!(r.retransmits(), 1);
+        assert_eq!(r.dropped_segments(), 0);
+    }
+
+    #[test]
+    fn strict_ooo_classified_as_dropped_not_retransmit() {
+        let mut r = BufferedReassembler::new();
+        r.segment(0, b"hello", Timestamp::new(1, 0)); // exp = 5
+        r.segment(100, b"x", Timestamp::new(2, 0)); // strictly past expected
+        assert_eq!(r.retransmits(), 0);
+        assert_eq!(r.dropped_segments(), 1);
+    }
+
+    #[test]
+    fn on_duplicate_receives_ts() {
+        use std::sync::{Arc, Mutex};
+        #[derive(Default)]
+        struct Spy {
+            inner: BufferedReassembler,
+            seen: Arc<Mutex<Vec<Timestamp>>>,
+        }
+        impl Reassembler for Spy {
+            fn segment(&mut self, seq: u32, payload: &[u8], ts: Timestamp) {
+                self.inner.segment(seq, payload, ts);
+            }
+            fn on_duplicate(&mut self, _seq: u32, _payload: &[u8], ts: Timestamp) {
+                self.seen.lock().unwrap().push(ts);
+            }
+        }
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let mut spy = Spy {
+            inner: BufferedReassembler::new(),
+            seen: seen.clone(),
+        };
+        spy.segment(0, b"hello", Timestamp::new(1, 0));
+        // Drive `on_duplicate` directly — the Spy's `segment` impl
+        // forwards to BufferedReassembler but doesn't call
+        // `on_duplicate` on Self; that confirms the contract: the
+        // base impl only calls on_duplicate on itself, custom
+        // wrappers need explicit forwarding. (Tested with a direct
+        // call here to verify the signature surfaces ts at all.)
+        spy.on_duplicate(0, b"hello", Timestamp::new(7, 42));
+        assert_eq!(seen.lock().unwrap().as_slice(), &[Timestamp::new(7, 42)]);
+    }
+
+    #[test]
+    fn retransmits_survives_take() {
+        let mut r = BufferedReassembler::new();
+        r.segment(0, b"abc", Timestamp::default()); // exp = 3
+        r.segment(0, b"abc", Timestamp::default()); // retransmit
+        let _ = r.take();
+        assert_eq!(r.retransmits(), 1);
+        r.segment(3, b"def", Timestamp::default());
+        r.segment(3, b"def", Timestamp::default()); // retransmit #2
+        assert_eq!(r.retransmits(), 2);
+    }
+
+    #[test]
+    fn retransmit_and_ooo_counters_are_independent() {
+        let mut r = BufferedReassembler::new();
+        r.segment(0, b"abcdefgh", Timestamp::default()); // exp = 8
+        r.segment(0, b"abc", Timestamp::default()); // retransmit
+        r.segment(100, b"x", Timestamp::default()); // OOO
+        r.segment(2, b"cd", Timestamp::default()); // partial-overlap retransmit
+        assert_eq!(r.retransmits(), 2);
+        assert_eq!(r.dropped_segments(), 1);
     }
 }

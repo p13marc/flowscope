@@ -74,7 +74,7 @@ fn truncate_reason(s: &str) -> String {
 struct NoopReassembler;
 
 impl Reassembler for NoopReassembler {
-    fn segment(&mut self, _seq: u32, _payload: &[u8]) {}
+    fn segment(&mut self, _seq: u32, _payload: &[u8], _ts: crate::Timestamp) {}
 }
 
 #[derive(Debug, Default)]

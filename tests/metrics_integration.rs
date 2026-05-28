@@ -8,7 +8,9 @@
 #![cfg(all(feature = "metrics", feature = "extractors", feature = "reassembler"))]
 
 use flowscope::extract::{FiveTuple, parse::test_frames::ipv4_tcp};
-use flowscope::obs::{METRIC_ANOMALIES, METRIC_BYTES, METRIC_FLOWS_CREATED, METRIC_FLOWS_ENDED};
+use flowscope::obs::{
+    METRIC_ANOMALIES, METRIC_BYTES, METRIC_FLOWS_CREATED, METRIC_FLOWS_ENDED, METRIC_RETRANSMITS,
+};
 use flowscope::{BufferedReassemblerFactory, FlowDriver, OverflowPolicy, PacketView, Timestamp};
 use metrics_util::MetricKind;
 use metrics_util::debugging::{DebugValue, DebuggingRecorder, Snapshotter};
@@ -82,12 +84,35 @@ fn metrics_capture_basic_flow_lifecycle_and_anomalies() {
         d.track(PacketView::new(f, Timestamp::default()));
     }
 
+    // Separate flow that retransmits an initiator data segment, then
+    // RST. Drives the retransmit anomaly + counter, and the
+    // `retransmits_*` field on the final stats.
+    let mut d2 = FlowDriver::<_, _>::new(
+        FiveTuple::bidirectional(),
+        BufferedReassemblerFactory::default(),
+    )
+    .with_emit_anomalies(true);
+    let ip_c = [10, 0, 0, 3];
+    let ip_d = [10, 0, 0, 4];
+    let body = b"hello";
+    let retx_frames = [
+        ipv4_tcp(mac, mac, ip_c, ip_d, 4444, 80, 2000, 0, 0x02, b""),
+        ipv4_tcp(mac, mac, ip_d, ip_c, 80, 4444, 6000, 2001, 0x12, b""),
+        ipv4_tcp(mac, mac, ip_c, ip_d, 4444, 80, 2001, 6001, 0x10, b""),
+        ipv4_tcp(mac, mac, ip_c, ip_d, 4444, 80, 2001, 6001, 0x18, body),
+        ipv4_tcp(mac, mac, ip_c, ip_d, 4444, 80, 2001, 6001, 0x18, body),
+        ipv4_tcp(mac, mac, ip_c, ip_d, 4444, 80, 2006, 6001, 0x04, b""),
+    ];
+    for f in &retx_frames {
+        d2.track(PacketView::new(f, Timestamp::default()));
+    }
+
     let rows = snap.snapshot().into_vec();
 
     assert_eq!(
         counter_value(&rows, METRIC_FLOWS_CREATED, Some(("l4", "tcp"))),
-        1,
-        "expected 1 tcp flow created"
+        2,
+        "expected 2 tcp flows created"
     );
     assert_eq!(
         counter_value(
@@ -104,6 +129,16 @@ fn metrics_capture_basic_flow_lifecycle_and_anomalies() {
         counter_value(&rows, METRIC_ANOMALIES, Some(("kind", "buffer_overflow"))),
         1,
         "expected 1 buffer_overflow anomaly counted"
+    );
+    assert_eq!(
+        counter_value(&rows, METRIC_ANOMALIES, Some(("kind", "retransmit"))),
+        1,
+        "expected 1 retransmit anomaly counted"
+    );
+    assert_eq!(
+        counter_value(&rows, METRIC_RETRANSMITS, Some(("side", "initiator"))),
+        1,
+        "expected 1 initiator retransmit counted"
     );
     assert_eq!(
         counter_value(&rows, "flowscope_packets_unmatched_total", None),
