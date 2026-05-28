@@ -395,6 +395,83 @@ The [`examples/length_prefixed_pcap.rs`](../examples/length_prefixed_pcap.rs) ex
 
 The example is paired with a deterministic pcap fixture and an integration test that exercises both the standard path and the byte-by-byte sliced path. Worth reading end-to-end if you're writing a custom binary-protocol parser.
 
+### Updating per-flow state from parser messages (0.5.0)
+
+If your application maintains **rich per-flow state** — TCP rich stats, connection-level counters, middleware state machines — that gets updated by BOTH the reassembler (TCP-layer signals) and the L7 parser (application-layer signals), you have a state-consolidation problem: where does the state live, and who writes it?
+
+flowscope's answer: state lives on `FlowEntry::user`, and the **consumer's event loop** writes it. The parser produces messages; the consumer turns messages into state updates.
+
+This avoids piping `&mut S` through `SessionParser::feed_*`, which would ripple a generic parameter through every shipped parser and every consumer of `SessionParserFactory`.
+
+#### The canonical pattern
+
+```rust,ignore
+use flowscope::{FlowSessionDriver, FlowSide, SessionEvent, Timestamp};
+use flowscope::extract::FiveTuple;
+
+// 1. Define your per-flow state.
+#[derive(Default)]
+struct RichFlowState {
+    init_messages: u64,
+    resp_messages: u64,
+    last_message_at: Option<Timestamp>,
+}
+
+// 2. Wire the driver with `S = RichFlowState`.
+let mut driver = FlowSessionDriver::<_, MyParser, RichFlowState>::new(
+    FiveTuple::bidirectional(),
+    MyParser::default(),
+);
+
+// 3. After each `track()`, walk the events and update state.
+for view in source.views() {
+    for ev in driver.track(view?) {
+        match ev {
+            SessionEvent::Application { key, side, message, ts, .. } => {
+                if let Some(entry) = driver.tracker_mut().get_mut(&key) {
+                    let s = &mut entry.user;
+                    match side {
+                        FlowSide::Initiator => s.init_messages += 1,
+                        FlowSide::Responder => s.resp_messages += 1,
+                    }
+                    s.last_message_at = Some(ts);
+                    consume_message(message);
+                }
+            }
+            SessionEvent::Closed { key, stats, .. } => {
+                if let Some(entry) = driver.tracker().get(&key) {
+                    publish_rich_summary(&key, &stats, &entry.user);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+```
+
+#### Why this works
+
+- **No second `HashMap` in the consumer.** State lives on `FlowEntry` next to the standard `FlowStats`; tracker LRU eviction cleans both up together.
+- **No trait change.** `SessionParser` stays minimal — message production is decoupled from state mutation.
+- **Reassembler-side updates use the same shape.** A custom `Reassembler` can keep its own per-side counters and the consumer reads `reassembler.dropped_segments()` / `.retransmits()` after `track()`, writing deltas into `entry.user`.
+
+#### Trade-offs vs the "parser holds state" pattern
+
+| Concern | Consumer-loop (this) | Parser-holds-state |
+|---------|----------------------|--------------------|
+| Where state lives | `FlowEntry::user` (one source) | Per-parser HashMap (a second source) |
+| Eviction | LRU drops together with stats | Manual cleanup in `rst_*` |
+| Thread safety | Single accessor via `tracker_mut()` | Parser manages |
+| Looks like | Imperative event-handler | Encapsulated parser |
+
+For the common case (one consumer, one parser-per-protocol, state updated by reassembler AND parser), consumer-loop wins on simplicity.
+
+#### When the parser DOES need state on every byte
+
+For state that genuinely tracks at the parsing-step level — HPACK decoder state in HTTP/2, FIX session state in middle-of-stream re-keying — that state belongs **inside** the parser. The "per-flow rich state" pattern above is for state that's *about* the flow, not state that's *internal* to parsing.
+
+If your use case is genuinely the latter and a `StateAwareSessionParser` trait would help, file an issue with the concrete reproducer; we revisit the API change once a second consumer asks.
+
 ## Sync vs async session driving (0.2.0)
 
 `SessionParser` is just a trait — the *driver* that feeds it bytes
@@ -456,29 +533,50 @@ for evt in PcapFlowSource::open("trace.pcap")?
 automatically — buffer caps and overflow policies (Plan 42) work
 identically across sync and async.
 
-## Reassembly health (0.2.0)
+## Reassembly health (0.2.0; expanded 0.5.0)
 
-Every `FlowEvent::Ended` now carries reassembly diagnostics in its
+Every `FlowEvent::Ended` carries reassembly diagnostics in its
 `stats` field:
 
 ```rust,ignore
 let FlowEvent::Ended { stats, .. } = ev else { return };
 println!(
-    "ooo init={} resp={}; oversize init={} resp={}",
+    "ooo init={} resp={}; oversize init={} resp={}; retx init={} resp={}",
     stats.reassembly_dropped_ooo_initiator,
     stats.reassembly_dropped_ooo_responder,
     stats.reassembly_bytes_dropped_oversize_initiator,
     stats.reassembly_bytes_dropped_oversize_responder,
+    stats.retransmits_initiator,
+    stats.retransmits_responder,
 );
 ```
 
-`reassembly_dropped_ooo_*` counts segments dropped because they
-arrived out of order. `reassembly_bytes_dropped_oversize_*` counts
-payload bytes dropped from the buffer because of an
-[`OverflowPolicy`](#recovery-after-buffer-cap)-driven cap (zero
-unless `with_max_buffer` was set). Custom `Reassembler` impls can
-opt into surfacing these counters by overriding the default-zero
-trait methods.
+- `reassembly_dropped_ooo_*` — segments strictly past the expected
+  sequence number; they carry bytes the reassembler has not yet
+  seen but cannot place in-order.
+- `reassembly_bytes_dropped_oversize_*` — payload bytes dropped
+  from the buffer because of an
+  [`OverflowPolicy`](#recovery-after-buffer-cap)-driven cap (zero
+  unless `with_max_buffer` was set).
+- `retransmits_{initiator,responder}` (0.5.0) — segments whose
+  payload re-delivers bytes the reassembler has already accounted
+  for (`seq + len <= expected_seq`, including partial overlap).
+- `reassembler_high_watermark_*` — peak in-flight buffer occupancy
+  ever observed.
+
+Custom `Reassembler` impls can opt into surfacing these counters
+by overriding the default-zero trait methods
+(`dropped_segments`, `bytes_dropped_oversize`, `retransmits`,
+`high_watermark`).
+
+### Segment timestamps (0.5.0)
+
+`Reassembler::segment(seq, payload, ts)` receives the carrying
+packet's kernel/source timestamp. The default `BufferedReassembler`
+uses `ts` only to forward classified retransmits to
+[`Reassembler::on_duplicate`]; custom reassemblers can use it for
+RTT estimation, staleness windows, etc. The signature is a
+breaking change vs 0.4.0 — existing impls need a one-line update.
 
 ## Recovery after buffer cap
 
@@ -546,6 +644,8 @@ inline, coalesced per (flow, side, kind) per tick:
 | `BufferOverflow` | reassembler dropped bytes due to a cap | `side`, `bytes` (delta this tick), `policy` |
 | `OutOfOrderSegment` | reassembler dropped one or more OOO segments | `side`, `count` (delta) |
 | `FlowTableEvictionPressure` | tracker hit `max_flows` and evicted ≥ 1 flow | `evicted_in_tick`, `evicted_total` |
+| `SessionParseError` (0.3.0) | a `SessionParser` / `DatagramParser` returned `is_poisoned() == true` | `side`, `reason` (truncated `poison_reason()`) |
+| `RetransmittedSegment` (0.5.0) | reassembler classified one or more segments as retransmits | `side`, `count` (delta) |
 
 Anomalies appear **before** any synthesised `Ended` event for the
 same flow so cause-then-effect ordering is preserved. The default
@@ -555,6 +655,67 @@ opting in.
 For production aggregation (Prometheus / OpenTelemetry), pair this
 with the `metrics` feature (Plan 40, future release): the same
 `AnomalyKind` vocabulary drives the metric labels.
+
+## Periodic flow ticks (0.5.0)
+
+Push-style periodic `FlowStats` emission for flow-statistics
+publishers. Opt in by setting
+`FlowTrackerConfig::flow_tick_interval` to `Some(d)`:
+
+```rust,ignore
+use std::time::Duration;
+use flowscope::{FlowDriver, FlowTrackerConfig, BufferedReassemblerFactory};
+use flowscope::extract::FiveTuple;
+
+let cfg = FlowTrackerConfig {
+    flow_tick_interval: Some(Duration::from_secs(5)),
+    ..FlowTrackerConfig::default()
+};
+let mut driver = FlowDriver::with_config(
+    FiveTuple::bidirectional(),
+    BufferedReassemblerFactory::default(),
+    cfg,
+);
+```
+
+The driver then emits one `FlowEvent::Tick { key, stats, ts }`
+per live flow per interval. `stats` is a fresh `FlowStats`
+clone with all reassembly-diagnostic fields patched in
+(`reassembly_dropped_ooo_*`, `bytes_dropped_oversize_*`,
+`reassembler_high_watermark_*`, `retransmits_*`). Consumers can
+keep the clone past further `track()` calls.
+
+`FlowSessionDriver` and `FlowDatagramDriver` forward as
+`SessionEvent::FlowTick`.
+
+### Semantics
+
+- **Timing is driven by packet timestamps**, not wall clock. A
+  flow that goes silent between ticks emits no ticks during the
+  silence; idle detection still belongs to
+  `FlowTracker::sweep` / the idle-timeout machinery.
+- **First packet fires an initial tick** — `last_tick_at` starts
+  at `None`, so the first observed packet for the flow is past-
+  due.
+- **`flow_tick_interval = None`** (default) — no ticks; existing
+  behaviour preserved.
+- Compatible with `with_monotonic_timestamps(true)`: tick timing
+  uses the clamped timestamp.
+
+A new `flowscope_flow_ticks_total` counter fires per emitted
+Tick when the `metrics` feature is on.
+
+### Pull alternative
+
+`FlowDriver::snapshot_flow_stats()` /
+`FlowSessionDriver::snapshot_flow_stats()` stay as the pull
+alternative for consumers that want full control over emission
+cadence. Pick whichever fits your control flow:
+
+- **Push (ticks)**: integrates cleanly with an event-loop
+  consumer that already matches on `FlowEvent` / `SessionEvent`.
+- **Pull (snapshot)**: integrates with a separate scrape loop
+  (Prometheus scrape, periodic exporter timer).
 
 ## Trait stability
 
@@ -582,6 +743,7 @@ pub trait SessionParser: Send + 'static {
     fn on_tick(&mut self, _now: Timestamp) -> Vec<Self::Message> { Vec::new() }
     fn is_poisoned(&self) -> bool { false }
     fn poison_reason(&self) -> Option<&str> { None }
+    fn parser_kind(&self) -> &'static str { "" } // 0.5.0
 }
 
 pub trait DatagramParser: Send + 'static {
@@ -590,8 +752,19 @@ pub trait DatagramParser: Send + 'static {
     fn on_tick(&mut self, _now: Timestamp) -> Vec<Self::Message> { Vec::new() }
     fn is_poisoned(&self) -> bool { false }
     fn poison_reason(&self) -> Option<&str> { None }
+    fn parser_kind(&self) -> &'static str { "" } // 0.5.0
 }
 ```
+
+### `parser_kind` (0.5.0)
+
+Identify which parser produced a message via the new
+`parser_kind` field on `SessionEvent::Application`. The shipped
+parsers report stable identifiers (`http/1`, `tls`, `dns-udp`,
+`dns-tcp`); the length-prefixed example reports
+`length-prefixed`. Operators route metric labels by this string;
+keep it lowercase, ASCII, snake-case or slash-separated, and
+stable for the parser's lifetime.
 
 Both have a `*Factory<K>` companion trait so you can implement
 custom per-flow construction. Any `Default + Clone` parser is its

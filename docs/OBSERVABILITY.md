@@ -36,9 +36,12 @@ by default).
 | `flowscope_flow_duration_seconds` | histogram | — | Per-flow duration on `Ended` |
 | `flowscope_flow_packets` | histogram | — | Per-flow packet count on `Ended` |
 | `flowscope_flow_bytes` | histogram | — | Per-flow byte total on `Ended` |
-| `flowscope_anomalies_total` | counter | `kind` (`buffer_overflow` / `ooo_segment` / `flow_table_eviction`) | Every `FlowEvent::Anomaly` |
+| `flowscope_anomalies_total` | counter | `kind` (`buffer_overflow` / `ooo_segment` / `flow_table_eviction` / `parse_error` / `retransmit`) | Every `FlowEvent::Anomaly` |
 | `flowscope_reassembly_dropped_ooo_total` | counter | `side` | Out-of-order TCP segment drops |
 | `flowscope_reassembly_bytes_dropped_oversize_total` | counter | `side` | Bytes dropped due to per-side buffer cap |
+| `flowscope_reassembler_high_watermark_bytes` | histogram | `side` | Peak per-side reassembler buffer occupancy at `Ended` |
+| `flowscope_retransmits_total` (0.5.0) | counter | `side` | Reassembler-classified TCP retransmits at `Ended` |
+| `flowscope_flow_ticks_total` (0.5.0) | counter | — | Per-flow periodic `FlowEvent::Tick` emissions |
 
 The metric names are also exported as constants from `flowscope::obs`
 (`METRIC_FLOWS_CREATED`, …) so downstream config can reference them
@@ -115,6 +118,13 @@ PrometheusBuilder::new()
 - **OOO drop rate by side**: `rate(flowscope_reassembly_dropped_ooo_total[1m])`
   by `side`. Sustained non-zero on one side suggests asymmetric
   routing or a lossy NIC.
+- **Retransmit rate** (0.5.0): `rate(flowscope_retransmits_total[1m])`
+  by `side`. Operators read this as a proxy for link loss; a sustained
+  imbalance between sides points at one-direction packet loss.
+- **Tick volume** (0.5.0): `rate(flowscope_flow_ticks_total[1m])`.
+  Helps size the `flow_tick_interval` against the live-flow count
+  — `flowscope_flows_active × (1 / interval)` is the expected
+  tick rate.
 
 ## Tracing
 

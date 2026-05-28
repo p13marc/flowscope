@@ -248,6 +248,12 @@ missing in flowscope 0.4 and are the highest-priority asks.
   - Or document the canonical pattern in `SESSION_GUIDE.md`
     (probably "use `tracker.get_mut(key).unwrap().user`
     inside the consumer-side event loop").
+- **0.5.0 response.** Took the second option. See
+  [`SESSION_GUIDE.md` → Updating per-flow state from parser
+  messages](SESSION_GUIDE.md#updating-per-flow-state-from-parser-messages-050)
+  for the canonical pattern. We revisit `&mut S` in `feed_*`
+  if a second consumer asks with a concrete reproducer that
+  the consumer-loop pattern can't handle.
 - **Why for us.** simple-nms's rich `TcpRichStats` is updated
   by both the reassembler (TCP path) and the L7 parser
   (middleware path). Threading `&mut FlowRichState` through

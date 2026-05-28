@@ -1,5 +1,102 @@
 # Changelog
 
+## 0.5.0 — TCP rich diagnostics, periodic ticks, parser kinds (unreleased)
+
+Driven by the
+[`simple-nms` upstream wishlist](docs/feedback-2026-08-11-simple-nms.md);
+the two-consumer signal on the periodic-tick ask (also from
+`des-rs` 2026-05-14) reversed the previous snapshot-only stance.
+
+### Breaking
+
+- **`Reassembler::segment` takes a `ts: Timestamp`.** The new
+  parameter is the carrying packet's kernel/source timestamp;
+  `BufferedReassembler` uses it only to forward classified
+  retransmits to `on_duplicate`. Pre-1.0 trait break per the BC
+  policy.
+  *Migration:* one-line signature update on every
+  `Reassembler::segment` impl. Existing in-tree impls
+  (`HttpReassembler`, `TlsReassembler`, `NoopReassembler`) take
+  `_ts: crate::Timestamp` and ignore it.
+- **`TcpInfo` is `#[non_exhaustive]`.** Closes an oversight from
+  the 0.2.0 project-wide pass. External consumers always read the
+  struct, so the change is benign in practice; internal
+  constructors use struct-literal syntax.
+- **`SessionEvent::Application` gains a `parser_kind: &'static
+  str` field.** Variant-field addition — destructuring patterns
+  need a new field name or `..`.
+  *Migration:*
+  ```diff
+  - SessionEvent::Application { key, side, message, ts } => ...
+  + SessionEvent::Application { key, side, message, ts, parser_kind } => ...
+  + // OR
+  + SessionEvent::Application { key, side, message, ts, .. } => ...
+  ```
+
+### Added
+
+- **TCP retransmit classification.** `BufferedReassembler`
+  distinguishes retransmits (`seq + len <= expected_seq`,
+  including partial overlap) from strict OOO segments
+  (`seq > expected_seq`) using wrap-aware sequence-space
+  comparison. New `Reassembler::retransmits()` accessor and
+  `on_duplicate(seq, payload, ts)` default-no-op hook let custom
+  reassemblers track and react.
+- **`AnomalyKind::RetransmittedSegment { side, count }`** —
+  coalesced per (flow, side) per tick.
+- **`FlowStats::retransmits_{initiator,responder}`** —
+  populated by `FlowDriver::finalize_ended_flows` and
+  `snapshot_flow_stats`.
+- **`TcpInfo::window: u16`** — raw TCP receive window from the
+  header (unscaled; window-scale tracking is a future plan).
+- **Periodic `FlowEvent::Tick { key, stats, ts }` /
+  `SessionEvent::FlowTick`** (opt-in via
+  `FlowTrackerConfig::flow_tick_interval: Option<Duration>`,
+  default `None`). The driver emits one Tick per live flow per
+  interval, driven by packet timestamps (no wall-clock
+  dependency). `stats` carries reassembler-patched diagnostics —
+  same shape as `Ended.stats`.
+- **`SessionParser::parser_kind` / `DatagramParser::parser_kind`**
+  trait methods (default `""`). Shipped parsers report
+  `http/1`, `tls`, `dns-udp`, `dns-tcp`. The length-prefixed
+  example reports `length-prefixed`. Threaded into every
+  `SessionEvent::Application::parser_kind`.
+- **Metrics**:
+  - `flowscope_retransmits_total{side=...}` — cumulative
+    classified retransmits at `Ended`.
+  - `flowscope_flow_ticks_total` — Tick emission counter.
+  - New `retransmit` label on `flowscope_anomalies_total{kind}`.
+
+### Fixed
+
+- **Reassembly-diagnostic metrics on natural flow end.** The
+  tracker called `record_flow_ended` from inside
+  `track_with_payload` / `sweep` *before* the driver patched in
+  reassembler-derived `FlowStats` fields, so
+  `flowscope_reassembly_dropped_ooo_total`,
+  `flowscope_reassembly_bytes_dropped_oversize_total`, and
+  `flowscope_reassembler_high_watermark_bytes` always saw zeroes
+  on FIN/RST/idle ends. Split into a new
+  `record_reassembly_diagnostics` call fired from
+  `finalize_ended_flows` after patching.
+
+### Docs
+
+- **SESSION_GUIDE.md**:
+  - New "Updating per-flow state from parser messages" subsection
+    documenting the canonical consumer-loop pattern that obviates
+    threading `&mut S` through `SessionParser::feed_*`. The
+    `simple-nms` wishlist's F1.4 ask is addressed here.
+  - "Periodic flow ticks" subsection.
+  - "Reassembly health" extended with retransmit + watermark
+    fields and the new `Reassembler::segment(ts)` signature.
+  - Trait-shape reference block updated with `parser_kind`.
+- **OBSERVABILITY.md** — three new metric rows and corresponding
+  Prometheus sample queries.
+- **`docs/feedback-2026-08-11-simple-nms.md`** — annotated
+  responses for F1.1–F1.7 + cross-links to plans / SESSION_GUIDE
+  sections.
+
 ## 0.4.0 — API ergonomics (2026-05-20)
 
 Driven by the audit in

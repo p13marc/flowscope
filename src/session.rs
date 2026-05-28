@@ -78,6 +78,18 @@ use crate::timestamp::Timestamp;
 /// Backpressure flows from the consuming `Stream` back to the
 /// kernel ring once the per-flow message buffer fills up — see
 /// the `netring::SessionStream` adapter.
+///
+/// # Per-flow rich state
+///
+/// For consumers that maintain per-flow user state updated by BOTH
+/// the reassembler and the parser — TCP rich stats, application-
+/// level counters, middleware state machines — keep that state on
+/// [`crate::FlowEntry::user`] (typed via the `S` parameter on
+/// [`crate::FlowSessionDriver`]) and update it from your event
+/// loop after `track()`. The pattern is documented in
+/// `docs/SESSION_GUIDE.md` → "Updating per-flow state from parser
+/// messages." Avoid piping `&mut S` through `feed_*` — it would
+/// ripple a generic parameter through every shipped parser.
 pub trait SessionParser: Send + 'static {
     /// L7 message produced by this parser.
     ///

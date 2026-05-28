@@ -21,35 +21,30 @@ The 30–39 API-ergonomics series (plans 32–37) has shipped; the audit
 that drove it is kept at
 [`../docs/API-ERGONOMICS-REVIEW.md`](../docs/API-ERGONOMICS-REVIEW.md).
 
-### Targeted for 0.5.0 (driven by simple-nms wishlist)
-
-Five sub-plans address the actionable items in the
-[simple-nms upstream wishlist](../docs/feedback-2026-08-11-simple-nms.md).
-The wishlist's full analysis (what we're shipping vs declining
-vs deferring vs RFC'ing) is documented per-plan in the
-"Provenance" sections.
+### Pending (0.6.0+)
 
 | Plan | Goal | Status |
 |------|------|--------|
-| [`70-tcp-rich-diagnostics.md`](./70-tcp-rich-diagnostics.md) | `TcpInfo.window` + `Reassembler::segment(ts)` + retransmit classification (F1.1 + F1.2 + F1.3 bundled) | 📋 ready to start |
-| [`71-periodic-flow-tick.md`](./71-periodic-flow-tick.md) | Opt-in `FlowEvent::Tick` + `SessionEvent::FlowTick` per interval (F1.5; two-consumer signal — also from des-rs feedback) | 📋 ready to start |
-| [`72-parser-kind-identity.md`](./72-parser-kind-identity.md) | `SessionParser::parser_kind()` + field on `SessionEvent::Application` (F1.7) | 📋 ready to start |
-| [`73-rich-state-pattern-guide.md`](./73-rich-state-pattern-guide.md) | SESSION_GUIDE walkthrough for the consumer-loop pattern that addresses F1.4 without an API change | 📋 ready to start (doc-only) |
 | [`74-rfc-ooo-reassembly.md`](./74-rfc-ooo-reassembly.md) | RFC scope for OOO TCP reassembly with hole-fill (F2.4). Implementation deferred to 0.6.0+. | 📝 RFC only — invites consumer + maintainer agreement before implementation |
 
-**0.5.0 effort**: ~5 days for plans 70–73 plus RFC iteration
-for plan 74.
+Plans 70–73 (the 0.5.0 sub-plans driven by the
+[simple-nms upstream wishlist](../docs/feedback-2026-08-11-simple-nms.md))
+shipped; see the 0.5.0 section of `CHANGELOG.md` for what
+landed and migration notes.
 
-**Wishlist items declined / deferred** (rationale lives in
-each plan's "Out of scope" and the wishlist response thread):
-F1.4 (parser `&mut S` API change — addressed via doc pattern
-in plan 73), F1.6 (lazy iterator return — declined twice;
-will not reconsider without a third consumer + reproducer),
+**Wishlist items declined / deferred** (recorded for posterity
+so a future ask doesn't get re-litigated):
+F1.4 (parser `&mut S` API change — addressed via the
+SESSION_GUIDE consumer-loop pattern instead of plumbing a
+generic through every parser),
+F1.6 (lazy iterator return — declined twice; will not
+reconsider without a third consumer + reproducer),
 F2.1 / F2.2 / F2.3 (built-in RTP / HTTP/2 / RTPS parsers —
 accept consumer-led upstream PRs after their parsers
-stabilise), F3.1 (TLS 1.3 0-RTT — small follow-up if a
-consumer asks), F3.2 (IP fragment reassembly — deferred
-indefinitely per `docs/ARCHITECTURE.md` known limitations).
+stabilise),
+F3.1 (TLS 1.3 0-RTT — small follow-up if a consumer asks),
+F3.2 (IP fragment reassembly — deferred indefinitely per
+`docs/ARCHITECTURE.md` known limitations).
 
 ### Sister-crate roadmap
 
@@ -100,10 +95,10 @@ pre-consolidation and would need full rewrites.
 | 60–69 | Tooling (CLIs) |
 | 70–79 | 0.5.0 production-hardening v2 (simple-nms wishlist) |
 
-Plan numbers 00–04, 12, 20, 22–25, 30–37, 40–42, 45–49, 51–57
-are retired (implementation shipped, file removed). New plans
-pick the lowest free number in the appropriate range — the
-0.5.0 series uses 70+ to keep the active set visually distinct
+Plan numbers 00–04, 12, 20, 22–25, 30–37, 40–42, 45–49, 51–57,
+70–73 are retired (implementation shipped, file removed). New
+plans pick the lowest free number in the appropriate range — the
+0.5.0 series used 70+ to keep the active set visually distinct
 from the retired numbers.
 
 ---
