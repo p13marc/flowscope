@@ -30,6 +30,21 @@ Pre-1.0 breaking changes; `netring` updates in lockstep.
 
 ### Added
 
+- **`flowscope::icmp` module + `icmp` Cargo feature** (plan 76).
+  `IcmpParser` is a `DatagramParser` over ICMPv4 + ICMPv6,
+  emitting a unified `IcmpMessage { family, ty }`. Type coverage
+  via etherparse: v4 Echo Request/Reply, Destination Unreachable,
+  Redirect, Time Exceeded, Parameter Problem, Timestamp; v6
+  Destination Unreachable, Packet Too Big, Time Exceeded,
+  Parameter Problem, Echo Request/Reply, plus manually-parsed
+  Neighbor Solicitation / Advertisement. Other types surface as
+  `Other { raw_type, raw_code, raw_body }`. **`IcmpInner`** —
+  the killer feature for cross-protocol correlation — extracts
+  `(src, dst, proto, src_port, dst_port)` from the embedded IP
+  header in ICMP error messages, letting consumers tie ICMP
+  errors back to the specific TCP/UDP flow they reference. The
+  `l7` umbrella feature now includes `icmp`. Feature-matrix CI
+  gains an `icmp`-standalone entry.
 - **`SessionParser::is_done()` / `DatagramParser::is_done()`** +
   **`EndReason::ParserDone`** (plan 80). Reverses the 0.6 decline
   of round-1 #10. Lets a parser signal completion ahead of

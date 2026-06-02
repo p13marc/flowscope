@@ -113,6 +113,8 @@ pub mod session;
 pub mod dns;
 #[cfg(feature = "http")]
 pub mod http;
+#[cfg(feature = "icmp")]
+pub mod icmp;
 #[cfg(feature = "pcap")]
 pub mod pcap;
 #[cfg(feature = "tls")]

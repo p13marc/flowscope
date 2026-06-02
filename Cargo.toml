@@ -77,10 +77,11 @@ http = ["reassembler", "session", "dep:httparse", "dep:bytes"]
 tls = ["reassembler", "session", "dep:tls-parser", "dep:bytes"]
 ja3 = ["tls", "dep:md-5", "dep:hex"]
 dns = ["extractors", "tracker", "session", "dep:simple-dns"]
+icmp = ["extractors", "tracker", "session", "dep:bytes"]
 
 # Umbrella: enable every shipped L7 protocol parser at once. Strict
 # subset of `full` (no `pcap`, no observability).
-l7 = ["http", "tls", "dns"]
+l7 = ["http", "tls", "dns", "icmp"]
 
 # pcap source adapter (offline replay).
 pcap = ["extractors", "tracker", "dep:pcap-file"]
@@ -202,6 +203,10 @@ required-features = ["http"]
 [[test]]
 name = "severity"
 required-features = ["reassembler"]
+
+[[test]]
+name = "icmp_parser"
+required-features = ["icmp"]
 
 [[bench]]
 name = "extractor"

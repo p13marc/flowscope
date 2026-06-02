@@ -45,7 +45,8 @@ jobs:
           - "dns"               # gate for obs::trace_session_message
           - "http,tls"
           - "metrics,tracing"
-          - "l7,pcap"
+          - "icmp"              # standalone ICMP parser
+          - "l7,pcap"           # `l7` now includes icmp
     steps:
       - uses: actions/checkout@v4
       - name: Build (--no-default-features --features "${{ matrix.features }}")
