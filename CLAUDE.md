@@ -319,18 +319,10 @@ For the next `cargo publish` of flowscope:
 
 ## Intra-doc links for re-exporters
 
-When a downstream crate re-exports `flowscope` types, the obvious
-`[FlowSessionDriver](flowscope::FlowSessionDriver)` style triggers
-rustdoc's `redundant_explicit_links` lint — path resolution flows
-through the re-export, so the explicit target equals what rustdoc
-would resolve `[FlowSessionDriver]` to anyway. Write the bare form
-instead:
-
-```rust
-//! See [`FlowSessionDriver`] for the sync session-event driver.
-```
-
-This saves every re-exporter the same 5-minute debug session.
+See `docs/SESSION_GUIDE.md` → "Re-exporting flowscope types" for
+the recipe. The source of truth lives in `docs/` so downstream
+re-exporters find it on docs.rs; keeping a copy here would just
+drift.
 
 ## Relationship to netring
 

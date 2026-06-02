@@ -46,7 +46,6 @@ The 0.7 implementation batch — plan-of-record at
 
 | Plan | Goal | Breaking? | Status |
 |------|------|-----------|--------|
-| [`62-intra-doc-recipe-in-published-docs.md`](./62-intra-doc-recipe-in-published-docs.md) | Move the intra-doc-link recipe from `CLAUDE.md` into `docs/SESSION_GUIDE.md` (closes round-1 item 12 / round-2 F8). | no | 🟢 ready |
 | [`76-icmp-parser.md`](./76-icmp-parser.md) | `flowscope::icmp::IcmpParser` (`DatagramParser`) + `IcmpInner` for ICMP-error → original-flow correlation (round-2 F1). | no (new feature `icmp`) | 🟢 ready |
 | [`77-display-impls.md`](./77-display-impls.md) | `impl Display` on `L4Proto`, `EndReason`, `AnomalyKind` matching the metric vocabulary (round-2 F2). | no | 🟢 ready |
 | [`78-http-tls-accessors.md`](./78-http-tls-accessors.md) | `HttpRequest::{host, user_agent, cookie, header}`, mirrors on `HttpResponse`, `TlsClientHello::sni()` (round-2 F3). | no | 🟢 ready |

@@ -56,6 +56,17 @@
 //! / `.session_stream` / `.datagram_stream`. Those depend on this
 //! crate's traits. The sync analogue for `session_stream` is
 //! [`FlowSessionDriver`].
+//!
+//! ## Re-exporting flowscope types
+//!
+//! Crates that re-export flowscope types (`netring`, sister crates,
+//! internal forks) should write intra-doc links in the bare
+//! `` [`FlowSessionDriver`] `` form, **not** the explicit
+//! `` [`FlowSessionDriver`](flowscope::FlowSessionDriver) `` form.
+//! The explicit path duplicates what rustdoc already resolves through
+//! the re-export and trips the `redundant_explicit_links` lint under
+//! `-D warnings`. See SESSION_GUIDE's "Re-exporting flowscope types"
+//! section for the worked example.
 
 #![cfg_attr(docsrs, feature(doc_cfg))]
 

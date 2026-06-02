@@ -801,3 +801,43 @@ Both have a `*Factory<K>` companion trait so you can implement
 custom per-flow construction. Any `Default + Clone` parser is its
 own factory via a blanket impl — the common case requires no
 factory boilerplate.
+
+## Re-exporting flowscope types (0.7.0)
+
+Downstream crates that re-export flowscope types — `netring`,
+sister crates, internal forks — hit a small rustdoc trap on the
+intra-doc links they write back to the re-exported types.
+
+The obvious form:
+
+```rust
+//! See [`FlowSessionDriver`](flowscope::FlowSessionDriver) for the
+//! sync session-event driver.
+```
+
+triggers `rustdoc`'s `redundant_explicit_links` lint under `-D
+warnings`. The reason: path resolution already flows through the
+re-export, so the explicit `flowscope::FlowSessionDriver` target
+equals what `[FlowSessionDriver]` would resolve to anyway. The
+explicit path is duplication, not disambiguation.
+
+The fix is to write the bare form:
+
+```rust
+//! See [`FlowSessionDriver`] for the sync session-event driver.
+```
+
+Concretely, in a netring-shape re-export:
+
+```rust,ignore
+// In netring/src/lib.rs:
+pub use flowscope::FlowSessionDriver;
+
+// In netring's rustdoc anywhere downstream:
+/// See [`FlowSessionDriver`] for the sync session-event driver.
+```
+
+Bare-form `[FlowSessionDriver]` resolves correctly on docs.rs
+because rustdoc walks the re-export. No warning. No round-trip
+to debug. This saves every re-exporter the same 5-minute
+investigation.

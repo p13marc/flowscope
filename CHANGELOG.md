@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased — 0.7 cycle
+
+Driven by [`docs/feedback-2026-05-29-netring-round2.md`](docs/feedback-2026-05-29-netring-round2.md)
+(netring's round-2 retrospective after writing four L7 examples
+against 0.6) — synthesis in
+[`docs/0.7-PLAN-OF-RECORD.md`](docs/0.7-PLAN-OF-RECORD.md).
+Pre-1.0 breaking changes; `netring` updates in lockstep.
+
+### Added
+
+- **Intra-doc-link recipe in `docs/SESSION_GUIDE.md`** (plan 62).
+  Closes a partial-implementation gap from the 0.6 cycle: the
+  recipe shipped to `CLAUDE.md` (in-repo only); downstream
+  re-exporters (`netring`, sister crates) read docs.rs and the
+  crates.io package. Now in published reference material with a
+  crate-level rustdoc breadcrumb for discoverability. CLAUDE.md
+  collapses to a pointer so the source of truth doesn't drift.
+
 ## 0.6.0 — Driver state restore, anomaly split, watermark threshold (2026-05-23)
 
 Driven by [`docs/feedback-2026-05-22-netring.md`](docs/feedback-2026-05-22-netring.md)
