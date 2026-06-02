@@ -39,19 +39,10 @@ feedback streams drove the two series:
   examples; drives the 0.7 series (plans 62, 76, 77, 78, 79,
   80, 82, plus RFC plan 81).
 
-### Pending (0.7.0)
-
-The 0.7 implementation batch — plan-of-record at
+The 0.7 implementation batch (plans 62, 76, 77, 78, 79, 80, 82)
+has shipped on this branch. Plan files retired per convention;
+CHANGELOG entries are the durable record. Plan-of-record at
 [`../docs/0.7-PLAN-OF-RECORD.md`](../docs/0.7-PLAN-OF-RECORD.md).
-
-| Plan | Goal | Breaking? | Status |
-|------|------|-----------|--------|
-| [`76-icmp-parser.md`](./76-icmp-parser.md) | `flowscope::icmp::IcmpParser` (`DatagramParser`) + `IcmpInner` for ICMP-error → original-flow correlation (round-2 F1). | no (new feature `icmp`) | 🟢 ready |
-| [`77-display-impls.md`](./77-display-impls.md) | `impl Display` on `L4Proto`, `EndReason`, `AnomalyKind` matching the metric vocabulary (round-2 F2). | no | 🟢 ready |
-| [`78-http-tls-accessors.md`](./78-http-tls-accessors.md) | `HttpRequest::{host, user_agent, cookie, header}`, mirrors on `HttpResponse`, `TlsClientHello::sni()` (round-2 F3). | no | 🟢 ready |
-| [`79-ended-l4-field.md`](./79-ended-l4-field.md) | `FlowEvent::Ended { l4 }` + `SessionEvent::Closed { l4 }` (round-2 F4 / round-1 C2). | **yes** (variant-field) | 🟢 ready |
-| [`80-session-parser-is-done.md`](./80-session-parser-is-done.md) | `SessionParser::is_done()` + `DatagramParser::is_done()` + `EndReason::ParserDone` (reverses 0.6 decline; round-2 F5). | no | 🟢 ready |
-| [`82-anomaly-severity.md`](./82-anomaly-severity.md) | `AnomalyKind::severity() -> Severity` (4 levels) + tracing field (round-2 F9). | no | 🟢 ready |
 
 ### Pending RFCs (0.8.0+)
 
@@ -140,13 +131,13 @@ pre-consolidation and would need full rewrites.
 | 60–69 | Tooling (CLIs) |
 | 70–79 | 0.5.0 production-hardening v2 (simple-nms wishlist) |
 
-Plan numbers 00–04, 12, 20, 22–25, 30–61, 70–73 (everything except
-21, 62, 74, 75, 76, 77, 78, 79, 80, 81, 82 — which are pending
-or parked) are retired (implementation shipped, file removed).
-New plans pick the lowest free number in the appropriate range —
-the 0.5.0 series used 70+ to keep the active set visually
-distinct from the retired numbers; the 0.7 series continues that
-convention in the 76–82 block.
+Plan numbers 00–04, 12, 20, 22–25, 30–61, 62, 70–73, 76–80, 82
+(everything except 21, 74, 75, 81 — which are parked as
+stale-deferred or RFC-only) are retired (implementation shipped,
+file removed). New plans pick the lowest free number in the
+appropriate range — the 0.5.0 series used 70+ to keep the active
+set visually distinct from the retired numbers; the 0.7 series
+continued that in the 76–82 block.
 
 ---
 
