@@ -34,9 +34,7 @@
 //! All label values are `&'static str` enums. **Never** pass a flow
 //! key as a label value — that creates one time series per flow.
 
-#[cfg(feature = "reassembler")]
-use crate::event::AnomalyKind;
-use crate::event::{EndReason, FlowStats};
+use crate::event::{AnomalyKind, EndReason, FlowStats};
 use crate::extractor::L4Proto;
 
 /// `flowscope_flows_created_total` — incremented on every new flow.
@@ -80,8 +78,12 @@ pub const METRIC_RETRANSMITS: &str = "flowscope_retransmits_total";
 /// `Some`.
 pub const METRIC_FLOW_TICKS: &str = "flowscope_flow_ticks_total";
 
-#[cfg(feature = "metrics")]
-fn l4_label(l4: Option<L4Proto>) -> &'static str {
+// These label functions are hoisted out of the `metrics` cfg gate
+// so the `Display` impls on `L4Proto`, `EndReason`, `AnomalyKind`
+// (plan 77) can call them under any feature set. They're pure data;
+// zero runtime cost.
+
+pub(crate) fn l4_label(l4: Option<L4Proto>) -> &'static str {
     match l4 {
         Some(L4Proto::Tcp) => "tcp",
         Some(L4Proto::Udp) => "udp",
@@ -89,8 +91,7 @@ fn l4_label(l4: Option<L4Proto>) -> &'static str {
     }
 }
 
-#[cfg(feature = "metrics")]
-fn reason_label(reason: EndReason) -> &'static str {
+pub(crate) fn reason_label(reason: EndReason) -> &'static str {
     match reason {
         EndReason::Fin => "fin",
         EndReason::Rst => "rst",
@@ -101,8 +102,7 @@ fn reason_label(reason: EndReason) -> &'static str {
     }
 }
 
-#[cfg(all(feature = "metrics", feature = "reassembler"))]
-fn anomaly_label(kind: &AnomalyKind) -> &'static str {
+pub(crate) fn anomaly_label(kind: &AnomalyKind) -> &'static str {
     match kind {
         AnomalyKind::BufferOverflow { .. } => "buffer_overflow",
         AnomalyKind::OutOfOrderSegment { .. } => "ooo_segment",

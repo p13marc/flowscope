@@ -41,6 +41,16 @@ pub enum EndReason {
     ParseError,
 }
 
+impl std::fmt::Display for EndReason {
+    /// Lowercase short label matching the
+    /// `flowscope_flows_ended_total{reason=…}` metric vocabulary
+    /// (`fin` / `rst` / `idle` / `evicted` / `buffer_overflow` /
+    /// `parse_error`).
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(crate::obs::reason_label(*self))
+    }
+}
+
 /// What to do when [`crate::BufferedReassembler`]'s in-flight buffer
 /// would exceed its configured cap.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -206,6 +216,17 @@ pub enum AnomalyKind {
         cap: u64,
         threshold_pct: u8,
     },
+}
+
+impl std::fmt::Display for AnomalyKind {
+    /// Lowercase short label matching the
+    /// `flowscope_anomalies_total{kind=…}` metric vocabulary
+    /// (`buffer_overflow` / `ooo_segment` /
+    /// `flow_table_eviction` / `parse_error` / `retransmit` /
+    /// `reassembler_high_watermark`).
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(crate::obs::anomaly_label(self))
+    }
 }
 
 /// Events emitted by the tracker.

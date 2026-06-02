@@ -91,6 +91,17 @@ pub enum L4Proto {
     Other(u8),
 }
 
+#[cfg(feature = "tracker")]
+impl std::fmt::Display for L4Proto {
+    /// Lowercase short label matching the `flowscope_*_total{l4=…}`
+    /// metric vocabulary (`tcp` / `udp` / `other`). Non-TCP /
+    /// non-UDP families collapse to `other`; consumers needing a
+    /// finer label match on the variant directly.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(crate::obs::l4_label(Some(*self)))
+    }
+}
+
 /// Pre-parsed TCP information for a packet.
 ///
 /// Filled by built-in extractors. Decoupled from frame layout so

@@ -10,6 +10,12 @@ Pre-1.0 breaking changes; `netring` updates in lockstep.
 
 ### Added
 
+- **`impl Display` for `L4Proto`, `EndReason`, `AnomalyKind`**
+  (plan 77). Rendered strings match the existing metric-label
+  vocabulary (`tcp`/`udp`/`other`, `fin`/`rst`/`idle`/…,
+  `buffer_overflow`/`ooo_segment`/…), so logs and Prometheus
+  scrapes use the same tokens. Saves the `match l4 { … }`
+  boilerplate that every consumer was writing against 0.6.
 - **Intra-doc-link recipe in `docs/SESSION_GUIDE.md`** (plan 62).
   Closes a partial-implementation gap from the 0.6 cycle: the
   recipe shipped to `CLAUDE.md` (in-repo only); downstream

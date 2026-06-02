@@ -191,6 +191,10 @@ required-features = ["pcap", "session", "reassembler", "extractors", "test-helpe
 name = "pcap_l7_iterators"
 required-features = ["pcap", "session", "reassembler", "extractors"]
 
+[[test]]
+name = "display_impls"
+required-features = ["tracker"]
+
 [[bench]]
 name = "extractor"
 harness = false
