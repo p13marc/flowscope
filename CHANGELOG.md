@@ -10,6 +10,15 @@ Pre-1.0 breaking changes; `netring` updates in lockstep.
 
 ### Added
 
+- **HTTP and TLS convenience accessors** (plan 78). On
+  `HttpRequest`: `host()`, `user_agent()`, `cookie()`. On
+  `HttpResponse`: `content_type()`, `content_length()` (parsed
+  `u64`), `set_cookie()` (iterator over multiple values). Both
+  gain `header(name)` and `headers_all(name)` for arbitrary
+  case-insensitive (RFC 7230 §3.2) lookup. `TlsClientHello::sni()`
+  mirrors the `sni` field for accessor symmetry. Saves the
+  `find().and_then(str::from_utf8)` dance every L7 example was
+  carrying.
 - **`impl Display` for `L4Proto`, `EndReason`, `AnomalyKind`**
   (plan 77). Rendered strings match the existing metric-label
   vocabulary (`tcp`/`udp`/`other`, `fin`/`rst`/`idle`/…,

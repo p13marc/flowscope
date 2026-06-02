@@ -195,6 +195,10 @@ required-features = ["pcap", "session", "reassembler", "extractors"]
 name = "display_impls"
 required-features = ["tracker"]
 
+[[test]]
+name = "http_accessors"
+required-features = ["http"]
+
 [[bench]]
 name = "extractor"
 harness = false

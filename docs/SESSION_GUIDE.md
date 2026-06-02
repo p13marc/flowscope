@@ -164,11 +164,21 @@ let mut s = AsyncCapture::open("eth0")?
     .session_stream(HttpParser::default());
 while let Some(evt) = s.next().await {
     if let SessionEvent::Application { message: HttpMessage::Request(req), .. } = evt? {
-        println!("{} {}", req.method, req.path);
+        println!("{} {} (host={}, ua={})",
+            req.method, req.path,
+            req.host().unwrap_or("?"),
+            req.user_agent().unwrap_or("?"));
     }
 }
 # Ok(()) }
 ```
+
+`HttpRequest` and `HttpResponse` ship case-insensitive header
+accessors (0.7.0): `host()`, `user_agent()`, `cookie()`,
+`content_type()`, `content_length()`, `set_cookie()` (iterator),
+plus generic `header(name)` / `headers_all(name)` for anything
+else. `TlsClientHello::sni()` mirrors the `sni` field for
+accessor symmetry.
 
 ### Async DNS-over-UDP via `DnsUdpParser`
 

@@ -32,6 +32,17 @@ pub struct TlsClientHello {
     pub extension_types: Vec<u16>,
 }
 
+impl TlsClientHello {
+    /// `Server Name Indication` extension value, if present.
+    /// Convenience accessor — equivalent to `self.sni.as_deref()`,
+    /// shipped (plan 78) for symmetry with the HTTP convenience
+    /// accessors and to give trait-object cases a method-shaped
+    /// call site.
+    pub fn sni(&self) -> Option<&str> {
+        self.sni.as_deref()
+    }
+}
+
 /// Parsed TLS ServerHello.
 #[derive(Debug, Clone)]
 pub struct TlsServerHello {
