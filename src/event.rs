@@ -229,6 +229,76 @@ impl std::fmt::Display for AnomalyKind {
     }
 }
 
+/// Severity classification for [`AnomalyKind`] events. Returned
+/// by [`AnomalyKind::severity`]; consumers route anomalies on
+/// this enum (logs vs metrics vs alerts).
+///
+/// Ordered ascending: `Info < Warning < Error < Critical`. Use
+/// `PartialOrd` / `Ord` for filter thresholds:
+///
+/// ```rust,ignore
+/// if kind.severity() >= Severity::Warning {
+///     metrics::counter!("anomalies_high_severity_total").increment(1);
+/// }
+/// ```
+///
+/// `#[non_exhaustive]` so future severity bands are additive.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[non_exhaustive]
+pub enum Severity {
+    /// Routine, informational — high-volume, log-only.
+    /// Default for `OutOfOrderSegment` and `RetransmittedSegment`.
+    Info,
+    /// Notable but expected — log + count; no immediate action.
+    /// Default for cap-pressure / eviction-pressure kinds.
+    Warning,
+    /// Error-level — operator should investigate.
+    /// Default for `SessionParseError`.
+    Error,
+    /// System-impact — page someone. Reserved for future use; no
+    /// [`AnomalyKind`] variant defaults to `Critical` today.
+    Critical,
+}
+
+impl AnomalyKind {
+    /// Default severity for this kind. Consumers free to override
+    /// by classifying on their side; this provides a sensible
+    /// out-of-the-box mapping for log / metric / alert routing.
+    ///
+    /// | Kind | Default severity | Rationale |
+    /// |------|------------------|-----------|
+    /// | [`Self::OutOfOrderSegment`] | [`Severity::Info`] | Routine on lossy / multi-path networks. |
+    /// | [`Self::RetransmittedSegment`] | [`Severity::Info`] | Normal TCP behaviour at low rates. |
+    /// | [`Self::ReassemblerHighWatermark`] | [`Severity::Warning`] | Cap pressure building; tune [`crate::FlowTrackerConfig::max_reassembler_buffer`]. |
+    /// | [`Self::BufferOverflow`] | [`Severity::Warning`] | Bytes dropped (sliding-window) or flow torn down (drop-flow). |
+    /// | [`Self::FlowTableEvictionPressure`] | [`Severity::Warning`] | Tracker bottleneck; bump `max_flows` or shorten idle. |
+    /// | [`Self::SessionParseError`] | [`Severity::Error`] | Parser is poisoned; flow ended. |
+    pub fn severity(&self) -> Severity {
+        match self {
+            AnomalyKind::OutOfOrderSegment { .. } | AnomalyKind::RetransmittedSegment { .. } => {
+                Severity::Info
+            }
+            AnomalyKind::ReassemblerHighWatermark { .. }
+            | AnomalyKind::BufferOverflow { .. }
+            | AnomalyKind::FlowTableEvictionPressure { .. } => Severity::Warning,
+            AnomalyKind::SessionParseError { .. } => Severity::Error,
+        }
+    }
+}
+
+impl std::fmt::Display for Severity {
+    /// Lowercase short label (`info` / `warning` / `error` /
+    /// `critical`) matching the metric-vocabulary convention.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Severity::Info => "info",
+            Severity::Warning => "warning",
+            Severity::Error => "error",
+            Severity::Critical => "critical",
+        })
+    }
+}
+
 /// Events emitted by the tracker.
 ///
 /// One packet typically produces one or two events. The `Started`

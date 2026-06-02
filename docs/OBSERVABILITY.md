@@ -158,6 +158,45 @@ For JSON logs / OpenTelemetry collection, swap in your usual
 `tracing-subscriber` layers — flowscope emits standard `tracing`
 events, no special integration required.
 
+### Routing by severity (0.7.0+)
+
+Every emitted `flowscope.anomaly` event carries a `severity`
+structured field — `info` / `warning` / `error` / `critical` —
+derived from `AnomalyKind::severity()`. Subscribers route on it:
+
+```rust,ignore
+// Pseudocode — wrap your subscriber to filter on the field.
+tracing_subscriber::fmt()
+    .with_env_filter("flowscope.anomaly=warn")
+    .init();
+
+// Or in a custom layer, inspect the event's severity field
+// and route to alerts / metrics / logs accordingly.
+```
+
+The default mapping is conservative:
+
+| Kind | Default severity |
+|------|------------------|
+| `OutOfOrderSegment` | `info` |
+| `RetransmittedSegment` | `info` |
+| `BufferOverflow` (any policy) | `warning` |
+| `ReassemblerHighWatermark` | `warning` |
+| `FlowTableEvictionPressure` | `warning` |
+| `SessionParseError` | `error` |
+
+`critical` is reserved for future use; no `AnomalyKind` variant
+defaults to `Critical` today. Consumers can override the default
+by classifying anomalies themselves in their event loop.
+
+`Severity` implements `Ord`, so threshold filters work directly:
+
+```rust,ignore
+if kind.severity() >= Severity::Warning {
+    metrics::counter!("anomalies_high_severity_total").increment(1);
+}
+```
+
 ### Overhead
 
 Tracing events are cheap when no subscriber is attached (the call

@@ -10,6 +10,14 @@ Pre-1.0 breaking changes; `netring` updates in lockstep.
 
 ### Added
 
+- **`AnomalyKind::severity() -> Severity`** (plan 82). Defaulted
+  classification: routine TCP noise (`OutOfOrderSegment`,
+  `RetransmittedSegment`) → `Info`; cap / eviction pressure →
+  `Warning`; parser poison → `Error`. `critical` reserved for
+  future use. `Severity` is `Ord` so threshold filters compile
+  directly (`kind.severity() >= Severity::Warning`). The
+  `flowscope.anomaly` tracing target gains a structured
+  `severity` field for subscriber routing.
 - **HTTP and TLS convenience accessors** (plan 78). On
   `HttpRequest`: `host()`, `user_agent()`, `cookie()`. On
   `HttpResponse`: `content_type()`, `content_length()` (parsed

@@ -199,6 +199,10 @@ required-features = ["tracker"]
 name = "http_accessors"
 required-features = ["http"]
 
+[[test]]
+name = "severity"
+required-features = ["reassembler"]
+
 [[bench]]
 name = "extractor"
 harness = false

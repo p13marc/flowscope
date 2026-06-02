@@ -256,7 +256,16 @@ pub(crate) fn trace_flow_ended(reason: EndReason, stats: &FlowStats) {
 
 #[cfg(all(feature = "tracing", feature = "reassembler"))]
 pub(crate) fn trace_anomaly(kind: &AnomalyKind) {
-    tracing::warn!(target: "flowscope.anomaly", ?kind, "anomaly");
+    // Plan 82: emit severity as a structured field so subscribers
+    // can route on it (info / warning / error / critical). Event
+    // level stays at warn! — anomalies are always at least notable
+    // — but consumers can filter by the field.
+    tracing::warn!(
+        target: "flowscope.anomaly",
+        severity = %kind.severity(),
+        ?kind,
+        "anomaly"
+    );
 }
 
 #[cfg(not(feature = "tracing"))]
