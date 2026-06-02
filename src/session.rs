@@ -160,6 +160,33 @@ pub trait SessionParser: Send + 'static {
         None
     }
 
+    /// Symmetric "I'm done — close this flow cleanly" signal.
+    /// Default: `false` (parser never self-terminates).
+    ///
+    /// Returning `true` tells the driver this parser has no more
+    /// useful work to extract — the flow can close ahead of FIN
+    /// / idle-timeout. The driver responds by synthesising
+    /// [`crate::SessionEvent::Closed`] with
+    /// [`crate::EndReason::ParserDone`] on the next check, after
+    /// flushing any pending messages from the same `feed_*` /
+    /// `on_tick` call.
+    ///
+    /// Reserve for protocols with intrinsic completion semantics:
+    /// HTTP/1.0 `Connection: close` after body fully received;
+    /// DNS-over-TCP after a query/response pair; framed protocols
+    /// with a session-end sentinel. Do **not** use this to give
+    /// up on bad input — that's [`is_poisoned`](Self::is_poisoned),
+    /// which routes through [`crate::EndReason::ParseError`].
+    ///
+    /// Should be idempotent: once `is_done()` returns `true`, it
+    /// should keep returning `true` for the lifetime of the parser.
+    /// [`is_poisoned`](Self::is_poisoned) takes precedence — a
+    /// parser that's both `is_done` and `is_poisoned` surfaces as
+    /// `ParseError`, not `ParserDone`.
+    fn is_done(&self) -> bool {
+        false
+    }
+
     /// Identifier for this parser, threaded into
     /// [`crate::SessionEvent::Application::parser_kind`]. New in
     /// 0.5.0.
@@ -230,6 +257,12 @@ pub trait DatagramParser: Send + 'static {
     /// [`SessionParser::poison_reason`].
     fn poison_reason(&self) -> Option<&str> {
         None
+    }
+
+    /// Symmetric "I'm done — close this flow cleanly" signal,
+    /// mirroring [`SessionParser::is_done`]. Default: `false`.
+    fn is_done(&self) -> bool {
+        false
     }
 
     /// See [`SessionParser::parser_kind`]. Default `""`.

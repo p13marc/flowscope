@@ -341,6 +341,14 @@ where
         // the swept events, so a flow this sweep closes still gets
         // its final tick ahead of its `Closed` event.
         let mut out: Vec<SessionEvent<E::Key, P::Message>> = Vec::new();
+        // Plan 80: defer tear-down of any parser that finished
+        // during on_tick to after the iteration so we don't mutate
+        // self.parsers while borrowing it.
+        enum TickClose<R> {
+            Poison(FlowSide, Option<R>),
+            Done,
+        }
+        let mut closes: Vec<(E::Key, TickClose<String>)> = Vec::new();
         for (key, parser) in self.parsers.iter_mut() {
             let kind = parser.parser_kind();
             for m in parser.on_tick(now) {
@@ -353,6 +361,30 @@ where
                     parser_kind: kind,
                 });
             }
+            if parser.is_poisoned() {
+                let reason = parser.poison_reason().map(truncate_reason);
+                closes.push((key.clone(), TickClose::Poison(FlowSide::Initiator, reason)));
+            } else if parser.is_done() {
+                closes.push((key.clone(), TickClose::Done));
+            }
+        }
+        let closed_keys: std::collections::HashSet<E::Key> =
+            closes.iter().map(|(k, _)| k.clone()).collect();
+        for (key, status) in closes {
+            match status {
+                TickClose::Poison(side, reason) => {
+                    self.synthesise_parser_poison(&key, side, reason, now, &mut out);
+                }
+                TickClose::Done => {
+                    self.synthesise_parser_done(&key, now, &mut out);
+                }
+            }
+        }
+        if !closed_keys.is_empty() {
+            flow_events.retain(|ev| match ev {
+                FlowEvent::Ended { key, .. } => !closed_keys.contains(key),
+                _ => true,
+            });
         }
         out.extend(self.translate_events(&flow_events, None));
         self.driver.finalize(flow_events.as_mut_slice());
@@ -423,9 +455,12 @@ where
                         });
                     }
                     // Plan 55 — parser poison check.
+                    // Plan 80 — parser-driven graceful close; poison wins.
                     if parser.is_poisoned() {
                         let reason = parser.poison_reason().map(truncate_reason);
                         self.synthesise_parser_poison(key, *side, reason, *ts, &mut out);
+                    } else if parser.is_done() {
+                        self.synthesise_parser_done(key, *ts, &mut out);
                     }
                 }
                 FlowEvent::Ended {
@@ -491,6 +526,31 @@ where
         out.push(SessionEvent::Closed {
             key: key.clone(),
             reason: EndReason::ParseError,
+            stats,
+        });
+        self.parsers.remove(key);
+        self.driver.tracker_mut().forget(key);
+    }
+
+    /// Plan 80: parser-driven graceful close (mirror of
+    /// [`Self::synthesise_parser_poison`] without the anomaly).
+    fn synthesise_parser_done(
+        &mut self,
+        key: &E::Key,
+        ts: Timestamp,
+        out: &mut Vec<SessionEvent<E::Key, P::Message>>,
+    ) {
+        let _ = ts;
+        let stats = self
+            .driver
+            .tracker()
+            .snapshot_stats(key)
+            .unwrap_or_default();
+        crate::obs::record_flow_ended(EndReason::ParserDone, &stats);
+        crate::obs::trace_flow_ended(EndReason::ParserDone, &stats);
+        out.push(SessionEvent::Closed {
+            key: key.clone(),
+            reason: EndReason::ParserDone,
             stats,
         });
         self.parsers.remove(key);

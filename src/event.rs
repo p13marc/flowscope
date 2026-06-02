@@ -39,6 +39,14 @@ pub enum EndReason {
     /// session-/datagram-driver — the tracker itself never emits
     /// this reason.
     ParseError,
+    /// New in 0.7.0. A [`crate::SessionParser`] or
+    /// [`crate::DatagramParser`] returned `true` from `is_done()`,
+    /// signalling clean completion ahead of FIN / idle-timeout.
+    /// Synthesised by the session-/datagram-driver — the tracker
+    /// itself never emits this reason. Distinct from
+    /// [`Self::ParseError`]: a `ParserDone` flow ended successfully;
+    /// a `ParseError` flow was torn down due to broken parser state.
+    ParserDone,
 }
 
 impl std::fmt::Display for EndReason {

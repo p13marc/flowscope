@@ -638,7 +638,9 @@ where
                             }
                         }
                         match reason {
-                            EndReason::Fin | EndReason::IdleTimeout => r.fin(),
+                            EndReason::Fin | EndReason::IdleTimeout | EndReason::ParserDone => {
+                                r.fin()
+                            }
                             EndReason::Rst
                             | EndReason::Evicted
                             | EndReason::BufferOverflow

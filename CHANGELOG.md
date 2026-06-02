@@ -10,6 +10,17 @@ Pre-1.0 breaking changes; `netring` updates in lockstep.
 
 ### Added
 
+- **`SessionParser::is_done()` / `DatagramParser::is_done()`** +
+  **`EndReason::ParserDone`** (plan 80). Reverses the 0.6 decline
+  of round-1 #10. Lets a parser signal completion ahead of
+  FIN/idle (HTTP/1.0 after body, DNS-over-TCP after Q/R pair,
+  framed protocols with session-end sentinels). Default `false`;
+  the driver checks after every `feed_*` / `parse` / `on_tick`.
+  Poison precedence: a parser that's both poisoned AND done
+  surfaces as `ParseError`. `OneShotSessionParser` /
+  `OneShotDatagramParser` ship in `test_helpers` for driver
+  integration tests. New `reason="parser_done"` label on
+  `flowscope_flows_ended_total`.
 - **`AnomalyKind::severity() -> Severity`** (plan 82). Defaulted
   classification: routine TCP noise (`OutOfOrderSegment`,
   `RetransmittedSegment`) → `Info`; cap / eviction pressure →

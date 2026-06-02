@@ -374,6 +374,14 @@ where
         // still gets its final tick, and the tick's messages land
         // ahead of that flow's `Closed`.
         let mut out: Vec<SessionEvent<E::Key, P::Message>> = Vec::new();
+        // Plan 80: collect (key, status) for parsers that finished
+        // during on_tick. Defer tear-down to after the iteration so
+        // we don't mutate self.parsers while borrowing it.
+        enum TickClose<R> {
+            Poison(FlowSide, Option<R>),
+            Done,
+        }
+        let mut closes: Vec<(E::Key, TickClose<String>)> = Vec::new();
         for (key, parser) in self.parsers.iter_mut() {
             let kind = parser.parser_kind();
             for m in parser.on_tick(now) {
@@ -386,6 +394,36 @@ where
                     parser_kind: kind,
                 });
             }
+            // Poison wins over done.
+            if parser.is_poisoned() {
+                let reason = parser.poison_reason().map(truncate_reason);
+                closes.push((key.clone(), TickClose::Poison(FlowSide::Initiator, reason)));
+            } else if parser.is_done() {
+                closes.push((key.clone(), TickClose::Done));
+            }
+        }
+        // Process deferred tear-downs.
+        let closed_keys: std::collections::HashSet<E::Key> =
+            closes.iter().map(|(k, _)| k.clone()).collect();
+        for (key, status) in closes {
+            match status {
+                TickClose::Poison(side, reason) => {
+                    self.synthesise_parser_poison(&key, side, reason, now, &mut out);
+                }
+                TickClose::Done => {
+                    self.synthesise_parser_done(&key, now, &mut out);
+                }
+            }
+        }
+        // Filter out any tracker-driven Ended events for flows we
+        // already closed via tick tear-down — prevents double-Closed
+        // emission if the tracker also idle-timed the same flow this
+        // sweep.
+        if !closed_keys.is_empty() {
+            flow_events.retain(|ev| match ev {
+                FlowEvent::Ended { key, .. } => !closed_keys.contains(key),
+                _ => true,
+            });
         }
         out.extend(self.translate_events(&flow_events));
         self.driver.finalize(flow_events.as_mut_slice());
@@ -452,7 +490,7 @@ where
                     if let Some(mut parser) = self.parsers.remove(key) {
                         let kind = parser.parser_kind();
                         match reason {
-                            EndReason::Fin | EndReason::IdleTimeout => {
+                            EndReason::Fin | EndReason::IdleTimeout | EndReason::ParserDone => {
                                 for m in parser.fin_initiator() {
                                     out.push(SessionEvent::Application {
                                         key: key.clone(),
@@ -557,9 +595,17 @@ where
             // doesn't see SessionParser poison); subsequent packets
             // will produce no further Application events because the
             // parser slot is gone.
+            //
+            // Plan 80: same wiring for is_done() — synthesise a
+            // ParserDone Closed event. Poison precedence: a parser
+            // that's both poisoned AND done surfaces as ParseError.
             if parser.is_poisoned() {
                 let reason = parser.poison_reason().map(truncate_reason);
                 self.synthesise_parser_poison(key, side, reason, ts, out);
+                return;
+            }
+            if parser.is_done() {
+                self.synthesise_parser_done(key, ts, out);
                 return;
             }
         }
@@ -595,6 +641,35 @@ where
         out.push(SessionEvent::Closed {
             key: key.clone(),
             reason: EndReason::ParseError,
+            stats,
+        });
+        self.parsers.remove(key);
+        self.driver.tracker_mut().forget(key);
+    }
+
+    /// Plan 80: parser-driven graceful close. No anomaly is emitted
+    /// (the parser is signalling success, not failure). Mirrors
+    /// [`Self::synthesise_parser_poison`] in shape: snapshot stats,
+    /// record metrics, emit Closed, drop the parser slot, forget the
+    /// flow in the tracker.
+    fn synthesise_parser_done(
+        &mut self,
+        key: &E::Key,
+        ts: Timestamp,
+        out: &mut Vec<SessionEvent<E::Key, P::Message>>,
+    ) {
+        let _ = ts; // No anomaly event needed; ts only matters if we
+        // re-emit an anomaly here in the future.
+        let stats = self
+            .driver
+            .tracker()
+            .snapshot_stats(key)
+            .unwrap_or_default();
+        crate::obs::record_flow_ended(EndReason::ParserDone, &stats);
+        crate::obs::trace_flow_ended(EndReason::ParserDone, &stats);
+        out.push(SessionEvent::Closed {
+            key: key.clone(),
+            reason: EndReason::ParserDone,
             stats,
         });
         self.parsers.remove(key);
@@ -1147,6 +1222,195 @@ mod tests {
             )),
             "non-poisoning parser produced a ParseError Closed event"
         );
+    }
+
+    // ── Plan 80: SessionParser::is_done() / EndReason::ParserDone ──
+
+    /// Parser that emits one message on first `feed_initiator` and
+    /// then reports `is_done() == true`. Single-pair completion
+    /// semantics (HTTP/1.0 after body, DNS-over-TCP after Q/R).
+    #[derive(Default, Clone)]
+    struct DoneAfterOne {
+        done: bool,
+    }
+    impl SessionParser for DoneAfterOne {
+        type Message = ();
+        fn feed_initiator(&mut self, _bytes: &[u8], _ts: Timestamp) -> Vec<()> {
+            self.done = true;
+            vec![()]
+        }
+        fn feed_responder(&mut self, _bytes: &[u8], _ts: Timestamp) -> Vec<()> {
+            Vec::new()
+        }
+        fn is_done(&self) -> bool {
+            self.done
+        }
+    }
+
+    #[test]
+    fn is_done_triggers_parser_done_close() {
+        let mut d = FlowSessionDriver::new(FiveTuple::bidirectional(), DoneAfterOne::default());
+        let mut events = Vec::new();
+        for f in build_3whs() {
+            events.extend(d.track(view(&f, 0)));
+        }
+        let mac = [0u8; 6];
+        let data = ipv4_tcp(
+            mac,
+            mac,
+            [10, 0, 0, 1],
+            [10, 0, 0, 2],
+            1234,
+            80,
+            1001,
+            5001,
+            0x18,
+            b"hello",
+        );
+        events.extend(d.track(view(&data, 0)));
+        let closed = events
+            .iter()
+            .find_map(|e| match e {
+                SessionEvent::Closed { reason, .. } => Some(*reason),
+                _ => None,
+            })
+            .expect("Closed event");
+        assert_eq!(closed, EndReason::ParserDone);
+    }
+
+    #[test]
+    fn is_done_emits_no_anomaly() {
+        // ParserDone is a clean close — no FlowAnomaly should be
+        // synthesised even when emit_anomalies is on.
+        let mut d = FlowSessionDriver::new(FiveTuple::bidirectional(), DoneAfterOne::default())
+            .with_emit_anomalies(true);
+        let mut events = Vec::new();
+        for f in build_3whs() {
+            events.extend(d.track(view(&f, 0)));
+        }
+        let mac = [0u8; 6];
+        let data = ipv4_tcp(
+            mac,
+            mac,
+            [10, 0, 0, 1],
+            [10, 0, 0, 2],
+            1234,
+            80,
+            1001,
+            5001,
+            0x18,
+            b"hello",
+        );
+        events.extend(d.track(view(&data, 0)));
+        assert!(
+            !events.iter().any(|e| matches!(
+                e,
+                SessionEvent::FlowAnomaly {
+                    kind: AnomalyKind::SessionParseError { .. },
+                    ..
+                }
+            )),
+            "ParserDone close should not emit a SessionParseError anomaly"
+        );
+    }
+
+    /// Parser that returns `true` from BOTH is_poisoned and
+    /// is_done. Poison must win (worse condition).
+    #[derive(Clone)]
+    struct BothPoisonedAndDone;
+    impl SessionParser for BothPoisonedAndDone {
+        type Message = ();
+        fn feed_initiator(&mut self, _bytes: &[u8], _ts: Timestamp) -> Vec<()> {
+            vec![()]
+        }
+        fn feed_responder(&mut self, _bytes: &[u8], _ts: Timestamp) -> Vec<()> {
+            Vec::new()
+        }
+        fn is_poisoned(&self) -> bool {
+            true
+        }
+        fn is_done(&self) -> bool {
+            true
+        }
+    }
+
+    #[test]
+    fn is_poisoned_wins_over_is_done() {
+        let mut d = FlowSessionDriver::new(FiveTuple::bidirectional(), BothPoisonedAndDone);
+        let mut events = Vec::new();
+        for f in build_3whs() {
+            events.extend(d.track(view(&f, 0)));
+        }
+        let mac = [0u8; 6];
+        let data = ipv4_tcp(
+            mac,
+            mac,
+            [10, 0, 0, 1],
+            [10, 0, 0, 2],
+            1234,
+            80,
+            1001,
+            5001,
+            0x18,
+            b"hello",
+        );
+        events.extend(d.track(view(&data, 0)));
+        let closed = events
+            .iter()
+            .find_map(|e| match e {
+                SessionEvent::Closed { reason, .. } => Some(*reason),
+                _ => None,
+            })
+            .expect("Closed event");
+        assert_eq!(closed, EndReason::ParseError, "poison must win over done");
+    }
+
+    #[test]
+    fn parser_done_flow_does_not_double_close_on_natural_fin() {
+        // Flow closes via ParserDone; subsequent FIN packet should
+        // not produce a second Closed event for the same flow
+        // (the tracker entry was already forgotten).
+        let mut d = FlowSessionDriver::new(FiveTuple::bidirectional(), DoneAfterOne::default());
+        let mut events = Vec::new();
+        for f in build_3whs() {
+            events.extend(d.track(view(&f, 0)));
+        }
+        let mac = [0u8; 6];
+        // Trigger ParserDone.
+        let data = ipv4_tcp(
+            mac,
+            mac,
+            [10, 0, 0, 1],
+            [10, 0, 0, 2],
+            1234,
+            80,
+            1001,
+            5001,
+            0x18,
+            b"hello",
+        );
+        events.extend(d.track(view(&data, 0)));
+        // Now feed a FIN — flow already gone from the tracker, so
+        // this looks like a fresh flow's first packet (no Closed
+        // for the original flow).
+        let fin = ipv4_tcp(
+            mac,
+            mac,
+            [10, 0, 0, 1],
+            [10, 0, 0, 2],
+            1234,
+            80,
+            1006,
+            5001,
+            0x11,
+            &[],
+        );
+        events.extend(d.track(view(&fin, 1)));
+        let closed_count = events
+            .iter()
+            .filter(|e| matches!(e, SessionEvent::Closed { .. }))
+            .count();
+        assert_eq!(closed_count, 1, "expected exactly one Closed event");
     }
 
     #[test]

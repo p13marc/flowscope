@@ -364,6 +364,44 @@ When `FlowStats.reassembly_bytes_dropped_oversize_* > 0` on an `Ended` event (or
 2. **Marker re-scan** for protocols with a fixed-length marker prefix (HTTP `\r\n\r\n`, PSMSG-style framing). Walk the buffer looking for the next marker, discard everything before it.
 3. **Tear down at the parser layer** via `is_poisoned()` (0.3.0): return `true` from `is_poisoned()` after detecting the desync; the driver synthesises `EndReason::ParseError` and drops your state. Consumers observe a `SessionEvent::Closed { reason: ParseError }`.
 
+### Parser-driven graceful close (0.7.0)
+
+Symmetric to [`SessionParser::is_poisoned`](#signalling-unrecoverable-errors-030),
+`is_done()` lets a parser signal clean completion ahead of FIN /
+idle-timeout. Default `false`; the driver checks it after every
+`feed_*` / `parse` / `on_tick` call. Returning `true` triggers a
+`SessionEvent::Closed { reason: EndReason::ParserDone, .. }` on
+the next driver check, the parser slot is dropped, and the
+tracker forgets the flow.
+
+```rust,ignore
+impl SessionParser for Http1ZeroParser {
+    type Message = HttpMessage;
+    // ...
+
+    fn is_done(&self) -> bool {
+        // Response fully received AND `Connection: close` seen?
+        // The flow is done — close ahead of FIN.
+        self.response_complete && self.connection_close_signalled
+    }
+}
+```
+
+Use cases:
+- **HTTP/1.0** with `Connection: close` after the body is fully
+  received — peer may delay FIN by seconds.
+- **DNS-over-TCP** after a single query/response pair completes.
+- Framed binary protocols with a session-end sentinel frame.
+
+**Precedence:** `is_poisoned()` takes precedence over `is_done()`.
+A parser that returns `true` from both surfaces as
+`EndReason::ParseError`, not `ParserDone` — the worse condition
+wins.
+
+**Idempotence:** once `is_done()` returns `true`, it should keep
+returning `true`. The driver checks the value, not its
+transitions.
+
 ### Signalling unrecoverable errors (0.3.0)
 
 For per-message errors (one bad message but the rest of the stream is fine), just don't push the bad message into the returned `Vec`. The framework can't tell the difference between "no message ready" and "bad message skipped" — both are fine.

@@ -55,6 +55,53 @@ impl SessionParser for EchoSessionParser {
     }
 }
 
+/// A `SessionParser` that emits one empty message on the first
+/// `feed_initiator` call and reports `is_done() == true`
+/// thereafter. Use for testing the plan-80
+/// [`crate::SessionParser::is_done`] /
+/// [`crate::EndReason::ParserDone`] wiring.
+#[derive(Debug, Default, Clone)]
+pub struct OneShotSessionParser {
+    done: bool,
+}
+
+impl SessionParser for OneShotSessionParser {
+    type Message = ();
+    fn feed_initiator(&mut self, _bytes: &[u8], _ts: Timestamp) -> Vec<()> {
+        self.done = true;
+        vec![()]
+    }
+    fn feed_responder(&mut self, _bytes: &[u8], _ts: Timestamp) -> Vec<()> {
+        Vec::new()
+    }
+    fn is_done(&self) -> bool {
+        self.done
+    }
+    fn parser_kind(&self) -> &'static str {
+        "one-shot-session"
+    }
+}
+
+/// Datagram mirror of [`OneShotSessionParser`].
+#[derive(Debug, Default, Clone)]
+pub struct OneShotDatagramParser {
+    done: bool,
+}
+
+impl DatagramParser for OneShotDatagramParser {
+    type Message = ();
+    fn parse(&mut self, _payload: &[u8], _side: FlowSide, _ts: Timestamp) -> Vec<()> {
+        self.done = true;
+        vec![()]
+    }
+    fn is_done(&self) -> bool {
+        self.done
+    }
+    fn parser_kind(&self) -> &'static str {
+        "one-shot-datagram"
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

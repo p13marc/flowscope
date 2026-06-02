@@ -99,6 +99,7 @@ pub(crate) fn reason_label(reason: EndReason) -> &'static str {
         EndReason::Evicted => "evicted",
         EndReason::BufferOverflow => "buffer_overflow",
         EndReason::ParseError => "parse_error",
+        EndReason::ParserDone => "parser_done",
     }
 }
 
