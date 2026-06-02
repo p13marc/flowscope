@@ -33,23 +33,52 @@ feedback streams drove the two series:
 - [`../docs/feedback-2026-08-11-simple-nms.md`](../docs/feedback-2026-08-11-simple-nms.md)
   (drove the 0.5.0 release — TCP rich diagnostics, FlowTick,
   parser_kind).
+- [`../docs/feedback-2026-05-29-netring-round2.md`](../docs/feedback-2026-05-29-netring-round2.md)
+  + [`../docs/0.7-PLAN-OF-RECORD.md`](../docs/0.7-PLAN-OF-RECORD.md) —
+  netring's round-2 retrospective after writing four L7
+  examples; drives the 0.7 series (plans 62, 76, 77, 78, 79,
+  80, 82, plus RFC plan 81).
 
-### Pending (0.7.0+)
+### Pending (0.7.0)
+
+The 0.7 implementation batch — plan-of-record at
+[`../docs/0.7-PLAN-OF-RECORD.md`](../docs/0.7-PLAN-OF-RECORD.md).
+
+| Plan | Goal | Breaking? | Status |
+|------|------|-----------|--------|
+| [`62-intra-doc-recipe-in-published-docs.md`](./62-intra-doc-recipe-in-published-docs.md) | Move the intra-doc-link recipe from `CLAUDE.md` into `docs/SESSION_GUIDE.md` (closes round-1 item 12 / round-2 F8). | no | 🟢 ready |
+| [`76-icmp-parser.md`](./76-icmp-parser.md) | `flowscope::icmp::IcmpParser` (`DatagramParser`) + `IcmpInner` for ICMP-error → original-flow correlation (round-2 F1). | no (new feature `icmp`) | 🟢 ready |
+| [`77-display-impls.md`](./77-display-impls.md) | `impl Display` on `L4Proto`, `EndReason`, `AnomalyKind` matching the metric vocabulary (round-2 F2). | no | 🟢 ready |
+| [`78-http-tls-accessors.md`](./78-http-tls-accessors.md) | `HttpRequest::{host, user_agent, cookie, header}`, mirrors on `HttpResponse`, `TlsClientHello::sni()` (round-2 F3). | no | 🟢 ready |
+| [`79-ended-l4-field.md`](./79-ended-l4-field.md) | `FlowEvent::Ended { l4 }` + `SessionEvent::Closed { l4 }` (round-2 F4 / round-1 C2). | **yes** (variant-field) | 🟢 ready |
+| [`80-session-parser-is-done.md`](./80-session-parser-is-done.md) | `SessionParser::is_done()` + `DatagramParser::is_done()` + `EndReason::ParserDone` (reverses 0.6 decline; round-2 F5). | no | 🟢 ready |
+| [`82-anomaly-severity.md`](./82-anomaly-severity.md) | `AnomalyKind::severity() -> Severity` (4 levels) + tracing field (round-2 F9). | no | 🟢 ready |
+
+### Pending RFCs (0.8.0+)
 
 | Plan | Goal | Status |
 |------|------|--------|
-| [`74-rfc-ooo-reassembly.md`](./74-rfc-ooo-reassembly.md) | RFC scope for OOO TCP reassembly with hole-fill (F2.4). | 📝 RFC only — invites consumer + maintainer agreement before implementation |
+| [`74-rfc-ooo-reassembly.md`](./74-rfc-ooo-reassembly.md) | RFC scope for OOO TCP reassembly with hole-fill (F2.4). | 📝 RFC only |
+| [`75-rfc-tracker-auto-sweep.md`](./75-rfc-tracker-auto-sweep.md) | RFC scope for `FlowTracker::with_auto_sweep(interval)` (round-1 #2). | 📝 RFC only |
+| [`81-rfc-correlate-module.md`](./81-rfc-correlate-module.md) | RFC scope for `flowscope::correlate` (`TimeBucketedCounter`, `KeyIndexed`, `SequencePattern`); round-2 F6 — netring author offered to co-author. | 📝 RFC only |
 
-Deferred from the two feedback streams (recorded so a future ask
-doesn't get re-litigated):
+Deferred from the three feedback streams (recorded so a future
+ask doesn't get re-litigated):
 
-- **#2 `FlowTracker::with_auto_sweep(interval)`** (netring) —
-  packet-clock auto-sweep for live/offline parity; needs its own
-  RFC (interaction with out-of-order timestamps, return-channel for
-  implicit-sweep events, monotonic-timestamps prerequisite).
-- **#10 `SessionParser::is_done()`** (netring) — declined pending a
-  real motivating case; HTTP/1.0 `Connection: close` (the example
-  use case) already triggers natural FIN-based close.
+- **#2 `FlowTracker::with_auto_sweep(interval)`** (netring round 1) —
+  packet-clock auto-sweep for live/offline parity; RFC scoped in
+  [`75-rfc-tracker-auto-sweep.md`](./75-rfc-tracker-auto-sweep.md);
+  implementation deferred to 0.8.0+ pending reviewer agreement.
+- **#10 `SessionParser::is_done()`** (netring round 1) — the
+  round-1 decline (HTTP/1.0 `Connection: close` already triggers
+  natural FIN-based close) is **reversed** for 0.7 per
+  [`80-session-parser-is-done.md`](./80-session-parser-is-done.md);
+  round-2's expanded use case (DNS-over-TCP, framed protocols)
+  supplied the missing motivation.
+- **F7 `DnsResolutionCache`** (netring round 2) — cross-protocol
+  key derivation; not RFC-ready per the author's own framing
+  ("the right shape probably emerges only after writing 2–3
+  anomaly examples manually first"). Revisit after plan 81 ships.
 - **F1.4** (simple-nms) — parser `&mut S` API change addressed via
   the SESSION_GUIDE consumer-loop pattern instead of plumbing a
   generic through every parser.
@@ -113,10 +142,12 @@ pre-consolidation and would need full rewrites.
 | 70–79 | 0.5.0 production-hardening v2 (simple-nms wishlist) |
 
 Plan numbers 00–04, 12, 20, 22–25, 30–61, 70–73 (everything except
-21 and 74, which are parked) are retired (implementation shipped,
-file removed). New plans pick the lowest free number in the
-appropriate range — the 0.5.0 series used 70+ to keep the active
-set visually distinct from the retired numbers.
+21, 62, 74, 75, 76, 77, 78, 79, 80, 81, 82 — which are pending
+or parked) are retired (implementation shipped, file removed).
+New plans pick the lowest free number in the appropriate range —
+the 0.5.0 series used 70+ to keep the active set visually
+distinct from the retired numbers; the 0.7 series continues that
+convention in the 76–82 block.
 
 ---
 
