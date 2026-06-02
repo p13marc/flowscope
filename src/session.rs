@@ -318,6 +318,9 @@ pub enum SessionEvent<K, M> {
         key: K,
         reason: EndReason,
         stats: FlowStats,
+        /// L4 protocol of the flow this session was tracked over.
+        /// New in 0.7.0; mirrors [`crate::FlowEvent::Ended::l4`].
+        l4: Option<crate::extractor::L4Proto>,
     },
     /// Live, in-flight per-flow anomaly forwarded from
     /// [`crate::FlowEvent::FlowAnomaly`]. Emitted only when the

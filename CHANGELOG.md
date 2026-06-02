@@ -8,6 +8,26 @@ against 0.6) — synthesis in
 [`docs/0.7-PLAN-OF-RECORD.md`](docs/0.7-PLAN-OF-RECORD.md).
 Pre-1.0 breaking changes; `netring` updates in lockstep.
 
+### Breaking
+
+- **`FlowEvent::Ended` and `SessionEvent::Closed` gain a
+  `l4: Option<L4Proto>` field** (plan 79). Mirrors the `l4` field
+  already present on `FlowEvent::Started`; saves the per-consumer
+  `HashMap<K, L4Proto>` workaround for "what protocol was this
+  flow?" Pre-1.0 variant-field addition.
+  *Migration:* update destructure patterns to bind or ignore the
+  new field:
+  ```diff
+  - FlowEvent::Ended { key, reason, stats, history } => …
+  + FlowEvent::Ended { key, reason, stats, history, l4 } => …
+    // or
+  + FlowEvent::Ended { key, reason, stats, history, .. } => …
+  ```
+  Same change applies to `SessionEvent::Closed`. New tracker
+  accessor `FlowTracker::snapshot_l4(key)` populates the field on
+  driver-synthesised Ended events (`BufferOverflow` / `ParseError`
+  / `ParserDone`).
+
 ### Added
 
 - **`SessionParser::is_done()` / `DatagramParser::is_done()`** +

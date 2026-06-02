@@ -480,7 +480,11 @@ where
                     self.drain_into_parser(key, *ts, &mut out);
                 }
                 FlowEvent::Ended {
-                    key, reason, stats, ..
+                    key,
+                    reason,
+                    stats,
+                    l4,
+                    ..
                 } => {
                     // Final drain (captures FIN-with-payload bytes
                     // before the reassembler is dropped in finalize),
@@ -523,6 +527,7 @@ where
                         key: key.clone(),
                         reason: *reason,
                         stats: stats.clone(),
+                        l4: *l4,
                     });
                 }
                 FlowEvent::FlowAnomaly { key, kind, ts } => {
@@ -636,12 +641,14 @@ where
             .tracker()
             .snapshot_stats(key)
             .unwrap_or_default();
+        let l4 = self.driver.tracker().snapshot_l4(key);
         crate::obs::record_flow_ended(EndReason::ParseError, &stats);
         crate::obs::trace_flow_ended(EndReason::ParseError, &stats);
         out.push(SessionEvent::Closed {
             key: key.clone(),
             reason: EndReason::ParseError,
             stats,
+            l4,
         });
         self.parsers.remove(key);
         self.driver.tracker_mut().forget(key);
@@ -665,12 +672,14 @@ where
             .tracker()
             .snapshot_stats(key)
             .unwrap_or_default();
+        let l4 = self.driver.tracker().snapshot_l4(key);
         crate::obs::record_flow_ended(EndReason::ParserDone, &stats);
         crate::obs::trace_flow_ended(EndReason::ParserDone, &stats);
         out.push(SessionEvent::Closed {
             key: key.clone(),
             reason: EndReason::ParserDone,
             stats,
+            l4,
         });
         self.parsers.remove(key);
         self.driver.tracker_mut().forget(key);

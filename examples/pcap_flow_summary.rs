@@ -45,6 +45,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     reason,
                     stats,
                     history,
+                    ..
                 } => {
                     ended += 1;
                     let total_pkts = stats.packets_initiator + stats.packets_responder;

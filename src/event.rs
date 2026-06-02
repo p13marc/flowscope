@@ -355,6 +355,12 @@ pub enum FlowEvent<K> {
         reason: EndReason,
         stats: FlowStats,
         history: HistoryString,
+        /// L4 protocol the flow was tracked under, or `None` if the
+        /// extractor never classified one. New in 0.7.0 — mirrors
+        /// the `l4` field set on the matching [`Self::Started`]
+        /// event for this flow, so consumers no longer carry a
+        /// side `HashMap<K, L4Proto>` workaround.
+        l4: Option<L4Proto>,
     },
 
     /// Live, in-flight per-flow anomaly. The flow is still alive

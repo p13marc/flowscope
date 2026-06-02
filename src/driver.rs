@@ -591,6 +591,7 @@ where
                 continue;
             };
             let history = tracker.snapshot_history(&key).unwrap_or_default();
+            let l4 = tracker.snapshot_l4(&key);
             tracker.forget(&key);
             crate::obs::record_flow_ended(EndReason::BufferOverflow, &stats);
             crate::obs::trace_flow_ended(EndReason::BufferOverflow, &stats);
@@ -599,6 +600,7 @@ where
                 reason: EndReason::BufferOverflow,
                 stats,
                 history,
+                l4,
             });
         }
         out
