@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased — 0.7 cycle
+## 0.7.0 — ICMP parser, HTTP accessors, anomaly severity (2026-05-23)
 
 Driven by [`docs/feedback-2026-05-29-netring-round2.md`](docs/feedback-2026-05-29-netring-round2.md)
 (netring's round-2 retrospective after writing four L7 examples
