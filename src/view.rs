@@ -32,6 +32,16 @@ impl<'a> PacketView<'a> {
         Self { frame, timestamp }
     }
 
+    /// Parse the frame into a layered view.
+    ///
+    /// Assumes Ethernet at the start. For raw IP datagrams (no L2
+    /// prefix — tun/tap captures, GTP-U inner) call
+    /// [`crate::layers::Layers::parse_ip`] directly.
+    #[cfg(feature = "extractors")]
+    pub fn layers(&self) -> crate::Result<crate::layers::Layers<'a>> {
+        crate::layers::Layers::parse_ethernet(self.frame)
+    }
+
     /// Replace `frame` with a new slice, keep the timestamp. Used by
     /// decap combinators to delegate to an inner extractor without
     /// losing context.

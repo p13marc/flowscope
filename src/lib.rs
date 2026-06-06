@@ -81,6 +81,9 @@ pub mod extractor;
 #[cfg(feature = "extractors")]
 pub mod extract;
 
+#[cfg(feature = "extractors")]
+pub mod layers;
+
 #[cfg(feature = "tracker")]
 pub mod event;
 #[cfg(feature = "tracker")]
