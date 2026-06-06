@@ -437,6 +437,36 @@ where
         self.sweep(Timestamp::MAX)
     }
 
+    /// Force-end the session with this key. Mirror of
+    /// [`crate::FlowTracker::force_close`] / [`FlowDriver::force_close`]
+    /// at the session layer. New in 0.8.0.
+    ///
+    /// Drains any buffered initiator/responder bytes through the
+    /// parser (one last `feed_*` per side), calls `fin_initiator()`
+    /// / `fin_responder()` to flush parser-side closing messages,
+    /// emits the resulting `Application` events, removes the parser
+    /// slot, then forwards the underlying driver's `Ended` event
+    /// as `SessionEvent::Closed { reason: ForceClosed, .. }`.
+    ///
+    /// Returns the resulting events; empty if `key` was not active.
+    pub fn force_close(
+        &mut self,
+        key: &E::Key,
+        now: Timestamp,
+    ) -> Vec<SessionEvent<E::Key, P::Message>> {
+        let mut out = Vec::new();
+        // Drain reassembled bytes into the parser before tear-down,
+        // so any messages buffered in the reassembler don't get
+        // dropped.
+        self.drain_into_parser(key, now, &mut out);
+        // The drain may have synthesised a parser-poison / parser-done
+        // close already; if so the parser slot is gone and the
+        // driver-level force_close will report no flow.
+        let driver_events = self.driver.force_close(key, now);
+        out.extend(self.translate_events(&driver_events));
+        out
+    }
+
     /// Borrow the inner tracker (for stats, introspection).
     pub fn tracker(&self) -> &FlowTracker<E, S> {
         self.driver.tracker()
@@ -494,7 +524,10 @@ where
                     if let Some(mut parser) = self.parsers.remove(key) {
                         let kind = parser.parser_kind();
                         match reason {
-                            EndReason::Fin | EndReason::IdleTimeout | EndReason::ParserDone => {
+                            EndReason::Fin
+                            | EndReason::IdleTimeout
+                            | EndReason::ParserDone
+                            | EndReason::ForceClosed => {
                                 for m in parser.fin_initiator() {
                                     out.push(SessionEvent::Application {
                                         key: key.clone(),

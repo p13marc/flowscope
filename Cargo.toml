@@ -216,6 +216,10 @@ required-features = ["session"]
 name = "iter_active"
 required-features = ["tracker", "extractors", "test-helpers"]
 
+[[test]]
+name = "force_close"
+required-features = ["tracker", "extractors", "test-helpers"]
+
 [[bench]]
 name = "extractor"
 harness = false

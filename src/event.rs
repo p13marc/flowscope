@@ -47,6 +47,12 @@ pub enum EndReason {
     /// [`Self::ParseError`]: a `ParserDone` flow ended successfully;
     /// a `ParseError` flow was torn down due to broken parser state.
     ParserDone,
+    /// New in 0.8.0. External orchestration called
+    /// [`crate::FlowTracker::force_close`] (or a driver-level
+    /// mirror). Used for resource budgets, test harnesses, rate
+    /// limiters — anywhere the consumer needs to end a specific
+    /// flow ahead of FIN / idle / eviction.
+    ForceClosed,
 }
 
 impl std::fmt::Display for EndReason {

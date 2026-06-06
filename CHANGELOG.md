@@ -30,6 +30,14 @@ Pre-1.0 breaking changes; `netring` updates in lockstep.
 
 ### Added
 
+- **`FlowTracker::force_close` + driver mirrors + `EndReason::ForceClosed`**
+  (plan 89). External orchestration can now end a specific flow
+  ahead of FIN / idle / eviction. Use cases: resource budgets,
+  test harnesses, rate limiters. Driver-level mirrors
+  (`FlowDriver::force_close`, `FlowSessionDriver::force_close`,
+  `FlowDatagramDriver::force_close`) tear down the parser +
+  reassembler slots before emitting the terminal event. New
+  `flowscope_flows_ended_total{reason="force_closed"}` metric label.
 - **`FlowTracker::iter_active() -> impl Iterator<Item = ActiveFlow<'_, K, S>>`**
   (plan 90). Snapshots every live flow with key + stats + user
   state + TCP state + L4 protocol. `ActiveFlow` is

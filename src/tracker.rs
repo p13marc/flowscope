@@ -480,6 +480,39 @@ impl<E: FlowExtractor, S: Send + 'static> FlowTracker<E, S> {
         self.sweep(Timestamp::MAX)
     }
 
+    /// Force-end the flow with this key. Removes the tracker entry,
+    /// emits an [`FlowEvent::Ended`] with [`EndReason::ForceClosed`]
+    /// populated from the entry's last-seen counters. New in 0.8.0.
+    ///
+    /// Returns the emitted `Ended` event, or `None` if the key was
+    /// not active.
+    ///
+    /// Does **not** flush any reassembler or parser slots — those live
+    /// on the driver. When driving through a [`crate::FlowDriver`] /
+    /// [`crate::FlowSessionDriver`] / [`crate::FlowDatagramDriver`],
+    /// call the driver-level `force_close` instead so the parser +
+    /// reassembler tear down cleanly.
+    pub fn force_close(&mut self, key: &E::Key, now: Timestamp) -> Option<FlowEvent<E::Key>> {
+        let removed = self.flows.pop(key)?;
+        if self.hot.as_ref() == Some(key) {
+            self.hot = None;
+        }
+        self.stats.flows_ended += 1;
+        crate::obs::record_flow_ended(EndReason::ForceClosed, &removed.stats);
+        crate::obs::trace_flow_ended(EndReason::ForceClosed, &removed.stats);
+        // `now` is reserved for future "Ended at now" semantics
+        // (when the synthesised Ended should override last_seen);
+        // today the event carries the entry's recorded counters.
+        let _ = now;
+        Some(FlowEvent::Ended {
+            key: key.clone(),
+            reason: EndReason::ForceClosed,
+            stats: removed.stats,
+            history: removed.history,
+            l4: removed.l4,
+        })
+    }
+
     /// Run a sweep, driving `on_tick` on every live parser
     /// **before** the swept events land. Mirrors the choreography
     /// that `FlowSessionDriver::sweep` does internally, so

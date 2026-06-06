@@ -397,6 +397,22 @@ where
         self.sweep(Timestamp::MAX)
     }
 
+    /// Force-end the UDP flow with this key. New in 0.8.0. Mirror of
+    /// the session-driver / flow-driver counterparts. No reassembler
+    /// to tear down; just removes the parser slot, calls
+    /// [`FlowDriver::force_close`], and translates the driver's
+    /// terminal event into `SessionEvent::Closed { reason:
+    /// ForceClosed, .. }`.
+    pub fn force_close(
+        &mut self,
+        key: &E::Key,
+        now: Timestamp,
+    ) -> Vec<SessionEvent<E::Key, P::Message>> {
+        self.parsers.remove(key);
+        let driver_events = self.driver.force_close(key, now);
+        self.translate_events(&driver_events, None)
+    }
+
     /// Borrow the inner tracker.
     pub fn tracker(&self) -> &FlowTracker<E, S> {
         self.driver.tracker()

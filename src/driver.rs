@@ -383,6 +383,33 @@ where
         self.sweep(Timestamp::MAX)
     }
 
+    /// Force-end the flow with this key. Driver-level mirror of
+    /// [`FlowTracker::force_close`]. Tears down the per-(flow, side)
+    /// reassembler slots before emitting the terminal event. New in
+    /// 0.8.0.
+    ///
+    /// Returns the resulting `FlowEvent`s (one `Ended` for the closed
+    /// flow plus any pending anomalies — same shape as `track()`).
+    /// Empty if `key` was not active.
+    pub fn force_close(&mut self, key: &E::Key, now: Timestamp) -> Vec<FlowEvent<E::Key>> {
+        // Pop the reassembler slots BEFORE the tracker forgets the
+        // entry so we can record any per-tick anomaly deltas the
+        // existing snapshot machinery would surface on a normal end.
+        self.reassemblers.retain(|(k, _), _| k != key);
+        // Tracker emits the Ended event with ForceClosed reason.
+        let Some(ended) = self.tracker.force_close(key, now) else {
+            return Vec::new();
+        };
+        // Finalize: patches reassembler diagnostic fields (now zero
+        // since the slots are gone) and emits metrics. We construct
+        // a one-element slice and run it through the standard
+        // finalize path so consumers see the same shape they get
+        // from natural ends.
+        let mut events = vec![ended];
+        self.finalize(events.as_mut_slice());
+        events
+    }
+
     /// Lower-level sweep variant. Like [`Self::sweep`] but does NOT
     /// finalize ended flows' reassemblers. See [`Self::track_pending`]
     /// for the contract.
@@ -640,9 +667,10 @@ where
                             }
                         }
                         match reason {
-                            EndReason::Fin | EndReason::IdleTimeout | EndReason::ParserDone => {
-                                r.fin()
-                            }
+                            EndReason::Fin
+                            | EndReason::IdleTimeout
+                            | EndReason::ParserDone
+                            | EndReason::ForceClosed => r.fin(),
                             EndReason::Rst
                             | EndReason::Evicted
                             | EndReason::BufferOverflow
