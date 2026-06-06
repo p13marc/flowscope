@@ -48,6 +48,16 @@ pub use parser::{DnsParseResult, parse_message, parse_message_at};
 pub use session::DnsTcpParser;
 pub use types::*;
 
+/// Slug returned by [`DnsUdpParser::parser_kind`]. See [`crate::parser_kinds::DNS_UDP`].
+///
+/// Stability: locked from 0.8 forward.
+pub const PARSER_KIND_UDP: &str = "dns-udp";
+
+/// Slug returned by [`DnsTcpParser::parser_kind`]. See [`crate::parser_kinds::DNS_TCP`].
+///
+/// Stability: locked from 0.8 forward.
+pub const PARSER_KIND_TCP: &str = "dns-tcp";
+
 /// Errors from the DNS module.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {

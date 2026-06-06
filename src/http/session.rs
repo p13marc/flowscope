@@ -123,7 +123,7 @@ impl SessionParser for HttpParser {
     }
 
     fn parser_kind(&self) -> &'static str {
-        "http/1"
+        crate::http::PARSER_KIND
     }
 }
 

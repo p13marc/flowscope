@@ -69,6 +69,6 @@ impl DatagramParser for IcmpParser {
     }
 
     fn parser_kind(&self) -> &'static str {
-        "icmp"
+        crate::icmp::PARSER_KIND
     }
 }

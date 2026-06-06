@@ -1,5 +1,24 @@
 # Changelog
 
+## Unreleased — 0.8 cycle
+
+Driven by [`docs/feedback-2026-06-06-netring-wishlist.md`](docs/feedback-2026-06-06-netring-wishlist.md)
+(netring's consolidated wishlist after three prior feedback
+rounds) — synthesis in
+[`docs/0.8-PLAN-OF-RECORD.md`](docs/0.8-PLAN-OF-RECORD.md).
+Pre-1.0 breaking changes; `netring` updates in lockstep.
+
+### Added
+
+- **`PARSER_KIND` / `PARSER_KIND_UDP` / `PARSER_KIND_TCP`
+  constants per parser module + `flowscope::parser_kinds`
+  umbrella re-export** (plan 86). Use the constants at match
+  sites in place of `"http/1"` / `"dns-udp"` / `"tls"` / etc.
+  string literals so typos fail to resolve (compile error)
+  rather than silently miss at runtime. Each parser's
+  `parser_kind()` impl now returns its module constant —
+  single source of truth.
+
 ## 0.7.0 — ICMP parser, HTTP accessors, anomaly severity (2026-05-23)
 
 Driven by [`docs/feedback-2026-05-29-netring-round2.md`](docs/feedback-2026-05-29-netring-round2.md)

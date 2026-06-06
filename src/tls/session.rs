@@ -149,7 +149,7 @@ impl SessionParser for TlsParser {
     }
 
     fn parser_kind(&self) -> &'static str {
-        "tls"
+        crate::tls::PARSER_KIND
     }
 }
 

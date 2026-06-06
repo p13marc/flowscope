@@ -41,3 +41,8 @@ pub use factory::{TlsFactory, TlsReassembler};
 pub use parser::Error;
 pub use session::{TlsMessage, TlsParser};
 pub use types::*;
+
+/// Slug returned by [`TlsParser::parser_kind`]. See [`crate::parser_kinds::TLS`].
+///
+/// Stability: locked from 0.8 forward.
+pub const PARSER_KIND: &str = "tls";

@@ -57,3 +57,8 @@ mod types;
 pub use datagram::IcmpParser;
 pub use parser::{Error, parse_v4, parse_v6};
 pub use types::*;
+
+/// Slug returned by [`IcmpParser::parser_kind`]. See [`crate::parser_kinds::ICMP`].
+///
+/// Stability: locked from 0.8 forward.
+pub const PARSER_KIND: &str = "icmp";

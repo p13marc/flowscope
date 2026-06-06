@@ -101,7 +101,7 @@ impl SessionParser for DnsTcpParser {
     }
 
     fn parser_kind(&self) -> &'static str {
-        "dns-tcp"
+        crate::dns::PARSER_KIND_TCP
     }
 }
 

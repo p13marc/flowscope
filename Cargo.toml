@@ -208,6 +208,10 @@ required-features = ["reassembler"]
 name = "icmp_parser"
 required-features = ["icmp"]
 
+[[test]]
+name = "parser_kind_constants"
+required-features = ["session"]
+
 [[bench]]
 name = "extractor"
 harness = false

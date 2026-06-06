@@ -128,6 +128,33 @@ pub mod test_helpers;
 pub use timestamp::Timestamp;
 pub use view::{AsPacketView, PacketView};
 
+/// Re-export of every shipped parser-kind constant under one path.
+///
+/// Use these constants at match sites instead of string literals so
+/// typos fail to resolve (compile error) rather than silently miss
+/// at runtime. Each constant is cfg-gated by its parser's feature.
+///
+/// ```ignore
+/// use flowscope::parser_kinds;
+/// match parser_kind {
+///     k if k == parser_kinds::DNS_UDP => /* DNS lookup */,
+///     k if k == parser_kinds::HTTP => /* HTTP request */,
+///     _ => {}
+/// }
+/// ```
+pub mod parser_kinds {
+    #[cfg(feature = "dns")]
+    pub use crate::dns::PARSER_KIND_TCP as DNS_TCP;
+    #[cfg(feature = "dns")]
+    pub use crate::dns::PARSER_KIND_UDP as DNS_UDP;
+    #[cfg(feature = "http")]
+    pub use crate::http::PARSER_KIND as HTTP;
+    #[cfg(feature = "icmp")]
+    pub use crate::icmp::PARSER_KIND as ICMP;
+    #[cfg(feature = "tls")]
+    pub use crate::tls::PARSER_KIND as TLS;
+}
+
 #[cfg(feature = "tracker")]
 pub use dedup::Dedup;
 
