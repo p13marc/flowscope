@@ -16,6 +16,11 @@ use super::types::{DnsConfig, DnsQuery, DnsResponse};
 ///
 /// `#[non_exhaustive]` — match with a trailing `_ => {}` arm.
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(
+    feature = "serde",
+    serde(tag = "type", content = "data", rename_all = "snake_case")
+)]
 #[non_exhaustive]
 pub enum DnsMessage {
     /// A query observed on the wire.

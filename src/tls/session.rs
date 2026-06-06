@@ -13,6 +13,11 @@ use super::types::{TlsAlert, TlsClientHello, TlsConfig, TlsServerHello};
 
 /// Unified message type emitted by [`TlsParser`].
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(
+    feature = "serde",
+    serde(tag = "type", content = "data", rename_all = "snake_case")
+)]
 pub enum TlsMessage {
     /// Client → server handshake `ClientHello`.
     ClientHello(Box<TlsClientHello>),

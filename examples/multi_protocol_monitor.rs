@@ -40,8 +40,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // ── HTTP ─────────────────────────────────────────────────────
     {
-        let source =
-            PcapFlowSource::open(&path)?.sessions(FiveTuple::bidirectional(), HttpParser::default());
+        let source = PcapFlowSource::open(&path)?
+            .sessions(FiveTuple::bidirectional(), HttpParser::default());
         for evt in source {
             let evt = evt?;
             if let SessionEvent::Application {
@@ -97,10 +97,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                     DnsMessage::Response(r) => {
                         let n = r.questions.first().map(|q| q.name.as_str()).unwrap_or("?");
-                        events.push((
-                            ts,
-                            format!("DNS  R  {n} ({} answers)", r.answers.len()),
-                        ));
+                        events.push((ts, format!("DNS  R  {n} ({} answers)", r.answers.len())));
                     }
                     _ => {}
                 }
@@ -124,7 +121,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         ),
                     ));
                 } else {
-                    events.push((ts, format!("ICMP {} ({:?})", message.short_kind(), message.family)));
+                    events.push((
+                        ts,
+                        format!("ICMP {} ({:?})", message.short_kind(), message.family),
+                    ));
                 }
             }
         }

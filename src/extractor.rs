@@ -72,6 +72,8 @@ pub struct Extracted<K> {
 
 /// Orientation of a packet relative to its canonical flow key.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
 pub enum Orientation {
     /// Packet's natural src→dst matches the key's a→b ordering.
     Forward,
@@ -82,6 +84,11 @@ pub enum Orientation {
 
 /// L4 protocol identified by an extractor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(
+    feature = "serde",
+    serde(tag = "kind", content = "value", rename_all = "snake_case")
+)]
 pub enum L4Proto {
     Tcp,
     Udp,
@@ -111,6 +118,7 @@ impl std::fmt::Display for L4Proto {
 /// unconditionally non-breaking. External consumers read fields by
 /// name; internal constructors use struct-literal syntax.
 #[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]
 pub struct TcpInfo {
     /// Decoded TCP flags.
@@ -144,6 +152,21 @@ bitflags! {
         const URG = 0b0010_0000;
         const ECE = 0b0100_0000;
         const CWR = 0b1000_0000;
+    }
+}
+
+#[cfg(feature = "serde")]
+impl serde::Serialize for TcpFlags {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        self.bits().serialize(s)
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<'de> serde::Deserialize<'de> for TcpFlags {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let raw = u8::deserialize(d)?;
+        Ok(TcpFlags::from_bits_retain(raw))
     }
 }
 

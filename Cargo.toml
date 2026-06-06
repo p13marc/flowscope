@@ -52,12 +52,16 @@ metrics = { version = "0.24", optional = true }
 # `tracing` feature
 tracing = { version = "0.1", default-features = false, features = ["std", "attributes"], optional = true }
 
+# `serde` feature
+serde = { version = "1", features = ["derive"], optional = true }
+
 [dev-dependencies]
 proptest = "1"
 pcap-file = "2"
 metrics-util = "0.20"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 criterion = { version = "0.5", features = ["html_reports"] }
+serde_json = "1"
 
 [features]
 default = ["extractors", "tracker", "reassembler", "session"]
@@ -88,6 +92,12 @@ pcap = ["extractors", "tracker", "dep:pcap-file"]
 
 # Observability hooks (zero-cost when off).
 metrics = ["tracker", "dep:metrics"]
+
+# Serde Serialize + Deserialize on every public event / message /
+# accessor / config type. Locks the snake_case wire vocabulary from
+# 0.8 forward — once shipped, dashboards depend on field / variant
+# names. Renames require a CHANGELOG-documented breaking change.
+serde = ["dep:serde", "bytes?/serde", "arrayvec?/serde", "smallvec?/serde"]
 tracing = ["tracker", "dep:tracing"]
 # Optional sub-feature: emit tracing::trace! events per
 # SessionEvent::Application, gated behind `tracing`. Adds a
@@ -227,6 +237,10 @@ required-features = ["dns"]
 [[example]]
 name = "multi_protocol_monitor"
 required-features = ["pcap", "http", "tls", "dns", "icmp"]
+
+[[test]]
+name = "serde_round_trip"
+required-features = ["serde", "tracker"]
 
 [[bench]]
 name = "extractor"

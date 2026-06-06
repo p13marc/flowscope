@@ -12,6 +12,7 @@ use crate::view::PacketView;
 pub struct MacPair;
 
 #[derive(Debug, Clone, Copy, Hash, Eq, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct MacPairKey {
     pub a: [u8; 6],
     pub b: [u8; 6],

@@ -49,6 +49,7 @@ impl Default for FiveTuple {
 /// In bidirectional mode, `a < b` (lexicographic on `SocketAddr`).
 /// In directional mode, `a` is always source, `b` always destination.
 #[derive(Debug, Clone, Copy, Hash, Eq, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct FiveTupleKey {
     pub proto: L4Proto,
     pub a: SocketAddr,

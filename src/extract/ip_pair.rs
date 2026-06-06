@@ -17,6 +17,7 @@ use super::parse;
 pub struct IpPair;
 
 #[derive(Debug, Clone, Copy, Hash, Eq, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct IpPairKey {
     pub a: IpAddr,
     pub b: IpAddr,

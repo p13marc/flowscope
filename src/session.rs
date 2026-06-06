@@ -295,6 +295,15 @@ where
 /// breaking exhaustive external `match` blocks. Match with a
 /// trailing `_ => {}` arm for forward-compatibility.
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(tag = "type", rename_all = "snake_case"))]
+#[cfg_attr(
+    feature = "serde",
+    serde(bound(
+        serialize = "K: serde::Serialize, M: serde::Serialize",
+        deserialize = "K: serde::de::DeserializeOwned, M: serde::de::DeserializeOwned"
+    ))
+)]
 #[non_exhaustive]
 pub enum SessionEvent<K, M> {
     /// First packet of a new session.

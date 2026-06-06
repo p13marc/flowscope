@@ -30,6 +30,20 @@ Pre-1.0 breaking changes; `netring` updates in lockstep.
 
 ### Added
 
+- **`serde` Cargo feature** (plan 83) — opt-in `Serialize` +
+  `Deserialize` derives on every public event, message,
+  accessor, and configuration type. **Locked wire vocabulary
+  from 0.8 forward**: snake_case field / variant names; enums
+  with payloads use adjacent tagging (`{"kind": "tcp"}` /
+  `{"kind": "other", "value": 99}`); enums with all struct
+  variants use internal tagging (`{"kind": "out_of_order_segment",
+  "side": "initiator", "count": 5}`); `Timestamp` serializes as
+  `{"sec": u32, "nsec": u32}`. Once shipped, dashboards depend
+  on these names — renames require a CHANGELOG-documented
+  breaking change. Adds `serde_json` / `bytes,serde` /
+  `arrayvec,serde` / `smallvec,serde` transitive feature
+  enablement. New CI feature-matrix entries: `serde` standalone
+  + `serde,l7,pcap` combined.
 - **Multi-protocol monitor recipe + example** (plan 91).
   `examples/multi_protocol_monitor.rs` demonstrates running
   HTTP + TLS + DNS + ICMP parsers against a single pcap with

@@ -2,6 +2,7 @@ use bytes::Bytes;
 
 /// Parsed TLS ClientHello — what the client offered to the server.
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct TlsClientHello {
     /// Record-layer protocol version (the version on the outer
     /// record, often `Tls1_0` for TLS 1.3 ClientHellos for
@@ -45,6 +46,7 @@ impl TlsClientHello {
 
 /// Parsed TLS ServerHello.
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct TlsServerHello {
     pub record_version: TlsVersion,
     pub legacy_version: TlsVersion,
@@ -63,12 +65,18 @@ pub struct TlsServerHello {
 
 /// TLS Alert record (RFC 5246 §7.2).
 #[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct TlsAlert {
     pub level: TlsAlertLevel,
     pub description: u8,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(
+    feature = "serde",
+    serde(tag = "kind", content = "value", rename_all = "snake_case")
+)]
 pub enum TlsAlertLevel {
     Warning,
     Fatal,
@@ -76,6 +84,11 @@ pub enum TlsAlertLevel {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(
+    feature = "serde",
+    serde(tag = "kind", content = "value", rename_all = "snake_case")
+)]
 pub enum TlsVersion {
     Ssl3_0,
     Tls1_0,

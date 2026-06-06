@@ -6,6 +6,8 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use crate::extractor::L4Proto;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
 pub enum IcmpFamily {
     V4,
     V6,
@@ -18,6 +20,7 @@ pub enum IcmpFamily {
 /// consumers a pattern match when they only need to route on
 /// family.
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct IcmpMessage {
     pub family: IcmpFamily,
     pub ty: IcmpType,
@@ -28,6 +31,11 @@ pub struct IcmpMessage {
 /// v4 vs `128` on v6) and the v6-specific Neighbor Discovery
 /// types don't appear in v4 at all.
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(
+    feature = "serde",
+    serde(tag = "family", content = "ty", rename_all = "snake_case")
+)]
 #[non_exhaustive]
 pub enum IcmpType {
     V4(Icmpv4Type),
@@ -40,6 +48,8 @@ pub enum IcmpType {
 /// relevant types; rarely-seen / obsolete types collapse into
 /// [`Self::Other`] with the raw type byte and code preserved.
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(tag = "type", rename_all = "snake_case"))]
 #[non_exhaustive]
 pub enum Icmpv4Type {
     /// Type 0.
@@ -99,6 +109,11 @@ pub enum Icmpv4Type {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(
+    feature = "serde",
+    serde(tag = "kind", content = "value", rename_all = "snake_case")
+)]
 #[non_exhaustive]
 pub enum Icmpv4DestUnreachCode {
     Net,
@@ -121,6 +136,11 @@ pub enum Icmpv4DestUnreachCode {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(
+    feature = "serde",
+    serde(tag = "kind", content = "value", rename_all = "snake_case")
+)]
 #[non_exhaustive]
 pub enum Icmpv4RedirectCode {
     Network,
@@ -131,6 +151,11 @@ pub enum Icmpv4RedirectCode {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(
+    feature = "serde",
+    serde(tag = "kind", content = "value", rename_all = "snake_case")
+)]
 #[non_exhaustive]
 pub enum Icmpv4TimeExceededCode {
     HopLimitExceeded,
@@ -144,6 +169,8 @@ pub enum Icmpv4TimeExceededCode {
 /// and the two most common Neighbor Discovery messages (NS, NA);
 /// MLD, RS, RA, Redirect collapse into [`Self::Other`].
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(tag = "type", rename_all = "snake_case"))]
 #[non_exhaustive]
 pub enum Icmpv6Type {
     /// Type 1.
@@ -189,6 +216,11 @@ pub enum Icmpv6Type {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(
+    feature = "serde",
+    serde(tag = "kind", content = "value", rename_all = "snake_case")
+)]
 #[non_exhaustive]
 pub enum Icmpv6DestUnreachCode {
     NoRoute,
@@ -202,6 +234,11 @@ pub enum Icmpv6DestUnreachCode {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(
+    feature = "serde",
+    serde(tag = "kind", content = "value", rename_all = "snake_case")
+)]
 #[non_exhaustive]
 pub enum Icmpv6TimeExceededCode {
     HopLimitExceeded,
@@ -210,6 +247,11 @@ pub enum Icmpv6TimeExceededCode {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(
+    feature = "serde",
+    serde(tag = "kind", content = "value", rename_all = "snake_case")
+)]
 #[non_exhaustive]
 pub enum Icmpv6ParamProblemCode {
     ErroneousHeaderField,
@@ -230,6 +272,7 @@ pub enum Icmpv6ParamProblemCode {
 /// the original packet placed after the IP header. For other
 /// protocols (or truncated embeds), they're `None`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct IcmpInner {
     pub src: IpAddr,
     pub dst: IpAddr,

@@ -12,6 +12,8 @@ use crate::history::HistoryString;
 /// - Packets matching that orientation are `Initiator`, packets in
 ///   the opposite orientation are `Responder`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
 pub enum FlowSide {
     Initiator,
     Responder,
@@ -19,6 +21,8 @@ pub enum FlowSide {
 
 /// Why a flow ended.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
 #[non_exhaustive]
 pub enum EndReason {
     /// TCP FIN observed (graceful close).
@@ -68,6 +72,8 @@ impl std::fmt::Display for EndReason {
 /// What to do when [`crate::BufferedReassembler`]'s in-flight buffer
 /// would exceed its configured cap.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
 pub enum OverflowPolicy {
     /// Drop oldest bytes from the front of the buffer until the new
     /// payload fits. The flow stays alive; the parser sees a gap and
@@ -93,6 +99,7 @@ pub enum OverflowPolicy {
 /// Construct via `FlowStats::default()` and mutate; do not rely on
 /// struct-literal construction from outside the crate.
 #[derive(Debug, Clone, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]
 pub struct FlowStats {
     pub packets_initiator: u64,
@@ -134,6 +141,8 @@ pub struct FlowStats {
 /// TCP flows transition through `SynSent → Established → FinWait → Closed`
 /// (or `Reset`/`Aborted` on irregular termination).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
 pub enum FlowState {
     /// First TCP SYN observed; awaiting SYN-ACK.
     SynSent,
@@ -173,6 +182,8 @@ impl FlowState {
 /// protocol-specific signals through their own `Message` type
 /// instead.
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(tag = "kind", rename_all = "snake_case"))]
 #[non_exhaustive]
 pub enum AnomalyKind {
     /// Reassembler dropped bytes from its buffer because the per-side
@@ -282,6 +293,8 @@ impl std::fmt::Display for AnomalyKind {
 ///
 /// `#[non_exhaustive]` so future severity bands are additive.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
 #[non_exhaustive]
 pub enum Severity {
     /// Routine, informational — high-volume, log-only.
@@ -349,6 +362,15 @@ impl std::fmt::Display for Severity {
 /// `#[non_exhaustive]` since 0.5 — future variants are additive;
 /// match with a trailing `_ => {}` arm for forward-compatibility.
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(tag = "type", rename_all = "snake_case"))]
+#[cfg_attr(
+    feature = "serde",
+    serde(bound(
+        serialize = "K: serde::Serialize",
+        deserialize = "K: serde::de::DeserializeOwned"
+    ))
+)]
 #[non_exhaustive]
 pub enum FlowEvent<K> {
     /// First packet of a new flow.

@@ -19,6 +19,7 @@ use super::parse;
 
 /// Wraps an inner key with a 20-bit IPv6 flow label.
 #[derive(Debug, Clone, Copy, Hash, Eq, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct FlowLabelKey<K> {
     /// The inner extractor's key.
     pub inner: K,

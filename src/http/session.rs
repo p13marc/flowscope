@@ -13,6 +13,11 @@ use super::types::{HttpConfig, HttpRequest, HttpResponse};
 
 /// Unified message type emitted by [`HttpParser`].
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(
+    feature = "serde",
+    serde(tag = "type", content = "data", rename_all = "snake_case")
+)]
 pub enum HttpMessage {
     Request(HttpRequest),
     Response(HttpResponse),

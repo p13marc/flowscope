@@ -4,6 +4,7 @@ use std::time::Duration;
 
 /// Parsed DNS query observed on the wire.
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct DnsQuery {
     pub transaction_id: u16,
     pub flags: DnsFlags,
@@ -13,6 +14,7 @@ pub struct DnsQuery {
 
 /// Parsed DNS response.
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct DnsResponse {
     pub transaction_id: u16,
     pub flags: DnsFlags,
@@ -29,6 +31,7 @@ pub struct DnsResponse {
 }
 
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct DnsQuestion {
     pub name: String,
     pub qtype: u16,
@@ -37,6 +40,7 @@ pub struct DnsQuestion {
 
 /// One DNS resource record.
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct DnsRecord {
     pub name: String,
     pub rtype: u16,
@@ -48,6 +52,11 @@ pub struct DnsRecord {
 /// Decoded record data for the common types we can render simply.
 /// Everything else lands in [`DnsRdata::Other`].
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(
+    feature = "serde",
+    serde(tag = "rtype", content = "data", rename_all = "snake_case")
+)]
 pub enum DnsRdata {
     A(Ipv4Addr),
     AAAA(Ipv6Addr),
@@ -70,6 +79,11 @@ pub enum DnsRdata {
 
 /// DNS response code (RFC 1035 §4.1.1, RFC 6895 for extended codes).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(
+    feature = "serde",
+    serde(tag = "kind", content = "value", rename_all = "snake_case")
+)]
 pub enum DnsRcode {
     NoError,
     FormErr,
@@ -106,6 +120,7 @@ impl DnsRcode {
 
 /// Flag/header bits from the DNS message header word.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct DnsFlags(pub u16);
 
 impl DnsFlags {

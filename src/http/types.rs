@@ -2,6 +2,7 @@ use bytes::Bytes;
 
 /// Parsed HTTP/1.x request — start line + headers + body.
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct HttpRequest {
     pub method: String,
     pub path: String,
@@ -16,6 +17,7 @@ pub struct HttpRequest {
 
 /// Parsed HTTP/1.x response.
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct HttpResponse {
     pub status: u16,
     pub reason: String,
@@ -25,6 +27,8 @@ pub struct HttpResponse {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
 pub enum HttpVersion {
     Http1_0,
     Http1_1,
