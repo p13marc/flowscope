@@ -27,6 +27,7 @@ use std::path::Path;
 
 use crate::event::FlowEvent;
 use crate::extractor::FlowExtractor;
+#[cfg(feature = "pcap")]
 use crate::pcap::PcapFlowSource;
 use crate::session::{DatagramParser, SessionEvent, SessionParser};
 use crate::tracker::FlowTrackerConfig;

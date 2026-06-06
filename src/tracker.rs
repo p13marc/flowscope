@@ -112,6 +112,23 @@ pub struct FlowTrackerConfig {
     /// Idle detection still belongs to
     /// [`FlowTracker::sweep`] / idle-timeout machinery.
     pub flow_tick_interval: Option<Duration>,
+    /// New in 0.9.0 (plan 75). When `Some(d)`, the tracker runs an
+    /// implicit sweep at the end of any [`FlowTracker::track`] call
+    /// where `view.timestamp.saturating_sub(last_sweep_ts) >= d`,
+    /// and merges the sweep's events into the returned vector.
+    ///
+    /// `None` (default) — only explicit [`FlowTracker::sweep`] /
+    /// [`FlowTracker::finish`] calls produce idle-timeout
+    /// `Ended` events. Live and offline pipelines diverge in this
+    /// case (live runs use `tokio::time::interval` for sweep
+    /// cadence; offline has no timer).
+    ///
+    /// Live and offline pipelines emit identical event streams
+    /// when both set this field to the same value.
+    ///
+    /// Manual [`FlowTracker::sweep`] resets `last_sweep_ts`, so
+    /// mixing manual + auto sweep is safe (no double-fires).
+    pub auto_sweep_interval: Option<Duration>,
 }
 
 impl Default for FlowTrackerConfig {
@@ -127,6 +144,7 @@ impl Default for FlowTrackerConfig {
             overflow_policy: crate::event::OverflowPolicy::SlidingWindow,
             reassembler_high_watermark_pct: None,
             flow_tick_interval: None,
+            auto_sweep_interval: None,
         }
     }
 }
@@ -169,6 +187,11 @@ pub struct FlowTracker<E: FlowExtractor, S = ()> {
     /// `Some`, [`Self::sweep`] consults this before falling back to
     /// the per-protocol defaults in [`FlowTrackerConfig`].
     idle_timeout_fn: Option<IdleTimeoutFn<E::Key>>,
+    /// Last packet timestamp at which a sweep ran (manual or
+    /// implicit). Plan 75: when `auto_sweep_interval` is `Some(d)`,
+    /// `track()` runs an implicit sweep whenever
+    /// `view.timestamp.saturating_sub(last_sweep_ts) >= d`.
+    last_sweep_ts: Option<Timestamp>,
 }
 
 impl<E: FlowExtractor, S: Send + 'static> FlowTracker<E, S> {
@@ -195,7 +218,29 @@ impl<E: FlowExtractor, S: Send + 'static> FlowTracker<E, S> {
             init: Box::new(init),
             hot: None,
             idle_timeout_fn: None,
+            last_sweep_ts: None,
         }
+    }
+
+    /// Enable packet-clock-driven implicit sweeps.
+    ///
+    /// After each [`Self::track`] / [`Self::track_with_payload`]
+    /// call, if `view.timestamp.saturating_sub(last_sweep_ts) >=
+    /// interval`, an implicit sweep runs and its events are
+    /// appended to the returned vector. Off by default — explicit
+    /// [`Self::sweep`] / [`Self::finish`] remain the primary
+    /// surface.
+    ///
+    /// Manual [`Self::sweep`] resets `last_sweep_ts`, so mixing
+    /// manual + auto-sweep is safe (no double-fires).
+    ///
+    /// Pairs naturally with offline pcap replay where live
+    /// pipelines drive sweeps via `tokio::time::interval` and the
+    /// offline path has no timer; setting the same interval on
+    /// both produces identical event streams. Plan 75.
+    pub fn with_auto_sweep(mut self, interval: Duration) -> Self {
+        self.config.auto_sweep_interval = Some(interval);
+        self
     }
 
     /// Process a packet. Returns 0–3 events.
@@ -413,6 +458,25 @@ impl<E: FlowExtractor, S: Send + 'static> FlowTracker<E, S> {
             self.hot = Some(key);
         }
 
+        // ── Plan 75: implicit auto-sweep ─────────────────────────
+        // If `auto_sweep_interval` is set and enough packet-clock
+        // time has elapsed since the last sweep, run one now and
+        // merge its events. Saturating arithmetic guards against
+        // out-of-order timestamps.
+        if let Some(interval) = self.config.auto_sweep_interval {
+            let should_sweep = match self.last_sweep_ts {
+                None => true,
+                Some(last) => ts
+                    .to_duration()
+                    .saturating_sub(last.to_duration())
+                    >= interval,
+            };
+            if should_sweep {
+                let swept = self.sweep(ts);
+                events.extend(swept);
+            }
+        }
+
         events
     }
 
@@ -426,7 +490,11 @@ impl<E: FlowExtractor, S: Send + 'static> FlowTracker<E, S> {
     /// Run the idle-timeout sweep. Returns events for flows that
     /// ended due to timeout. Call periodically (e.g., from a tokio
     /// `Interval`).
+    ///
+    /// Updates `last_sweep_ts`, so a subsequent
+    /// auto-sweep (plan 75) won't double-fire.
     pub fn sweep(&mut self, now: Timestamp) -> Vec<FlowEvent<E::Key>> {
+        self.last_sweep_ts = Some(now);
         let mut ended = Vec::new();
         // Collect keys to expire. Walk all entries to compute idle.
         let now_dur = now.to_duration();

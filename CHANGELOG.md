@@ -4,6 +4,15 @@
 
 ### Added
 
+- **`FlowTracker::with_auto_sweep(interval)`** (plan 75).
+  Packet-clock-driven implicit sweeps so live and offline
+  pipelines emit identical event streams for identical inputs.
+  Off by default. Sets `FlowTrackerConfig::auto_sweep_interval`.
+  After each `track()` call, if
+  `view.timestamp - last_sweep_ts >= interval`, runs an implicit
+  sweep and merges its events into the returned vector. Manual
+  `sweep()` resets `last_sweep_ts` so mixing manual + auto
+  is safe.
 - **`flowscope::layers` module** (plan 94 Tier 3). Public per-
   packet introspection: `Layers<'a>` with direct accessors
   (`.tcp()`, `.ipv4()`, `.vlan()`, …) and a dynamic walk
