@@ -36,12 +36,14 @@
 //! - **Common record types** decoded: A, AAAA, CNAME, NS, PTR, MX.
 //!   Everything else: `DnsRdata::Other { rtype, data }`.
 
+mod correlate;
 mod correlator;
 mod datagram;
 mod parser;
 mod session;
 mod types;
 
+pub use correlate::DnsResolutionCache;
 pub use correlator::Correlator;
 pub use datagram::{DnsMessage, DnsUdpParser};
 pub use parser::{DnsParseResult, parse_message, parse_message_at};

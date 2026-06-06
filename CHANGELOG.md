@@ -30,6 +30,14 @@ Pre-1.0 breaking changes; `netring` updates in lockstep.
 
 ### Added
 
+- **`flowscope::dns::DnsResolutionCache`** (plan 85). TTL'd
+  per-client DNS resolution cache for cross-protocol correlation:
+  `"did client X recently resolve target Y?"` / `"what hostname
+  did X use for Y?"`. Records every A / AAAA answer; skips
+  CNAME / NS / MX. LRU-bounded (default 16,384 entries); periodic
+  `sweep(now)` drops expired entries. Hostnames canonicalised to
+  lowercase ASCII (RFC 1035 §2.3.1). Two netring detectors already
+  hand-rolled this primitive; this lifts it once.
 - **`FlowTracker::force_close` + driver mirrors + `EndReason::ForceClosed`**
   (plan 89). External orchestration can now end a specific flow
   ahead of FIN / idle / eviction. Use cases: resource budgets,

@@ -220,6 +220,10 @@ required-features = ["tracker", "extractors", "test-helpers"]
 name = "force_close"
 required-features = ["tracker", "extractors", "test-helpers"]
 
+[[test]]
+name = "dns_resolution_cache"
+required-features = ["dns"]
+
 [[bench]]
 name = "extractor"
 harness = false
