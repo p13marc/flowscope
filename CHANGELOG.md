@@ -21,8 +21,21 @@ Pre-1.0 breaking changes; `netring` updates in lockstep.
   + FlowEvent::Established { key, ts, .. } => …
   ```
 
+### Deprecated
+
+- **`FlowTracker::all_flow_stats`** in favour of
+  [`FlowTracker::iter_active`] (plan 90). One-line migration; the
+  new method exposes per-flow user state, TCP state, and L4
+  protocol in addition to stats. Removal targeted for 0.9 or 0.10.
+
 ### Added
 
+- **`FlowTracker::iter_active() -> impl Iterator<Item = ActiveFlow<'_, K, S>>`**
+  (plan 90). Snapshots every live flow with key + stats + user
+  state + TCP state + L4 protocol. `ActiveFlow` is
+  `#[non_exhaustive]` named-struct so future fields stay
+  non-breaking. LRU order untouched (uses `peek`-equivalent
+  iteration).
 - **`IcmpType::is_error()`, `error_inner()`, `short_kind()` +
   mirrors on `IcmpMessage`** (plan 84). `is_error` returns true
   for the seven error-class variants (Destination Unreachable,

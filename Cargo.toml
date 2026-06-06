@@ -212,6 +212,10 @@ required-features = ["icmp"]
 name = "parser_kind_constants"
 required-features = ["session"]
 
+[[test]]
+name = "iter_active"
+required-features = ["tracker", "extractors", "test-helpers"]
+
 [[bench]]
 name = "extractor"
 harness = false

@@ -25,6 +25,22 @@ use crate::view::PacketView;
 /// Established + Packet) emit 3.
 pub type FlowEvents<K> = SmallVec<[FlowEvent<K>; 3]>;
 
+/// Snapshot of one live flow returned by [`FlowTracker::iter_active`].
+///
+/// `#[non_exhaustive]` so future fields stay non-breaking. Construct
+/// is internal to flowscope; external consumers read fields by name.
+#[derive(Debug)]
+#[non_exhaustive]
+pub struct ActiveFlow<'a, K, S> {
+    pub key: &'a K,
+    pub stats: &'a FlowStats,
+    /// Per-flow user state. `()` when the tracker was constructed via
+    /// the stateless `new` / `with_config` constructors.
+    pub user: &'a S,
+    pub state: FlowState,
+    pub l4: Option<L4Proto>,
+}
+
 /// Per-flow accounting + user state.
 #[derive(Debug, Clone)]
 pub struct FlowEntry<S> {
@@ -612,8 +628,39 @@ impl<E: FlowExtractor, S: Send + 'static> FlowTracker<E, S> {
     /// [`crate::FlowDriver::snapshot_flow_stats`] or
     /// [`crate::FlowSessionDriver::snapshot_flow_stats`] which
     /// combine tracker stats with live reassembler state.
+    #[deprecated(
+        since = "0.8.0",
+        note = "use `iter_active()` which exposes per-flow user state, TCP state, and L4 protocol in addition to stats"
+    )]
     pub fn all_flow_stats(&self) -> impl Iterator<Item = (&E::Key, &FlowStats)> {
         self.flows.iter().map(|(k, e)| (k, &e.stats))
+    }
+
+    /// Iterate over every live flow as an [`ActiveFlow`] snapshot.
+    /// New in 0.8.0; replaces (and deprecates) [`Self::all_flow_stats`].
+    ///
+    /// Surfaces the key, stats, per-flow user state (`S`), TCP state
+    /// machine state, and L4 protocol — everything a periodic
+    /// dashboard / top-N report / stuck-handshake inspector needs.
+    /// LRU order is **not** touched (uses [`lru::LruCache::iter`]).
+    ///
+    /// Mutation through this iterator is not allowed (shared borrow);
+    /// use [`Self::force_close`] to end a specific flow.
+    ///
+    /// ```ignore
+    /// for af in tracker.iter_active() {
+    ///     println!("{:?} state={:?} bytes={}", af.key, af.state,
+    ///         af.stats.bytes_initiator + af.stats.bytes_responder);
+    /// }
+    /// ```
+    pub fn iter_active(&self) -> impl Iterator<Item = ActiveFlow<'_, E::Key, S>> {
+        self.flows.iter().map(|(key, entry)| ActiveFlow {
+            key,
+            stats: &entry.stats,
+            user: &entry.user,
+            state: entry.state,
+            l4: entry.l4,
+        })
     }
 
     /// Snapshot the [`HistoryString`] of a live flow without ending
