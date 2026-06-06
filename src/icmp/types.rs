@@ -237,3 +237,130 @@ pub struct IcmpInner {
     pub src_port: Option<u16>,
     pub dst_port: Option<u16>,
 }
+
+// ── Convenience accessors (plan 84) ─────────────────────────────
+
+impl IcmpType {
+    /// `true` if this is an error-class type — one that carries an
+    /// `inner: Option<IcmpInner>` field (Destination Unreachable,
+    /// Redirect, Time Exceeded, Parameter Problem on v4; the v6
+    /// counterparts plus Packet Too Big).
+    ///
+    /// Non-error types (Echo*, Timestamp*, Neighbor*, Other) return
+    /// `false`.
+    pub fn is_error(&self) -> bool {
+        matches!(
+            self,
+            IcmpType::V4(
+                Icmpv4Type::DestinationUnreachable { .. }
+                    | Icmpv4Type::Redirect { .. }
+                    | Icmpv4Type::TimeExceeded { .. }
+                    | Icmpv4Type::ParameterProblem { .. },
+            ) | IcmpType::V6(
+                Icmpv6Type::DestinationUnreachable { .. }
+                    | Icmpv6Type::PacketTooBig { .. }
+                    | Icmpv6Type::TimeExceeded { .. }
+                    | Icmpv6Type::ParameterProblem { .. },
+            )
+        )
+    }
+
+    /// `(short label, &IcmpInner)` for any error variant whose inner
+    /// was successfully parsed. `None` for non-error types or
+    /// truncated / unparseable embeds.
+    ///
+    /// The short label is the same slug [`Self::short_kind`] returns
+    /// for error variants — stable, zero-allocation, suitable as a
+    /// metric label.
+    pub fn error_inner(&self) -> Option<(&'static str, &IcmpInner)> {
+        let (label, inner) = match self {
+            IcmpType::V4(Icmpv4Type::DestinationUnreachable { inner, .. }) => {
+                ("dest_unreachable", inner.as_ref())
+            }
+            IcmpType::V4(Icmpv4Type::Redirect { inner, .. }) => ("redirect", inner.as_ref()),
+            IcmpType::V4(Icmpv4Type::TimeExceeded { inner, .. }) => {
+                ("time_exceeded", inner.as_ref())
+            }
+            IcmpType::V4(Icmpv4Type::ParameterProblem { inner, .. }) => {
+                ("parameter_problem", inner.as_ref())
+            }
+            IcmpType::V6(Icmpv6Type::DestinationUnreachable { inner, .. }) => {
+                ("dest_unreachable", inner.as_ref())
+            }
+            IcmpType::V6(Icmpv6Type::PacketTooBig { inner, .. }) => {
+                ("packet_too_big", inner.as_ref())
+            }
+            IcmpType::V6(Icmpv6Type::TimeExceeded { inner, .. }) => {
+                ("time_exceeded", inner.as_ref())
+            }
+            IcmpType::V6(Icmpv6Type::ParameterProblem { inner, .. }) => {
+                ("parameter_problem", inner.as_ref())
+            }
+            _ => return None,
+        };
+        inner.map(|i| (label, i))
+    }
+
+    /// Stable variant slug. Zero-allocation `&'static str`; suitable
+    /// as a metric label. v4 / v6 variants with the same semantic
+    /// meaning share the same slug (`"echo_request"` etc.); use
+    /// [`IcmpMessage::family`] to disambiguate.
+    ///
+    /// | Variant | Slug |
+    /// |---------|------|
+    /// | v4/v6 EchoRequest | `"echo_request"` |
+    /// | v4/v6 EchoReply | `"echo_reply"` |
+    /// | v4/v6 DestinationUnreachable | `"dest_unreachable"` |
+    /// | v4 Redirect | `"redirect"` |
+    /// | v6 PacketTooBig | `"packet_too_big"` |
+    /// | v4/v6 TimeExceeded | `"time_exceeded"` |
+    /// | v4/v6 ParameterProblem | `"parameter_problem"` |
+    /// | v4 Timestamp | `"timestamp"` |
+    /// | v4 TimestampReply | `"timestamp_reply"` |
+    /// | v6 NeighborSolicitation | `"neighbor_solicitation"` |
+    /// | v6 NeighborAdvertisement | `"neighbor_advertisement"` |
+    /// | Other | `"other"` |
+    pub fn short_kind(&self) -> &'static str {
+        match self {
+            IcmpType::V4(t) => match t {
+                Icmpv4Type::EchoReply { .. } => "echo_reply",
+                Icmpv4Type::DestinationUnreachable { .. } => "dest_unreachable",
+                Icmpv4Type::Redirect { .. } => "redirect",
+                Icmpv4Type::EchoRequest { .. } => "echo_request",
+                Icmpv4Type::TimeExceeded { .. } => "time_exceeded",
+                Icmpv4Type::ParameterProblem { .. } => "parameter_problem",
+                Icmpv4Type::Timestamp { .. } => "timestamp",
+                Icmpv4Type::TimestampReply { .. } => "timestamp_reply",
+                Icmpv4Type::Other { .. } => "other",
+            },
+            IcmpType::V6(t) => match t {
+                Icmpv6Type::DestinationUnreachable { .. } => "dest_unreachable",
+                Icmpv6Type::PacketTooBig { .. } => "packet_too_big",
+                Icmpv6Type::TimeExceeded { .. } => "time_exceeded",
+                Icmpv6Type::ParameterProblem { .. } => "parameter_problem",
+                Icmpv6Type::EchoRequest { .. } => "echo_request",
+                Icmpv6Type::EchoReply { .. } => "echo_reply",
+                Icmpv6Type::NeighborSolicitation { .. } => "neighbor_solicitation",
+                Icmpv6Type::NeighborAdvertisement { .. } => "neighbor_advertisement",
+                Icmpv6Type::Other { .. } => "other",
+            },
+        }
+    }
+}
+
+impl IcmpMessage {
+    /// See [`IcmpType::is_error`].
+    pub fn is_error(&self) -> bool {
+        self.ty.is_error()
+    }
+
+    /// See [`IcmpType::error_inner`].
+    pub fn error_inner(&self) -> Option<(&'static str, &IcmpInner)> {
+        self.ty.error_inner()
+    }
+
+    /// See [`IcmpType::short_kind`].
+    pub fn short_kind(&self) -> &'static str {
+        self.ty.short_kind()
+    }
+}

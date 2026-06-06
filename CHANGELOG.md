@@ -23,6 +23,16 @@ Pre-1.0 breaking changes; `netring` updates in lockstep.
 
 ### Added
 
+- **`IcmpType::is_error()`, `error_inner()`, `short_kind()` +
+  mirrors on `IcmpMessage`** (plan 84). `is_error` returns true
+  for the seven error-class variants (Destination Unreachable,
+  Redirect, Time Exceeded, Parameter Problem on v4; the v6
+  counterparts plus Packet Too Big). `error_inner` returns
+  `(label, &IcmpInner)` in one call — saves the 40-LoC manual
+  match every ICMP-correlation consumer was writing.
+  `short_kind` returns the stable variant slug as `&'static str`
+  for metric labels (v4 and v6 variants with the same semantics
+  share the same slug; `family` field disambiguates).
 - **`AnomalyKind::short_kind() -> &'static str`** (plan 88).
   Stable variant slug returned for explicit metric-label intent.
   Same string as `Display`; pick whichever expresses your call

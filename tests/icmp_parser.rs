@@ -339,3 +339,140 @@ fn malformed_short_header_does_not_panic() {
     let _ = parse_v6(&[1, 2, 3]);
     // Just must not panic.
 }
+
+// ── Plan 84 helpers: is_error / error_inner / short_kind ──────────
+
+#[test]
+fn is_error_returns_true_for_error_variants() {
+    // v4 error variants
+    let p = v4_header(3, 0, [0, 0, 0, 0]); // DestUnreach
+    assert!(parse_v4(&p).unwrap().ty.is_error());
+    let p = v4_header(11, 0, [0, 0, 0, 0]); // TimeExceeded
+    assert!(parse_v4(&p).unwrap().ty.is_error());
+    let p = v4_header(5, 0, [1, 2, 3, 4]); // Redirect
+    assert!(parse_v4(&p).unwrap().ty.is_error());
+    // v6 error variants
+    let p = v6_header(1, 0, [0, 0, 0, 0]); // DestUnreach
+    assert!(parse_v6(&p).unwrap().ty.is_error());
+    let p = v6_header(2, 0, [0, 0, 5, 220]); // PacketTooBig (mtu 1500)
+    assert!(parse_v6(&p).unwrap().ty.is_error());
+    let p = v6_header(3, 0, [0, 0, 0, 0]); // TimeExceeded
+    assert!(parse_v6(&p).unwrap().ty.is_error());
+}
+
+#[test]
+fn is_error_returns_false_for_non_error_variants() {
+    let p = v4_header(8, 0, [0, 1, 0, 1]); // EchoRequest
+    assert!(!parse_v4(&p).unwrap().ty.is_error());
+    let p = v4_header(0, 0, [0, 1, 0, 1]); // EchoReply
+    assert!(!parse_v4(&p).unwrap().ty.is_error());
+    let p = v6_header(128, 0, [0, 1, 0, 1]); // EchoRequest v6
+    assert!(!parse_v6(&p).unwrap().ty.is_error());
+    // NeighborSolicitation
+    let mut p = v6_header(135, 0, [0, 0, 0, 0]);
+    p.extend_from_slice(&[0u8; 16]);
+    assert!(!parse_v6(&p).unwrap().ty.is_error());
+}
+
+#[test]
+fn error_inner_returns_label_and_inner() {
+    let mut payload = v4_header(3, 3, [0, 0, 0, 0]);
+    payload.extend(ipv4_tcp_inner([10, 0, 0, 1], [10, 0, 0, 2], 12345, 80));
+    let msg = parse_v4(&payload).unwrap();
+    let (label, inner) = msg.ty.error_inner().expect("inner");
+    assert_eq!(label, "dest_unreachable");
+    assert_eq!(inner.src_port, Some(12345));
+    assert_eq!(inner.dst_port, Some(80));
+}
+
+#[test]
+fn error_inner_returns_none_for_non_error() {
+    let p = v4_header(8, 0, [0, 1, 0, 1]); // EchoRequest
+    assert!(parse_v4(&p).unwrap().ty.error_inner().is_none());
+}
+
+#[test]
+fn error_inner_returns_none_for_truncated() {
+    let payload = v4_header(3, 0, [0, 0, 0, 0]); // No inner body at all
+    let msg = parse_v4(&payload).unwrap();
+    // The inner is None (no body); error_inner returns None.
+    assert!(msg.ty.error_inner().is_none());
+}
+
+#[test]
+fn short_kind_table() {
+    // v4
+    assert_eq!(
+        parse_v4(&v4_header(8, 0, [0, 1, 0, 1]))
+            .unwrap()
+            .short_kind(),
+        "echo_request"
+    );
+    assert_eq!(
+        parse_v4(&v4_header(0, 0, [0, 1, 0, 1]))
+            .unwrap()
+            .short_kind(),
+        "echo_reply"
+    );
+    assert_eq!(
+        parse_v4(&v4_header(3, 3, [0, 0, 0, 0]))
+            .unwrap()
+            .short_kind(),
+        "dest_unreachable"
+    );
+    assert_eq!(
+        parse_v4(&v4_header(5, 1, [1, 2, 3, 4]))
+            .unwrap()
+            .short_kind(),
+        "redirect"
+    );
+    assert_eq!(
+        parse_v4(&v4_header(11, 0, [0, 0, 0, 0]))
+            .unwrap()
+            .short_kind(),
+        "time_exceeded"
+    );
+    // v6
+    assert_eq!(
+        parse_v6(&v6_header(128, 0, [0, 1, 0, 1]))
+            .unwrap()
+            .short_kind(),
+        "echo_request"
+    );
+    assert_eq!(
+        parse_v6(&v6_header(2, 0, [0, 0, 5, 220]))
+            .unwrap()
+            .short_kind(),
+        "packet_too_big"
+    );
+    let mut ns = v6_header(135, 0, [0, 0, 0, 0]);
+    ns.extend_from_slice(&[0u8; 16]);
+    assert_eq!(parse_v6(&ns).unwrap().short_kind(), "neighbor_solicitation");
+}
+
+#[test]
+fn short_kind_v4_v6_share_slug_for_shared_semantics() {
+    let v4_echo = parse_v4(&v4_header(8, 0, [0, 1, 0, 1])).unwrap();
+    let v6_echo = parse_v6(&v6_header(128, 0, [0, 1, 0, 1])).unwrap();
+    assert_eq!(v4_echo.short_kind(), v6_echo.short_kind());
+    // family disambiguates when the consumer needs to:
+    assert_ne!(v4_echo.family, v6_echo.family);
+}
+
+#[test]
+fn short_kind_is_static_str() {
+    let m = parse_v4(&v4_header(8, 0, [0, 1, 0, 1])).unwrap();
+    let _s: &'static str = m.ty.short_kind();
+    let _s: &'static str = m.short_kind();
+}
+
+#[test]
+fn message_helpers_mirror_type_helpers() {
+    let mut payload = v4_header(3, 3, [0, 0, 0, 0]);
+    payload.extend(ipv4_tcp_inner([10, 0, 0, 1], [10, 0, 0, 2], 1, 2));
+    let msg = parse_v4(&payload).unwrap();
+    assert_eq!(msg.is_error(), msg.ty.is_error());
+    assert_eq!(msg.short_kind(), msg.ty.short_kind());
+    // error_inner returns a borrow; both should agree on Some-ness.
+    assert_eq!(msg.error_inner().is_some(), msg.ty.error_inner().is_some());
+}
