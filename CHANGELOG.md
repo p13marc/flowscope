@@ -1,5 +1,37 @@
 # Changelog
 
+## Unreleased — 0.9.0 cycle (in progress)
+
+### Breaking
+
+- **Error types unified into `flowscope::Error`** (plan 96). The
+  five module-local enums (`http::Error`, `tls::Error`,
+  `dns::Error`, `pcap::Error`, `icmp::Error`) are removed.
+  Every fallible flowscope API now returns
+  `flowscope::Result<T>` (alias for `Result<T, flowscope::Error>`).
+  `Error` carries a `Module`, an `ErrorCode`, a human-readable
+  message, and an optional `source` chain to the upstream
+  parser library's error type.
+
+  *Migration:*
+  ```diff
+  - match err {
+  -     flowscope::http::Error::Parse(s)          => log::warn!("http parse: {s}"),
+  -     flowscope::http::Error::BufferOverflow(n) => log::error!("http overflow at {n}"),
+  - }
+  + use flowscope::{Module, ErrorCode};
+  + match (err.module(), err.code()) {
+  +     (Module::Http, ErrorCode::Parse)          => log::warn!("http: {err}"),
+  +     (Module::Http, ErrorCode::BufferOverflow) => log::error!("http: {err}"),
+  +     _ => {}
+  + }
+  ```
+
+  Walk the underlying parser error with
+  `std::error::Error::source()`. Display format is
+  `"{module}: {code}: {message}"` — not API-stable, do not
+  parse.
+
 ## 0.8.0 — serde, force_close, iter_active, ICMP helpers, DnsResolutionCache (2026-06-06)
 
 Driven by the `netring` consolidated wishlist (2026-06-06,

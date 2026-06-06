@@ -21,17 +21,16 @@ pub enum DnsParseResult {
 /// `timestamp` is attached to the resulting event. `elapsed` is
 /// always `None` here — that field is filled by [`crate::dns::Correlator`]
 /// when the response is matched against a previously-seen query.
-pub fn parse_message(payload: &[u8]) -> Result<DnsParseResult, super::Error> {
+pub fn parse_message(payload: &[u8]) -> crate::Result<DnsParseResult> {
     parse_message_at(payload, Timestamp::default())
 }
 
 /// Same as [`parse_message`] but lets you set the event timestamp.
-pub fn parse_message_at(
-    payload: &[u8],
-    timestamp: Timestamp,
-) -> Result<DnsParseResult, super::Error> {
+pub fn parse_message_at(payload: &[u8], timestamp: Timestamp) -> crate::Result<DnsParseResult> {
+    use crate::error::{Error, Module};
+
     if payload.len() < 12 {
-        return Err(super::Error::Parse("payload < 12 bytes".into()));
+        return Err(Error::parse(Module::Dns, "payload < 12 bytes"));
     }
 
     // Header word (16 bits at offset 2) — we read flags + rcode
@@ -42,7 +41,8 @@ pub fn parse_message_at(
     let flags = DnsFlags(flags_raw);
     let rcode_raw = (flags_raw & 0x000F) as u8;
 
-    let pkt = Packet::parse(payload).map_err(|e| super::Error::Parse(format!("{e:?}")))?;
+    let pkt = Packet::parse(payload)
+        .map_err(|e| Error::parse(Module::Dns, format!("simple-dns parse failed: {e:?}")))?;
 
     let questions = pkt
         .questions

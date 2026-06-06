@@ -55,7 +55,7 @@ mod parser;
 mod types;
 
 pub use datagram::IcmpParser;
-pub use parser::{Error, parse_v4, parse_v6};
+pub use parser::{parse_v4, parse_v6};
 pub use types::*;
 
 /// Slug returned by [`IcmpParser`]'s `parser_kind()`. See

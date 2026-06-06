@@ -70,8 +70,11 @@
 
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
+mod error;
 mod timestamp;
 mod view;
+
+pub use error::{Error, ErrorCode, ErrorKind, Module, Result};
 
 pub mod extractor;
 

@@ -6,19 +6,14 @@
 use bytes::Bytes;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
+use crate::error::{Error, Module};
 use crate::extractor::L4Proto;
 use crate::icmp::types::*;
 
-#[derive(Debug, thiserror::Error)]
-pub enum Error {
-    #[error("invalid ICMP message: {0}")]
-    Parse(&'static str),
-}
-
 /// Parse a raw ICMPv4 payload into an [`IcmpMessage`].
-pub fn parse_v4(payload: &[u8]) -> Result<IcmpMessage, Error> {
+pub fn parse_v4(payload: &[u8]) -> crate::Result<IcmpMessage> {
     let slice = etherparse::Icmpv4Slice::from_slice(payload)
-        .map_err(|_| Error::Parse("malformed ICMPv4 header"))?;
+        .map_err(|e| Error::parse_with(Module::Icmp, "malformed ICMPv4 header", e))?;
     let ty = translate_v4(&slice);
     Ok(IcmpMessage {
         family: IcmpFamily::V4,
@@ -27,9 +22,9 @@ pub fn parse_v4(payload: &[u8]) -> Result<IcmpMessage, Error> {
 }
 
 /// Parse a raw ICMPv6 payload into an [`IcmpMessage`].
-pub fn parse_v6(payload: &[u8]) -> Result<IcmpMessage, Error> {
+pub fn parse_v6(payload: &[u8]) -> crate::Result<IcmpMessage> {
     let slice = etherparse::Icmpv6Slice::from_slice(payload)
-        .map_err(|_| Error::Parse("malformed ICMPv6 header"))?;
+        .map_err(|e| Error::parse_with(Module::Icmp, "malformed ICMPv6 header", e))?;
     let ty = translate_v6(&slice, payload);
     Ok(IcmpMessage {
         family: IcmpFamily::V6,

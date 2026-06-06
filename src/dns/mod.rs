@@ -62,10 +62,3 @@ pub const PARSER_KIND_UDP: &str = "dns-udp";
 /// Stability: locked from 0.8 forward.
 pub const PARSER_KIND_TCP: &str = "dns-tcp";
 
-/// Errors from the DNS module.
-#[derive(Debug, thiserror::Error)]
-pub enum Error {
-    /// The payload could not be parsed as a DNS message.
-    #[error("invalid DNS message: {0}")]
-    Parse(String),
-}

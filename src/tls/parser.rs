@@ -9,17 +9,7 @@ use tls_parser::{
 use super::types::{
     TlsAlert, TlsAlertLevel, TlsClientHello, TlsConfig, TlsServerHello, TlsVersion,
 };
-
-/// Parser-side errors. Bubbled up to the reassembler, which transitions
-/// the per-direction state to a desynchronised mode that drops further
-/// bytes on the floor.
-#[derive(Debug, thiserror::Error)]
-pub enum Error {
-    #[error("invalid TLS record: {0}")]
-    Parse(String),
-    #[error("buffer overflow: handshake exceeded max_buffer={0}")]
-    BufferOverflow(usize),
-}
+use crate::error::{Error, Module};
 
 /// Per-direction parser state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -53,11 +43,11 @@ pub(crate) fn step(
     buffer: &mut Vec<u8>,
     is_initiator: bool,
     config: &TlsConfig,
-) -> Result<Option<ParseOutput>, Error> {
+) -> crate::Result<Option<ParseOutput>> {
     if buffer.len() > config.max_buffer {
         *state = DirState::Desynced;
         buffer.clear();
-        return Err(Error::BufferOverflow(config.max_buffer));
+        return Err(Error::buffer_overflow(Module::Tls, config.max_buffer));
     }
     if matches!(*state, DirState::Encrypted | DirState::Desynced) {
         return Ok(None);
@@ -84,7 +74,7 @@ pub(crate) fn step(
                 let msg = format!("{e:?}");
                 *state = DirState::Desynced;
                 buffer.clear();
-                return Err(Error::Parse(msg));
+                return Err(Error::parse(Module::Tls, msg));
             }
         };
         let record_version = TlsVersion::from_raw(plaintext.hdr.version.0);

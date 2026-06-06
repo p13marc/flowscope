@@ -46,7 +46,6 @@ mod session;
 mod types;
 
 pub use factory::{HttpFactory, HttpReassembler};
-pub use parser::Error;
 pub use session::{HttpMessage, HttpParser};
 pub use types::{HttpConfig, HttpHandler, HttpRequest, HttpResponse, HttpVersion};
 

@@ -11,14 +11,7 @@ use crate::{FlowSessionDriver, SessionEvent, SessionParser};
 
 use pcap_file::pcap::PcapReader;
 
-/// Errors from this crate.
-#[derive(Debug, thiserror::Error)]
-pub enum Error {
-    #[error("io: {0}")]
-    Io(#[from] std::io::Error),
-    #[error("pcap: {0}")]
-    Pcap(#[from] pcap_file::PcapError),
-}
+use crate::error::{Error, Module};
 
 /// A pcap-backed source of [`PacketView`]s.
 ///
@@ -30,18 +23,20 @@ pub struct PcapFlowSource<R: Read> {
 
 impl PcapFlowSource<BufReader<File>> {
     /// Open a pcap file from disk.
-    pub fn open(path: impl AsRef<Path>) -> Result<Self, Error> {
-        let file = File::open(path)?;
-        let reader = PcapReader::new(BufReader::new(file))?;
+    pub fn open(path: impl AsRef<Path>) -> crate::Result<Self> {
+        let file = File::open(path).map_err(|e| Error::io(Module::Pcap, e))?;
+        let reader = PcapReader::new(BufReader::new(file))
+            .map_err(|e| Error::parse_with(Module::Pcap, "invalid pcap header", e))?;
         Ok(Self { reader })
     }
 }
 
 impl<R: Read> PcapFlowSource<R> {
     /// Wrap any `Read` (e.g., `Cursor<&[u8]>` for tests).
-    pub fn from_reader(reader: R) -> Result<Self, Error> {
+    pub fn from_reader(reader: R) -> crate::Result<Self> {
         Ok(Self {
-            reader: PcapReader::new(reader)?,
+            reader: PcapReader::new(reader)
+                .map_err(|e| Error::parse_with(Module::Pcap, "invalid pcap header", e))?,
         })
     }
 
@@ -191,13 +186,13 @@ impl crate::AsPacketView for OwnedPacketView {
     }
 }
 
-/// Iterator yielding `Result<OwnedPacketView, Error>`.
+/// Iterator yielding `crate::Result<OwnedPacketView>`.
 pub struct ViewIter<R: Read> {
     reader: PcapReader<R>,
 }
 
 impl<R: Read> Iterator for ViewIter<R> {
-    type Item = Result<OwnedPacketView, Error>;
+    type Item = crate::Result<OwnedPacketView>;
 
     fn next(&mut self) -> Option<Self::Item> {
         let pkt = self.reader.next_packet()?;
@@ -209,12 +204,12 @@ impl<R: Read> Iterator for ViewIter<R> {
                     timestamp: ts,
                 }))
             }
-            Err(e) => Some(Err(e.into())),
+            Err(e) => Some(Err(Error::parse_with(Module::Pcap, "malformed pcap record", e))),
         }
     }
 }
 
-/// Iterator yielding `Result<FlowEvent<E::Key>, Error>`.
+/// Iterator yielding `crate::Result<FlowEvent<E::Key>>`.
 ///
 /// Drives an internal [`FlowTracker`] over the pcap stream. After
 /// the underlying pcap is exhausted, runs one final sweep at
@@ -234,7 +229,7 @@ impl<R: Read, E: FlowExtractor> Iterator for EventIter<R, E>
 where
     E::Key: Clone,
 {
-    type Item = Result<FlowEvent<E::Key>, Error>;
+    type Item = crate::Result<FlowEvent<E::Key>>;
 
     fn next(&mut self) -> Option<Self::Item> {
         loop {
@@ -270,7 +265,7 @@ where
     }
 }
 
-/// Iterator yielding `Result<SessionEvent<E::Key, P::Message>, Error>`.
+/// Iterator yielding `crate::Result<SessionEvent<E::Key, P::Message>>`.
 ///
 /// Produced by [`PcapFlowSource::sessions`]. Drives an internal
 /// [`FlowSessionDriver`] over the pcap stream; after the pcap is
@@ -295,7 +290,7 @@ where
     E::Key: std::hash::Hash + Eq + Clone + Send + 'static,
     P: SessionParser + Clone + Send + 'static,
 {
-    type Item = Result<SessionEvent<E::Key, P::Message>, Error>;
+    type Item = crate::Result<SessionEvent<E::Key, P::Message>>;
 
     fn next(&mut self) -> Option<Self::Item> {
         loop {
@@ -323,7 +318,7 @@ where
     }
 }
 
-/// Iterator yielding `Result<SessionEvent<E::Key, P::Message>, Error>`.
+/// Iterator yielding `crate::Result<SessionEvent<E::Key, P::Message>>`.
 ///
 /// Produced by [`PcapFlowSource::datagrams`] — the UDP mirror of
 /// [`SessionIter`].
@@ -347,7 +342,7 @@ where
     E::Key: std::hash::Hash + Eq + Clone + Send + 'static,
     P: DatagramParser + Clone + Send + 'static,
 {
-    type Item = Result<SessionEvent<E::Key, P::Message>, Error>;
+    type Item = crate::Result<SessionEvent<E::Key, P::Message>>;
 
     fn next(&mut self) -> Option<Self::Item> {
         loop {

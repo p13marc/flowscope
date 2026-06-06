@@ -1,16 +1,7 @@
 use bytes::Bytes;
 
 use super::types::{HttpConfig, HttpRequest, HttpResponse, HttpVersion};
-
-/// Parser-side errors. Internal to the reassembler — exposed
-/// so users can surface a descriptive message if they want.
-#[derive(Debug, thiserror::Error)]
-pub enum Error {
-    #[error("invalid HTTP/1.x: {0}")]
-    Parse(String),
-    #[error("buffer overflow: message exceeded max_buffer={0}")]
-    BufferOverflow(usize),
-}
+use crate::error::{Error, Module};
 
 /// Per-direction parser state.
 #[derive(Debug, Clone)]
@@ -89,11 +80,11 @@ pub(crate) fn step(
     buffer: &mut Vec<u8>,
     is_request: bool,
     config: &HttpConfig,
-) -> Result<Option<ParseOutput>, Error> {
+) -> crate::Result<Option<ParseOutput>> {
     if buffer.len() > config.max_buffer {
         *state = DirState::Desynced;
         buffer.clear();
-        return Err(Error::BufferOverflow(config.max_buffer));
+        return Err(Error::buffer_overflow(Module::Http, config.max_buffer));
     }
 
     loop {
@@ -117,7 +108,7 @@ pub(crate) fn step(
                         Err(e) => {
                             *state = DirState::Desynced;
                             buffer.clear();
-                            return Err(Error::Parse(e.to_string()));
+                            return Err(Error::parse_with(Module::Http, "httparse failed", e));
                         }
                     }
                 } else {
@@ -134,7 +125,7 @@ pub(crate) fn step(
                         Err(e) => {
                             *state = DirState::Desynced;
                             buffer.clear();
-                            return Err(Error::Parse(e.to_string()));
+                            return Err(Error::parse_with(Module::Http, "httparse failed", e));
                         }
                     }
                 }
@@ -196,22 +187,22 @@ fn emit(started: BodyStart, body: Bytes) -> ParseOutput {
     }
 }
 
-fn snapshot_request(req: &httparse::Request<'_, '_>) -> Result<BodyStart, Error> {
+fn snapshot_request(req: &httparse::Request<'_, '_>) -> crate::Result<BodyStart> {
     let method = req
         .method
-        .ok_or_else(|| Error::Parse("missing method".into()))?
+        .ok_or_else(|| Error::parse(Module::Http, "missing method"))?
         .to_string();
     let path = req
         .path
-        .ok_or_else(|| Error::Parse("missing path".into()))?
+        .ok_or_else(|| Error::parse(Module::Http, "missing path"))?
         .to_string();
     let version = req
         .version
-        .ok_or_else(|| Error::Parse("missing version".into()))?;
+        .ok_or_else(|| Error::parse(Module::Http, "missing version"))?;
     let version = match version {
         0 => HttpVersion::Http1_0,
         1 => HttpVersion::Http1_1,
-        _ => return Err(Error::Parse(format!("unknown version: {version}"))),
+        _ => return Err(Error::parse(Module::Http, format!("unknown version: {version}"))),
     };
     let headers: Vec<(String, Vec<u8>)> = req
         .headers
@@ -230,18 +221,18 @@ fn snapshot_request(req: &httparse::Request<'_, '_>) -> Result<BodyStart, Error>
     })
 }
 
-fn snapshot_response(resp: &httparse::Response<'_, '_>) -> Result<BodyStart, Error> {
+fn snapshot_response(resp: &httparse::Response<'_, '_>) -> crate::Result<BodyStart> {
     let status = resp
         .code
-        .ok_or_else(|| Error::Parse("missing status code".into()))?;
+        .ok_or_else(|| Error::parse(Module::Http, "missing status code"))?;
     let reason = resp.reason.unwrap_or("").to_string();
     let version = resp
         .version
-        .ok_or_else(|| Error::Parse("missing version".into()))?;
+        .ok_or_else(|| Error::parse(Module::Http, "missing version"))?;
     let version = match version {
         0 => HttpVersion::Http1_0,
         1 => HttpVersion::Http1_1,
-        _ => return Err(Error::Parse(format!("unknown version: {version}"))),
+        _ => return Err(Error::parse(Module::Http, format!("unknown version: {version}"))),
     };
     let headers: Vec<(String, Vec<u8>)> = resp
         .headers

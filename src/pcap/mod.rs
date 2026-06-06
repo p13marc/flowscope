@@ -22,4 +22,4 @@
 
 mod source;
 
-pub use source::{Error, EventIter, OwnedPacketView, PcapFlowSource, ViewIter};
+pub use source::{EventIter, OwnedPacketView, PcapFlowSource, ViewIter};
