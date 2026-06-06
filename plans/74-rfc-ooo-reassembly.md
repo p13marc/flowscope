@@ -1,28 +1,27 @@
-# Plan 74 — RFC: out-of-order TCP reassembly with hole-fill
+# Plan 74 — Out-of-order TCP reassembly with hole-fill
 
 ## Summary
 
-**This is an RFC plan, not an implementation plan.** It scopes
-the design space for adding out-of-order TCP segment buffering
-+ hole-fill reassembly to flowscope, articulates the
-constraints, and identifies the questions that need answers
-before implementation can start.
-
-Implementation is **not in scope for 0.5.0**. Expected
-landing: 0.6.0 or later, after the RFC drives a maintainer +
-consumer agreement on the design.
+Adds an opt-in `SegmentBufferReassembler` — a sibling of
+`BufferedReassembler` — that holds out-of-order TCP segments
+until the gap fills (bounded by a per-side cap and a per-segment
+deadline) instead of dropping them.
 
 The motivating concrete use case is HTTP/2 + HPACK: a lossy
 capture today produces an undecodable HTTP/2 stream because
-`BufferedReassembler` drops OOO segments and HPACK state
-desyncs at the first gap. The same shape applies to any
-protocol with cross-segment state machines (DTLS, QUIC, custom
-binary protocols with multi-segment headers).
+`BufferedReassembler` drops OOO segments and HPACK state desyncs
+at the first gap. The same shape applies to any protocol with
+cross-segment state machines (DTLS, QUIC, custom binary protocols
+with multi-segment headers).
+
+This started as an RFC plan published in 0.5.0; for 0.9.0 the
+eight design questions are locked (see "Design decisions" below)
+and the plan promotes to an implementation plan.
 
 ## Status
 
-**RFC scope only.** Targets 0.5.0 release as a published RFC;
-implementation deferred.
+**Ready to implement.** Targets 0.9.0 release. The eight design
+questions are answered with locked decisions.
 
 ## Prerequisites
 
@@ -350,55 +349,53 @@ Cleaner integration.
 
 ---
 
-## Open questions
+## Design decisions
 
-These need decisions before implementation:
+All eight Qs from the RFC phase are now locked for the 0.9 cycle.
+Implementation proceeds directly against these picks.
 
-1. **Default OOO cap.** 256 KiB feels right for "most flows,
-   most networks." Too small for HTTP/2 with 64-KiB
-   SETTINGS_MAX_FRAME_SIZE under heavy reorder. Too large
-   wastes memory on long-tail flows. Should be a soft default
-   with the knob explicit.
-2. **Default deadline.** 1 second. HTTP/2 ping interval is
-   typically 10s, but a 1-second hole is already a "this
-   capture is broken" signal. Negotiable.
-3. **Strict vs loose overlap.** Strict mode (RFC 5722) drops
-   overlapping segments. Loose mode picks one and discards the
-   other. We pick strict. If a real consumer needs loose,
-   they fork the type.
-4. **Poison-on-expiry semantics.** If a hole NEVER fills (the
-   deadline expires while segments are still ahead), the flow
-   has a permanent gap. Should we:
-   - Poison the reassembler immediately (current sketch)?
-   - Keep going with the gap as if the segments were OOO
-     drops (current `BufferedReassembler` semantics)?
-   - Emit an `AnomalyKind::PermanentGap` and let the consumer
-     decide?
-   I lean toward (a) — for protocols that need OOO reassembly,
-   the user explicitly opted in by choosing the new factory;
-   they want strict semantics.
-5. **Anomaly emission shape.**
-   `AnomalyKind::HoleFilled { side, count }` and
-   `AnomalyKind::HoleExpired { side, count }` for live
-   signal? Or just per-tick deltas via the existing pattern?
-   Probably the latter for consistency.
-6. **`Reassembler::tick_at(now)`?** Option B above avoids it,
-   but Option A's hook may be cleaner if other reassemblers
-   want periodic maintenance. Defer the trait change unless a
-   second consumer needs it.
-7. **Configuration through `FlowTrackerConfig`?** The
-   existing `max_reassembler_buffer` / `overflow_policy`
-   fields are shape-specific to `BufferedReassembler`. The
-   new fields (`max_ooo_buffer`, `ooo_deadline`) belong on
-   the factory, not the config. Or we generalise `FlowTrackerConfig`
-   into a more polymorphic shape. Decide before
-   implementation.
-8. **Diagnostic surfacing.** `FlowStats` already has
-   `reassembly_dropped_ooo_*` (which today counts dropped
-   OOO segments). With the OOO reassembler, that field
-   becomes "OOO segments that even the OOO reassembler
-   couldn't hold." Plus we add `holes_filled_*` and
-   `holes_expired_*`. Names + semantics need pinning down.
+1. **Default OOO cap: 256 KiB per side.** Tuneable via
+   `SegmentBufferReassembler::with_max_ooo_buffer(bytes)`. Sized
+   for HTTP/2-with-modest-reorder; HFT-style traffic profiles can
+   raise. Documented in rustdoc + `docs/concepts.md`.
+2. **Default deadline: 1 second.** Tuneable via
+   `with_ooo_deadline(Duration)`. The window is the *"this
+   capture is broken"* threshold — operationally calibrated
+   against the HTTP/2 ping interval (~10s) and real-world
+   reorder-buffer depths.
+3. **Strict overlap (RFC 5722).** Conflicting overlapping
+   segments → first kept, second classified as retransmit (via
+   the existing `on_duplicate` hook). Loose mode is **out of
+   scope**; fork the type if you need it.
+4. **Poison on expiry.** When a held segment's deadline passes
+   without the hole filling, the reassembler poisons. The driver
+   tears the flow down with `EndReason::BufferOverflow` (existing
+   shape — no new `EndReason` variant). Rationale: consumers who
+   opted into OOO reassembly want strict semantics.
+5. **Anomaly emission via existing per-tick delta pattern.** Two
+   new `AnomalyKind` variants: `OutOfOrderHoleFilled { side,
+   count }` and `OutOfOrderHoleExpired { side, count }`. Counts
+   accumulate; emission is per-tick delta-coalesced via the
+   existing `FlowDriver::with_emit_anomalies(true)` path.
+   Consistent with retransmit / OOO-drop anomalies (plan 70).
+6. **No `Reassembler::tick_at(now)` trait expansion.**
+   Opportunistic expiry inside `segment()` is sufficient; periodic
+   maintenance happens lazily on the next packet. Defer the trait
+   change unless a second consumer surfaces a need.
+7. **OOO config lives on the factory, not `FlowTrackerConfig`.**
+   `BufferedReassemblerFactory` and the new
+   `SegmentBufferReassemblerFactory` are the configuration
+   surface. `FlowTrackerConfig` stays focused on tracker-level
+   knobs. Avoids forcing `FlowTrackerConfig` toward
+   reassembler-polymorphism.
+8. **`FlowStats` field surface.**
+   - Existing `reassembly_dropped_ooo_*` keeps its meaning
+     (OOO segments dropped because the reassembler couldn't
+     hold them — applies to both the legacy in-order reassembler
+     and the new segment-buffer one).
+   - New: `reassembly_holes_filled_*`, `reassembly_holes_expired_*`.
+   - Same per-side `_initiator` / `_responder` pattern as the
+     existing fields.
 
 ---
 

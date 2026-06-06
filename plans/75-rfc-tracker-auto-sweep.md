@@ -1,35 +1,24 @@
-# Plan 75 — RFC: `FlowTracker::with_auto_sweep(interval)`
+# Plan 75 — `FlowTracker::with_auto_sweep(interval)`
 
 ## Summary
 
-**This is an RFC plan, not an implementation plan.** It scopes
-the design space for an optional packet-clock-driven sweep mode
-on `FlowTracker`, identifies the load-bearing design questions,
-and articulates the cross-API interactions that need answers
-before implementation can start.
+Optional packet-clock-driven sweep mode on `FlowTracker`.
 
-Implementation is **not in scope for 0.7.0**. Expected landing:
-0.8.0 or later, after the RFC drives a maintainer + consumer
-agreement on the design.
-
-The motivating case is online-vs-offline divergence in the same
-pipeline: live capture today has a wall-clock sweep tick
+Today live capture has a wall-clock sweep tick
 (`tokio::time::interval` in netring); offline pcap replay has no
 such tick. Identical traffic on identical config emits different
 event streams between the two paths because mid-stream
-idle-timeouts fire live but not offline. The netring author
-called this out as one of the two items they explicitly flagged
-as *"deserves its own RFC"* during the 0.5-cycle integration.
+idle-timeouts fire live but not offline. This plan adds an opt-in
+packet-clock auto-sweep so live and offline pipelines emit
+identical event streams for identical inputs.
 
-The 0.5.0 release shipped `flow_tick_interval` for periodic
-`FlowEvent::Tick` events (plan 71). This RFC is the *sister*:
-periodic sweep cadence, not periodic tick emission. The two
-features have similar timing surfaces; they must compose cleanly.
+This started as an RFC plan published in 0.7.0; for 0.9.0 the
+design is locked and it promotes to an implementation plan.
 
 ## Status
 
-**RFC scope only.** Targets 0.7.0 release as a published RFC;
-implementation deferred to 0.8.0+.
+**Ready to implement.** Targets 0.9.0 release. Design questions
+Q1–Q7 (below) are answered with locked picks.
 
 ## Prerequisites
 
@@ -170,7 +159,7 @@ a sink. Auto-sweep events flow through it.
   driver event loops netring uses.
 - ❌ Inconsistent with the rest of flowscope's API.
 
-**Tentative pick:** **Option A**, with a clear note in the
+**Locked decision:** **Option A**, with a clear note in the
 rustdoc and CHANGELOG that opting into auto-sweep changes the
 event-rate shape. The "tracker is reactive" model bends but
 doesn't break: the trigger is still a `track()` call, just with
@@ -187,7 +176,7 @@ dense (interval check per packet, ~ns/check).
 **Option II: After every Nth `track()` call.** Amortizes the
 check; introduces sweep-cadence jitter proportional to N.
 
-**Tentative pick:** **Option I.** The check is a single
+**Locked decision:** **Option I.** The check is a single
 timestamp compare and a branch — negligible at the per-packet
 level. Plan 71's `flow_tick_interval` check already uses Option
 I for the same reason. Consistency wins.
@@ -226,7 +215,7 @@ trip an auto-sweep at ts=100, then a `track(p_b)` would have
    an intentional rewind — sweep again "going forward" from the
    new `now`. (Very unusual; not recommended.)
 
-**Tentative pick:** **#1 + #2 combined.** Require monotonic
+**Locked decision:** **#1 + #2 combined.** Require monotonic
 timestamps as a documented prerequisite (compile-time would be
 ideal but the type-system overhead isn't worth it); under the
 hood, use the saturating-last-sweep guard as a belt-and-braces
@@ -249,7 +238,7 @@ as today).
 `tick_dispatch` method, the driver delegates to it, and direct
 consumers get the same behaviour.
 
-**Tentative pick:** **A** for the initial implementation. The
+**Locked decision:** **A** for the initial implementation. The
 two features are independent (tick is informational; sweep is
 state-changing). Coupling them upfront is premature. If
 consumers ask for "auto-sweep + auto-tick", do it as a
@@ -283,7 +272,7 @@ running parsers manually call
 to mop up. Auto-sweep on the tracker is for direct-tracker
 consumers that *don't* run parsers.
 
-**Tentative pick:** **A.** Mirrors the existing
+**Locked decision:** **A.** Mirrors the existing
 `sweep_with_parsers` shape. The `track_with_parsers` name flags
 clearly that auto-sweep is happening in the call.
 
@@ -444,70 +433,43 @@ sweep path still works. But the recommended pattern shifts.
 
 ---
 
-## Acceptance criteria for THIS RFC (not the implementation)
+## Acceptance criteria
 
-- The maintainer (me) and the netring author both agree on the
-  answers to Q1–Q7 (or document where they disagree explicitly).
-- simple-nms maintainer reviews the design (they're the other
-  affected consumer who would benefit from offline-pcap parity).
-- The API shape is concrete enough that an implementation plan
-  can be written without re-arguing the design.
-- The implementation plan (whoever picks it up) can be written
-  in <2 hours from this RFC.
-
----
-
-## Open questions for reviewers
-
-Phrased as questions reviewers should answer in PR comments /
-issues:
-
-1. **Q1 (event surface):** option A, B, or C? Or something
-   else?
-2. **Q4 (out-of-order):** is the monotonic-timestamp
-   prerequisite acceptable, or should we ship without it and
-   accept the corner case?
-3. **Q6 (parser choreography):** is the
-   `track_with_parsers` second entry point a worthy expansion,
-   or should we tell consumers to manage parsers themselves
-   after auto-sweep events?
-4. **General:** is "packet-clock semantics" the right framing,
-   or should we widen scope to "tracker-driven timing" more
-   generally (which would include monotonic timestamps, flow
-   ticks, and sweep cadence as one coherent feature surface)?
-
----
+- `FlowTrackerConfig::auto_sweep_interval: Option<Duration>` field
+  added (default `None`); construction unchanged for existing
+  callers.
+- `tracker.track(view)` returns merged per-packet + implicit-sweep
+  events when auto-sweep is on. Existing single-event-per-packet
+  expectations stay valid when auto-sweep is off.
+- `tracker.track_with_parsers(view, parsers, on_message)` /
+  `track_with_datagram_parsers(...)` ship as parser-aware mirrors
+  of `track()` — same shape as the existing
+  `sweep_with_parsers` choreography.
+- Backwards-guard against out-of-order timestamps: `last_sweep_ts
+  = max(last_sweep_ts, packet.ts)`. Documented; no
+  `with_monotonic_timestamps` strict requirement (consumers in
+  monotonic mode are guaranteed safe; non-monotonic mode is
+  safe-by-saturation).
+- Cross-pipeline parity test: identical pcap fed through live
+  shape vs offline-with-auto-sweep produces identical event
+  streams up to timestamp-tie ordering.
+- `docs/concepts.md` and `docs/recipes.md` updated with the
+  auto-sweep semantics.
+- netring 0.x bumps to use `track_with_parsers` in both
+  `FlowStream::poll_next` and `PcapFlowStream::poll_next` —
+  lockstep release.
 
 ## Effort
 
-**For the RFC itself** (this document): ~600 lines, ~3 hours.
-Includes reading existing related plans (60, 71, 74) for shape
-consistency.
-
-**For the implementation** (deferred — not in this plan):
-
 - API plumbing on `FlowTracker` + `FlowTrackerConfig`: ~60 LoC,
   1 hour.
-- `track_with_parsers` / `track_with_datagram_parsers`: ~80
-  LoC, 1.5 hours.
-- Tests (unit + cross-pipeline parity test): ~150 LoC,
-  3 hours.
-- Doc updates (`SESSION_GUIDE.md`, OBSERVABILITY.md): ~30 lines,
-  1 hour.
-- **Implementation total:** ~6.5 hours, ~320 LoC.
-
-## Provenance
-
-The netring author flagged this as one of two items deferred
-from the 0.6 cycle for "deserves its own RFC" status (the other
-being the driver `S` story, which we resolved by shipping option
-A in plan 38).
-
-The simple-nms wishlist raised the same underlying problem —
-online/offline divergence — from a different angle. Two
-independent consumers asking for related fixes is the threshold
-this RFC was waiting for.
-
-Target landing for the RFC: 0.7.0 (next minor). Target landing
-for the implementation: 0.8.0, contingent on reviewer agreement
-on the design questions above.
+- `track_with_parsers` / `track_with_datagram_parsers`: ~80 LoC,
+  1.5 hours.
+- Saturating-last-sweep guard + monotonic-mode interaction
+  tests: ~40 LoC, 1 hour.
+- Cross-pipeline parity test using `tests/round_trip.rs` shape:
+  ~80 LoC, 2 hours.
+- Existing tests + doctests: ~30 LoC adjusted, 1 hour.
+- Doc updates (`docs/concepts.md`, `docs/recipes.md`,
+  `docs/observability.md`): ~50 lines, 1.5 hours.
+- **Implementation total:** ~290 LoC, ~8 hours.

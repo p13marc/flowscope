@@ -1,11 +1,9 @@
-# Plan 81 — RFC: `flowscope::correlate` module
+# Plan 81 — `flowscope::correlate` module
 
 ## Summary
 
-**This is an RFC plan, not an implementation plan.** It scopes
-the design space for a `flowscope::correlate` module containing
-shared building blocks every consumer building real-time
-anomaly-correlation logic needs:
+A `flowscope::correlate` module shipping three building blocks
+every consumer of real-time anomaly-correlation logic needs:
 
 1. **`TimeBucketedCounter<K>`** — windowed rate counting per
    key, with automatic bucket eviction. Use case:
@@ -14,24 +12,25 @@ anomaly-correlation logic needs:
    time semantics. Use case: *"DNS resolved foo.com → IPs Y at
    time T; was the subsequent TCP connection to Y within idle
    window of T?"*
-3. **`SequencePattern<E>`** — generic FSM for event-sequence
-   detection: *"event matching A → expect event matching B
-   within K seconds → otherwise emit anomaly."*
+3. **`SequencePattern<E>`** — generic FSM trait for event-
+   sequence detection: *"event matching A → expect event matching
+   B within K seconds → otherwise emit anomaly."*
 
-Implementation is **not in scope for 0.7.0**. Expected landing:
-0.8.0 or later, after the RFC drives a maintainer + consumer
-agreement on the design.
+This started as an RFC plan published in 0.7.0; for 0.9.0 the
+design is locked and it promotes to an implementation plan.
 
-The netring author flagged this as the single biggest enabler
-for their anomaly-correlation roadmap and explicitly asked for
-an RFC pass before any implementation. They offered to co-author
-the RFC. This plan documents what flowscope expects from the
-final RFC; the implementation plan is a follow-up.
+The narrow `flowscope::dns::DnsResolutionCache` primitive (shipped
+in 0.8.0, plan 85) consumes the `KeyIndexed` shape — when
+`correlate` lands, `DnsResolutionCache` is re-implemented as a
+domain-specific wrapper around `KeyIndexed<(IpAddr, IpAddr),
+String>` for zero-cost type-narrowing while preserving the
+existing API.
 
 ## Status
 
-**RFC scope only.** Targets 0.7.0 release as a published RFC
-plan; implementation deferred to 0.8.0+.
+**Ready to implement.** Targets 0.9.0 release. Design questions
+Q1–Q7 (below) are answered with locked picks; reviewer pushback
+is welcome but no further blocking on consensus.
 
 ## Prerequisites
 
@@ -45,16 +44,12 @@ plan; implementation deferred to 0.8.0+.
 - Plan 43 (`FlowAnomaly` / `TrackerAnomaly` split) — shipped in
   0.6.0. Correlation outputs that classify as anomalies use the
   established carrier shapes.
+- Plan 85 (`DnsResolutionCache`) — shipped in 0.8.0. The
+  domain-specific shape this plan generalises. Plan covers the
+  re-implementation step as a wrapper around `KeyIndexed`.
 
-## Out of scope (for this RFC)
+## Out of scope
 
-- Implementation. The point of this document is to surface the
-  design questions, not to pre-commit to a shape.
-- A built-in `DnsResolutionCache`. That's round-2 item F7, which
-  the author themselves flagged as not RFC-ready (*"the right
-  shape probably emerges only after writing 2–3 anomaly examples
-  manually first"*). A future plan revisits after `correlate`
-  ships.
 - Concrete anomaly *types* / heuristics (volumetric attack
   detection, port-scan detection, etc.). The module ships
   primitives; consumers compose them into detectors. Concrete
@@ -63,6 +58,9 @@ plan; implementation deferred to 0.8.0+.
   distributed consumer (multi-collector NMS) coordinates via
   external means (Prometheus, Kafka, etc.). The flowscope
   primitives are deliberately single-process.
+- Built-in pre-baked `SequencePattern` implementations (e.g.
+  `WithinWindow<E>`). Ship the trait + adapter in 0.9; the
+  pre-baked patterns are a follow-up after 0.9 usage data.
 
 ---
 
@@ -125,7 +123,7 @@ unless capped per key).
 **Option C** (TDigest / exponential decay): smooths the cliff
 but introduces estimation error.
 
-**Tentative pick:** Option A with a documented cliff. The
+**Locked decision:** Option A with a documented cliff. The
 80% case for anomaly detection is rate thresholds on the order
 of multiple buckets — a 99-bump burst at bucket boundary that
 reads as 99-bumps-in-one-bucket-then-zero is operationally
@@ -145,7 +143,7 @@ second LRU implementation. The wrapping logic is:
 Hand-rolling would buy us nothing: the `lru` crate is mature,
 the per-entry timestamp is the only extra bookkeeping.
 
-**Tentative pick:** wrap `lru::LruCache<K, (V, Timestamp)>`.
+**Locked decision:** wrap `lru::LruCache<K, (V, Timestamp)>`.
 
 ### Q3: `SequencePattern` — trait-based or callback?
 
@@ -169,7 +167,7 @@ Alternative: a `SequencePattern` *struct* configured via a
 state-table or DSL. Pro: declarative; consumer writes less
 code. Con: design-heavy; the DSL is the hard part.
 
-**Tentative pick:** trait-based. Consumers either roll a
+**Locked decision:** trait-based. Consumers either roll a
 custom struct (full control) or pick a small set of pre-built
 patterns flowscope ships (e.g. `WithinWindow<E>` for
 "event-A-then-event-B within T"). The set of pre-built
@@ -193,7 +191,7 @@ consumer wraps it with a `HashMap<K, SequencePattern>`.
 **Option B:** `SequencePattern` is inherently keyed:
 `fn observe(&mut self, key: &K, evt: &E, now: Timestamp)`.
 
-**Tentative pick:** Option B. The keying is so universal that
+**Locked decision:** Option B. The keying is so universal that
 making it explicit on the trait saves the per-consumer
 boilerplate. Cost: less flexible for keyless patterns
 (global-state detectors). Mitigation: a `KeylessSequencePattern`
@@ -210,7 +208,7 @@ each pattern has its own `Anomaly` type.
 that all built-in patterns produce; consumers writing custom
 patterns either map into it or expose their own type.
 
-**Tentative pick:** the associated type. Built-in patterns
+**Locked decision:** the associated type. Built-in patterns
 (when shipped) all converge on a single concrete type for
 ergonomics; custom patterns use whatever fits.
 
@@ -227,7 +225,7 @@ event loop? Two shapes:
 sits *atop* a `FlowSessionDriver` and merges the pattern's
 anomalies into the event stream as a new `SessionEvent` variant.
 
-**Tentative pick:** A. Consumer-owned composition keeps the
+**Locked decision:** A. Consumer-owned composition keeps the
 driver simple and lets the consumer mix multiple patterns
 over the same event stream. The wrapper-driver approach
 (option B) can be a downstream's `netring::CorrelatedStream`
@@ -398,54 +396,42 @@ machinery.
 
 ---
 
-## Acceptance criteria for THIS RFC (not the implementation)
+## Acceptance criteria
 
-- The maintainer (me) and the netring author both agree on the
-  answers to Q1–Q7 (or document where they disagree explicitly).
-- At least one second consumer (simple-nms or des-rs)
-  acknowledges the proposed API shape fits their anomaly
-  patterns.
-- The API shape is concrete enough that an implementation plan
-  can be written without re-arguing the design.
-- The author's offer to co-author the RFC is taken up: the final
-  RFC is jointly authored, with both sides' use cases backing
-  the design decisions.
-
-## Open questions for reviewers
-
-Phrased as questions reviewers should answer in PR comments /
-issues:
-
-1. **Q1 (bucket shape):** A, B, or C? Or something else?
-2. **Q3 (SequencePattern surface):** Trait-only, or also ship
-   pre-built patterns (and which ones)?
-3. **Q4 (keyed vs keyless):** Is the
-   `KeylessSequencePattern` blanket worth the cognitive
-   overhead, or do we just make keying mandatory?
-4. **Q5 (anomaly typing):** Associated type or unified enum?
-5. **General:** is `correlate` the right module name? Or
-   `pattern`, `detect`, `match`, `engine`?
-
----
+- All three primitives compile under `--features correlate` and
+  carry round-trip tests for the documented semantics.
+- `DnsResolutionCache` (plan 85) is re-implemented as a
+  domain-specific wrapper around `KeyIndexed<(IpAddr, IpAddr),
+  String>`. The public API is unchanged; the migration is
+  internal-only.
+- `TimeBucketedCounter` and `KeyIndexed` both ship LRU
+  capacity caps with eviction-pressure anomaly variants on
+  `AnomalyKind` (`CorrelationTableEvictionPressure`).
+- One pre-built `SequencePattern` impl ships in the same
+  release: `WithinWindow<E>` for the "event-A-then-event-B
+  within T" pattern.
+- `docs/recipes.md` gains a "Building anomaly detectors with
+  correlate" section consuming the three primitives.
+- `cargo bench --features correlate` shows the three primitives'
+  hot-path costs; baseline numbers land in `docs/performance.md`.
 
 ## Effort
 
-**For the RFC itself** (this document): ~600 lines, ~3 hours.
-
-**For the implementation** (deferred — not in this plan):
-
 - `TimeBucketedCounter`: ~150 LoC + tests, 4 hours.
 - `KeyIndexed`: ~80 LoC + tests, 2 hours.
-- `SequencePattern` trait + blanket adapter: ~100 LoC +
-  tests, 3 hours.
-- One pre-built pattern (`WithinWindow<E>`) for the example
-  set: ~120 LoC + tests, 4 hours.
-- Doc updates (`SESSION_GUIDE.md`, new section): ~50 lines,
-  1.5 hours.
+- `SequencePattern` trait + `KeylessSequencePattern` blanket
+  adapter: ~100 LoC + tests, 3 hours.
+- `WithinWindow<E>` pre-built pattern: ~120 LoC + tests, 4 hours.
+- `DnsResolutionCache` re-implementation as `KeyIndexed`
+  wrapper: ~60 LoC change + tests adjusted, 2 hours.
+- `AnomalyKind::CorrelationTableEvictionPressure` variant +
+  metric label + tracing field: ~30 LoC, 1 hour.
+- Doc updates (`docs/recipes.md`, `docs/concepts.md` note): ~80
+  lines, 2 hours.
 - Criterion benches under `benches/correlate.rs`: ~200 LoC,
   2 hours.
-- **Implementation total:** ~16.5 hours, ~700 LoC. Two days
-  focused.
+- **Implementation total:** ~20 hours, ~840 LoC. Two to three
+  days focused.
 
 ## Provenance
 

@@ -1,10 +1,17 @@
-# Plan 92 — RFC: `FlowMultiSessionDriver` composite parser driver
+# Plan 92 — `FlowMultiSessionDriver` composite parser driver
 
 ## Summary
 
-**This is an RFC plan, not an implementation plan.** It scopes
-the design space for a composite session driver that runs N L7
-parsers against a single packet stream in one pass.
+A composite session driver that runs N L7 parsers against a
+single packet stream in one pass. The motivating shape:
+
+```rust,ignore
+let driver = FlowMultiSessionDriver::<_, MyL7Message>::new(FiveTuple::bidirectional())
+    .with_parser_on_ports(HttpParser::default(), [80, 8080], MyL7Message::Http)
+    .with_parser_on_ports(TlsParser::default(),  [443, 8443], MyL7Message::Tls)
+    .with_parser_on_ports(DnsTcpParser::default(), [53], MyL7Message::Dns)
+    .with_parser_broadcast(IcmpParser::new(), MyL7Message::Icmp);
+```
 
 The 0.8 cycle shipped the lighter-version fallback that the
 wishlist author proposed: a documented recipe + worked example
@@ -12,49 +19,57 @@ wishlist author proposed: a documented recipe + worked example
 manual "every parser, every packet" pattern. That pattern is
 adequate for offline replay but loads the pcap N times. For live
 capture and high-throughput offline pipelines, consumers want
-**one packet read → routed to each applicable parser → unified
-event stream**.
+one packet read → routed to each applicable parser → unified
+event stream.
 
-Implementation is **not in scope for 0.9.0** until reviewer
-agreement is reached. The bulk of the work here is in the
-sum-type-of-messages design surface — three candidate shapes,
-each with real ergonomic costs. The RFC commits to the question
-list and the evaluation criteria; the answers wait for input.
+This started as an RFC plan published in 0.8.0; for 0.9.0 the
+six design questions are locked (see "Design decisions" below)
+and the plan promotes to an implementation plan.
+
+The plan ships a `FlowMultiSessionDriver` for stream protocols
+plus a `FlowMultiDatagramDriver` mirror for UDP — both follow
+the same sum-type / routing shape, sharing as much
+implementation as practical.
 
 ## Status
 
-**RFC scope only.** Targets 0.9.0 release as a published RFC
-plan; implementation deferred until the design questions below
-have answers.
+**Ready to implement.** Targets 0.9.0 release. Design questions
+Q1–Q6 are answered with locked decisions.
 
 ## Prerequisites
 
 - Plan 91 — shipped in 0.8.0. Documents the manual dispatch
-  pattern this RFC's driver would absorb. The example file
-  becomes the migration / comparison reference.
-- Plan 76 (ICMP parser) — shipped in 0.7.0. ICMP is one of the
-  parsers a composite driver must route to; its handling
-  validates the design covers `DatagramParser` (not just
-  `SessionParser`) flows.
+  pattern this driver absorbs. The example file becomes the
+  migration / comparison reference.
+- Plan 76 (ICMP parser) — shipped in 0.7.0. ICMP is the
+  canonical `broadcast`-routed parser (no ports); its handling
+  validates the design covers `DatagramParser` flows.
 - Plan 86 (`PARSER_KIND` constants) — shipped in 0.8.0.
   Consumers match composite-emitted events by `parser_kind`
   string; the constants are the routing keys.
+- Plan 93 (0.9 API ergonomics audit) — covers how
+  `FlowMultiSessionDriver` interacts with the broader
+  builder-pattern refactor (plan 94).
 
-## Out of scope (for this RFC)
+## Out of scope
 
-- Implementation. The design space is wide enough that we want
-  reviewer input before any code lands.
 - Cross-parser reassembler state sharing. Each parser owns its
   reassembler; the composite driver coordinates dispatch, not
-  storage.
+  storage. Sharing is a follow-up perf optimisation if profiling
+  warrants.
 - Async / tokio integration. flowscope is sync; netring builds
   the async layer.
 - Backpressure semantics across parsers. Same boundary as
   today's single-parser drivers (consumer drains the returned
   `Vec`).
-- A `FlowMultiDatagramDriver` mirror. The session-driver design
-  generalises to the datagram side naturally; defer the explicit
-  spec to the implementation plan.
+- Per-parser `S` user state. Composite drivers drop the `S`
+  parameter entirely — see Q5 below. Consumers who need rich
+  per-flow state stay on the bespoke single-parser driver.
+- A pre-baked `flowscope::AnyL7Message` enum covering the
+  built-in parsers. Wishlist's "Option C" — a convenience shim
+  for the common case — is deferred to a follow-up plan once
+  this lands and we have real usage data on how often consumers
+  reach for the built-in subset vs custom enums.
 
 ---
 
@@ -92,9 +107,10 @@ list of `(parser, port_set)` pairs and routes packets internally.
 
 ---
 
-## Design questions
+## Design decisions
 
-Each has a tentative pick; the RFC explicitly invites disagreement.
+Each question is now answered with a locked decision. The "Options"
+text is retained as design rationale for future maintainers.
 
 ### Q1: Sum-type-of-messages — how do consumers see emitted messages?
 
@@ -163,7 +179,7 @@ let mut driver = FlowMultiSessionDriver::new(FiveTuple::bidirectional())
 - ⚠️ Mixed: a "I want to also include my custom parser" consumer
   falls back to option A anyway.
 
-**Tentative pick:** **A** as the primary surface, with **C** as a
+**Locked decision:** **A** as the primary surface, with **C** as a
 follow-up convenience shim. Custom parsers and bring-your-own
 enums (option A) are the load-bearing case; the option-C
 preset is genuinely just a shortcut over option A and can ship
@@ -194,7 +210,7 @@ predicate.
 `.with_parser_broadcast(p)`. ICMP gets broadcast (no ports);
 HTTP/TLS/DNS get ports.
 
-**Tentative pick:** **III** — covers both common cases without
+**Locked decision:** **III** — covers both common cases without
 predicate overhead. Predicate-based added if a consumer asks.
 
 ### Q3: Reassembly state — per-parser or shared?
@@ -218,7 +234,7 @@ offsets.
   Existing single-driver consumers must opt in or get
   surprised by the new shape.
 
-**Tentative pick:** **α** for the first implementation;
+**Locked decision:** **α** for the first implementation;
 optimise later if memory pressure is a real problem in
 production deployments. The 3× cost is bounded by
 `max_reassembler_buffer` per parser.
@@ -239,7 +255,7 @@ Consumer pre-sorts if they want timestamp order.
 events for this packet first, then parser 2's, etc.
 
 These are equivalent for single-packet events; the difference
-shows up only when multi-message bursts emit. **Tentative pick:**
+shows up only when multi-message bursts emit. **Locked decision:**
 **✚** (registration order) — predictable and easy to test.
 
 ### Q5: Per-parser `S` state — supported or not?
@@ -247,7 +263,7 @@ shows up only when multi-message bursts emit. **Tentative pick:**
 Today's single-parser driver supports per-flow user state `S`
 (plan 38). For the composite, each parser has its own state.
 
-**Tentative pick:** drop `S` entirely from the composite. Custom
+**Locked decision:** drop `S` entirely from the composite. Custom
 state belongs in the consumer's lift closure (option A), not in
 the driver. The composite is the high-level convenience; rich
 state stays on the bespoke single-parser pipeline.
@@ -257,13 +273,13 @@ state stays on the bespoke single-parser pipeline.
 If one parser poisons (`is_poisoned() == true`), what happens
 to the others?
 
-**Tentative pick:** **isolation** — the poisoned parser tears
+**Locked decision:** **isolation** — the poisoned parser tears
 down via the existing `SessionEvent::Closed { reason:
 ParseError }` synthesis; the other parsers continue.
 
 ---
 
-## Proposed minimum API (tentative)
+## Proposed minimum API
 
 ```rust,ignore
 // src/multi_session_driver.rs (new module, opt-in feature?)
@@ -331,61 +347,66 @@ where M: Send + 'static
 
 ---
 
-## Acceptance criteria for THIS RFC (not the implementation)
+## Acceptance criteria
 
-- The maintainer (me) and the netring author both agree on the
-  answers to Q1–Q6 (or document where they disagree explicitly).
-- The chosen sum-type shape (Q1) survives a sanity check against
-  a custom parser composing with the built-ins.
-- The chosen routing policy (Q2) covers ICMP (no ports), DNS-UDP
-  (port 53), and a custom hypothetical "DNS-over-TLS" parser
-  needing predicate-based routing.
-- The API shape is concrete enough that an implementation plan
-  can be written without re-arguing the design.
-
-## Open questions for reviewers
-
-1. **Q1 sum-type shape:** A (user enum + lift) primary, C
-   (built-in `AnyL7Message`) shim? Or one of them alone?
-2. **Q2 routing:** ports + broadcast (III), or just ports (I)?
-3. **Q3 reassembly state:** stay per-parser (α), or share (β)?
-4. **Q5 per-parser S:** drop entirely, or thread through as
-   `S = ()`?
-5. **General:** is `FlowMultiSessionDriver` the right module
-   name, or do we go with `MultiParserDriver` /
-   `CompositeSessionDriver` / `MultiplexedDriver`?
+- `FlowMultiSessionDriver<E, M>` and `FlowMultiDatagramDriver<E, M>`
+  ship behind the existing `session` / no-extra-feature surface
+  (no new Cargo feature).
+- `with_parser_on_ports` and `with_parser_broadcast` cover ICMP
+  (broadcast), HTTP/TLS (port set), and DNS-TCP/UDP (port 53);
+  documented in `docs/recipes.md`.
+- Per-parser poison isolation: a parser that errors emits
+  `SessionEvent::Closed { reason: ParseError }` for that
+  `(flow, parser_kind)` pair; other parsers on the same flow
+  continue.
+- Events for a single packet land in the returned `Vec` in
+  parser-registration order (Q4 — deterministic and tested).
+- Three integration tests:
+  1. Two-parser pcap (HTTP + TLS on the same port range) replays
+     to the same event sequence as two single-parser drivers run
+     against the same pcap independently.
+  2. Three-parser pcap (HTTP + DNS-TCP + ICMP) covers the
+     port-set / broadcast mix.
+  3. Poison isolation: a deliberately broken parser is registered
+     alongside HTTP; HTTP events continue after the broken parser
+     synthesises its `Closed`.
+- One round-trip proptest extending `tests/round_trip.rs` over a
+  two-parser configuration.
+- `netring`'s `pcap_replay_multi` example is rewritten as a
+  single-pass loop using the new driver; reduces from ~120 LoC
+  to ~30.
+- `docs/recipes.md` gains a "Multi-protocol monitoring" section
+  with the locked example from the Summary.
+- `docs/concepts.md` documents the routing model in one
+  paragraph.
+- Zero clippy warnings, zero rustdoc warnings under
+  `--all-features`.
 
 ---
 
 ## Effort
 
-**For the RFC itself** (this document): ~600 lines, ~3 hours.
-
-**For the implementation** (deferred — not in this plan):
-
-- Driver shell + registration API: ~150 LoC, 3 hours.
-- Per-parser reassembler + per-flow parser instance management:
-  ~200 LoC, 5 hours.
-- Event translation (FlowEvent → SessionEvent<K, M> via per-
-  parser slot): ~120 LoC, 3 hours.
-- Tests covering 2-parser, 3-parser, and 4-parser registration;
-  routing correctness; poison isolation; event ordering: ~300
-  LoC, 4 hours.
-- Doc updates (SESSION_GUIDE.md "Multi-protocol monitoring"
-  section absorbing the composite-driver flow): ~80 lines, 1
-  hour.
-- **Implementation total:** ~16 hours, ~770 LoC.
+- Driver shell + registration API (ports / broadcast): ~180 LoC,
+  ~4 hours.
+- Per-parser reassembler + per-flow parser instance management
+  (TCP + UDP variants share helpers): ~260 LoC, ~6 hours.
+- Event translation pipeline (FlowEvent → composite
+  `SessionEvent<K, M>`, parser_kind on `Application`): ~130 LoC,
+  ~3 hours.
+- Tests (two-parser, three-parser, poison isolation, round-trip
+  proptest): ~340 LoC, ~5 hours.
+- Doc + example updates (recipes + concepts + netring example
+  refactor): ~3 hours.
+- **Total:** ~22 hours, ~910 LoC.
 
 ## Provenance
 
 Round-3 wishlist item B2 in netring's 2026-06-06 consolidated
 wishlist. Plan 91 shipped the doc-recipe fallback the author
-proposed; this RFC scopes the full composite driver they
+proposed; this plan scopes the full composite driver they
 originally asked for. The author was clear that the recipe is a
 stopgap (*"netring's `pcap_replay_multi.rs` example uses the
 'open twice, merge by timestamp' approach — readable but loads
 the pcap 2× from disk"*); the composite driver replaces it.
 
-Target landing for the RFC: 0.9.0. Target landing for the
-implementation: 0.9.0 or 0.10.0, contingent on reviewer
-agreement on the design questions.
+Target: 0.9.0 release.
