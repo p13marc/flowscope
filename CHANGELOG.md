@@ -10,6 +10,10 @@ Pre-1.0 breaking changes; `netring` updates in lockstep.
 
 ### Added
 
+- **`AnomalyKind::short_kind() -> &'static str`** (plan 88).
+  Stable variant slug returned for explicit metric-label intent.
+  Same string as `Display`; pick whichever expresses your call
+  site's intent.
 - **`PARSER_KIND` / `PARSER_KIND_UDP` / `PARSER_KIND_TCP`
   constants per parser module + `flowscope::parser_kinds`
   umbrella re-export** (plan 86). Use the constants at match

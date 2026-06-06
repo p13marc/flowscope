@@ -97,6 +97,53 @@ fn severity_display_renders_lowercase() {
 }
 
 #[test]
+fn short_kind_matches_display() {
+    // Plan 88: short_kind() returns the same string as Display.
+    let kinds = [
+        AnomalyKind::BufferOverflow {
+            side: FlowSide::Initiator,
+            bytes: 0,
+            policy: OverflowPolicy::SlidingWindow,
+        },
+        AnomalyKind::OutOfOrderSegment {
+            side: FlowSide::Initiator,
+            count: 1,
+        },
+        AnomalyKind::FlowTableEvictionPressure {
+            evicted_in_tick: 1,
+            evicted_total: 42,
+        },
+        AnomalyKind::SessionParseError {
+            side: FlowSide::Initiator,
+            reason: None,
+        },
+        AnomalyKind::RetransmittedSegment {
+            side: FlowSide::Initiator,
+            count: 2,
+        },
+        AnomalyKind::ReassemblerHighWatermark {
+            side: FlowSide::Initiator,
+            bytes: 800,
+            cap: 1000,
+            threshold_pct: 80,
+        },
+    ];
+    for kind in &kinds {
+        assert_eq!(kind.short_kind(), format!("{kind}"));
+    }
+}
+
+#[test]
+fn short_kind_is_static_str() {
+    // Type-asserts the zero-allocation contract.
+    let kind = AnomalyKind::OutOfOrderSegment {
+        side: FlowSide::Initiator,
+        count: 1,
+    };
+    let _s: &'static str = kind.short_kind();
+}
+
+#[test]
 fn severity_filter_threshold_works() {
     // Canonical operator pattern: route only Warning+ to alerts.
     let kinds = [

@@ -226,6 +226,30 @@ pub enum AnomalyKind {
     },
 }
 
+impl AnomalyKind {
+    /// Stable variant slug used as a metric label.
+    ///
+    /// Returns the same string as `<Self as Display>::fmt` produces —
+    /// both forward to the same source of truth. Use this method when
+    /// intent is *"give me the label"*; use `to_string()` / `format!`
+    /// when intent is *"render this"*. New in 0.8.0.
+    ///
+    /// The slug vocabulary matches `flowscope_anomalies_total{kind=...}`
+    /// and is locked from 0.6 forward:
+    ///
+    /// | Variant | Slug |
+    /// |---------|------|
+    /// | [`Self::BufferOverflow`] | `"buffer_overflow"` |
+    /// | [`Self::OutOfOrderSegment`] | `"ooo_segment"` |
+    /// | [`Self::FlowTableEvictionPressure`] | `"flow_table_eviction"` |
+    /// | [`Self::SessionParseError`] | `"parse_error"` |
+    /// | [`Self::RetransmittedSegment`] | `"retransmit"` |
+    /// | [`Self::ReassemblerHighWatermark`] | `"reassembler_high_watermark"` |
+    pub fn short_kind(&self) -> &'static str {
+        crate::obs::anomaly_label(self)
+    }
+}
+
 impl std::fmt::Display for AnomalyKind {
     /// Lowercase short label matching the
     /// `flowscope_anomalies_total{kind=…}` metric vocabulary
