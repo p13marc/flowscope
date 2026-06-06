@@ -8,6 +8,19 @@ rounds) — synthesis in
 [`docs/0.8-PLAN-OF-RECORD.md`](docs/0.8-PLAN-OF-RECORD.md).
 Pre-1.0 breaking changes; `netring` updates in lockstep.
 
+### Breaking
+
+- **`FlowEvent::Established` gains a `l4: Option<L4Proto>` field**
+  (plan 87). Rounds out the trio with `Started` (0.4.0) and
+  `Ended` (0.7.0); same shape, same mechanical migration.
+  *Migration:*
+  ```diff
+  - FlowEvent::Established { key, ts } => …
+  + FlowEvent::Established { key, ts, l4 } => …
+    // or
+  + FlowEvent::Established { key, ts, .. } => …
+  ```
+
 ### Added
 
 - **`AnomalyKind::short_kind() -> &'static str`** (plan 88).

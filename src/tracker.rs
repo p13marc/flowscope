@@ -344,6 +344,7 @@ impl<E: FlowExtractor, S: Send + 'static> FlowTracker<E, S> {
                     events.push(FlowEvent::Established {
                         key: key.clone(),
                         ts,
+                        l4: entry.l4,
                     });
                 } else {
                     events.push(FlowEvent::StateChange {
@@ -1184,6 +1185,64 @@ mod tests {
         assert!(matches!(ended[0], FlowEvent::Ended { .. }));
         // Second call sees no flows.
         assert!(t.finish().is_empty());
+    }
+
+    /// Plan 87: `Established.l4` mirrors `Started.l4` for TCP flows.
+    #[test]
+    fn established_carries_l4() {
+        use crate::extract::parse::test_frames::ipv4_tcp;
+        let mut t = FlowTracker::<FiveTuple>::new(FiveTuple::bidirectional());
+        let mac = [0u8; 6];
+        // SYN
+        let syn = ipv4_tcp(
+            mac,
+            mac,
+            [10, 0, 0, 1],
+            [10, 0, 0, 2],
+            1234,
+            80,
+            1000,
+            0,
+            0x02,
+            &[],
+        );
+        t.track(view(&syn, 0));
+        // SYN-ACK
+        let synack = ipv4_tcp(
+            mac,
+            mac,
+            [10, 0, 0, 2],
+            [10, 0, 0, 1],
+            80,
+            1234,
+            5000,
+            1001,
+            0x12,
+            &[],
+        );
+        t.track(view(&synack, 0));
+        // ACK -> Established
+        let ack = ipv4_tcp(
+            mac,
+            mac,
+            [10, 0, 0, 1],
+            [10, 0, 0, 2],
+            1234,
+            80,
+            1001,
+            5001,
+            0x10,
+            &[],
+        );
+        let evs = t.track(view(&ack, 0));
+        let established_l4 = evs
+            .iter()
+            .find_map(|e| match e {
+                FlowEvent::Established { l4, .. } => Some(*l4),
+                _ => None,
+            })
+            .expect("Established event");
+        assert_eq!(established_l4, Some(crate::L4Proto::Tcp));
     }
 
     /// Plan 79: `Ended.l4` mirrors `Started.l4` for the same flow.

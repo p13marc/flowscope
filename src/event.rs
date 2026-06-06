@@ -362,7 +362,15 @@ pub enum FlowEvent<K> {
     },
 
     /// TCP only — 3WHS completed for this flow.
-    Established { key: K, ts: Timestamp },
+    Established {
+        key: K,
+        ts: Timestamp,
+        /// L4 protocol the flow was tracked under, or `None` if the
+        /// extractor never classified one. New in 0.8.0; rounds out
+        /// the [`Self::Started`] / [`Self::Ended`] trio (always
+        /// `Some(L4Proto::Tcp)` for a real 3WHS-complete event).
+        l4: Option<L4Proto>,
+    },
 
     /// State machine transitioned. Fires for TCP non-Established
     /// transitions (e.g., `Established → FinWait`).
