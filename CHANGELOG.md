@@ -43,6 +43,14 @@
 
 ### Breaking
 
+- **MSRV bumped 1.85 → 1.88** (plan 99). Rust 1.88 (June 2025)
+  stabilised let-chains at expression position
+  (`if let Some(a) = x && let Some(b) = y { … }`), which
+  flowscope's source already uses in several spots. The bump
+  formalises the requirement and clears the way for an idiom
+  sweep across the rest of the codebase. AFIT (1.75), async
+  closures (1.85), and trait upcasting (1.86) are also
+  available within the new MSRV.
 - **Error types unified into `flowscope::Error`** (plan 96). The
   five module-local enums (`http::Error`, `tls::Error`,
   `dns::Error`, `pcap::Error`, `icmp::Error`) are removed.

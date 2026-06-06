@@ -209,10 +209,10 @@ fn build_server_hello(
         for ext in &exts {
             match ext {
                 TlsExtension::ALPN(protos) => {
-                    if let Some(p) = protos.first() {
-                        if let Ok(s) = std::str::from_utf8(p) {
-                            alpn = Some(s.to_string());
-                        }
+                    if let Some(p) = protos.first()
+                        && let Ok(s) = std::str::from_utf8(p)
+                    {
+                        alpn = Some(s.to_string());
                     }
                 }
                 TlsExtension::SupportedVersions(vs) => {
