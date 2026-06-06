@@ -96,6 +96,9 @@ mod tcp_state;
 pub mod tracker;
 
 #[cfg(feature = "tracker")]
+pub mod correlate;
+
+#[cfg(feature = "tracker")]
 pub mod obs;
 
 #[cfg(feature = "reassembler")]

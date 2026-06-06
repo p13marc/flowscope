@@ -1569,6 +1569,7 @@ mod tests {
         assert_eq!(Noop.parser_kind(), "");
     }
 
+    #[cfg(all(feature = "http", feature = "tls", feature = "dns"))]
     #[test]
     fn shipped_http_tls_dns_parser_kinds() {
         use crate::DatagramParser as _;

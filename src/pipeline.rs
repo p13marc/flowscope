@@ -23,6 +23,7 @@
 use std::collections::VecDeque;
 use std::hash::Hash;
 use std::marker::PhantomData;
+#[cfg(feature = "pcap")]
 use std::path::Path;
 
 use crate::event::FlowEvent;

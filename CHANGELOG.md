@@ -4,6 +4,18 @@
 
 ### Added
 
+- **`flowscope::correlate` module** (plan 81). Three composable
+  primitives for cross-flow correlation patterns:
+  - `TimeBucketedCounter<K>` — windowed per-key event counter
+    with bucket-based aggregation (DDoS rate-limits, SYN-flood
+    thresholds, "did key K cross N in W seconds").
+  - `KeyIndexed<K, V>` — TTL'd LRU cache with packet-clock
+    eviction (DNS query/response correlation, ICMP error tying
+    back to the original flow, generic request/response
+    matching).
+  - `SequencePattern` trait + `KeylessSequencePattern` blanket-
+    adapter — generic FSM for event-stream pattern detectors
+    (port scans, "auth-failure-then-success", retry storms).
 - **`FlowTracker::with_auto_sweep(interval)`** (plan 75).
   Packet-clock-driven implicit sweeps so live and offline
   pipelines emit identical event streams for identical inputs.

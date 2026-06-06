@@ -272,10 +272,10 @@ where
     pub fn track_pending<'v>(&mut self, view: impl Into<PacketView<'v>>) -> FlowEvents<E::Key> {
         let view: PacketView<'v> = view.into();
         // Dedup before extraction — duplicates produce no events.
-        if let Some(d) = self.dedup.as_mut() {
-            if !d.keep(view) {
-                return FlowEvents::new();
-            }
+        if let Some(d) = self.dedup.as_mut()
+            && !d.keep(view)
+        {
+            return FlowEvents::new();
         }
         // Monotonic timestamp clamp (Plan 48) — applied to the
         // view's timestamp before tracker dispatch.

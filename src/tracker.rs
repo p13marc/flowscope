@@ -631,15 +631,15 @@ impl<E: FlowExtractor, S: Send + 'static> FlowTracker<E, S> {
         // 3. For each ended flow with a parser, flush fin output
         //    and remove the parser.
         for ev in &events {
-            if let FlowEvent::Ended { key, stats, .. } = ev {
-                if let Some(mut parser) = parsers.remove(key) {
-                    let ended_ts = stats.last_seen;
-                    for msg in parser.fin_initiator() {
-                        on_message(key, FlowSide::Initiator, msg, ended_ts);
-                    }
-                    for msg in parser.fin_responder() {
-                        on_message(key, FlowSide::Responder, msg, ended_ts);
-                    }
+            if let FlowEvent::Ended { key, stats, .. } = ev
+                && let Some(mut parser) = parsers.remove(key)
+            {
+                let ended_ts = stats.last_seen;
+                for msg in parser.fin_initiator() {
+                    on_message(key, FlowSide::Initiator, msg, ended_ts);
+                }
+                for msg in parser.fin_responder() {
+                    on_message(key, FlowSide::Responder, msg, ended_ts);
                 }
             }
         }
