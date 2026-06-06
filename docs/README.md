@@ -4,20 +4,13 @@ Published reference material — ships as part of the crates.io
 package. For forward-looking work items, see
 [`../plans/`](../plans/) (in-repo only).
 
-## How-to / reference
+## Read in order
 
 | File | What |
 |------|------|
-| [`ARCHITECTURE.md`](ARCHITECTURE.md) | High-level architecture overview. Read first. |
-| [`SESSION_GUIDE.md`](SESSION_GUIDE.md) | Picking the right L7 parser API: `FlowEvent` / `Reassembler` / `*Factory<H>` / `SessionParser` / `DatagramParser` / `FlowSessionDriver` / `FlowDatagramDriver`. Includes a "Writing your own SessionParser" walkthrough and migration recipes. |
-| [`OBSERVABILITY.md`](OBSERVABILITY.md) | Metric vocabulary, cardinality notes, Prometheus / Grafana sample queries, `tracing-subscriber` wiring. |
-| [`PERFORMANCE.md`](PERFORMANCE.md) | Criterion bench methodology and baseline numbers. |
-
-## Design / research (background)
-
-| File | What |
-|------|------|
-| [`DPI_ARCHITECTURE.md`](DPI_ARCHITECTURE.md) | SOTA-DPI research and crate-split recommendations (2026). Why flowscope is shaped the way it is, and where sister crates fit. |
-| [`flow-session-tracking-design.md`](flow-session-tracking-design.md) | Original design rationale for the flow / session tracking surface. The *why* behind the `FlowExtractor` / `FlowTracker` / `Reassembler` / `SessionParser` layering. |
-| [`high-level-features-design.md`](high-level-features-design.md) | High-level features survey. Drove the `Dedup` primitive shape and other 0.3.0 ergonomics. |
-
+| [`getting-started.md`](getting-started.md) | Install + three minimal pipelines (lifecycle / offline HTTP / async live). |
+| [`concepts.md`](concepts.md) | The four layers (`FlowExtractor` / `FlowTracker` / `Reassembler` / `SessionParser` / `DatagramParser`) and the event model. |
+| [`recipes.md`](recipes.md) | Named patterns: picking an API, writing your own parser, multi-protocol monitoring, cross-protocol correlation, structured output. |
+| [`observability.md`](observability.md) | Metric vocabulary, cardinality, tracing targets, severity routing. |
+| [`performance.md`](performance.md) | Criterion bench methodology, baseline numbers, regression workflow. |
+| [`design.md`](design.md) | Why the library is shaped the way it is — runtime-free, run-to-completion threading, layered traits, locked serde format. |

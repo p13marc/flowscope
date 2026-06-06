@@ -1,0 +1,371 @@
+# Concepts
+
+flowscope is a layered library. Every layer ships a trait you can
+plug into, and a sensible default. You can stop at any layer and
+still get something useful — flow lifecycle without bytes, bytes
+without typed messages, typed messages without async.
+
+This document is the conceptual reference: what each layer does,
+how they compose, and what the events look like. For an
+opinionated decision tree on which layer to reach for, see
+[`recipes.md`](recipes.md). For a working hello-world, see
+[`getting-started.md`](getting-started.md).
+
+## The pipeline
+
+```
+  ┌────────┐    ┌──────────────┐    ┌──────────────┐    ┌──────────────┐
+  │  view  │───▶│  Extractor   │───▶│   Tracker    │───▶│ Reassembler  │
+  │  &[u8] │    │  key + L4    │    │  FlowEvent   │    │ per-side     │
+  └────────┘    └──────────────┘    └──────────────┘    └──────┬───────┘
+                                                              │
+                                                              ▼
+                                                  ┌──────────────────┐
+                                                  │  SessionParser   │
+                                                  │  DatagramParser  │
+                                                  │  typed messages  │
+                                                  └──────────────────┘
+                                                              │
+                                                              ▼
+                                                       SessionEvent
+```
+
+Each arrow is a contract: a packet at the source produces zero or
+more events at the sink. A consumer picks the layer that matches
+the shape of the question they're asking.
+
+## Layer 1 — `FlowExtractor`
+
+Turn a packet into a flow descriptor. The trait:
+
+```rust,ignore
+pub trait FlowExtractor: Send + Sync + 'static {
+    type Key: Hash + Eq + Clone + Send + 'static;
+    fn extract(&self, view: PacketView<'_>) -> Option<Extracted<Self::Key>>;
+}
+
+pub struct Extracted<K> {
+    pub key: K,
+    pub orientation: Orientation,     // Forward or Reverse (canonical direction)
+    pub l4: Option<L4Proto>,
+    pub tcp: Option<TcpInfo>,
+}
+```
+
+Built-in extractors live behind the `extractors` feature:
+
+| Extractor | Key shape | What it sees |
+|-----------|-----------|--------------|
+| `FiveTuple` | `(proto, SocketAddr, SocketAddr)` | The 5-tuple over IPv4 / IPv6 |
+| `IpPair` | `(IpAddr, IpAddr)` | Just src/dst hosts; useful for ICMP |
+| `MacPair` | `([u8; 6], [u8; 6])` | L2 only |
+
+**Decap combinators** wrap an inner extractor:
+
+```rust,ignore
+use flowscope::extract::{FiveTuple, StripVlan, InnerVxlan};
+
+let extractor = StripVlan(InnerVxlan::new(FiveTuple::bidirectional()));
+//                          strip 802.1Q → strip VXLAN → 5-tuple
+```
+
+`AutoDetectEncap` is the *"I have mixed traffic, just figure it
+out"* combinator. It costs up to 5× the per-packet parse cost on a
+miss; if you know the encap shape, compose explicitly.
+
+`FlowLabel<E>` augments an inner key with the IPv6 flow label (RFC
+6437) — useful when MPTCP subflows share a 5-tuple and need to
+be distinguished.
+
+**Bring your own extractor.** Custom keys are common — app-level
+cookies, BGP communities, tenant IDs in a header. Implement the
+trait; the rest of the stack treats your key as opaque.
+
+## Layer 2 — `FlowTracker<E, S>`
+
+Per-flow accounting on top of the extractor. Generic over the
+extractor `E` and an optional per-flow user state `S` (defaults to
+`()`).
+
+### State machine
+
+TCP flows go through:
+
+```
+SynSent ──ack──▶ SynReceived ──ack──▶ Established ──fin──▶ FinWait
+   │                                       │                │
+   │                                       └──rst──▶ Reset  fin
+   └──rst──▶ Reset                                          │
+                                                            ▼
+                                                      ClosingTcp
+                                                            │
+                                                          ack
+                                                            ▼
+                                                         Closed
+```
+
+Non-TCP flows skip the SYN states; they go straight to `Active`
+and stay there until idle-timeout sweep.
+
+### Lifecycle events
+
+`FlowEvent<K>` is what falls out of `tracker.track(view)`:
+
+| Variant | Fires when |
+|---------|-----------|
+| `Started { key, side, ts, l4 }` | First sight of a flow |
+| `Packet { key, side, len, ts }` | Subsequent packet on a known flow |
+| `Established { key, ts, l4 }` | TCP 3WHS complete |
+| `StateChange { key, from, to, ts }` | TCP non-Established transition |
+| `Ended { key, reason, stats, history, l4 }` | Flow concluded (FIN/RST/idle/etc.) |
+| `Tick { key, stats, ts }` | Periodic snapshot; opt-in via `flow_tick_interval` |
+| `FlowAnomaly { key, kind, ts }` | Per-flow anomaly; opt-in |
+| `TrackerAnomaly { kind, ts }` | Tracker-global anomaly; opt-in |
+
+### Configuration
+
+`FlowTrackerConfig`:
+
+- `idle_timeout_tcp` (default 5 min), `idle_timeout_udp` (60 s),
+  `idle_timeout_other` (30 s) — protocol-aware idle classification.
+- `max_flows` (default 100k) — LRU eviction kicks in here. Eviction
+  emits `Ended { reason: Evicted }`.
+- `max_reassembler_buffer`, `overflow_policy` — passed through to
+  default reassembler factories.
+- `flow_tick_interval` — opt-in periodic `Tick` events.
+- `reassembler_high_watermark_pct` — buffer-pressure anomalies.
+
+Per-flow user state `S` is generic — counters, parsers, anything.
+Default `()`. Construct with `FlowTracker::new(extractor)` for `S
+= ()`, or `with_state(extractor, init_fn)` / `with_state_init(...)`
+for a custom `S`.
+
+### Programmatic control
+
+`tracker.force_close(key, now)` ends a specific flow ahead of
+FIN/idle and emits `Ended { reason: ForceClosed }`. Use for
+resource budgets, test harnesses, rate limiters.
+
+`tracker.iter_active()` yields a snapshot per live flow:
+
+```rust,ignore
+for af in tracker.iter_active() {
+    println!("{:?} state={:?} l4={:?} bytes={}",
+        af.key, af.state, af.l4,
+        af.stats.bytes_initiator + af.stats.bytes_responder);
+}
+```
+
+`ActiveFlow` is `#[non_exhaustive]`; future fields are additive.
+
+## Layer 3 — `Reassembler`
+
+A per-`(flow, side)` byte-stream hook. The trait:
+
+```rust,ignore
+pub trait Reassembler: Send + 'static {
+    fn segment(&mut self, seq: u32, payload: &[u8], ts: Timestamp);
+    fn fin(&mut self);
+    fn rst(&mut self);
+    // diagnostic accessors — see rustdoc
+}
+```
+
+The default `BufferedReassembler` accumulates in-order bytes and
+classifies retransmits vs out-of-order segments using wrap-aware
+sequence-space comparison. Custom reassemblers (gap-fill,
+hole-tolerant, anything else) implement the trait directly.
+
+### Bounded memory
+
+`BufferedReassembler::with_max_buffer(bytes)` caps per-side
+buffering. Pair with an `OverflowPolicy`:
+
+- `SlidingWindow` (default) — drop oldest bytes when full. Flow
+  stays alive; parser must resync. Stream-shaped protocols only.
+- `DropFlow` — poison the reassembler; the driver tears down the
+  flow on the next tick via `Ended { reason: BufferOverflow }`.
+
+`with_high_watermark_threshold(pct)` fires a
+`ReassemblerHighWatermark` anomaly when occupancy crosses the
+threshold — operators see cap pressure building before
+`BufferOverflow` bites.
+
+### Diagnostics
+
+`FlowStats` (on every `Ended` event) carries per-side:
+
+- `reassembly_dropped_ooo_*` — OOO segment count
+- `reassembly_bytes_dropped_oversize_*` — sliding-window drops
+- `reassembler_high_watermark_*` — peak occupancy
+- `retransmits_*` — classified TCP retransmits
+
+## Layer 4 — `SessionParser` / `DatagramParser`
+
+Typed L7 messages on top of the bytes. Two trait shapes:
+
+```rust,ignore
+pub trait SessionParser: Send + 'static {
+    type Message: Send + Debug + 'static;
+
+    fn feed_initiator(&mut self, bytes: &[u8], ts: Timestamp) -> Vec<Self::Message>;
+    fn feed_responder(&mut self, bytes: &[u8], ts: Timestamp) -> Vec<Self::Message>;
+
+    fn fin_initiator(&mut self) -> Vec<Self::Message> { Vec::new() }
+    fn fin_responder(&mut self) -> Vec<Self::Message> { Vec::new() }
+    fn rst_initiator(&mut self) {}
+    fn rst_responder(&mut self) {}
+
+    fn on_tick(&mut self, _now: Timestamp) -> Vec<Self::Message> { Vec::new() }
+
+    fn is_poisoned(&self) -> bool { false }
+    fn poison_reason(&self) -> Option<&str> { None }
+    fn is_done(&self) -> bool { false }
+
+    fn parser_kind(&self) -> &'static str { "" }
+}
+
+pub trait DatagramParser: Send + 'static {
+    type Message: Send + Debug + 'static;
+    fn parse(&mut self, payload: &[u8], side: FlowSide, ts: Timestamp) -> Vec<Self::Message>;
+    // mirrors on_tick / is_poisoned / is_done / parser_kind
+}
+```
+
+Stream-based protocols (HTTP/1.x, TLS, DNS-over-TCP) use
+`SessionParser`. Packet-based protocols (DNS-over-UDP, ICMP,
+syslog, NTP) use `DatagramParser`.
+
+### Shipped parsers
+
+Each behind its own Cargo feature:
+
+| Feature | Parser | Kind | `parser_kind()` constant |
+|---------|--------|------|--------------------------|
+| `http` | `HttpParser` | session | `flowscope::http::PARSER_KIND` (`"http/1"`) |
+| `tls` | `TlsParser` | session | `flowscope::tls::PARSER_KIND` (`"tls"`) |
+| `dns` | `DnsTcpParser` | session | `flowscope::dns::PARSER_KIND_TCP` (`"dns-tcp"`) |
+| `dns` | `DnsUdpParser` | datagram | `flowscope::dns::PARSER_KIND_UDP` (`"dns-udp"`) |
+| `icmp` | `IcmpParser` | datagram | `flowscope::icmp::PARSER_KIND` (`"icmp"`) |
+
+`l7` umbrella feature enables all four. Use the constants — or
+the `flowscope::parser_kinds::*` umbrella module — at match sites
+instead of string literals.
+
+### Lifecycle signals
+
+- `is_poisoned()` → driver synthesises `Ended { reason: ParseError }`
+- `is_done()` → driver synthesises `Ended { reason: ParserDone }`
+
+Use `is_done()` for protocols with intrinsic completion semantics
+(HTTP/1.0 after body, DNS-over-TCP query/response pair, framed
+sessions). `is_poisoned()` wins precedence if both fire.
+
+### Convenience accessors
+
+L7 message types ship method-shaped accessors for common header
+lookups:
+
+- `HttpRequest::host()`, `user_agent()`, `cookie()`, `header(name)`
+- `HttpResponse::content_type()`, `content_length()`, `set_cookie()`
+- `TlsClientHello::sni()`
+- `IcmpType::is_error()`, `error_inner()` — extract the embedded
+  `(src, dst, proto, src_port, dst_port)` from ICMP error
+  messages for cross-protocol correlation
+- `IcmpMessage::short_kind()` and `AnomalyKind::short_kind()` —
+  stable `&'static str` slugs for metric labels
+
+## Drivers
+
+Layers 2–4 stitch together. flowscope ships three sync wrappers:
+
+- **`FlowDriver<E, F, S>`** — tracker + reassembler factory. Emits
+  `FlowEvent`. Use when you have a callback-style consumer.
+- **`FlowSessionDriver<E, P, S>`** — adds a `SessionParser`. Emits
+  `SessionEvent`.
+- **`FlowDatagramDriver<E, P, S>`** — adds a `DatagramParser`.
+  Emits `SessionEvent` for UDP-shaped protocols.
+
+`S` defaults to `()` — common-case constructors (`new`,
+`with_config`) need no type annotation. For per-flow state, use
+`with_state`, `with_state_init`, `with_state_factory`. For
+expensive-init parsers, `with_factory` skips the `P: Clone`
+requirement.
+
+All three expose `finish()` (sweep at `Timestamp::MAX`),
+`force_close(key, now)`, and the underlying tracker via
+`tracker()` / `tracker_mut()`.
+
+## Events at the L7 layer
+
+`SessionEvent<K, M>`:
+
+| Variant | Fires |
+|---------|-------|
+| `Started { key, ts }` | First sight of a flow |
+| `Application { key, side, message, ts, parser_kind }` | Parser emitted a message |
+| `Closed { key, reason, stats, l4 }` | Flow concluded |
+| `FlowAnomaly { key, kind, ts }` | Per-flow anomaly (opt-in) |
+| `TrackerAnomaly { kind, ts }` | Tracker-global anomaly (opt-in) |
+| `FlowTick { key, stats, ts }` | Periodic snapshot (opt-in) |
+
+The `parser_kind` field on `Application` lets consumers running
+multiple parsers route by protocol string — match against the
+exported constants for typo-safe matching.
+
+## Async integration
+
+flowscope is **runtime-free**. To get a `Stream<FlowEvent>` /
+`Stream<SessionEvent>`, layer on
+[`netring`](https://crates.io/crates/netring):
+
+```rust,ignore
+let stream = AsyncCapture::open("eth0")?
+    .flow_stream(FiveTuple::bidirectional())
+    .session_stream(HttpParser::default());
+```
+
+netring depends on flowscope, not the other way around. tokio
+never reaches the lib crate.
+
+## State invariants
+
+The contracts the library will not violate, in order of how often
+they trip people up:
+
+- **Mono-direction never doubles back.** Once a flow's `Initiator`
+  side is determined (from the first packet's orientation), it
+  stays. The tracker maintains this via an internal canonicalisation
+  in the extractor's `Orientation`.
+- **`fin()` is idempotent.** Multiple FINs on the same side are
+  fine.
+- **Parser splitting invariance.** Feeding a byte sequence in one
+  chunk produces the same messages as feeding it split anywhere.
+  Verified by proptest for every shipped parser.
+- **No-panic on random bytes.** Garbage input never panics; either
+  errors or skips.
+- **Per-protocol idle timeouts are independent.** A TCP flow with
+  60 s of silence isn't ended; a UDP flow is.
+- **LRU eviction is by `last_seen`.** When `max_flows` is hit, the
+  oldest-seen flow is evicted.
+- **`#[non_exhaustive]` on every public struct/enum that may grow.**
+  Construct via `::default()` and mutate; do not rely on
+  struct-literal construction from outside the crate.
+
+## Known limitations
+
+- **OOO TCP reassembly with hole-fill** — `BufferedReassembler`
+  drops out-of-order segments. Strict drop is fine for most
+  protocols (resync on next message); HTTP/2 + HPACK is the
+  classic case where a hole desyncs the decoder. RFC tracked in
+  `plans/74-rfc-ooo-reassembly.md`.
+- **IPv4/IPv6 fragment reassembly** — `etherparse` parses the
+  first fragment; subsequent fragments are tracked under their
+  fragment-header tuple rather than reassembled into the inner
+  flow. Out of scope until a consumer hits a heavy-fragmentation
+  workload.
+- **Wall-clock vs packet-clock divergence on offline pcaps** —
+  live capture sweeps idle flows on a wall clock; offline replay
+  only sweeps at EOF. Workaround: call `tracker.sweep(now)`
+  yourself driven by packet timestamps. RFC for an opt-in
+  packet-clock auto-sweep at `plans/75-rfc-tracker-auto-sweep.md`.

@@ -130,12 +130,13 @@ are settled; public structs and enums are `#[non_exhaustive]` so
 future variants and fields are additive. See
 [`CHANGELOG.md`](CHANGELOG.md) for the release history.
 
-See [`CHANGELOG.md`](CHANGELOG.md) for the per-release feature
-list and migration recipes,
-[`docs/SESSION_GUIDE.md`](docs/SESSION_GUIDE.md) for the
-decision-flow on which API to pick, and
-[`docs/OBSERVABILITY.md`](docs/OBSERVABILITY.md) for the metric
-vocabulary.
+See [`docs/getting-started.md`](docs/getting-started.md) for a
+hello-world,
+[`docs/concepts.md`](docs/concepts.md) for the conceptual model,
+[`docs/recipes.md`](docs/recipes.md) for worked patterns,
+[`docs/observability.md`](docs/observability.md) for metrics +
+tracing, and [`CHANGELOG.md`](CHANGELOG.md) for the per-release
+feature list and migration recipes.
 
 ## License
 

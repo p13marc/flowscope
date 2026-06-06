@@ -65,7 +65,7 @@
 //! `` [`FlowSessionDriver`](flowscope::FlowSessionDriver) `` form.
 //! The explicit path duplicates what rustdoc already resolves through
 //! the re-export and trips the `redundant_explicit_links` lint under
-//! `-D warnings`. See SESSION_GUIDE's "Re-exporting flowscope types"
+//! `-D warnings`. See recipes.md's "Re-exporting flowscope types"
 //! section for the worked example.
 
 #![cfg_attr(docsrs, feature(doc_cfg))]

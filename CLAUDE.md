@@ -26,7 +26,7 @@ identity. Driven by the simple-nms upstream wishlist
 proptests, tracker + round-trip proptests. Zero clippy
 warnings, zero rustdoc warnings, fmt-clean. Five criterion
 bench groups under `benches/` with baseline numbers in
-`docs/PERFORMANCE.md`.
+`docs/performance.md`.
 
 0.5.0 shipped: `Reassembler::segment(ts)` + `retransmits()` /
 `on_duplicate` accessors, `BufferedReassembler` retransmit
@@ -120,7 +120,7 @@ src/
 - `benches/{extractor,tracker,reassembler,session_driver,dedup}.rs`
   — criterion benchmark harness (0.3.0). Run with
   `cargo bench --all-features`; baselines in
-  `docs/PERFORMANCE.md`.
+  `docs/performance.md`.
 
 ## Build & Test
 
@@ -157,7 +157,7 @@ cargo doc --all-features --no-deps
    fast path for monoflow workloads (0.2.0).
 3. **Reassembler** / **SessionParser** / **DatagramParser** — three
    API shapes for consuming TCP / UDP payloads. Pick by use case
-   ([SESSION_GUIDE.md](docs/SESSION_GUIDE.md) walks through the
+   ([recipes.md](docs/recipes.md) walks through the
    decision tree).
 
 ### Two API shapes for L7 parsing — sync / async parity
@@ -204,7 +204,7 @@ coalesced per (flow, side, kind) per tick.
 `metrics` and `tracing` Cargo features wire the tracker and driver
 into the standard observability ecosystem. Both zero-cost when off
 (every entry point compile-time stubbed). Metric vocabulary in
-[docs/OBSERVABILITY.md](docs/OBSERVABILITY.md).
+[docs/observability.md](docs/observability.md).
 
 ### Design constraints
 
@@ -255,27 +255,23 @@ record; `plans/` is the working backlog.
 
 ### `docs/` (published reference)
 
-- `ARCHITECTURE.md` — high-level architecture overview.
-- `SESSION_GUIDE.md` — picking an API (FlowEvent / Reassembler /
-  `*Factory<H>` / SessionParser / DatagramParser /
-  FlowSessionDriver / FlowDatagramDriver).
-- `OBSERVABILITY.md` — metric vocabulary, cardinality notes,
-  Prometheus / Grafana / tracing wiring.
-- `PERFORMANCE.md` — criterion bench methodology and baseline
-  numbers.
-- `DPI_ARCHITECTURE.md` — SOTA-DPI research and crate-split
-  recommendations (2026).
-- `flow-session-tracking-design.md` — original design rationale
-  for the session-tracking surface.
-- `high-level-features-design.md` — high-level features survey;
-  drove the `Dedup` primitive shape.
-- `API-ERGONOMICS-REVIEW.md` — public-API audit that drove the
-  0.4.0 ergonomics release (plans 32–37).
+- `getting-started.md` — install + three minimal pipelines.
+- `concepts.md` — the four layers + event model.
+- `recipes.md` — picking an API, custom parsers, multi-protocol
+  monitoring, cross-protocol correlation, structured output.
+- `observability.md` — metric vocabulary, cardinality, tracing
+  targets, severity routing.
+- `performance.md` — criterion bench methodology and baseline
+  numbers (0.3.0 snapshot).
+- `design.md` — why flowscope is shaped the way it is
+  (runtime-free, run-to-completion threading, layered traits,
+  locked serde format).
 
-Per-cycle upstream-feedback documents and plan-of-record
-syntheses are retired once their plans ship — `CHANGELOG.md`
-entries are the durable record, and `plans/INDEX.md` carries
-the surviving deferral / RFC notes.
+Per-cycle upstream-feedback documents, per-cycle plan-of-record
+syntheses, design proposals, and audit reports are retired once
+their plans ship — `CHANGELOG.md` entries are the durable
+record, and `plans/INDEX.md` carries the surviving deferral /
+RFC notes.
 
 ### `plans/` (active backlog)
 
@@ -318,7 +314,7 @@ For the next `cargo publish` of flowscope:
 
 ## Intra-doc links for re-exporters
 
-See `docs/SESSION_GUIDE.md` → "Re-exporting flowscope types" for
+See `docs/recipes.md` → "Re-exporting flowscope types" for
 the recipe. The source of truth lives in `docs/` so downstream
 re-exporters find it on docs.rs; keeping a copy here would just
 drift.
