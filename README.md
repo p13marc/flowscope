@@ -49,47 +49,63 @@ Protocol parsers (each behind its own feature):
 
 ```toml
 [dependencies]
-flowscope = { version = "0.5", features = ["full"] }
+flowscope = { version = "0.9", features = ["full"] }
 ```
 
-```rust,no_run
-use flowscope::extract::FiveTuple;
-use flowscope::pcap::PcapFlowSource;
-use flowscope::FlowEvent;
+MSRV is Rust 1.88.
 
-# fn main() -> Result<(), Box<dyn std::error::Error>> {
-for evt in PcapFlowSource::open("trace.pcap")?.with_extractor(FiveTuple::bidirectional()) {
-    if let FlowEvent::Started { key, .. } = evt? {
-        println!("flow started: {key:?}");
-    }
-}
-# Ok(()) }
-```
-
-Typed L7 messages are one iterator away — `sessions()` runs an
-extractor plus a per-flow `SessionParser` over the pcap, with the
-end-of-input flush folded in:
+One import, one builder chain, one iterator — the high-level
+`Pipeline` entry point introduced in 0.9.0:
 
 ```rust,no_run
-use flowscope::extract::FiveTuple;
-use flowscope::pcap::PcapFlowSource;
+use flowscope::prelude::*;
 use flowscope::http::HttpParser;
-use flowscope::SessionEvent;
 
-# fn main() -> Result<(), Box<dyn std::error::Error>> {
-for evt in PcapFlowSource::open("trace.pcap")?
-    .sessions(FiveTuple::bidirectional(), HttpParser::default())
-{
-    if let SessionEvent::Application { message, .. } = evt? {
+# fn main() -> flowscope::Result<()> {
+let mut pipeline = Pipeline::builder(FiveTuple::bidirectional())
+    .session(HttpParser::default())
+    .build();
+
+for event in pipeline.run_pcap("trace.pcap")? {
+    if let Event::Tcp(SessionEvent::Application { message, .. }) = event? {
         println!("{message:?}");
     }
 }
 # Ok(()) }
 ```
 
-`datagrams()` is the UDP mirror. For TLS / DNS and the callback-style
-`*Factory<H>` APIs, see `examples/` and the per-module documentation
-on docs.rs.
+`Pipeline` bundles the common driver setup with sensible defaults
+(anomalies emitted, monotonic timestamps for offline replay).
+For per-flow user state, custom drainers, or multiple parsers
+per L4, drop to `FlowSessionDriver` / `FlowDatagramDriver`
+directly.
+
+### Per-packet introspection
+
+The 0.9 `flowscope::layers` module exposes a zero-copy view of a
+frame with both direct accessors and a dynamic walk:
+
+```rust,no_run
+use flowscope::PacketView;
+use flowscope::layers::LayerKind;
+
+# fn ex(pv: PacketView<'_>) -> flowscope::Result<()> {
+let layers = pv.layers()?;
+
+// Direct accessors — the common case.
+if let Some(tcp) = layers.tcp() {
+    println!("seq={} window={}", tcp.seq(), tcp.window());
+}
+if let Some(vlan) = layers.vlan() {
+    println!("vid={}", vlan.vid());
+}
+
+// Dynamic walk — "show me everything".
+for layer in layers.iter() {
+    println!("{} ({}B)", layer.kind(), layer.bytes().len());
+}
+# Ok(()) }
+```
 
 ### Custom protocols
 
@@ -122,13 +138,20 @@ while let Some(evt) = s.next().await { /* ... */ }
 
 ## Status
 
-0.8.0 — serde wire-format lock, ICMP correlation helpers,
-programmatic flow termination, per-flow snapshot iterator,
-multi-protocol monitor recipe. Core flow APIs (`FlowExtractor`,
-`FlowTracker`, `Reassembler`, `SessionParser`, `DatagramParser`)
-are settled; public structs and enums are `#[non_exhaustive]` so
-future variants and fields are additive. See
-[`CHANGELOG.md`](CHANGELOG.md) for the release history.
+0.9.0 (in progress) — high-level `Pipeline` entry point,
+public `flowscope::layers` per-packet view, unified
+`flowscope::Error`, `FlowTracker::with_auto_sweep` for
+live/offline parity, `flowscope::prelude`, MSRV bumped to 1.88.
+
+0.8.0 was the last point release: serde wire-format lock,
+ICMP correlation helpers, programmatic flow termination,
+per-flow snapshot iterator, multi-protocol monitor recipe.
+
+Core flow APIs (`FlowExtractor`, `FlowTracker`, `Reassembler`,
+`SessionParser`, `DatagramParser`) are settled; public structs
+and enums are `#[non_exhaustive]` so future variants and fields
+are additive. See [`CHANGELOG.md`](CHANGELOG.md) for the
+release history.
 
 See [`docs/getting-started.md`](docs/getting-started.md) for a
 hello-world,

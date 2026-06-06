@@ -7,7 +7,8 @@ capture pipelines. Single crate with feature-gated modules. Runtime-
 free, cross-platform — no tokio, no futures, no Linux-specific code in
 the core.
 
-- Edition 2024, MSRV 1.85
+- Edition 2024, MSRV 1.88 (bumped from 1.85 in plan 99 for
+  let-chains)
 - Single Cargo package; modules `http` / `tls` (+ `ja3`) / `dns` /
   `pcap` are opt-in via Cargo features. Observability hooks
   (`metrics`, `tracing`) are opt-in too.
@@ -20,33 +21,51 @@ the core.
 
 ## Implementation Status
 
-**0.5.0** — TCP rich diagnostics, periodic ticks, parser
-identity. Driven by the simple-nms upstream wishlist
-(2026-08-11). 203 lib + integration tests, 11 parser
-proptests, tracker + round-trip proptests. Zero clippy
-warnings, zero rustdoc warnings, fmt-clean. Five criterion
-bench groups under `benches/` with baseline numbers in
-`docs/performance.md`.
+**0.9.0 cycle** (in progress at 2026-06). Plan-of-record in
+`plans/INDEX.md`. Shipped so far:
 
-0.5.0 shipped: `Reassembler::segment(ts)` + `retransmits()` /
-`on_duplicate` accessors, `BufferedReassembler` retransmit
-classification (wrap-aware seq-space), `AnomalyKind::Retransmitted
-Segment`, `FlowStats::retransmits_*`, `TcpInfo::window` +
-`#[non_exhaustive]`, opt-in periodic `FlowEvent::Tick` /
-`SessionEvent::FlowTick`, `SessionParser::parser_kind` /
-`DatagramParser::parser_kind` threaded into Application events,
-SESSION_GUIDE rich-state pattern (doc-only response to F1.4).
-Also fixes a latent timing bug where reassembly-diagnostic
-metrics fired with zero values on natural flow ends.
+- **Plan 96** — unified `flowscope::Error` (5 module enums
+  collapsed; source-chain preserved; `(module, code)` matching).
+- **Plan 94 Tier 3** — public `flowscope::layers` per-packet
+  view (zero-copy, Layers/Layer/LayerKind + Eth/VLAN/IPv4/IPv6/
+  TCP/UDP slices, dynamic walk + direct accessors, `PacketView::layers()`).
+- **Plan 94 Tier 1** — `flowscope::Pipeline` high-level entry
+  point + `flowscope::prelude` (one-import API).
+- **Plan 75** — `FlowTracker::with_auto_sweep(interval)` for
+  live/offline parity.
+- **Plan 99** — MSRV 1.85 → 1.88 + let-chain idiom sweep.
+
+Pending:
+- Plan 92 (multi-parser driver), 74 (OOO reassembly),
+  81 (correlate module), 97 (TLS modernization), plus Tier 2
+  driver-builder consolidation in plan 94.
+
+Test counts: 457 passing, zero clippy warnings under
+`--all-features --all-targets -D warnings`, zero rustdoc
+warnings.
+
+(0.5.0 historical: TCP rich diagnostics, periodic ticks,
+parser identity. 0.8.0 historical: serde wire-format lock,
+ICMP correlation, programmatic flow termination, snapshot
+iterator, multi-protocol monitor recipe. See CHANGELOG.md.)
 
 ### Modules
 
 ```
 src/
 ├── lib.rs                       # re-exports + feature wiring
+├── error.rs                     # flowscope::Error / ErrorKind / Module / ErrorCode (plan 96, 0.9.0)
+├── prelude.rs                   # flowscope::prelude::* (plan 94, 0.9.0)
+├── pipeline.rs                  # Pipeline + PipelineBuilder + Event + EventKind (plan 94 Tier 1, 0.9.0)
 ├── timestamp.rs                 # Timestamp (also re-exported by netring)
-├── view.rs                      # PacketView<'a> = (frame: &[u8], ts)
+├── view.rs                      # PacketView<'a> = (frame: &[u8], ts) + .layers() (plan 94, 0.9.0)
 ├── extractor.rs                 # FlowExtractor trait + Extracted/Orientation
+├── layers/                      # Per-packet layered view (plan 94 Tier 3, 0.9.0)
+│   ├── mod.rs                   # Layers + Layer + accessors + dynamic walk
+│   ├── kind.rs                  # LayerKind enum + .layer_number()
+│   ├── eth.rs                   # EthernetSlice + VlanSlice
+│   ├── ip.rs                    # Ipv4Slice + Ipv6Slice
+│   └── transport.rs             # TcpSlice + UdpSlice + TcpFlagsView + TcpOption
 ├── extract/                     # built-in extractors (extractors feature)
 │   ├── parse.rs                 # internal etherparse wrappers
 │   ├── five_tuple.rs            # FiveTuple { proto, a, b }

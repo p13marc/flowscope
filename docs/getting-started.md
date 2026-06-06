@@ -5,9 +5,10 @@ pipelines. Single crate, runtime-free, cross-platform. Pair with
 [netring](https://crates.io/crates/netring) for live Linux capture
 or with pcap files for offline replay.
 
-This guide walks through three minimal pipelines so you can see
+This guide walks through four minimal pipelines so you can see
 the shape before you commit to a layer:
 
+0. **The shortest path** — `Pipeline`, one import, one builder.
 1. Lifecycle only — flow events without bytes.
 2. Typed L7 messages — HTTP requests from a pcap.
 3. Async live capture — same, but via netring.
@@ -18,15 +19,17 @@ After each, the right doc to read next is called out.
 
 ```toml
 [dependencies]
-flowscope = "0.8"
+flowscope = "0.9"
 ```
+
+MSRV is Rust 1.88 (June 2025).
 
 The default features cover the core stack (`extractors`,
 `tracker`, `reassembler`, `session`). Opt into protocol parsers
 and observability piecemeal:
 
 ```toml
-flowscope = { version = "0.8", features = ["l7", "pcap", "metrics", "tracing"] }
+flowscope = { version = "0.9", features = ["l7", "pcap", "metrics", "tracing"] }
 ```
 
 | Feature | What it adds |
@@ -38,6 +41,50 @@ flowscope = { version = "0.8", features = ["l7", "pcap", "metrics", "tracing"] }
 | `serde` | `Serialize` + `Deserialize` on every public event / message type |
 | `ja3` | TLS ClientHello fingerprinting |
 | `test-helpers` | Reusable parser stubs for downstream test crates |
+
+## 0. The shortest path: `Pipeline`
+
+The 90 % case: one import, one builder chain, one iterator. The
+high-level entry point introduced in 0.9.0.
+
+```rust,ignore
+use flowscope::prelude::*;
+use flowscope::http::HttpParser;
+
+fn main() -> flowscope::Result<()> {
+    let mut pipeline = Pipeline::builder(FiveTuple::bidirectional())
+        .session(HttpParser::default())
+        .build();
+
+    for event in pipeline.run_pcap("trace.pcap")? {
+        match event? {
+            Event::Tcp(SessionEvent::Application { message, .. }) => {
+                println!("HTTP: {message:?}");
+            }
+            Event::Flow(FlowEvent::Started { key, .. }) => {
+                println!("+ flow {key:?}");
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+```
+
+Build with `cargo run --features http,pcap`. The `prelude`
+re-exports `Pipeline`, `Event`, `SessionEvent`, `FlowEvent`,
+`FiveTuple`, `Timestamp`, `Result`, and the per-feature parser
+types you need.
+
+`Pipeline` opinionates the defaults: anomalies emitted, monotonic
+timestamps for offline replay. Configure via
+`.config(FlowTrackerConfig { … })` and the chainable setters.
+When you need per-flow user state, custom drainers, or multiple
+parsers per L4, drop down to `FlowSessionDriver` /
+`FlowDatagramDriver` — see `recipes.md`.
+
+**Read next:** [`concepts.md`](concepts.md) — the three-tier
+shape (`Pipeline` → driver builders → `layers`).
 
 ## 1. Lifecycle only
 
