@@ -30,6 +30,15 @@ Pre-1.0 breaking changes; `netring` updates in lockstep.
 
 ### Added
 
+- **Multi-protocol monitor recipe + example** (plan 91).
+  `examples/multi_protocol_monitor.rs` demonstrates running
+  HTTP + TLS + DNS + ICMP parsers against a single pcap with
+  correlated (timestamp-merged) output. SESSION_GUIDE gains a
+  "Multi-protocol monitoring" section covering both the simple
+  "every parser, every pass" pattern and the performant manual-
+  dispatch pattern. A full composite driver (wishlist B2) is
+  deferred to a 0.9 RFC; this recipe is the recommended pattern
+  until then.
 - **`flowscope::dns::DnsResolutionCache`** (plan 85). TTL'd
   per-client DNS resolution cache for cross-protocol correlation:
   `"did client X recently resolve target Y?"` / `"what hostname

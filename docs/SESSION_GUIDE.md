@@ -889,3 +889,74 @@ Bare-form `[FlowSessionDriver]` resolves correctly on docs.rs
 because rustdoc walks the re-export. No warning. No round-trip
 to debug. This saves every re-exporter the same 5-minute
 investigation.
+
+## Multi-protocol monitoring (0.8.0)
+
+flowscope ships one parser per L7 protocol; consumers running
+multiple parsers against the same packet stream (HTTP and TLS on
+overlapping TCP ports; HTTP + DNS + ICMP in one pcap) have two
+patterns to pick from:
+
+### The simple pattern — one driver per parser, one pass per driver
+
+Read the source N times, once per parser. Each parser owns its
+own [`FlowSessionDriver`] / [`FlowDatagramDriver`] and runs
+against the full packet stream — parsers that can't make sense
+of a given flow produce nothing, which is fine.
+
+Pro: very readable, fully decoupled, every parser sees every
+flow it might apply to.
+Con: N pcap reads (acceptable for replay; not great for live
+capture).
+
+```rust,ignore
+let mut http = FlowSessionDriver::new(FiveTuple::bidirectional(), HttpParser::default());
+let mut tls  = FlowSessionDriver::new(FiveTuple::bidirectional(), TlsParser::default());
+let mut dns  = FlowDatagramDriver::new(FiveTuple::bidirectional(), DnsUdpParser::default());
+
+for source in [path.clone(), path.clone(), path] {
+    let src = PcapFlowSource::open(&source)?;
+    // ... feed every view to each driver ...
+}
+```
+
+A worked example ships at
+[`examples/multi_protocol_monitor.rs`](https://github.com/p13marc/flowscope/blob/master/examples/multi_protocol_monitor.rs)
+— run with `cargo run --features l7,pcap --example
+multi_protocol_monitor -- trace.pcap`.
+
+### The performant pattern — single pass, manual port dispatch
+
+Walk the source once; route each packet to the relevant parser(s)
+based on `FlowEvent::Started`'s `l4` + the destination port. The
+shape is essentially:
+
+```rust,ignore
+for view in source.views() {
+    let view = view?;
+    let port = peek_dst_port(&view); // user-supplied helper
+    match (l4_classification(&view), port) {
+        (Some(L4Proto::Tcp), 80) | (Some(L4Proto::Tcp), 8080) => {
+            for ev in http.track(&view) { ... }
+        }
+        (Some(L4Proto::Tcp), 443) => {
+            for ev in tls.track(&view) { ... }
+        }
+        (Some(L4Proto::Udp), 53) => {
+            for ev in dns.track(&view) { ... }
+        }
+        _ => {}
+    }
+}
+```
+
+Pro: one pcap read, minimal wasted work.
+Con: ~80 LoC of boilerplate; you bake the port↔parser map into
+your code.
+
+### Future: composite driver (0.9 RFC)
+
+A `FlowMultiSessionDriver` that accepts a tuple of parsers + port
+sets is on the 0.9 roadmap. It would absorb the manual dispatch
+above without forcing the consumer to write it. Until then, the
+two patterns here are the recommended shapes.

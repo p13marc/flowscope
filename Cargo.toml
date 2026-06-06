@@ -224,6 +224,10 @@ required-features = ["tracker", "extractors", "test-helpers"]
 name = "dns_resolution_cache"
 required-features = ["dns"]
 
+[[example]]
+name = "multi_protocol_monitor"
+required-features = ["pcap", "http", "tls", "dns", "icmp"]
+
 [[bench]]
 name = "extractor"
 harness = false
