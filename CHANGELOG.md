@@ -2,6 +2,36 @@
 
 ## Unreleased — 0.9.0 cycle (in progress)
 
+### Added
+
+- **`flowscope::layers` module** (plan 94 Tier 3). Public per-
+  packet introspection: `Layers<'a>` with direct accessors
+  (`.tcp()`, `.ipv4()`, `.vlan()`, …) and a dynamic walk
+  (`iter` / `find` / `find_all` over `LayerKind`). Built atop
+  `etherparse::SlicedPacket` with flowscope-shaped slice types
+  (`TcpSlice`, `UdpSlice`, `Ipv4Slice`, `Ipv6Slice`,
+  `EthernetSlice`, `VlanSlice`). Constructed via
+  `PacketView::layers()` or `Layers::parse_ethernet` /
+  `parse_ip`. Coverage in this first cut: Ethernet + VLAN
+  (single + Q-in-Q) + IPv4/IPv6 + TCP (with options iterator) +
+  UDP. Tunnel walking (VXLAN/GTP-U/GRE), ARP, ICMP slices, and
+  a zero-allocation `LayerParser` fast path are scoped for
+  follow-ups.
+- **`flowscope::Pipeline` high-level entry point** (plan 94
+  Tier 1). One import, one builder chain, one iterator over a
+  unified `Event<K, SM, DM>` enum. Bundles
+  `FlowSessionDriver` + `FlowDatagramDriver` with sensible
+  defaults (anomalies emitted, monotonic timestamps for offline
+  replay). Constructed via
+  `Pipeline::builder(extractor).session(p).build()` /
+  `.datagram(p)`. Runs via `pipeline.run_pcap("trace.pcap")`.
+  Power users continue to drop down to the underlying drivers.
+- **`flowscope::prelude` module**. `use flowscope::prelude::*;`
+  imports `Pipeline`, `FiveTuple`, `FlowEvent`, `SessionEvent`,
+  `Timestamp`, `Error`, `Result`, `Layers`, the protocol
+  parsers, and the rest of the common surface so a
+  hello-world program needs one `use`.
+
 ### Breaking
 
 - **Error types unified into `flowscope::Error`** (plan 96). The

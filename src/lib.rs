@@ -112,6 +112,14 @@ pub mod session_driver;
 #[cfg(all(feature = "extractors", feature = "reassembler", feature = "session"))]
 pub mod datagram_driver;
 
+#[cfg(all(feature = "extractors", feature = "reassembler", feature = "session"))]
+pub mod pipeline;
+
+#[cfg(all(feature = "extractors", feature = "reassembler", feature = "session"))]
+pub use pipeline::{Event, EventKind, NoDatagramParser, NoSessionParser, Pipeline, PipelineBuilder};
+
+pub mod prelude;
+
 #[cfg(feature = "session")]
 pub mod session;
 
