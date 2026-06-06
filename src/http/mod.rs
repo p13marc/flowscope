@@ -50,10 +50,10 @@ pub use parser::Error;
 pub use session::{HttpMessage, HttpParser};
 pub use types::{HttpConfig, HttpHandler, HttpRequest, HttpResponse, HttpVersion};
 
-/// Slug returned by [`HttpParser::parser_kind`]. Use at match
-/// sites in place of a string literal so typos fail to resolve
-/// instead of silently miss. Available also as
-/// [`crate::parser_kinds::HTTP`].
+/// Slug returned by [`HttpParser`]'s `parser_kind()`. Use at
+/// match sites in place of a string literal so typos fail to
+/// resolve instead of silently miss. Available also as
+/// `flowscope::parser_kinds::HTTP`.
 ///
 /// Stability: locked from 0.8 forward.
 pub const PARSER_KIND: &str = "http/1";
