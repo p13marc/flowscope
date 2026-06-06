@@ -48,22 +48,11 @@ has shipped on master. Plan files retired per convention;
 CHANGELOG entries are the durable record. Plan-of-record at
 [`../docs/0.7-PLAN-OF-RECORD.md`](../docs/0.7-PLAN-OF-RECORD.md).
 
-### Pending (0.8.0)
-
-The 0.8 implementation batch — plan-of-record at
+The 0.8 implementation batch (plans 83, 84, 85, 86, 87, 88, 89,
+90, 91) has shipped on this branch. Plan files retired per
+convention; CHANGELOG entries are the durable record.
+Plan-of-record at
 [`../docs/0.8-PLAN-OF-RECORD.md`](../docs/0.8-PLAN-OF-RECORD.md).
-
-| Plan | Goal | Breaking? | Status |
-|------|------|-----------|--------|
-| [`83-serde-feature.md`](./83-serde-feature.md) | `serde` opt-in feature with `Serialize` + `Deserialize` on every public type; locks the snake_case wire vocabulary from 0.8 forward (wishlist A1). | no (new feature) | 🟢 ready |
-| [`84-icmp-helpers.md`](./84-icmp-helpers.md) | `IcmpType::is_error()` + `error_inner()` + `short_kind()` and mirrors on `IcmpMessage` (wishlist A2). | no | 🟢 ready |
-| [`85-dns-resolution-cache.md`](./85-dns-resolution-cache.md) | `flowscope::dns::DnsResolutionCache` — TTL'd per-client resolution cache (wishlist A3). | no | 🟢 ready |
-| [`86-parser-kind-constants.md`](./86-parser-kind-constants.md) | `PARSER_KIND*` constants per parser module + `flowscope::parser_kinds` umbrella (wishlist B1). | no | 🟢 ready |
-| [`87-established-l4.md`](./87-established-l4.md) | `FlowEvent::Established { l4 }` — rounds out the trio (wishlist B3). | **yes** (variant-field) | 🟢 ready |
-| [`88-short-kind.md`](./88-short-kind.md) | `AnomalyKind::short_kind() -> &'static str` (wishlist B4). | no | 🟢 ready |
-| [`89-force-close.md`](./89-force-close.md) | `FlowTracker::force_close` + driver mirrors + `EndReason::ForceClosed` (wishlist B5). | no (additive variant) | 🟢 ready |
-| [`90-iter-active.md`](./90-iter-active.md) | `FlowTracker::iter_active() -> impl Iterator<Item = ActiveFlow<'_, K, S>>` (wishlist B7); deprecates `all_flow_stats`. | minor (deprecation) | 🟢 ready |
-| [`91-multi-protocol-monitor.md`](./91-multi-protocol-monitor.md) | Multi-protocol monitor recipe + example (wishlist B2's lighter fallback). | no | 🟢 ready |
 
 ### Pending RFCs (0.9.0+)
 
@@ -161,14 +150,14 @@ pre-consolidation and would need full rewrites.
 | 60–69 | Tooling (CLIs) |
 | 70–79 | 0.5.0 production-hardening v2 (simple-nms wishlist) |
 
-Plan numbers 00–04, 12, 20, 22–25, 30–61, 62, 70–73, 76–80, 82
-(everything except 21, 74, 75, 81, 83–91 — which are parked as
-stale-deferred, RFC-only, or pending implementation in 0.8.0)
-are retired (implementation shipped, file removed). New plans
-pick the lowest free number in the appropriate range — the 0.5.0
-series used 70+ to keep the active set visually distinct from the
-retired numbers; the 0.7 series continued that in the 76–82
-block; the 0.8 series occupies 83–91.
+Plan numbers 00–04, 12, 20, 22–25, 30–61, 62, 70–73, 76–80, 82,
+83–91 (everything except 21, 74, 75, 81 — which are parked as
+stale-deferred or RFC-only) are retired (implementation shipped,
+file removed). New plans pick the lowest free number in the
+appropriate range — the 0.5.0 series used 70+ to keep the active
+set visually distinct from the retired numbers; the 0.7 series
+continued that in the 76–82 block; the 0.8 series occupied
+83–91.
 
 ---
 
