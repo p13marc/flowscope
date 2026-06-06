@@ -122,50 +122,20 @@ while let Some(evt) = s.next().await { /* ... */ }
 
 ## Status
 
-0.5.0 — TCP rich diagnostics + periodic ticks + parser identity,
-driven by the
-[`simple-nms` upstream wishlist](docs/feedback-2026-08-11-simple-nms.md).
-Core flow APIs (`FlowExtractor`, `FlowTracker`, `Reassembler`,
-`SessionParser`, `DatagramParser`) are settled; public structs
-and enums are `#[non_exhaustive]` so future variants and fields
-are additive.
+0.8.0 — serde wire-format lock, ICMP correlation helpers,
+programmatic flow termination, per-flow snapshot iterator,
+multi-protocol monitor recipe. Core flow APIs (`FlowExtractor`,
+`FlowTracker`, `Reassembler`, `SessionParser`, `DatagramParser`)
+are settled; public structs and enums are `#[non_exhaustive]` so
+future variants and fields are additive. See
+[`CHANGELOG.md`](CHANGELOG.md) for the release history.
 
-0.5.0 ships:
-- TCP retransmit classification on `BufferedReassembler`
-  (`Reassembler::retransmits()`, `on_duplicate(seq, payload, ts)`
-  hook, `AnomalyKind::RetransmittedSegment`,
-  `FlowStats::retransmits_*`, `flowscope_retransmits_total`).
-- `Reassembler::segment(seq, payload, ts)` — segment timestamps
-  for downstream RTT estimation (one-line trait break vs 0.4.0).
-- `TcpInfo::window` raw receive window + `#[non_exhaustive]`.
-- Opt-in periodic `FlowEvent::Tick` / `SessionEvent::FlowTick`
-  via `FlowTrackerConfig::flow_tick_interval`. Driven by packet
-  timestamps; pairs with `flowscope_flow_ticks_total`.
-- `SessionParser::parser_kind()` / `DatagramParser::parser_kind()`
-  threaded into `SessionEvent::Application::parser_kind`. Shipped
-  parsers report `http/1`, `tls`, `dns-udp`, `dns-tcp`.
-- Reassembly-diagnostic metrics now fire correctly on natural
-  flow ends (latent bug — the tracker called `record_flow_ended`
-  before the driver patched reassembler-derived fields).
-- New SESSION_GUIDE walkthrough for the consumer-loop pattern
-  that updates per-flow rich state without piping `&mut S`
-  through `SessionParser::feed_*`.
-
-See [`CHANGELOG.md`](CHANGELOG.md) for the full migration
-recipes, [`docs/SESSION_GUIDE.md`](docs/SESSION_GUIDE.md) for the
+See [`CHANGELOG.md`](CHANGELOG.md) for the per-release feature
+list and migration recipes,
+[`docs/SESSION_GUIDE.md`](docs/SESSION_GUIDE.md) for the
 decision-flow on which API to pick, and
 [`docs/OBSERVABILITY.md`](docs/OBSERVABILITY.md) for the metric
 vocabulary.
-
-0.4.0 features remain: drivers without the `S` type parameter,
-`SessionParser`/`DatagramParser` timestamp-aware data methods +
-`on_tick`, three-driver `finish()`, `PcapFlowSource::sessions()` /
-`datagrams()` one-step pipelines, DNS-UDP unified on
-`DnsUdpParser`. 0.3.0 / 0.2.0 features remain: `FlowDatagramDriver`,
-sync `Dedup`, per-key idle-timeout predicates, monotonic
-timestamps, parser-poison synthesis, anomaly forwarding,
-criterion bench harness, buffer caps with `SlidingWindow` /
-`DropFlow` policies.
 
 ## License
 

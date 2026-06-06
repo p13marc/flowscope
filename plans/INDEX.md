@@ -21,85 +21,90 @@ The 0.4 API-ergonomics series (plans 32–37) has shipped; the audit
 that drove it is kept at
 [`../docs/API-ERGONOMICS-REVIEW.md`](../docs/API-ERGONOMICS-REVIEW.md).
 
-The 0.5.0 release (plans 70–73, simple-nms wishlist) shipped from
-its own series in parallel; the 0.6 API-ergonomics series (plans
-38, 39, 43, 44, 50, 58, 59, 60, 61) shipped on top of it. Two
-feedback streams drove the two series:
+The 0.5.0 release shipped plans 70–73 from a `simple-nms`
+upstream wishlist. The 0.6.0 release shipped plans 38, 39, 43,
+44, 50, 58, 59, 60, 61 from a `netring` integration feedback
+round. The 0.7.0 release shipped plans 62, 76, 77, 78, 79, 80,
+82 from a `netring` round-2 retrospective. The 0.8.0 release
+shipped plans 83, 84, 85, 86, 87, 88, 89, 90, 91 from a
+consolidated `netring` wishlist.
 
-- [`../docs/feedback-2026-05-22-netring.md`](../docs/feedback-2026-05-22-netring.md) +
-  [`../docs/0.6-PLAN-OF-RECORD.md`](../docs/0.6-PLAN-OF-RECORD.md)
-  (§3 documents the substantive disagreement with the netring
-  author's "lean toward option B" on plan 38).
-- [`../docs/feedback-2026-08-11-simple-nms.md`](../docs/feedback-2026-08-11-simple-nms.md)
-  (drove the 0.5.0 release — TCP rich diagnostics, FlowTick,
-  parser_kind).
-- [`../docs/feedback-2026-05-29-netring-round2.md`](../docs/feedback-2026-05-29-netring-round2.md)
-  + [`../docs/0.7-PLAN-OF-RECORD.md`](../docs/0.7-PLAN-OF-RECORD.md) —
-  netring's round-2 retrospective after writing four L7
-  examples; drives the 0.7 series (plans 62, 76, 77, 78, 79,
-  80, 82, plus RFC plan 81).
-- [`../docs/feedback-2026-06-06-netring-wishlist.md`](../docs/feedback-2026-06-06-netring-wishlist.md)
-  + [`../docs/0.8-PLAN-OF-RECORD.md`](../docs/0.8-PLAN-OF-RECORD.md) —
-  consolidated netring wishlist; drives the 0.8 series (plans
-  83, 84, 85, 86, 87, 88, 89, 90, 91).
-
-The 0.7 implementation batch (plans 62, 76, 77, 78, 79, 80, 82)
-has shipped on master. Plan files retired per convention;
-CHANGELOG entries are the durable record. Plan-of-record at
-[`../docs/0.7-PLAN-OF-RECORD.md`](../docs/0.7-PLAN-OF-RECORD.md).
-
-The 0.8 implementation batch (plans 83, 84, 85, 86, 87, 88, 89,
-90, 91) has shipped on this branch. Plan files retired per
-convention; CHANGELOG entries are the durable record.
-Plan-of-record at
-[`../docs/0.8-PLAN-OF-RECORD.md`](../docs/0.8-PLAN-OF-RECORD.md).
+In every cycle the plan files have been retired per the project
+convention — `CHANGELOG.md` entries and the `plan NN: …` commit
+subjects are the durable record. The upstream-feedback documents
+and per-cycle plan-of-record syntheses that drove each release
+have also been retired now that every load-bearing item is
+either shipped, RFC-scoped, or deferral-noted below.
 
 ### Pending RFCs (0.9.0+)
 
 | Plan | Goal | Status |
 |------|------|--------|
-| [`74-rfc-ooo-reassembly.md`](./74-rfc-ooo-reassembly.md) | RFC scope for OOO TCP reassembly with hole-fill (F2.4). | 📝 RFC only |
-| [`75-rfc-tracker-auto-sweep.md`](./75-rfc-tracker-auto-sweep.md) | RFC scope for `FlowTracker::with_auto_sweep(interval)` (round-1 #2). | 📝 RFC only |
-| [`81-rfc-correlate-module.md`](./81-rfc-correlate-module.md) | RFC scope for `flowscope::correlate` (`TimeBucketedCounter`, `KeyIndexed`, `SequencePattern`); round-2 F6 — netring author offered to co-author. | 📝 RFC only |
+| [`74-rfc-ooo-reassembly.md`](./74-rfc-ooo-reassembly.md) | RFC scope for OOO TCP reassembly with hole-fill. | 📝 RFC only |
+| [`75-rfc-tracker-auto-sweep.md`](./75-rfc-tracker-auto-sweep.md) | RFC scope for `FlowTracker::with_auto_sweep(interval)`. | 📝 RFC only |
+| [`81-rfc-correlate-module.md`](./81-rfc-correlate-module.md) | RFC scope for `flowscope::correlate` (`TimeBucketedCounter`, `KeyIndexed`, `SequencePattern`); upstream author offered to co-author. | 📝 RFC only |
+| [`92-rfc-multi-parser-driver.md`](./92-rfc-multi-parser-driver.md) | RFC scope for `FlowMultiSessionDriver` — composite session driver running N parsers in one pass. The 0.8 doc-recipe fallback (plan 91, shipped) forward-points here. | 📝 RFC only |
 
-Deferred from the three feedback streams (recorded so a future
-ask doesn't get re-litigated):
+Deferred items recorded so a future ask doesn't get
+re-litigated:
 
-- **#2 `FlowTracker::with_auto_sweep(interval)`** (netring round 1) —
-  packet-clock auto-sweep for live/offline parity; RFC scoped in
-  [`75-rfc-tracker-auto-sweep.md`](./75-rfc-tracker-auto-sweep.md);
-  implementation deferred to 0.8.0+ pending reviewer agreement.
-- **#10 `SessionParser::is_done()`** (netring round 1) — the
-  round-1 decline (HTTP/1.0 `Connection: close` already triggers
-  natural FIN-based close) is **reversed** for 0.7 per
-  [`80-session-parser-is-done.md`](./80-session-parser-is-done.md);
-  round-2's expanded use case (DNS-over-TCP, framed protocols)
-  supplied the missing motivation.
-- **F7 `DnsResolutionCache`** (netring round 2) — was deferred
-  pending more usage data. Now consumed via plan 85
-  ([`85-dns-resolution-cache.md`](./85-dns-resolution-cache.md))
-  which ships the focused dns-side primitive; the broader
-  `correlate` module (plan 81) remains on the 0.9 RFC track.
-- **B2 Multi-parser composite driver** (netring round 3) — full
-  driver deferred to a 0.9 RFC. The lighter doc-recipe fallback
-  ships as plan 91 ([`91-multi-protocol-monitor.md`](./91-multi-protocol-monitor.md)).
-- **B6 TlsHandshake aggregator** (netring round 3) — more design
-  surface than the wishlist suggested (resumption / abbreviated
-  handshake / failed handshake). Manual ClientHello+ServerHello
-  pattern documented in SESSION_GUIDE. Revisit if a second
-  consumer asks.
-- **F1.4** (simple-nms) — parser `&mut S` API change addressed via
-  the SESSION_GUIDE consumer-loop pattern instead of plumbing a
-  generic through every parser.
-- **F1.6** (simple-nms) — lazy iterator return; declined twice,
-  will not reconsider without a third consumer + reproducer.
-- **F2.1 / F2.2 / F2.3** (simple-nms) — built-in RTP / HTTP/2 /
-  RTPS parsers; accept consumer-led upstream PRs after their
-  parsers stabilise.
-- **F3.1** (simple-nms) — TLS 1.3 0-RTT, small follow-up if a
-  consumer asks.
-- **F3.2** (simple-nms) — IP fragment reassembly, deferred
-  indefinitely per `docs/ARCHITECTURE.md` known limitations.
+- **`FlowTracker::with_auto_sweep(interval)`** — packet-clock
+  auto-sweep for live/offline parity. RFC scoped in plan 75;
+  implementation pending reviewer agreement.
+- **`flowscope::correlate` module** (`TimeBucketedCounter`,
+  `KeyIndexed`, `SequencePattern`) — RFC scoped in plan 81.
+  The narrow dns-side primitive shipped separately as
+  [`DnsResolutionCache`](./../src/dns/correlate.rs) in 0.8
+  (plan 85).
+- **OOO TCP reassembly with hole-fill** — RFC scoped in plan 74.
+  Driven by HTTP/2 + HPACK desync after segment loss.
+- **`FlowMultiSessionDriver` composite parser driver** — RFC
+  scoped in plan 92. The doc-recipe fallback shipped in 0.8 as
+  [`examples/multi_protocol_monitor.rs`](../examples/multi_protocol_monitor.rs)
+  and `docs/SESSION_GUIDE.md` → "Multi-protocol monitoring".
+- **`TlsHandshake` aggregator parser** — more design surface
+  than initially scoped (resumption / abbreviated handshake /
+  failed handshake / renegotiation). Manual ClientHello +
+  ServerHello correlation pattern is documented in
+  `docs/SESSION_GUIDE.md`. Revisit if a second consumer asks.
+- **Parser `&mut S` API change** — addressed via the
+  `docs/SESSION_GUIDE.md` consumer-loop pattern instead of
+  plumbing a generic through every shipped parser.
+- **Lazy iterator return type on parser `feed_*` / `parse`** —
+  declined twice; reconsider only with a third consumer +
+  reproducer.
+- **Built-in RTP / RTCP / HTTP/2 / RTPS parsers** — accept
+  consumer-led upstream PRs after their parsers stabilise;
+  don't ship without an out-of-tree maintainer commitment.
+- **TLS 1.3 0-RTT classification surface** — small follow-up if
+  a consumer asks; not blocking anyone today.
+- **IPv4 / IPv6 fragment reassembly** — deferred indefinitely
+  per `docs/ARCHITECTURE.md` known-limitations section.
+- **`FlowTrackerConfig::with_event_filter(SUPPRESS_PACKET)`** —
+  per-flow event-variant suppression at the tracker source.
+  Perf-only optimisation; revisit if a profile shows
+  `FlowEvent::Packet` allocation as a hot path.
+- **`extract::HostPair` / `extract::AppliedFilter`** —
+  additional extractor adapters. Add when a consumer asks for
+  one specifically; the existing `FiveTuple` / `IpPair` /
+  `MacPair` set covers most cases.
+- **Pageable reassembler** — writes excess to disk / a
+  side-channel on `BufferedReassembler` overflow, preserving
+  evidence for forensics. Niche; revisit when a forensics-
+  focused consumer asks.
+- **`SyntheticFlowDriver` / `pcap_macro!` test fixtures** —
+  programmatic `FlowEvent` vec construction + frame-builder
+  macro. Useful as `test_helpers` extensions; revisit when a
+  downstream consumer asks.
+- **Tracker pause/resume for load-shedding** — accept packets
+  but don't emit events without losing flow state. Niche;
+  revisit when a consumer asks.
+- **JA4 fingerprint** — modern JA3 successor (weighted-by-
+  popularity ordering). Ship behind a `ja4` feature mirroring
+  the existing `ja3` feature; revisit when a consumer asks.
+- **`FlowExtractor::extract_batch` for SIMD-shaped parsers** —
+  speculative; only matters at 40+ Gbps line rates. No current
+  consumer at that scale.
 
 ### Sister crates
 

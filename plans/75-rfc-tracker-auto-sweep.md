@@ -18,10 +18,8 @@ pipeline: live capture today has a wall-clock sweep tick
 such tick. Identical traffic on identical config emits different
 event streams between the two paths because mid-stream
 idle-timeouts fire live but not offline. The netring author
-called this out in
-[`docs/feedback-2026-05-22-netring.md`](../docs/feedback-2026-05-22-netring.md)
-§2 as one of the two items they explicitly flagged as
-"deserves its own RFC."
+called this out as one of the two items they explicitly flagged
+as *"deserves its own RFC"* during the 0.5-cycle integration.
 
 The 0.5.0 release shipped `flow_tick_interval` for periodic
 `FlowEvent::Tick` events (plan 71). This RFC is the *sister*:
@@ -111,10 +109,10 @@ Three reasons:
 ### Other affected consumers
 
 - **simple-nms** explicitly flagged offline-pcap idle-timeout
-  parity in their wishlist (`docs/feedback-2026-08-11-simple-nms.md`).
-  Same concern, different framing.
-- **des-rs** offline replay has the same issue (per
-  `docs/feedback-2026-05-14-des-rs.md`).
+  parity in their 0.5-cycle wishlist. Same concern, different
+  framing.
+- **des-rs** offline replay has the same issue per the 0.3-cycle
+  feedback round.
 
 ### Not in scope for the use case
 
@@ -502,15 +500,13 @@ consistency.
 
 The netring author flagged this as one of two items deferred
 from the 0.6 cycle for "deserves its own RFC" status (the other
-being item 6, which we resolved by shipping option A in plan
-38). See `docs/feedback-2026-05-22-netring.md` §2 + the
-"What I'd ship first" section.
+being the driver `S` story, which we resolved by shipping option
+A in plan 38).
 
-The simple-nms wishlist
-(`docs/feedback-2026-08-11-simple-nms.md`) raised the same
-underlying problem — online/offline divergence — from a
-different angle. Two independent consumers asking for related
-fixes is the threshold this RFC was waiting for.
+The simple-nms wishlist raised the same underlying problem —
+online/offline divergence — from a different angle. Two
+independent consumers asking for related fixes is the threshold
+this RFC was waiting for.
 
 Target landing for the RFC: 0.7.0 (next minor). Target landing
 for the implementation: 0.8.0, contingent on reviewer agreement

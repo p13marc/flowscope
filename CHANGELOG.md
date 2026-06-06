@@ -2,11 +2,9 @@
 
 ## 0.8.0 — serde, force_close, iter_active, ICMP helpers, DnsResolutionCache (2026-06-06)
 
-Driven by [`docs/feedback-2026-06-06-netring-wishlist.md`](docs/feedback-2026-06-06-netring-wishlist.md)
-(netring's consolidated wishlist after three prior feedback
-rounds) — synthesis in
-[`docs/0.8-PLAN-OF-RECORD.md`](docs/0.8-PLAN-OF-RECORD.md).
-Pre-1.0 breaking changes; `netring` updates in lockstep.
+Driven by the `netring` consolidated wishlist (2026-06-06,
+after three prior feedback rounds). Pre-1.0 breaking changes;
+`netring` updates in lockstep.
 
 ### Breaking
 
@@ -100,11 +98,9 @@ Pre-1.0 breaking changes; `netring` updates in lockstep.
 
 ## 0.7.0 — ICMP parser, HTTP accessors, anomaly severity (2026-05-23)
 
-Driven by [`docs/feedback-2026-05-29-netring-round2.md`](docs/feedback-2026-05-29-netring-round2.md)
-(netring's round-2 retrospective after writing four L7 examples
-against 0.6) — synthesis in
-[`docs/0.7-PLAN-OF-RECORD.md`](docs/0.7-PLAN-OF-RECORD.md).
-Pre-1.0 breaking changes; `netring` updates in lockstep.
+Driven by the `netring` round-2 retrospective (2026-05-29, after
+writing four L7 examples against 0.6). Pre-1.0 breaking changes;
+`netring` updates in lockstep.
 
 ### Breaking
 
@@ -187,9 +183,7 @@ Pre-1.0 breaking changes; `netring` updates in lockstep.
 
 ## 0.6.0 — Driver state restore, anomaly split, watermark threshold (2026-05-23)
 
-Driven by [`docs/feedback-2026-05-22-netring.md`](docs/feedback-2026-05-22-netring.md)
-(netring 0.14.0 integration feedback) — synthesis in
-[`docs/0.6-PLAN-OF-RECORD.md`](docs/0.6-PLAN-OF-RECORD.md).
+Driven by the `netring` 0.14.0 integration feedback (2026-05-22).
 Pre-1.0 breaking changes; `netring` updates in lockstep.
 
 This cycle was developed in parallel with the 0.5.0 release
@@ -300,10 +294,9 @@ are relative to 0.5.0.
 
 ## 0.5.0 — TCP rich diagnostics, periodic ticks, parser kinds (2026-05-28)
 
-Driven by the
-[`simple-nms` upstream wishlist](docs/feedback-2026-08-11-simple-nms.md);
-the two-consumer signal on the periodic-tick ask (also from
-`des-rs` 2026-05-14) reversed the previous snapshot-only stance.
+Driven by the `simple-nms` upstream wishlist (2026-08-11); the
+two-consumer signal on the periodic-tick ask (also from `des-rs`
+2026-05-14) reversed the previous snapshot-only stance.
 
 ### Breaking
 
@@ -391,8 +384,8 @@ the two-consumer signal on the periodic-tick ask (also from
   - Trait-shape reference block updated with `parser_kind`.
 - **OBSERVABILITY.md** — three new metric rows and corresponding
   Prometheus sample queries.
-- **`docs/feedback-2026-08-11-simple-nms.md`** — annotated
-  responses for F1.1–F1.7 + cross-links to plans / SESSION_GUIDE
+- Annotated responses to the simple-nms wishlist items F1.1–F1.7
+  threaded into the per-plan commit messages and SESSION_GUIDE
   sections.
 
 ## 0.4.0 — API ergonomics (2026-05-20)
@@ -479,11 +472,10 @@ lockstep.
 ## 0.3.0 — Production hardening
 
 Eleven sub-plans driven by external feedback from the `des-rs`
-team ([`docs/feedback-2026-05-14-des-rs.md`](docs/feedback-2026-05-14-des-rs.md))
-plus four planning-review additions. The plans themselves have
-been pruned from `plans/` (shipped → deleted convention); the
-implementation is in `git log` under the `plan NN:` commit
-prefixes.
+team (2026-05-14) plus four planning-review additions. The plans
+themselves have been pruned from `plans/` (shipped → deleted
+convention); the implementation is in `git log` under the
+`plan NN:` commit prefixes.
 
 ### Highlights
 

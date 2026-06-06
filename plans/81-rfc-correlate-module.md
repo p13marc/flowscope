@@ -449,13 +449,12 @@ issues:
 
 ## Provenance
 
-Round-2 feedback item F6 in
-[`docs/feedback-2026-05-29-netring-round2.md`](../docs/feedback-2026-05-29-netring-round2.md).
-The author identified this as the single biggest enabler for
-their anomaly-correlation roadmap and offered to draft the
-RFC. This plan documents what flowscope expects from the
-final RFC — it's a contract for the joint authorship rather
-than a finished design.
+Originated from the `netring` round-2 retrospective (item F6)
+where the author identified this as the single biggest enabler
+for their anomaly-correlation roadmap and offered to draft the
+RFC. This plan documents what flowscope expects from the final
+RFC — it's a contract for the joint authorship rather than a
+finished design.
 
 Target landing for the RFC document: 0.7.0. Target landing
 for the implementation: 0.8.0, contingent on reviewer

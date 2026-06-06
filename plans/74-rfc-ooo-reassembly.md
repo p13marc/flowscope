@@ -524,12 +524,12 @@ in 74a–74e once the RFC settles.)
 
 ## Provenance
 
-Wishlist item F2.4 from
-`docs/feedback-2026-08-11-simple-nms.md`. The wishlist
-correctly tags this as "RFC-tier" and "right size of ask to
-RFC first." This plan operationalises that tag — we ship the
-RFC in 0.5.0 so the conversation is in flight; we don't
-ship the implementation until 0.6.0 (earliest).
+The original ask came from the `simple-nms` upstream wishlist as
+item F2.4. That wishlist correctly tagged the ask as "RFC-tier"
+and "right size of ask to RFC first." This plan operationalises
+that tag — we shipped the RFC in 0.5.0 so the conversation is in
+flight; implementation has been deferred past 0.8.0 pending
+reviewer agreement on the design questions above.
 
 The HTTP/2 use case provides a concrete reference protocol;
 if `simple-nms`'s v2 work commits to HTTP/2, that becomes

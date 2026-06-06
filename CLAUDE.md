@@ -269,31 +269,30 @@ record; `plans/` is the working backlog.
   for the session-tracking surface.
 - `high-level-features-design.md` — high-level features survey;
   drove the `Dedup` primitive shape.
-- `feedback-2026-05-14-des-rs.md` — `des-rs` team feedback
-  record that drove the 0.3.0 "production hardening" release.
-- `feedback-2026-08-11-simple-nms.md` — `simple-nms` upstream
-  wishlist that drove the 0.5.0 release (plans 70–73 shipped,
-  plan 74 RFC-only deferred to 0.6.0+).
 - `API-ERGONOMICS-REVIEW.md` — public-API audit that drove the
   0.4.0 ergonomics release (plans 32–37).
-- `feedback-2026-05-22-netring.md` — `netring` integration
-  feedback after the 0.4 bump; source for the 0.6 cycle (developed
-  in parallel with the simple-nms-driven 0.5 release).
-- `0.6-PLAN-OF-RECORD.md` — synthesis of the netring feedback
-  into the 0.6 plan series (plans 38, 39, 43, 44, 50, 58, 59,
-  60, 61); §3 documents where we disagreed with the author.
+
+Per-cycle upstream-feedback documents and plan-of-record
+syntheses are retired once their plans ship — `CHANGELOG.md`
+entries are the durable record, and `plans/INDEX.md` carries
+the surviving deferral / RFC notes.
 
 ### `plans/` (active backlog)
 
-- `INDEX.md` — backlog index, project conventions, and a
-  "considered but not in the backlog" footnote listing known
-  capability gaps without active plans (NetFlow/IPFIX export,
-  CLIs, IPv6 fragment reassembly).
+- `INDEX.md` — backlog index, project conventions, and the
+  "Considered but not in the backlog" footnote listing known
+  capability gaps without active plans.
 - `21-flow-protolens.md` — protolens bridge sister crate (STALE
   pre-consolidation draft, pending real consumer ask).
 - `74-rfc-ooo-reassembly.md` — RFC for OOO TCP reassembly
-  (`SegmentBufferReassembler`); implementation deferred to
-  0.6.0+ pending consumer + maintainer agreement.
+  (`SegmentBufferReassembler`); implementation deferred pending
+  consumer + maintainer agreement.
+- `75-rfc-tracker-auto-sweep.md` — RFC for
+  `FlowTracker::with_auto_sweep(interval)`.
+- `81-rfc-correlate-module.md` — RFC for `flowscope::correlate`
+  (`TimeBucketedCounter`, `KeyIndexed`, `SequencePattern`).
+- `92-rfc-multi-parser-driver.md` — RFC for
+  `FlowMultiSessionDriver` composite parser driver.
 
 Plan numbers 00–04, 12, 20, 22–25, 30–61, 70–73 (everything
 except 21 and 74, which are parked) are retired (implementation
