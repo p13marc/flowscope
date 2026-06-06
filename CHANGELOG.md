@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased — 0.8 cycle
+## 0.8.0 — serde, force_close, iter_active, ICMP helpers, DnsResolutionCache (2026-06-06)
 
 Driven by [`docs/feedback-2026-06-06-netring-wishlist.md`](docs/feedback-2026-06-06-netring-wishlist.md)
 (netring's consolidated wishlist after three prior feedback
