@@ -122,9 +122,15 @@ rustdoc-args = ["--cfg", "docsrs"]
 [package.metadata.cargo-machete]
 ignored = ["md-5"]
 
+# ─── Examples (see examples/README.md for a catalog) ───
+
 [[example]]
-name = "generate_fixtures"
+name = "gen_fixtures"
 required-features = ["test-helpers"]
+
+[[example]]
+name = "gen_length_prefixed_pcap"
+required-features = ["test-helpers", "pcap"]
 
 [[example]]
 name = "pcap_buffered_reassembly"
@@ -155,8 +161,84 @@ name = "length_prefixed_pcap"
 required-features = ["pcap", "session"]
 
 [[example]]
-name = "generate_length_prefixed_pcap"
-required-features = ["test-helpers", "pcap"]
+name = "hello_pipeline"
+required-features = ["pcap", "extractors", "reassembler", "session"]
+
+[[example]]
+name = "multi_parser_pipeline"
+required-features = ["pcap", "extractors", "reassembler", "session"]
+
+[[example]]
+name = "multi_protocol_monitor"
+required-features = ["l7", "pcap"]
+
+[[example]]
+name = "inspect_packet"
+required-features = ["pcap", "extractors"]
+
+[[example]]
+name = "top_talkers"
+required-features = ["pcap", "extractors", "tracker"]
+
+[[example]]
+name = "port_scan_detector"
+required-features = ["pcap", "extractors", "tracker"]
+
+[[example]]
+name = "dns_tunnel_detector"
+required-features = ["pcap", "dns", "extractors"]
+
+[[example]]
+name = "tcp_retransmit_audit"
+required-features = ["pcap", "extractors", "reassembler"]
+
+[[example]]
+name = "conversation_timeline"
+required-features = ["pcap", "extractors", "reassembler"]
+
+[[example]]
+name = "flow_duration_histogram"
+required-features = ["pcap", "extractors", "tracker"]
+
+[[example]]
+name = "bandwidth_by_protocol"
+required-features = ["pcap", "extractors", "tracker"]
+
+[[example]]
+name = "http_error_rate"
+required-features = ["pcap", "http"]
+
+[[example]]
+name = "failed_auth_burst"
+required-features = ["pcap", "http"]
+
+[[example]]
+name = "redis_protocol"
+required-features = ["pcap", "extractors", "reassembler"]
+
+[[example]]
+name = "tls_inventory"
+required-features = ["tls", "ja3", "ja4", "pcap"]
+
+[[example]]
+name = "extract_iocs"
+required-features = ["pcap", "http", "tls", "ja3", "ja4", "dns", "extractors"]
+
+[[example]]
+name = "flow_csv_export"
+required-features = ["pcap", "extractors", "tracker"]
+
+[[example]]
+name = "flow_json_export"
+required-features = ["pcap", "extractors", "tracker", "serde"]
+
+[[example]]
+name = "zeek_style_conn_log"
+required-features = ["pcap", "extractors", "tracker"]
+
+[[example]]
+name = "layer_fast_path"
+required-features = ["pcap", "extractors"]
 
 [[test]]
 name = "http_parser"
@@ -237,10 +319,6 @@ required-features = ["tracker", "extractors", "test-helpers"]
 [[test]]
 name = "dns_resolution_cache"
 required-features = ["dns"]
-
-[[example]]
-name = "multi_protocol_monitor"
-required-features = ["pcap", "http", "tls", "dns", "icmp"]
 
 [[test]]
 name = "serde_round_trip"

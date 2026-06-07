@@ -164,8 +164,12 @@ hello-world,
 [`docs/concepts.md`](docs/concepts.md) for the conceptual model,
 [`docs/recipes.md`](docs/recipes.md) for worked patterns,
 [`docs/observability.md`](docs/observability.md) for metrics +
-tracing, and [`CHANGELOG.md`](CHANGELOG.md) for the per-release
-feature list and migration recipes.
+tracing, [`examples/README.md`](examples/README.md) for a
+catalog of 25+ runnable examples (port-scan detection, IoC
+extraction, Zeek-style conn.log, TLS handshake inventory,
+per-packet inspection, NDJSON export, custom protocols, …),
+and [`CHANGELOG.md`](CHANGELOG.md) for the per-release feature
+list and migration recipes.
 
 ## License
 
