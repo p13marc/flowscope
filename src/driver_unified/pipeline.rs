@@ -28,9 +28,12 @@ use std::hash::Hash;
 #[cfg(feature = "pcap")]
 use std::path::Path;
 
+use std::time::Duration;
+
 use crate::OwnedPacketView;
+use crate::dedup::Dedup;
 use crate::detect::signatures::SignatureFn;
-use crate::extractor::FlowExtractor;
+use crate::extractor::{FlowExtractor, L4Proto};
 #[cfg(feature = "pcap")]
 use crate::pcap::PcapFlowSource;
 use crate::session::{DatagramParser, SessionParser};
@@ -69,7 +72,12 @@ where
             extractor,
             config: FlowTrackerConfig::default(),
             monotonic_timestamps: true,
+            // Anomalies on by default for Pipeline — most pcap
+            // consumers want them in their event stream.
+            emit_anomalies: true,
             emit_packet_details: false,
+            dedup: None,
+            idle_timeout_fn: None,
             register: Vec::new(),
         }
     }
@@ -132,6 +140,9 @@ where
 type RegisterStep<E, M> =
     Box<dyn Fn(DriverBuilder<E, M>) -> DriverBuilder<E, M> + 'static>;
 
+type IdleTimeoutFn<K> =
+    std::sync::Arc<dyn Fn(&K, Option<L4Proto>) -> Option<Duration> + Send + Sync + 'static>;
+
 pub struct PipelineBuilder<E, M>
 where
     E: FlowExtractor + Clone + Send + 'static,
@@ -141,7 +152,14 @@ where
     extractor: E,
     config: FlowTrackerConfig,
     monotonic_timestamps: bool,
+    emit_anomalies: bool,
     emit_packet_details: bool,
+    dedup: Option<Dedup>,
+    /// Cloneable factory for the idle_timeout_fn — `Arc` so the
+    /// pipeline's rebuild closure (used by [`Pipeline::reset`])
+    /// can re-apply it. Send + Sync because the inner
+    /// `DriverBuilder::idle_timeout_fn` requires `Send`.
+    idle_timeout_fn: Option<IdleTimeoutFn<E::Key>>,
     register: Vec<RegisterStep<E, M>>,
 }
 
@@ -170,6 +188,36 @@ where
     /// [`Event::FlowPacket`]. Default `false`.
     pub fn emit_packet_details(mut self, on: bool) -> Self {
         self.emit_packet_details = on;
+        self
+    }
+
+    /// Proxy of [`DriverBuilder::emit_anomalies`]. Default
+    /// `true` on `Pipeline` (the offline-pcap-replay default).
+    pub fn emit_anomalies(mut self, on: bool) -> Self {
+        self.emit_anomalies = on;
+        self
+    }
+
+    /// Proxy of [`DriverBuilder::dedup`].
+    pub fn dedup(mut self, dedup: Dedup) -> Self {
+        self.dedup = Some(dedup);
+        self
+    }
+
+    /// Proxy of [`DriverBuilder::idle_timeout_fn`].
+    ///
+    /// The closure must implement `Fn(&E::Key, Option<L4Proto>) ->
+    /// Option<Duration>` and is stored in an `Arc` so the
+    /// pipeline's internal `rebuild` closure (used by
+    /// [`Pipeline::reset`]) can re-apply it across resets. `Send
+    /// + Sync` is required so the resulting boxed closure can be
+    /// handed to the inner `DriverBuilder::idle_timeout_fn`,
+    /// which requires `Send`.
+    pub fn idle_timeout_fn<F>(mut self, f: F) -> Self
+    where
+        F: Fn(&E::Key, Option<L4Proto>) -> Option<Duration> + Send + Sync + 'static,
+    {
+        self.idle_timeout_fn = Some(std::sync::Arc::new(f));
         self
     }
 
@@ -307,18 +355,30 @@ where
         let extractor = self.extractor;
         let config = self.config;
         let monotonic = self.monotonic_timestamps;
+        let emit_anomalies = self.emit_anomalies;
         let packet_details = self.emit_packet_details;
+        let dedup = self.dedup;
+        let idle_fn = self.idle_timeout_fn;
         let register: std::rc::Rc<[RegisterStep<E, M>]> =
             self.register.into_iter().collect::<Vec<_>>().into();
 
         let rebuild_extractor = extractor.clone();
         let rebuild_config = config.clone();
         let rebuild_register = register.clone();
+        let rebuild_dedup = dedup.clone();
+        let rebuild_idle = idle_fn.clone();
         let rebuild: Box<dyn Fn() -> Driver<E, M> + 'static> = Box::new(move || {
             let mut b: DriverBuilder<E, M> = Driver::builder(rebuild_extractor.clone())
                 .config(rebuild_config.clone())
                 .monotonic_timestamps(monotonic)
+                .emit_anomalies(emit_anomalies)
                 .emit_packet_details(packet_details);
+            if let Some(d) = rebuild_dedup.clone() {
+                b = b.dedup(d);
+            }
+            if let Some(f) = rebuild_idle.clone() {
+                b = b.idle_timeout_fn(move |k, l4| f(k, l4));
+            }
             for step in rebuild_register.iter() {
                 b = step(b);
             }

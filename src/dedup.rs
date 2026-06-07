@@ -47,7 +47,7 @@ use crate::view::PacketView;
 /// explicit constructor: [`Self::loopback`] for the
 /// tuned-for-`tcpdump -i lo` profile, or [`Self::new`] for
 /// custom window / capacity.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Dedup {
     window: Duration,
     capacity: usize,

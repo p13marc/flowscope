@@ -134,6 +134,33 @@ pub trait ReassemblerFactory<K>: Send + 'static {
     fn new_reassembler(&mut self, key: &K, side: FlowSide) -> Self::Reassembler;
 }
 
+/// Discards every segment without buffering. Used by the unified
+/// [`crate::driver_unified::Driver`] as the central
+/// [`FlowDriver`](crate::FlowDriver)'s reassembler factory when
+/// the driver itself doesn't need byte-stream reassembly — that
+/// work happens inside each registered slot's own
+/// [`FlowSessionDriver`](crate::FlowSessionDriver). Plan-116
+/// support.
+///
+/// New in 0.10.0.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct NoopReassembler;
+
+impl Reassembler for NoopReassembler {
+    fn segment(&mut self, _seq: u32, _payload: &[u8], _ts: Timestamp) {}
+}
+
+/// Factory for [`NoopReassembler`]. New in 0.10.0.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct NoopReassemblerFactory;
+
+impl<K> ReassemblerFactory<K> for NoopReassemblerFactory {
+    type Reassembler = NoopReassembler;
+    fn new_reassembler(&mut self, _key: &K, _side: FlowSide) -> NoopReassembler {
+        NoopReassembler
+    }
+}
+
 /// Built-in: drop OOO segments, accumulate in-order bytes into a
 /// `Vec<u8>` per direction. Drain via [`take`](Self::take).
 ///

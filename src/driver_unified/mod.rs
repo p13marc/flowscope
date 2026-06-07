@@ -23,14 +23,16 @@
 //!
 //! ## Builder knob coverage
 //!
+//! All plan-116 builder knobs ship in 0.10:
+//!
 //! | Plan-116 knob | Status | Notes |
 //! |---------------|--------|-------|
 //! | [`DriverBuilder::config`] | ✅ | Override the central tracker config. |
-//! | [`DriverBuilder::monotonic_timestamps`] | ✅ | Forwarded to every slot's inner driver. |
+//! | [`DriverBuilder::monotonic_timestamps`] | ✅ | Forwarded to the central [`crate::FlowDriver`] + every slot's inner driver. |
 //! | [`DriverBuilder::emit_packet_details`] | ✅ | Populates [`Event::FlowPacket`]'s `tcp` + `frame` fields. |
-//! | `emit_anomalies(bool)` | ⏸ deferred | The central [`crate::FlowTracker`] doesn't synthesise anomalies (that lives on [`crate::FlowDriver`]); plumbing it cleanly without N× duplication needs either a "primary slot" pattern or replacing the central tracker. |
-//! | `dedup(Dedup)` | ⏸ deferred | Same shape constraint as `emit_anomalies`. |
-//! | `idle_timeout_fn(F)` | 🟡 workaround | Available today via `driver.tracker_mut().set_idle_timeout_fn(f)` — direct builder method queued. |
+//! | [`DriverBuilder::emit_anomalies`] | ✅ | The unified `Driver` runs a central [`crate::FlowDriver`] over a [`crate::NoopReassemblerFactory`]; this is the single source for [`Event::FlowAnomaly`] / [`Event::TrackerAnomaly`]. Slot inner drivers are kept at the default `false` so anomalies don't duplicate per-slot. |
+//! | [`DriverBuilder::dedup`] | ✅ | Forwards to [`crate::FlowDriver::with_dedup`] on the central. Duplicate packets are dropped before any slot sees them. |
+//! | [`DriverBuilder::idle_timeout_fn`] | ✅ | Direct builder method; applies via [`crate::FlowTracker::set_idle_timeout_fn`] on the central tracker at build time. |
 //!
 //! ```ignore
 //! use flowscope::driver_unified::{Driver, Event};
@@ -64,16 +66,23 @@ pub use pipeline::{Pipeline, PipelineBuilder, PipelineIter};
 use std::hash::Hash;
 use std::marker::PhantomData;
 
+use std::time::Duration;
+
 use crate::PacketView;
 use crate::Timestamp;
+use crate::dedup::Dedup;
 use crate::detect::signatures::SignatureFn;
+use crate::driver::FlowDriver;
 use crate::event::FlowEvent;
-use crate::extractor::{FlowExtractor, TcpInfo};
+use crate::extractor::{FlowExtractor, L4Proto, TcpInfo};
+use crate::reassembler::NoopReassemblerFactory;
 use crate::session::{DatagramParser, SessionParser};
 use crate::tracker::{FlowTracker, FlowTrackerConfig};
 
 use erased::{ConcreteDatagramSlot, ConcreteSlot, DriverSlot};
 use heuristic::{HeuristicDatagramSlot, HeuristicSessionSlot};
+
+type IdleTimeoutFn<K> = Box<dyn Fn(&K, Option<L4Proto>) -> Option<Duration> + Send + 'static>;
 
 /// Unified flow + session driver.
 ///
@@ -96,7 +105,7 @@ where
     E::Key: Hash + Eq + Clone + Send + 'static,
     M: Send + 'static,
 {
-    tracker: FlowTracker<E, ()>,
+    central: FlowDriver<E, NoopReassemblerFactory, ()>,
     extractor: E,
     emit_packet_details: bool,
     slots: Vec<Box<dyn DriverSlot<E::Key, M>>>,
@@ -115,7 +124,10 @@ where
             extractor,
             config: FlowTrackerConfig::default(),
             monotonic_timestamps: false,
+            emit_anomalies: false,
             emit_packet_details: false,
+            dedup: None,
+            idle_timeout_fn: None,
             slots: Vec::new(),
             _marker: PhantomData,
         }
@@ -145,13 +157,15 @@ where
                 (None, None)
             };
 
-        // Central tracker emits flow-lifecycle events. The
-        // pre-extracted enrichment is consumed by the FIRST
-        // FlowEvent::Packet we see (there's usually exactly one
-        // per track() call); subsequent events get None.
+        // Central FlowDriver emits flow-lifecycle events
+        // (including anomalies when emit_anomalies(true) was
+        // set on the builder). The pre-extracted enrichment is
+        // consumed by the FIRST FlowEvent::Packet we see (there's
+        // usually exactly one per track() call); subsequent
+        // events get None.
         let mut tcp_slot = tcp_for_packet;
         let mut frame_slot = frame_for_packet;
-        for flow_ev in self.tracker.track(view).into_iter() {
+        for flow_ev in self.central.track(view).into_iter() {
             let (this_tcp, this_frame) = if matches!(flow_ev, FlowEvent::Packet { .. }) {
                 let pair = (tcp_slot, frame_slot.take());
                 tcp_slot = None; // consumed; subsequent Packets in this call get None
@@ -175,7 +189,7 @@ where
     /// from the central tracker plus per-slot `on_tick` output.
     pub fn sweep(&mut self, now: Timestamp) -> Vec<Event<E::Key, M>> {
         let mut out: Vec<Event<E::Key, M>> = Vec::new();
-        for flow_ev in self.tracker.sweep(now) {
+        for flow_ev in self.central.sweep(now) {
             out.extend(map_flow_event_with_details::<E::Key, M>(flow_ev, None, None));
         }
         for slot in &mut self.slots {
@@ -188,7 +202,7 @@ where
     /// drains every parser's pending state.
     pub fn finish(&mut self) -> Vec<Event<E::Key, M>> {
         let mut out: Vec<Event<E::Key, M>> = Vec::new();
-        for flow_ev in self.tracker.finish() {
+        for flow_ev in self.central.finish() {
             out.extend(map_flow_event_with_details::<E::Key, M>(flow_ev, None, None));
         }
         for slot in &mut self.slots {
@@ -199,12 +213,12 @@ where
 
     /// Borrow the underlying tracker for introspection.
     pub fn tracker(&self) -> &FlowTracker<E, ()> {
-        &self.tracker
+        self.central.tracker()
     }
 
     /// Mutable borrow of the underlying tracker.
     pub fn tracker_mut(&mut self) -> &mut FlowTracker<E, ()> {
-        &mut self.tracker
+        self.central.tracker_mut()
     }
 }
 
@@ -217,7 +231,10 @@ where
     extractor: E,
     config: FlowTrackerConfig,
     monotonic_timestamps: bool,
+    emit_anomalies: bool,
     emit_packet_details: bool,
+    dedup: Option<Dedup>,
+    idle_timeout_fn: Option<IdleTimeoutFn<E::Key>>,
     slots: Vec<Box<dyn DriverSlot<E::Key, M>>>,
     _marker: PhantomData<M>,
 }
@@ -257,6 +274,45 @@ where
     /// Plan 108 absorbed into plan 116.
     pub fn emit_packet_details(mut self, on: bool) -> Self {
         self.emit_packet_details = on;
+        self
+    }
+
+    /// Emit `Event::FlowAnomaly` / `Event::TrackerAnomaly`
+    /// events inline. Default `false`.
+    ///
+    /// The central tracker (a [`FlowDriver`] under a
+    /// [`NoopReassemblerFactory`]) synthesises anomalies for
+    /// every flow it tracks. Slots' inner drivers do not — slot
+    /// reassemblers may still surface their own anomalies through
+    /// their own internal paths, but the unified `Event` stream
+    /// fires per-flow + tracker-global anomalies from the central
+    /// only, avoiding the N-slot duplication a naive design
+    /// would produce.
+    pub fn emit_anomalies(mut self, on: bool) -> Self {
+        self.emit_anomalies = on;
+        self
+    }
+
+    /// Content-hash duplicate filtering on the central
+    /// flow-lifecycle path. Forwards to
+    /// [`FlowDriver::with_dedup`]; duplicate packets are dropped
+    /// at the unified `Driver` entry point before any slot sees
+    /// them.
+    pub fn dedup(mut self, dedup: Dedup) -> Self {
+        self.dedup = Some(dedup);
+        self
+    }
+
+    /// Per-key idle-timeout override for the central tracker.
+    /// Forwards to [`FlowTracker::set_idle_timeout_fn`] at build
+    /// time. Replaces the workaround that previously required
+    /// `driver.tracker_mut().set_idle_timeout_fn(f)` after
+    /// construction.
+    pub fn idle_timeout_fn<F>(mut self, f: F) -> Self
+    where
+        F: Fn(&E::Key, Option<L4Proto>) -> Option<Duration> + Send + 'static,
+    {
+        self.idle_timeout_fn = Some(Box::new(f));
         self
     }
 
@@ -431,8 +487,21 @@ where
 
     /// Finalize the builder.
     pub fn build(self) -> Driver<E, M> {
+        let mut central = FlowDriver::with_config(
+            self.extractor.clone(),
+            NoopReassemblerFactory,
+            self.config,
+        )
+        .with_emit_anomalies(self.emit_anomalies)
+        .with_monotonic_timestamps(self.monotonic_timestamps);
+        if let Some(d) = self.dedup {
+            central = central.with_dedup(d);
+        }
+        if let Some(f) = self.idle_timeout_fn {
+            central.tracker_mut().set_idle_timeout_fn(move |k, l4| f(k, l4));
+        }
         Driver {
-            tracker: FlowTracker::with_config(self.extractor.clone(), self.config),
+            central,
             extractor: self.extractor,
             emit_packet_details: self.emit_packet_details,
             slots: self.slots,

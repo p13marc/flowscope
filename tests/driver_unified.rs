@@ -381,6 +381,45 @@ fn datagram_heuristic_skips_on_never_match() {
 }
 
 #[test]
+fn idle_timeout_fn_applies_to_central_tracker() {
+    use std::time::Duration;
+    // Custom idle timeout of 1 s; sweep at t=10 should evict any
+    // flow whose last packet was older than 1 s.
+    let mut driver = Driver::<_, Msg>::builder(FiveTuple::bidirectional())
+        .idle_timeout_fn(|_, _| Some(Duration::from_secs(1)))
+        .build();
+    let frame = ipv4_tcp(
+        [1; 6], [2; 6], [10, 0, 0, 1], [10, 0, 0, 2], 33000, 80, 0, 0, 0x02, b"",
+    );
+    let _ = driver.track(PacketView::new(&frame, Timestamp::new(0, 0)));
+    let evs = driver.sweep(Timestamp::new(5, 0));
+    let ended = evs
+        .iter()
+        .filter(|e| matches!(e, Event::FlowEnded { .. }))
+        .count();
+    assert_eq!(ended, 1, "expected idle-timeout to fire FlowEnded by t=5s");
+}
+
+#[test]
+fn emit_anomalies_off_by_default_yields_no_anomalies() {
+    let mut driver = Driver::<_, Msg>::builder(FiveTuple::bidirectional()).build();
+    let frame = ipv4_tcp(
+        [1; 6], [2; 6], [10, 0, 0, 1], [10, 0, 0, 2], 33000, 80, 0, 0, 0x02, b"",
+    );
+    let evs = driver.track(PacketView::new(&frame, Timestamp::new(0, 0)));
+    let anomalies = evs
+        .iter()
+        .filter(|e| {
+            matches!(
+                e,
+                Event::FlowAnomaly { .. } | Event::TrackerAnomaly { .. }
+            )
+        })
+        .count();
+    assert_eq!(anomalies, 0);
+}
+
+#[test]
 fn one_flow_started_per_flow_regardless_of_parser_count() {
     // Plan 116 spec: "one FlowStarted per flow, not N per parser".
     // The central tracker is the single source of flow lifecycle;

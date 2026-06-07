@@ -223,7 +223,8 @@ pub use tracker::{FlowEntry, FlowEvents, FlowTracker, FlowTrackerConfig, FlowTra
 pub use driver::FlowDriver;
 #[cfg(feature = "reassembler")]
 pub use reassembler::{
-    BufferedReassembler, BufferedReassemblerFactory, Reassembler, ReassemblerFactory,
+    BufferedReassembler, BufferedReassemblerFactory, NoopReassembler, NoopReassemblerFactory,
+    Reassembler, ReassemblerFactory,
 };
 
 #[cfg(feature = "session")]
