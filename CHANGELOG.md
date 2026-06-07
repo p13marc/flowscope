@@ -4,6 +4,25 @@
 
 ### Added
 
+- **Plan 101 — `flowscope::emit`.** Structured event sinks for
+  the three log formats every flow-analysis pipeline ends up
+  emitting. Each writer takes a `std::io::Write` sink and a
+  `FlowEvent<FiveTupleKey>` per call; defaults to emitting only
+  `FlowEvent::Ended`.
+  - `FlowEventCsvWriter` — RFC-4180-quoted CSV (no extra deps).
+    Behind the `emit` feature.
+  - `FlowEventNdjsonWriter` — newline-delimited JSON using the
+    locked snake_case wire vocabulary. Behind the `emit-ndjson`
+    feature (pulls in `serde_json` + requires `serde`).
+  - `ZeekConnLogWriter` — tab-separated Zeek `conn.log` rows
+    with `#fields` / `#types` / `#close` headers, auto-generated
+    UIDs, full `EndReason` → Zeek `conn_state` mapping. Behind
+    the `emit` feature.
+  - `EndReason::as_zeek_state()` — pure-function mapping
+    documented stable for the 0.10 cycle.
+  - The three existing examples (`flow_csv_export`,
+    `flow_json_export`, `zeek_style_conn_log`) migrated to the
+    new writers — each dropped from 60-100 LoC to ~15 LoC.
 - **Plan 102 sub-D — `flowscope::well_known`.** Curated
   `(L4Proto, port)` → label table with ~70 entries (IANA-aligned
   plus widely-deployed cloud-native services like Kafka, Redis,

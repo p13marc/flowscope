@@ -143,6 +143,9 @@ pub mod pipeline;
 #[cfg(all(feature = "extractors", feature = "reassembler", feature = "session"))]
 pub use pipeline::{Event, EventKind, NoDatagramParser, NoSessionParser, Pipeline, PipelineBuilder};
 
+#[cfg(feature = "emit")]
+pub mod emit;
+
 pub mod prelude;
 
 #[cfg(feature = "session")]

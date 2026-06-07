@@ -83,6 +83,38 @@ impl EndReason {
     pub fn as_str(&self) -> &'static str {
         crate::obs::reason_label(*self)
     }
+
+    /// Zeek `conn_state` code for this end reason.
+    ///
+    /// Maps flowscope's lifecycle vocabulary onto the
+    /// connection-state codes Zeek records use:
+    ///
+    /// | Variant | Zeek code | Meaning |
+    /// |---------|-----------|---------|
+    /// | [`Self::Fin`] | `"SF"` | Normal close (both sides FIN). |
+    /// | [`Self::Rst`] | `"RSTO"` | Reset. |
+    /// | [`Self::IdleTimeout`] | `"OTH"` | No clean close. |
+    /// | [`Self::Evicted`] | `"OTH"` | Forcibly evicted by capacity. |
+    /// | [`Self::BufferOverflow`] | `"S0"` | Buffer cap reached. |
+    /// | [`Self::ParseError`] | `"REJ"` | Parser rejected the stream. |
+    /// | [`Self::ParserDone`] | `"SF"` | Parser drained cleanly. |
+    /// | [`Self::ForceClosed`] | `"OTH"` | External force-close. |
+    ///
+    /// Documented stable for the 0.10 cycle so downstream Zeek
+    /// pipelines can rely on the mapping. Use the
+    /// [`crate::emit::ZeekConnLogWriter`] (`emit` feature) to
+    /// produce conn.log-shaped output.
+    ///
+    /// New in 0.10.0.
+    pub fn as_zeek_state(&self) -> &'static str {
+        match self {
+            EndReason::Fin | EndReason::ParserDone => "SF",
+            EndReason::Rst => "RSTO",
+            EndReason::BufferOverflow => "S0",
+            EndReason::ParseError => "REJ",
+            EndReason::IdleTimeout | EndReason::Evicted | EndReason::ForceClosed => "OTH",
+        }
+    }
 }
 
 impl std::fmt::Display for EndReason {

@@ -58,6 +58,9 @@ tracing = { version = "0.1", default-features = false, features = ["std", "attri
 # `serde` feature
 serde = { version = "1", features = ["derive"], optional = true }
 
+# `emit-ndjson` sub-feature
+serde_json = { version = "1", optional = true }
+
 [dev-dependencies]
 proptest = "1"
 pcap-file = "2"
@@ -109,8 +112,14 @@ tracing = ["tracker", "dep:tracing"]
 # enable only when the per-message overhead is acceptable.
 tracing-messages = ["tracing"]
 
+# Structured event sinks (plan 101). `emit` ships the CSV + Zeek
+# `conn.log` writers (no extra deps). `emit-ndjson` adds the
+# newline-delimited-JSON writer; pulls in `serde_json`.
+emit = ["tracker", "extractors"]
+emit-ndjson = ["emit", "serde", "dep:serde_json"]
+
 # Convenience: turn everything on.
-full = ["http", "tls", "ja3", "ja4", "dns", "icmp", "pcap", "metrics", "tracing", "tracing-messages", "serde"]
+full = ["http", "tls", "ja3", "ja4", "dns", "icmp", "pcap", "metrics", "tracing", "tracing-messages", "serde", "emit", "emit-ndjson"]
 
 [package.metadata.docs.rs]
 all-features = true
@@ -226,15 +235,15 @@ required-features = ["pcap", "http", "tls", "ja3", "ja4", "dns", "extractors"]
 
 [[example]]
 name = "flow_csv_export"
-required-features = ["pcap", "extractors", "tracker"]
+required-features = ["pcap", "emit"]
 
 [[example]]
 name = "flow_json_export"
-required-features = ["pcap", "extractors", "tracker", "serde"]
+required-features = ["pcap", "emit-ndjson"]
 
 [[example]]
 name = "zeek_style_conn_log"
-required-features = ["pcap", "extractors", "tracker"]
+required-features = ["pcap", "emit"]
 
 [[example]]
 name = "layer_fast_path"
@@ -323,6 +332,18 @@ required-features = ["dns"]
 [[test]]
 name = "serde_round_trip"
 required-features = ["serde", "tracker"]
+
+[[test]]
+name = "emit_csv"
+required-features = ["emit"]
+
+[[test]]
+name = "emit_ndjson"
+required-features = ["emit-ndjson"]
+
+[[test]]
+name = "emit_zeek"
+required-features = ["emit"]
 
 [[bench]]
 name = "extractor"

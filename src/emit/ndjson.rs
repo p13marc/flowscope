@@ -1,0 +1,108 @@
+//! [`FlowEventNdjsonWriter`] — newline-delimited JSON sink.
+//!
+//! Each [`FlowEvent`] becomes one JSON object on one line, using
+//! flowscope's existing serde wire format (snake_case + adjacent
+//! tagging — locked since 0.8). Suitable for direct ingest into
+//! Elasticsearch / Loki / ClickHouse / DuckDB without any
+//! transformation.
+
+use std::io::{self, Write};
+
+use serde::Serialize;
+
+use crate::FlowEvent;
+
+/// Newline-delimited JSON writer for [`FlowEvent`] streams.
+pub struct FlowEventNdjsonWriter<W: Write> {
+    sink: W,
+    options: NdjsonOptions,
+}
+
+/// Options for [`FlowEventNdjsonWriter`].
+#[derive(Debug, Clone, Copy, Default)]
+#[non_exhaustive]
+pub struct NdjsonOptions {
+    /// Pretty-print one indented JSON per event (default `false`).
+    ///
+    /// NOTE: pretty-printed output is NOT valid NDJSON — each
+    /// record spans multiple lines. Use only for human inspection.
+    pub pretty: bool,
+    /// Include `FlowEvent::Packet` rows (high volume; off by
+    /// default).
+    pub include_packets: bool,
+    /// Include `FlowEvent::Started` rows (default `false`).
+    pub include_started: bool,
+    /// Include `FlowEvent::FlowAnomaly` / `TrackerAnomaly` rows
+    /// (default `true`).
+    pub include_anomalies: bool,
+    /// Include `FlowEvent::Established` rows (default `false`).
+    pub include_established: bool,
+    /// Include `FlowEvent::Tick` rows (default `false`).
+    pub include_ticks: bool,
+}
+
+impl<W: Write> FlowEventNdjsonWriter<W> {
+    /// Construct with default options.
+    pub fn new(sink: W) -> Self {
+        Self::with_options(sink, NdjsonOptions::default_anomalies_on())
+    }
+
+    /// Construct with custom options.
+    pub fn with_options(sink: W, options: NdjsonOptions) -> Self {
+        Self { sink, options }
+    }
+
+    /// Write one event to the sink. Skipped variants (per
+    /// [`NdjsonOptions`]) produce no output.
+    pub fn write_event<K>(&mut self, ev: &FlowEvent<K>) -> io::Result<()>
+    where
+        K: Serialize,
+    {
+        if !self.should_emit(ev) {
+            return Ok(());
+        }
+        let result = if self.options.pretty {
+            serde_json::to_string_pretty(ev)
+        } else {
+            serde_json::to_string(ev)
+        };
+        let s = result.map_err(io::Error::other)?;
+        self.sink.write_all(s.as_bytes())?;
+        self.sink.write_all(b"\n")?;
+        Ok(())
+    }
+
+    fn should_emit<K>(&self, ev: &FlowEvent<K>) -> bool {
+        match ev {
+            FlowEvent::Ended { .. } => true,
+            FlowEvent::Started { .. } => self.options.include_started,
+            FlowEvent::Packet { .. } => self.options.include_packets,
+            FlowEvent::Established { .. } => self.options.include_established,
+            FlowEvent::Tick { .. } => self.options.include_ticks,
+            FlowEvent::FlowAnomaly { .. } | FlowEvent::TrackerAnomaly { .. } => {
+                self.options.include_anomalies
+            }
+            FlowEvent::StateChange { .. } => false,
+        }
+    }
+
+    /// Flush buffered output to the sink.
+    pub fn flush(&mut self) -> io::Result<()> {
+        self.sink.flush()
+    }
+
+    /// Flush and recover the underlying sink.
+    pub fn finish(mut self) -> io::Result<W> {
+        self.flush()?;
+        Ok(self.sink)
+    }
+}
+
+impl NdjsonOptions {
+    fn default_anomalies_on() -> Self {
+        Self {
+            include_anomalies: true,
+            ..Self::default()
+        }
+    }
+}
