@@ -45,11 +45,14 @@ fix.
 | **[`109-cross-l4-multi-driver.md`](./109-cross-l4-multi-driver.md)** | **`FlowMultiDriver<E, M>` — shared-tracker, spans TCP+UDP.** | **6** | **~1,330 LoC, ~38 h** |
 | [`110-rustdoc-landing-pages.md`](./110-rustdoc-landing-pages.md) | Module-level rustdoc accessor index for http/tls/dns/icmp + 7 new HTTP accessors. | 4 | ~400 LoC, ~7 h |
 | [`111-quick-wins.md`](./111-quick-wins.md) | `Timestamp` / `FlowStats` / `EndReason` / `LayerKind` / `Layer` / `LayerStack` / `KeyIndexed` helpers. | 1 + 3 + 4 | ~535 LoC, ~10 h |
+| [`112-dynamic-lazy-analysis.md`](./112-dynamic-lazy-analysis.md) | Analysis: does the 0.10 surface allow dynamic / lazy detection? (no — proposal for 113/114/115.) | — | doc |
+| [`113-detection-signatures.md`](./113-detection-signatures.md) | `flowscope::detect::signatures` — 12 magic-byte recognizers for shipped protocols. | (new) | ~720 LoC, ~9 h |
+| [`114-heuristic-routing.md`](./114-heuristic-routing.md) | `Routing::Heuristic` on `FlowMultiDriver` — content-based dispatch with cheap-first cascade + pin-on-match + bounded budget. | (new) | ~850 LoC, ~16 h |
 
-Total: ~7,330 LoC, ~169 hours across 11 implementation
-plans. Comparable to the 0.9 cycle (~5,880 LoC, ~174 h);
-distributed more evenly across multiple smaller plans than
-0.9's plan-94-dominated shape.
+Total: ~8,900 LoC, ~194 hours across 13 implementation
+plans. The +25 hour delta over the original 11-plan budget
+covers the dynamic-detection capability surfaced by the
+follow-up audit (plan 112).
 
 Cycle theme: "address the next layer of DX after the 0.9
 big surface choices."
@@ -61,7 +64,7 @@ Canonical landing sequence:
    ↓
 101, 105, 110 (small additive — no dependencies)
    ↓
-102, 103, 104 (aggregation primitives — feed plan 107)
+102, 103, 104, 113 (correlate + aggregate + detect + signatures)
    ↓
 106 (parser ergonomics — feed plan 107 + plan 109)
    ↓
@@ -70,11 +73,18 @@ Canonical landing sequence:
 108 (packet enrichment — affects every consumer)
    ↓
 109 (cross-L4 driver — the centerpiece; depends on 106)
+   ↓
+114 (heuristic routing — depends on 109 + 113)
 ```
 
 The user-priority plan is **109** — cross-L4 multi-driver.
-Land it last in the cycle so the supporting infrastructure
-(parser ergonomics, packet enrichment) is in place first.
+Land it before 114 so the routing surface is in place.
+
+Plan **112** (dynamic / lazy analysis) is a doc; plans
+**113** + **114** together address the "dynamic detection"
+gap surfaced by the follow-up audit. Plan 115 (lazy
+`Layers`) is sketched in 112 but deferred pending benchmark
+data.
 
 ### Deferred / stale
 
@@ -169,8 +179,8 @@ Land it last in the cycle so the supporting infrastructure
 
 Plan numbers retired (implementation shipped, file removed):
 00–04, 12, 20, 22–25, 30–61, 62, 70–73, 74, 75, 76–82, 83–91,
-93, 94, 96, 97, 99. Active: 21 (stale-deferred), 100–111
-(0.10 cycle). The next free number for a new plan is 112+.
+93, 94, 96, 97, 99. Active: 21 (stale-deferred), 100–114
+(0.10 cycle). The next free number for a new plan is 115+.
 
 ---
 
