@@ -381,6 +381,94 @@ fn datagram_heuristic_skips_on_never_match() {
 }
 
 #[test]
+fn one_flow_started_per_flow_regardless_of_parser_count() {
+    // Plan 116 spec: "one FlowStarted per flow, not N per parser".
+    // The central tracker is the single source of flow lifecycle;
+    // slots filter their own SessionEvent::Started variants out.
+    let mut driver = Driver::<_, Msg>::builder(FiveTuple::bidirectional())
+        .session_broadcast(CountParser::named("a"), |(s, n)| Msg::Counted {
+            name: "a",
+            side: s,
+            len: n,
+        })
+        .session_broadcast(CountParser::named("b"), |(s, n)| Msg::Counted {
+            name: "b",
+            side: s,
+            len: n,
+        })
+        .session_broadcast(CountParser::named("c"), |(s, n)| Msg::Counted {
+            name: "c",
+            side: s,
+            len: n,
+        })
+        .build();
+
+    let frame = ipv4_tcp(
+        [1; 6], [2; 6], [10, 0, 0, 1], [10, 0, 0, 2], 33000, 80, 1000, 0, 0x02, b"",
+    );
+    let events = driver.track(PacketView::new(&frame, Timestamp::new(0, 0)));
+    let started = events
+        .iter()
+        .filter(|e| matches!(e, Event::FlowStarted { .. }))
+        .count();
+    assert_eq!(
+        started, 1,
+        "with 3 broadcast parsers, expected 1 FlowStarted; got {started}",
+    );
+}
+
+#[test]
+fn parser_closed_fires_per_parser_on_flow_end() {
+    // Plan 116 spec: ParserClosed fires per (parser, flow). With
+    // 2 broadcast parsers registered, ending a flow should yield
+    // 2 ParserClosed events (one per parser) and 1 FlowEnded
+    // (single source).
+    let mut driver = Driver::<_, Msg>::builder(FiveTuple::bidirectional())
+        .session_broadcast(CountParser::named("a"), |(s, n)| Msg::Counted {
+            name: "a",
+            side: s,
+            len: n,
+        })
+        .session_broadcast(CountParser::named("b"), |(s, n)| Msg::Counted {
+            name: "b",
+            side: s,
+            len: n,
+        })
+        .build();
+
+    // SYN to start the flow.
+    let syn = ipv4_tcp(
+        [1; 6], [2; 6], [10, 0, 0, 1], [10, 0, 0, 2], 33000, 80, 1000, 0, 0x02, b"",
+    );
+    let _ = driver.track(PacketView::new(&syn, Timestamp::new(0, 0)));
+
+    // finish() flushes idle flows.
+    let finish_events = driver.finish();
+    let parser_closed: Vec<&'static str> = finish_events
+        .iter()
+        .filter_map(|e| match e {
+            Event::ParserClosed { parser_kind, .. } => Some(*parser_kind),
+            _ => None,
+        })
+        .collect();
+    let flow_ended = finish_events
+        .iter()
+        .filter(|e| matches!(e, Event::FlowEnded { .. }))
+        .count();
+
+    // 2 ParserClosed (one per registered parser).
+    assert_eq!(
+        parser_closed.len(),
+        2,
+        "expected 2 ParserClosed events; got {parser_closed:?}",
+    );
+    assert!(parser_closed.contains(&"a"));
+    assert!(parser_closed.contains(&"b"));
+    // 1 FlowEnded (central tracker only).
+    assert_eq!(flow_ended, 1, "expected 1 FlowEnded; got {flow_ended}");
+}
+
+#[test]
 fn emit_packet_details_populates_tcp_and_frame() {
     let mut driver = Driver::<_, Msg>::builder(FiveTuple::bidirectional())
         .emit_packet_details(true)

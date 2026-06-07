@@ -153,11 +153,12 @@ where
         let mut frame_slot = frame_for_packet;
         for flow_ev in self.tracker.track(view).into_iter() {
             let (this_tcp, this_frame) = if matches!(flow_ev, FlowEvent::Packet { .. }) {
-                (tcp_slot, frame_slot.take())
+                let pair = (tcp_slot, frame_slot.take());
+                tcp_slot = None; // consumed; subsequent Packets in this call get None
+                pair
             } else {
                 (None, None)
             };
-            tcp_slot = None; // used; subsequent Packet variants in this call get None
             out.extend(map_flow_event_with_details::<E::Key, M>(
                 flow_ev, this_tcp, this_frame,
             ));
