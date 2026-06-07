@@ -7,8 +7,13 @@ to your needs. For the conceptual model, see
 
 ## Picking the right API
 
-flowscope exposes four layers. Walk top-to-bottom; the first
-"yes" picks your API.
+flowscope exposes three tiers + the underlying traits. Walk
+top-to-bottom; the first "yes" picks your API.
+
+0. **Just want a hello-world running against a pcap?**
+   → `flowscope::Pipeline::builder(ext).session(parser).build()
+   .run_pcap(path)`. One import (`use flowscope::prelude::*;`),
+   one builder chain, one iterator. See `examples/hello_pipeline.rs`.
 
 1. **Only care about flow lifecycle, not L7?**
    → Use `FlowTracker` directly, consume `FlowEvent`.
@@ -20,14 +25,20 @@ flowscope exposes four layers. Walk top-to-bottom; the first
    sync use, or netring's `session_stream` / `datagram_stream`
    for async.
 
-3. **Want HTTP/TLS callback events from a sync loop?**
-   → `HttpFactory<H>` / `TlsFactory<H>` driven via `FlowDriver`.
-
-4. **Want typed L7 messages from a sync loop or pcap?**
+3. **Want typed L7 messages from a sync loop or pcap?**
    → `FlowSessionDriver` (HTTP/TLS/DNS-TCP) or
-   `FlowDatagramDriver` (DNS-UDP/ICMP). For offline pcap, the
-   `PcapFlowSource::sessions()` / `.datagrams()` one-shot
+   `FlowDatagramDriver` (DNS-UDP/ICMP) — both available via the
+   high-level `flowscope::Pipeline` entry point, or directly via
+   their builders. For offline pcap, `Pipeline::run_pcap` and
+   the `PcapFlowSource::sessions()` / `.datagrams()` one-shot
    adapters wrap them.
+
+4. **Want a callback-shaped HTTP/TLS interface?**
+   → Use the `SessionParser` shape with a consumer loop on
+   `SessionEvent::Application` — the 0.9 release deleted the
+   legacy `HttpFactory` / `TlsFactory` callback-handler shape
+   in favour of the typed-stream API. The migration is a one-
+   line change; see CHANGELOG 0.9.0 → Breaking.
 
 5. **Want typed L7 messages from a tokio task?**
    → netring's `AsyncCapture::flow_stream(...).session_stream(...)`
@@ -376,7 +387,7 @@ Enable the `serde` feature and pipe events into Vector / Fluentd /
 Loki / any JSON-consuming log pipeline.
 
 ```toml
-flowscope = { version = "0.8", features = ["l7", "serde"] }
+flowscope = { version = "0.9", features = ["l7", "serde"] }
 serde_json = "1"
 ```
 

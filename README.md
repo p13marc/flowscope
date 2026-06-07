@@ -37,13 +37,15 @@ Protocol parsers (each behind its own feature):
 
 | Feature | What you get |
 |---------|--------------|
-| `http`  | HTTP/1.x request/response parsing — both `HttpFactory` (callback) and `HttpParser` (`SessionParser`) |
-| `tls`   | TLS handshake observer (ClientHello/ServerHello/Alert) — passive only, no decryption |
+| `http`  | HTTP/1.x request/response parsing via `HttpParser` (`SessionParser`) |
+| `tls`   | TLS handshake observer (ClientHello/ServerHello/Alert) via `TlsParser` (`SessionParser`) — passive only, no decryption; `TlsHandshakeParser` aggregates a handshake into one event |
 | `ja3`   | [JA3](https://github.com/salesforce/ja3) client fingerprinting (sub-feature of `tls`) |
+| `ja4`   | [JA4](https://github.com/FoxIO-LLC/ja4) client fingerprinting (sub-feature of `tls`) |
 | `dns`   | DNS message parser, per-flow query/response correlator. UDP via `DnsUdpParser` (`DatagramParser`); TCP via `DnsTcpParser` (`SessionParser`, RFC 1035 §4.2.2 length-framed) |
+| `icmp`  | ICMPv4/v6 message parser (`IcmpParser` — `DatagramParser`) |
 | `pcap`  | pcap file source for offline replay |
-| `l7`    | Umbrella: enables `http` + `tls` + `dns` together |
-| `full`  | All of the above (incl. `ja3`, `pcap`, observability) |
+| `l7`    | Umbrella: `http` + `tls` + `dns` + `icmp` |
+| `full`  | All of the above (incl. `ja3`, `ja4`, `pcap`, `serde`, observability) |
 
 ## Quick start
 

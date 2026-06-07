@@ -65,7 +65,7 @@ shipped. The plan-of-record umbrella (93) lingers as the
 durable audit; the implementation plans (74, 75, 81, 92, 94,
 96, 97, 99) are retired per project convention.
 
-Test counts: 506 passing, zero clippy warnings under
+Test counts: 508 passing, zero clippy warnings under
 `--all-features --all-targets -D warnings`, zero rustdoc
 warnings.
 
@@ -134,26 +134,32 @@ src/
 │                                # tracing-messages sub-feature (plan 56, 0.3.0)
 ├── http/                        # `http` feature
 │   ├── parser.rs                # internal step() machine (httparse-based)
-│   ├── factory.rs               # HttpFactory / HttpReassembler (callback-style)
-│   ├── session.rs               # HttpParser (SessionParser-style, plan 31)
-│   └── types.rs                 # HttpRequest / HttpResponse / HttpHandler / HttpConfig
+│   ├── session.rs               # HttpParser (SessionParser, plan 31, the only public shape since 0.9.0)
+│   └── types.rs                 # HttpRequest / HttpResponse / HttpConfig
 ├── tls/                         # `tls` feature
 │   ├── parser.rs                # internal step() machine (tls-parser-based)
-│   ├── factory.rs               # TlsFactory / TlsReassembler (callback-style)
-│   ├── session.rs               # TlsParser (SessionParser-style, plan 31)
+│   ├── session.rs               # TlsParser (SessionParser, the only public shape since 0.9.0)
 │   ├── handshake.rs             # TlsHandshakeParser aggregator (plan 97, 0.9.0)
 │   ├── fingerprint.rs           # JA3 (gated by `ja3` feature)
 │   ├── ja4.rs                   # JA4 (gated by `ja4` feature, plan 97, 0.9.0)
-│   └── types.rs                 # TlsClientHello / TlsServerHello / TlsAlert / TlsHandler
+│   └── types.rs                 # TlsClientHello / TlsServerHello / TlsAlert / TlsConfig
 ├── dns/                         # `dns` feature
 │   ├── parser.rs                # parse_message / parse_message_at (simple-dns-based)
 │   ├── correlator.rs            # Correlator<S> — query/response matching
 │   ├── datagram.rs              # DnsUdpParser (DatagramParser; correlating, plan 37)
 │   ├── session.rs               # DnsTcpParser (SessionParser, RFC 1035 §4.2.2 framing)
 │   └── types.rs                 # DnsQuery / DnsResponse / DnsRdata / DnsConfig
+├── icmp/                        # `icmp` feature
+│   ├── parser.rs                # parse_v4 / parse_v6 stateless decoders
+│   ├── datagram.rs              # IcmpParser (DatagramParser, plan 76, 0.7.0)
+│   └── types.rs                 # IcmpMessage / IcmpType variants
 └── pcap/                        # `pcap` feature
     └── source.rs                # PcapFlowSource — offline replay
 ```
+
+The legacy `HttpFactory` / `TlsFactory` callback-handler shape
+(`factory.rs` modules) was removed in 0.9.0 — the
+`SessionParser` typed-stream shape is the only public surface.
 
 ### Tests
 
@@ -162,7 +168,9 @@ src/
   Run with `PROPTEST_CASES=10000` for stress testing.
 - `tests/proptest_invariants.rs` — tracker-level proptests
   (FiveTuple canonicalization, TCP state machine).
-- `tests/{http,tls,dns}_parser.rs` — fixture-based unit tests per parser.
+- `tests/{http,tls,dns}_parser.rs` — fixture-based unit tests per parser
+  (TLS rewritten on 0.9 to drive the SessionParser shape after the
+  callback-factory removal).
 - `tests/{http,pcap}_pcap.rs`, `tests/pcap_integration.rs`,
   `tests/pcap_fixtures.rs` — pcap-driven integration tests.
 - `tests/length_prefixed_example.rs` — sync `FlowSessionDriver` +
@@ -173,6 +181,15 @@ src/
 - `tests/round_trip.rs` — synthesize→pcap→PcapFlowSource→
   FlowSessionDriver→assert byte-equality regression test. Three
   hand-written variants plus a proptest (0.3.0).
+- `tests/pipeline.rs` — `Pipeline` builder + `run_pcap` /
+  `run_iter` / `reset` integration (plan 94 Tier 1, 0.9.0).
+- `tests/layers.rs` + `tests/layers_extended.rs` — Tier 3
+  per-packet view (direct slices, dynamic walk, tunnel walking,
+  ARP/MPLS/ICMP).
+- `tests/auto_sweep.rs` — `FlowTracker::with_auto_sweep` (plan
+  75, 0.9.0).
+- `tests/error_chain.rs` — unified `flowscope::Error` source
+  chain across pcap I/O, ICMP, DNS (plan 96, 0.9.0).
 - `benches/{extractor,tracker,reassembler,session_driver,dedup}.rs`
   — criterion benchmark harness (0.3.0). Run with
   `cargo bench --all-features`; baselines in
@@ -216,26 +233,34 @@ cargo doc --all-features --no-deps
    ([recipes.md](docs/recipes.md) walks through the
    decision tree).
 
-### Two API shapes for L7 parsing — sync / async parity
+### One L7 API shape — sync / async parity
 
-L7 parsers expose the typed-stream shape; HTTP and TLS additionally
-expose a callback factory:
+Every shipped L7 parser exposes the typed-stream shape only
+(`SessionParser` for TCP, `DatagramParser` for UDP). The legacy
+`*Factory<H>` callback-handler shape that shipped through 0.8
+was removed in 0.9.
 
-- **`*Factory<H>`** — callback handler trait (`HttpHandler`,
-  `TlsHandler`). Callback-driven. Pair with a sync `FlowDriver` or
-  netring's `with_async_reassembler`.
 - **`SessionParser` / `DatagramParser`** — typed message stream.
   `feed_initiator` / `feed_responder` / `parse` return
   `Vec<Self::Message>`; both traits have a defaulted `on_tick`.
+- A consumer who wants callback ergonomics writes
+  `for ev in driver.track(...) { match ev { … } }` and
+  dispatches inside the `SessionEvent::Application` arm.
 
-For the typed-stream API, two driver helpers:
+Two driver helpers:
 
 - Sync, no runtime: **`FlowSessionDriver<E, P, S = ()>`** in
-  flowscope (0.2.0; `S` restored in 0.5 — see plan 38).
+  flowscope (0.2.0; `S` restored in 0.5 — see plan 38). The 0.9
+  release adds `FlowSessionDriver::builder(ext)` chainable
+  construction alongside the existing constructors.
 - Async tokio: **`flow_stream(...).session_stream(parser)`** in
   netring.
 
 Both produce the same `SessionEvent`s for the same wire bytes.
+
+For the highest-level convenience, the 0.9 `flowscope::Pipeline`
+wraps both `FlowSessionDriver` + `FlowDatagramDriver` behind one
+builder chain — see `docs/getting-started.md`.
 
 ### Reassembly observability (0.2.0)
 

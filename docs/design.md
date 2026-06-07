@@ -96,29 +96,34 @@ The trait shapes (`SessionParser` and `DatagramParser`) have been
 locked since 0.1.0 — additions stay additive, default methods
 extend the surface without breaking existing impls.
 
-## Two API shapes per L7 protocol
+## One API shape per L7 protocol
 
-HTTP and TLS ship both:
+Every shipped L7 module — HTTP, TLS, DNS, ICMP — uses the
+typed-stream shape: a `SessionParser` (TCP) or `DatagramParser`
+(UDP) implementation that returns `Vec<Message>` from `feed_*`
+or `parse`; the consumer iterates `SessionEvent::Application`
+arms.
 
-- A **callback factory** (`HttpFactory<H>`, `TlsFactory<H>`) —
-  the consumer implements a handler trait; the factory drives
-  callbacks from inside `FlowDriver`.
-- A **typed message parser** (`HttpParser`, `TlsParser`) — the
-  parser returns `Vec<Message>` from `feed_*`; the consumer
-  iterates.
+TLS additionally ships `TlsHandshakeParser` — also a
+`SessionParser`, but aggregating ClientHello + ServerHello +
+Alert into one `TlsHandshake` message per handshake. The
+per-message `TlsParser` and the aggregator stand side by side
+for the two granularities consumers want.
 
-**Why both:**
+**Why one shape:**
 
-- Callbacks suit synchronous loops where the consumer wants
-  decoupling from the event-emission point.
-- Typed parsers suit `Stream<SessionEvent>` async iteration with
-  natural backpressure.
-- The two shapes produce identical events for identical wire
-  bytes — pick by control flow, not by protocol.
-
-DNS-UDP ships only the typed parser (`DnsUdpParser`); a callback
-factory would be redundant in the datagram shape. ICMP ships only
-the typed parser for the same reason.
+- Typed parsers compose naturally with `Stream<SessionEvent>`
+  async iteration and the sync `FlowSessionDriver` /
+  `FlowDatagramDriver` loop alike — the same parser drives
+  both paths.
+- A consumer who wants callback ergonomics writes a
+  `for ev in driver.track(...) { match ev { … } }` loop and
+  dispatches inside the arms — no need for a separate
+  callback trait.
+- Single shape = single docs path, single test fixture, single
+  set of guarantees. The legacy callback-factory shape that
+  shipped through 0.8 was removed in 0.9 once the
+  `SessionParser` story was complete.
 
 ## Bounded memory everywhere
 

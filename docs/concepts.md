@@ -311,7 +311,8 @@ lookups:
 Layers 2–4 stitch together. flowscope ships three sync wrappers:
 
 - **`FlowDriver<E, F, S>`** — tracker + reassembler factory. Emits
-  `FlowEvent`. Use when you have a callback-style consumer.
+  `FlowEvent`. The low-level building block — use it directly when
+  you want flow lifecycle events without per-flow L7 parsing.
 - **`FlowSessionDriver<E, P, S>`** — adds a `SessionParser`. Emits
   `SessionEvent`.
 - **`FlowDatagramDriver<E, P, S>`** — adds a `DatagramParser`.
