@@ -25,6 +25,17 @@
   sweep and merges its events into the returned vector. Manual
   `sweep()` resets `last_sweep_ts` so mixing manual + auto
   is safe.
+- **Driver builders** (plan 94 Tier 2 partial). New
+  `Driver::builder(extractor)` entry point on
+  `FlowSessionDriver` + `FlowDatagramDriver`. Discoverable
+  chainable shape: `.parser(p) / .config(c) /
+  .emit_anomalies(b) / .monotonic_timestamps(b) / .dedup(d) /
+  .idle_timeout_fn(f) / .build()`. The plan-94 Tier 2 spec
+  called for collapsing all 38 driver constructors into one
+  builder; this cut ships the most-discoverable entry point
+  alongside the existing constructors. Constructor deletion
+  is deferred to a follow-up cycle so consumers can migrate
+  at their own pace.
 - **`flowscope::layers` fast path** (plan 94 Tier 3 fast-path
   follow-up). Mirror of gopacket's `DecodingLayerParser`
   pattern. `LayerParser` + `LayerStack`: zero per-frame
