@@ -138,10 +138,14 @@ while let Some(evt) = s.next().await { /* ... */ }
 
 ## Status
 
-0.9.0 (in progress) — high-level `Pipeline` entry point,
-public `flowscope::layers` per-packet view, unified
-`flowscope::Error`, `FlowTracker::with_auto_sweep` for
-live/offline parity, `flowscope::prelude`, MSRV bumped to 1.88.
+0.9.0 (in progress) — biggest release since 0.1: high-level
+`Pipeline` entry point, public `flowscope::layers` per-packet
+view (with tunnel walking + zero-alloc fast path), unified
+`flowscope::Error`, `flowscope::correlate` cross-flow primitives,
+`FlowMultiSessionDriver` composite driver, `SegmentBufferReassembler`
+OOO TCP hole-fill, JA4 TLS fingerprint + `TlsHandshakeParser`
+aggregator, `FlowTracker::with_auto_sweep` for live/offline
+parity, `flowscope::prelude`, MSRV bumped to 1.88.
 
 0.8.0 was the last point release: serde wire-format lock,
 ICMP correlation helpers, programmatic flow termination,

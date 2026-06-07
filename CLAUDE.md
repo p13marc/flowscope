@@ -52,12 +52,20 @@ the core.
   (BTreeMap-backed pending queue; deadline expiry; strict
   RFC 5722 overlap).
 
-Pending:
-- Plan 94 Tier 2 (driver-builder consolidation — collapses 38
-  constructors; deferred as maintainer-facing churn without
-  user-facing capability addition).
+- **Plan 94 Tier 2** — driver builders: additive
+  `Driver::builder(extractor)` chainable entry on
+  `FlowSessionDriver` + `FlowDatagramDriver`. Constructor
+  deletion deferred to a follow-up cycle.
+- **Plan 94 Tier 3 fast path** — `LayerParser` + `LayerStack`
+  zero-allocation parsing (gopacket `DecodingLayerParser`
+  shape) with caller-owned scratch + `.only(kinds)` mask.
 
-Test counts: 495 passing, zero clippy warnings under
+The 0.9 cycle is complete; all eight implementation plans
+shipped. The plan-of-record umbrella (93) lingers as the
+durable audit; the implementation plans (74, 75, 81, 92, 94,
+96, 97, 99) are retired per project convention.
+
+Test counts: 506 passing, zero clippy warnings under
 `--all-features --all-targets -D warnings`, zero rustdoc
 warnings.
 
@@ -89,6 +97,8 @@ src/
 │   ├── bucketed.rs              # TimeBucketedCounter<K>
 │   ├── indexed.rs               # KeyIndexed<K, V>
 │   └── sequence.rs              # SequencePattern + KeylessSequencePattern
+├── driver_builder.rs            # Driver::builder(ext) entry (plan 94 Tier 2, 0.9.0)
+├── layers/fast.rs               # LayerParser + LayerStack zero-alloc (plan 94 Tier 3 fast path, 0.9.0)
 ├── multi_session_driver.rs      # FlowMultiSessionDriver<E, M> (plan 92, 0.9.0)
 ├── segment_reassembler.rs       # SegmentBufferReassembler OOO hole-fill (plan 74, 0.9.0)
 ├── extract/                     # built-in extractors (extractors feature)
