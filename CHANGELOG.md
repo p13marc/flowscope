@@ -58,6 +58,33 @@
   `Driver<E, M>`. Internal `ConcreteDatagramSlot` wraps a
   `FlowDatagramDriver`; same lift-and-filter behaviour as the
   session path.
+- **Plan 116 migration mapping (legacy → unified).** The
+  unified API in `flowscope::driver_unified` ships alongside
+  the 0.9-era types for migration; the deletion sweep is
+  queued for the next major release. Reference mapping
+  (legacy 0.9 → unified 0.10):
+
+  | 0.9 type / variant | Unified 0.10 equivalent |
+  |--------------------|--------------------------|
+  | `FlowSessionDriver::new(ext, p)` | `Driver::builder(ext).session_broadcast(p, identity).build()` |
+  | `FlowDatagramDriver::new(ext, p)` | `Driver::builder(ext).datagram_broadcast(p, identity).build()` |
+  | `FlowMultiSessionDriver` | `Driver` with multiple `.session_on_ports(…)` / `.session_broadcast(…)` |
+  | `flowscope::Pipeline::builder(ext).session(p)` | `flowscope::driver_unified::Pipeline::builder(ext).session_broadcast(p, identity)` |
+  | `pipeline::Event::Flow(FlowEvent::Started)` | `Event::FlowStarted` |
+  | `pipeline::Event::Flow(FlowEvent::Established)` | `Event::FlowEstablished` |
+  | `pipeline::Event::Flow(FlowEvent::Packet)` | `Event::FlowPacket` (now with optional `tcp` / `frame`) |
+  | `pipeline::Event::Flow(FlowEvent::Ended)` | `Event::FlowEnded` |
+  | `pipeline::Event::Flow(FlowEvent::Tick)` | `Event::FlowTick` |
+  | `pipeline::Event::Flow(FlowEvent::FlowAnomaly)` | `Event::FlowAnomaly` (deferred — see module rustdoc) |
+  | `pipeline::Event::Flow(FlowEvent::TrackerAnomaly)` | `Event::TrackerAnomaly` (deferred) |
+  | `pipeline::Event::Flow(FlowEvent::StateChange)` | dropped — `FlowEstablished` is the only transition surfaced |
+  | `pipeline::Event::Tcp(SessionEvent::Application)` | `Event::Message` |
+  | `pipeline::Event::Tcp(SessionEvent::Closed)` | `Event::FlowEnded` (lifecycle) + `Event::ParserClosed` (per-parser) |
+  | `pipeline::Event::Udp(SessionEvent::Application)` | `Event::Message` |
+  | `pipeline::Event::Udp(SessionEvent::Closed)` | `Event::FlowEnded` + `Event::ParserClosed` |
+
+  See `docs/recipes.md` → "Migrating to the unified Driver
+  (0.10+)" for a worked example.
 - **Plan 116 PR 1 — unified `Driver<E, M>` + `Event<K, M>`
   preview.** First step of the centerpiece API redesign that
   collapses the 0.9-era 6-driver / 4-event surface into one
