@@ -116,6 +116,12 @@ pub mod session_driver;
 pub mod datagram_driver;
 
 #[cfg(all(feature = "extractors", feature = "reassembler", feature = "session"))]
+pub mod multi_session_driver;
+
+#[cfg(all(feature = "extractors", feature = "reassembler", feature = "session"))]
+pub use multi_session_driver::FlowMultiSessionDriver;
+
+#[cfg(all(feature = "extractors", feature = "reassembler", feature = "session"))]
 pub mod pipeline;
 
 #[cfg(all(feature = "extractors", feature = "reassembler", feature = "session"))]

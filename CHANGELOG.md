@@ -25,6 +25,21 @@
   sweep and merges its events into the returned vector. Manual
   `sweep()` resets `last_sweep_ts` so mixing manual + auto
   is safe.
+- **`FlowMultiSessionDriver<E, M>`** (plan 92). Composite
+  driver running N session parsers against the same packet
+  stream in one pass. Each registered parser observes packets
+  matching its routing rule:
+  - `.with_parser_on_ports(parser, ports, lift)` — fires when
+    `dst_port ∈ ports || src_port ∈ ports`.
+  - `.with_parser_broadcast(parser, lift)` — fires on every
+    packet matching the flow's L4.
+  Each parser's emitted messages are lifted to a user-supplied
+  sum type `M` via the registration-time closure; events are
+  merged in registration order. The 0.9 implementation runs
+  parallel `FlowSessionDriver` instances internally (one per
+  parser), trading the shared-tracker storage optimisation
+  from the plan for ergonomic simplicity; this is documented
+  inline and the optimisation can land in a follow-up.
 - **TLS modernization** (plan 97). Two TLS additions behind
   Cargo features:
   - **`ja4` Cargo feature** — JA4 client fingerprint (FoxIO
