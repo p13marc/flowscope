@@ -63,6 +63,7 @@
 mod correlate;
 mod correlator;
 mod datagram;
+mod exchange;
 mod parser;
 mod session;
 mod types;
@@ -70,6 +71,7 @@ mod types;
 pub use correlate::DnsResolutionCache;
 pub use correlator::Correlator;
 pub use datagram::{DnsMessage, DnsUdpParser};
+pub use exchange::{DnsExchange, DnsExchangeParser, DnsOutcome};
 pub use parser::{DnsParseResult, parse_message, parse_message_at};
 pub use session::DnsTcpParser;
 pub use types::*;

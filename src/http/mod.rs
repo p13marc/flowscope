@@ -86,10 +86,12 @@
 //! | [`header`](HttpResponse::header) | `Option<&[u8]>` | first matching header |
 //! | [`headers_all`](HttpResponse::headers_all) | `impl Iterator<Item = &[u8]>` | every matching header |
 
+mod exchange;
 mod parser;
 mod session;
 mod types;
 
+pub use exchange::{HttpExchange, HttpExchangeParser, HttpOutcome};
 pub use session::{HttpMessage, HttpParser};
 pub use types::{HttpConfig, HttpRequest, HttpResponse, HttpVersion};
 

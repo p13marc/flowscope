@@ -356,6 +356,14 @@ required-features = ["emit"]
 name = "parser_helpers"
 required-features = ["session"]
 
+[[test]]
+name = "http_exchange"
+required-features = ["http"]
+
+[[test]]
+name = "dns_exchange"
+required-features = ["dns"]
+
 [[bench]]
 name = "extractor"
 harness = false

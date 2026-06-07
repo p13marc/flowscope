@@ -4,6 +4,20 @@
 
 ### Added
 
+- **Plan 107 — HTTP + DNS exchange aggregators.** Mirror of the
+  0.9 `TlsHandshakeParser` shape for two more L7 protocols. One
+  rich event per logical exchange instead of per-message
+  decomposition.
+  - `HttpExchangeParser` — emits one `HttpExchange` per
+    request/response pair. Handles HTTP/1.1 pipelining (FIFO
+    matching). Outcomes: `Completed` / `NoResponse` / `Reset`.
+    Convenience accessors: `status_class()` / `is_success()` /
+    `is_error()`.
+  - `DnsExchangeParser` — emits one `DnsExchange` per
+    query/response pair (UDP only — TCP variant deferred).
+    Built atop `DnsUdpParser` with correlation enabled.
+    Outcomes: `Completed` / `NoResponse` /
+    `Failed { rcode }`.
 - **Plan 106 — parser ergonomics.** Three helpers for writing
   custom `SessionParser` / `DatagramParser` impls without
   reinventing the buffer + drain boilerplate that every
