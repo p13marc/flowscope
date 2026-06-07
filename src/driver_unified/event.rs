@@ -5,7 +5,7 @@
 
 use crate::Timestamp;
 use crate::event::{AnomalyKind, EndReason, FlowSide, FlowStats};
-use crate::extractor::L4Proto;
+use crate::extractor::{L4Proto, TcpInfo};
 use crate::history::HistoryString;
 
 /// Single event type emitted by the unified [`super::Driver`].
@@ -37,13 +37,27 @@ pub enum Event<K, M> {
         l4: Option<L4Proto>,
     },
 
-    /// Per-packet event on an existing flow. Lightweight — for
-    /// every packet observed after `FlowStarted`.
+    /// Per-packet event on an existing flow.
+    ///
+    /// The `tcp` and `frame` fields are populated only when
+    /// [`super::DriverBuilder::emit_packet_details`] was called
+    /// with `true`. Both are `None` by default — flowscope avoids
+    /// the per-packet TCP-info re-extraction and frame-bytes
+    /// clone unless the consumer opts in.
+    ///
+    /// `tcp` carries the TCP header fields ([`TcpInfo::flags`],
+    /// `seq`, `ack`, etc.) for the packet that produced this
+    /// event; `frame` is an owned copy of the full L2 frame.
     FlowPacket {
         key: K,
         side: FlowSide,
         len: usize,
         ts: Timestamp,
+        /// `Some` only when `emit_packet_details(true)` was set.
+        tcp: Option<TcpInfo>,
+        /// Owned copy of the L2 frame bytes. `Some` only when
+        /// `emit_packet_details(true)` was set.
+        frame: Option<Vec<u8>>,
     },
 
     /// Flow ended (FIN / RST / idle / eviction / parser close).

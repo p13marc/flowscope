@@ -21,40 +21,16 @@
 //! 5. PR 5 — deletes legacy types; renames `driver_unified` →
 //!    top-level `driver`.
 //!
-//! ## Deferred knobs (planned for post-0.10)
+//! ## Builder knob coverage
 //!
-//! Plan 116's spec lists a handful of optional builder knobs
-//! that ship with the legacy [`crate::FlowSessionDriver`] /
-//! [`crate::FlowDriver`] but are NOT yet plumbed through the
-//! unified [`Driver`]:
-//!
-//! - **`emit_anomalies(bool)`** — would surface
-//!   [`crate::FlowEvent::FlowAnomaly`] /
-//!   [`crate::FlowEvent::TrackerAnomaly`] as
-//!   [`Event::FlowAnomaly`] / [`Event::TrackerAnomaly`].
-//!   Deferred because the central [`crate::FlowTracker`] used
-//!   internally doesn't synthesise anomalies — that lives on
-//!   [`crate::FlowDriver`]. Bringing it up cleanly requires
-//!   either a "primary slot" pattern or replacing the central
-//!   tracker with a wrapping driver. Both approaches need
-//!   measurement; punted to a follow-up plan.
-//! - **`dedup(Dedup)`** — content-hash duplicate filtering.
-//!   Same shape constraint as `emit_anomalies`.
-//! - **`idle_timeout_fn(F)`** — per-key idle-timeout override.
-//!   Can be set on the central tracker via
-//!   [`Driver::tracker_mut`] in the meantime:
-//!   `driver.tracker_mut().set_idle_timeout_fn(f)`.
-//! - **`emit_packet_details(bool)`** — would add `tcp:
-//!   Option<TcpInfo>` and `frame: Option<Bytes>` fields to
-//!   [`Event::FlowPacket`]. Variant-field addition; deferred to
-//!   the post-0.10 follow-up that fully retires the legacy
-//!   types.
-//!
-//! Today the unified [`Driver`] supports
-//! [`DriverBuilder::config`] and
-//! [`DriverBuilder::monotonic_timestamps`] only; the deferred
-//! knobs are documented as known follow-ups so consumers can
-//! file specific requests if needed.
+//! | Plan-116 knob | Status | Notes |
+//! |---------------|--------|-------|
+//! | [`DriverBuilder::config`] | ✅ | Override the central tracker config. |
+//! | [`DriverBuilder::monotonic_timestamps`] | ✅ | Forwarded to every slot's inner driver. |
+//! | [`DriverBuilder::emit_packet_details`] | ✅ | Populates [`Event::FlowPacket`]'s `tcp` + `frame` fields. |
+//! | `emit_anomalies(bool)` | ⏸ deferred | The central [`crate::FlowTracker`] doesn't synthesise anomalies (that lives on [`crate::FlowDriver`]); plumbing it cleanly without N× duplication needs either a "primary slot" pattern or replacing the central tracker. |
+//! | `dedup(Dedup)` | ⏸ deferred | Same shape constraint as `emit_anomalies`. |
+//! | `idle_timeout_fn(F)` | 🟡 workaround | Available today via `driver.tracker_mut().set_idle_timeout_fn(f)` — direct builder method queued. |
 //!
 //! ```ignore
 //! use flowscope::driver_unified::{Driver, Event};
@@ -90,9 +66,9 @@ use std::marker::PhantomData;
 
 use crate::PacketView;
 use crate::Timestamp;
-use crate::event::FlowEvent;
-use crate::extractor::FlowExtractor;
 use crate::detect::signatures::SignatureFn;
+use crate::event::FlowEvent;
+use crate::extractor::{FlowExtractor, TcpInfo};
 use crate::session::{DatagramParser, SessionParser};
 use crate::tracker::{FlowTracker, FlowTrackerConfig};
 
@@ -121,6 +97,8 @@ where
     M: Send + 'static,
 {
     tracker: FlowTracker<E, ()>,
+    extractor: E,
+    emit_packet_details: bool,
     slots: Vec<Box<dyn DriverSlot<E::Key, M>>>,
     _marker: PhantomData<M>,
 }
@@ -137,6 +115,7 @@ where
             extractor,
             config: FlowTrackerConfig::default(),
             monotonic_timestamps: false,
+            emit_packet_details: false,
             slots: Vec::new(),
             _marker: PhantomData,
         }
@@ -152,9 +131,36 @@ where
         let ts = view.timestamp;
         let mut out: Vec<Event<E::Key, M>> = Vec::new();
 
-        // Central tracker emits flow-lifecycle events.
+        // Optionally pre-extract TcpInfo + frame bytes for
+        // emit_packet_details enrichment. We re-extract here
+        // because the central FlowTracker doesn't surface tcp
+        // info on FlowEvent::Packet; this is the cheapest way
+        // to honour plan 108's spec without changing the
+        // tracker's event shape.
+        let (tcp_for_packet, frame_for_packet): (Option<TcpInfo>, Option<Vec<u8>>) =
+            if self.emit_packet_details {
+                let tcp = self.extractor.extract(view).and_then(|e| e.tcp);
+                (tcp, Some(view.frame.to_vec()))
+            } else {
+                (None, None)
+            };
+
+        // Central tracker emits flow-lifecycle events. The
+        // pre-extracted enrichment is consumed by the FIRST
+        // FlowEvent::Packet we see (there's usually exactly one
+        // per track() call); subsequent events get None.
+        let mut tcp_slot = tcp_for_packet;
+        let mut frame_slot = frame_for_packet;
         for flow_ev in self.tracker.track(view).into_iter() {
-            out.extend(map_flow_event::<E::Key, M>(flow_ev));
+            let (this_tcp, this_frame) = if matches!(flow_ev, FlowEvent::Packet { .. }) {
+                (tcp_slot, frame_slot.take())
+            } else {
+                (None, None)
+            };
+            tcp_slot = None; // used; subsequent Packet variants in this call get None
+            out.extend(map_flow_event_with_details::<E::Key, M>(
+                flow_ev, this_tcp, this_frame,
+            ));
         }
 
         // Slots emit Message + ParserClosed only (filtered).
@@ -169,7 +175,7 @@ where
     pub fn sweep(&mut self, now: Timestamp) -> Vec<Event<E::Key, M>> {
         let mut out: Vec<Event<E::Key, M>> = Vec::new();
         for flow_ev in self.tracker.sweep(now) {
-            out.extend(map_flow_event::<E::Key, M>(flow_ev));
+            out.extend(map_flow_event_with_details::<E::Key, M>(flow_ev, None, None));
         }
         for slot in &mut self.slots {
             out.extend(slot.sweep(now));
@@ -182,7 +188,7 @@ where
     pub fn finish(&mut self) -> Vec<Event<E::Key, M>> {
         let mut out: Vec<Event<E::Key, M>> = Vec::new();
         for flow_ev in self.tracker.finish() {
-            out.extend(map_flow_event::<E::Key, M>(flow_ev));
+            out.extend(map_flow_event_with_details::<E::Key, M>(flow_ev, None, None));
         }
         for slot in &mut self.slots {
             out.extend(slot.finish());
@@ -210,6 +216,7 @@ where
     extractor: E,
     config: FlowTrackerConfig,
     monotonic_timestamps: bool,
+    emit_packet_details: bool,
     slots: Vec<Box<dyn DriverSlot<E::Key, M>>>,
     _marker: PhantomData<M>,
 }
@@ -234,6 +241,21 @@ where
     /// Mirror of [`crate::FlowSessionDriver::with_monotonic_timestamps`].
     pub fn monotonic_timestamps(mut self, on: bool) -> Self {
         self.monotonic_timestamps = on;
+        self
+    }
+
+    /// Opt into per-packet enrichment: when set, every
+    /// [`Event::FlowPacket`] carries
+    /// `tcp: Option<crate::TcpInfo>` + `frame: Option<Vec<u8>>`
+    /// populated from a fresh extraction of the packet view.
+    ///
+    /// Costs (default `false` — enrichment is opt-in):
+    /// - One extra `extract` call per packet (for `tcp`).
+    /// - One memcpy of the full frame per packet (for `frame`).
+    ///
+    /// Plan 108 absorbed into plan 116.
+    pub fn emit_packet_details(mut self, on: bool) -> Self {
+        self.emit_packet_details = on;
         self
     }
 
@@ -409,7 +431,9 @@ where
     /// Finalize the builder.
     pub fn build(self) -> Driver<E, M> {
         Driver {
-            tracker: FlowTracker::with_config(self.extractor, self.config),
+            tracker: FlowTracker::with_config(self.extractor.clone(), self.config),
+            extractor: self.extractor,
+            emit_packet_details: self.emit_packet_details,
             slots: self.slots,
             _marker: PhantomData,
         }
@@ -417,11 +441,18 @@ where
 }
 
 /// Adapt a tracker-emitted [`FlowEvent`] into the unified
-/// [`Event`] shape. Some variants split (`Ended` ←→ `FlowEnded`);
-/// `StateChange` is dropped (no equivalent in the new shape —
-/// `FlowEstablished` is the only state-transition event the new
-/// type ships).
-fn map_flow_event<K, M>(ev: FlowEvent<K>) -> Option<Event<K, M>> {
+/// [`Event`] shape, populating `Event::FlowPacket`'s `tcp` /
+/// `frame` fields from the pre-extracted enrichment if it was
+/// produced this `track()` call.
+///
+/// Some variants split (`Ended` ←→ `FlowEnded`); `StateChange`
+/// is dropped (no equivalent in the new shape — `FlowEstablished`
+/// is the only state-transition event the new type ships).
+fn map_flow_event_with_details<K, M>(
+    ev: FlowEvent<K>,
+    tcp: Option<TcpInfo>,
+    frame: Option<Vec<u8>>,
+) -> Option<Event<K, M>> {
     match ev {
         FlowEvent::Started { key, ts, l4, .. } => Some(Event::FlowStarted { key, ts, l4 }),
         FlowEvent::Established { key, ts, l4 } => {
@@ -437,6 +468,8 @@ fn map_flow_event<K, M>(ev: FlowEvent<K>) -> Option<Event<K, M>> {
             side,
             len,
             ts,
+            tcp,
+            frame,
         }),
         FlowEvent::Ended {
             key,

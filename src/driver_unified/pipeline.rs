@@ -69,6 +69,7 @@ where
             extractor,
             config: FlowTrackerConfig::default(),
             monotonic_timestamps: true,
+            emit_packet_details: false,
             register: Vec::new(),
         }
     }
@@ -140,6 +141,7 @@ where
     extractor: E,
     config: FlowTrackerConfig,
     monotonic_timestamps: bool,
+    emit_packet_details: bool,
     register: Vec<RegisterStep<E, M>>,
 }
 
@@ -160,6 +162,14 @@ where
     /// live-clock-coherent streams.
     pub fn monotonic_timestamps(mut self, on: bool) -> Self {
         self.monotonic_timestamps = on;
+        self
+    }
+
+    /// Proxy of [`DriverBuilder::emit_packet_details`]. Opt
+    /// into per-packet `tcp` + `frame` enrichment on
+    /// [`Event::FlowPacket`]. Default `false`.
+    pub fn emit_packet_details(mut self, on: bool) -> Self {
+        self.emit_packet_details = on;
         self
     }
 
@@ -297,6 +307,7 @@ where
         let extractor = self.extractor;
         let config = self.config;
         let monotonic = self.monotonic_timestamps;
+        let packet_details = self.emit_packet_details;
         let register: std::rc::Rc<[RegisterStep<E, M>]> =
             self.register.into_iter().collect::<Vec<_>>().into();
 
@@ -306,7 +317,8 @@ where
         let rebuild: Box<dyn Fn() -> Driver<E, M> + 'static> = Box::new(move || {
             let mut b: DriverBuilder<E, M> = Driver::builder(rebuild_extractor.clone())
                 .config(rebuild_config.clone())
-                .monotonic_timestamps(monotonic);
+                .monotonic_timestamps(monotonic)
+                .emit_packet_details(packet_details);
             for step in rebuild_register.iter() {
                 b = step(b);
             }

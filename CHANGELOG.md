@@ -4,6 +4,17 @@
 
 ### Added
 
+- **Plan 116 — `emit_packet_details` + `Event::FlowPacket`
+  enrichment (plan 108 absorbed).** `DriverBuilder` and
+  `PipelineBuilder` gain `emit_packet_details(bool)`. When set,
+  every emitted `Event::FlowPacket` carries
+  `tcp: Option<TcpInfo>` and `frame: Option<Vec<u8>>`
+  populated from a fresh per-packet extraction; default
+  `false` (the per-packet `extract` + frame `memcpy` is opt-in
+  because the overhead is real). Closes the last
+  plan-116-spec gap besides the deferred `emit_anomalies` /
+  `dedup` / direct `idle_timeout_fn` (workaround:
+  `driver.tracker_mut().set_idle_timeout_fn(f)`).
 - **Plan 116 PR 4 partial — unified-driver demo + migration
   recipe.** New `examples/unified_driver_demo.rs` showcases the
   unified `Driver` with port-routed HTTP + DNS dispatch plus a

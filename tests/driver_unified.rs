@@ -381,6 +381,49 @@ fn datagram_heuristic_skips_on_never_match() {
 }
 
 #[test]
+fn emit_packet_details_populates_tcp_and_frame() {
+    let mut driver = Driver::<_, Msg>::builder(FiveTuple::bidirectional())
+        .emit_packet_details(true)
+        .build();
+
+    let frame = ipv4_tcp(
+        [1; 6], [2; 6], [10, 0, 0, 1], [10, 0, 0, 2], 33000, 80, 1000, 0, 0x18, b"data",
+    );
+    let events = driver.track(PacketView::new(&frame, Timestamp::new(0, 0)));
+    let packet_events: Vec<_> = events
+        .iter()
+        .filter_map(|e| match e {
+            Event::FlowPacket { tcp, frame, .. } => Some((tcp.is_some(), frame.is_some())),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        packet_events.iter().any(|(t, f)| *t && *f),
+        "emit_packet_details=true should populate tcp + frame: {packet_events:?}",
+    );
+}
+
+#[test]
+fn emit_packet_details_off_leaves_tcp_and_frame_none() {
+    let mut driver = Driver::<_, Msg>::builder(FiveTuple::bidirectional()).build();
+    let frame = ipv4_tcp(
+        [1; 6], [2; 6], [10, 0, 0, 1], [10, 0, 0, 2], 33000, 80, 1000, 0, 0x18, b"data",
+    );
+    let events = driver.track(PacketView::new(&frame, Timestamp::new(0, 0)));
+    let packet_events: Vec<_> = events
+        .iter()
+        .filter_map(|e| match e {
+            Event::FlowPacket { tcp, frame, .. } => Some((tcp.is_some(), frame.is_some())),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        packet_events.iter().all(|(t, f)| !*t && !*f),
+        "default emit_packet_details=false should leave tcp/frame None: {packet_events:?}",
+    );
+}
+
+#[test]
 fn udp_flow_does_not_emit_established() {
     let mut driver = Driver::<_, Msg>::builder(FiveTuple::bidirectional())
         .session_broadcast(CountParser::default(), |(side, len)| Msg::Counted {
