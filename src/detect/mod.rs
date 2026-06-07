@@ -36,6 +36,8 @@
 //! assert!(!is_hex_string("not hex"));
 //! ```
 
+pub mod signatures;
+
 use std::collections::HashMap;
 
 /// Shannon entropy in bits per byte. Returns `0.0` for empty

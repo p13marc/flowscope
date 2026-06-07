@@ -4,6 +4,24 @@
 
 ### Added
 
+- **Plan 113 sub-A — `flowscope::detect::signatures`.** Pure-
+  function magic-byte recognizers for 10 protocols. Each
+  signature returns `Match` / `NoMatch` / `NeedMoreData`; no
+  state, no allocation, suitable for hot-path dispatch.
+  - HTTP: `http_request` / `http_response`.
+  - TLS: `tls_client_hello` / `tls_server_hello`.
+  - DNS: `dns_message`.
+  - Banner protocols: `ssh_banner` / `smtp_banner` /
+    `ftp_banner` / `irc_message`.
+  - Framed protocols: `redis_resp` / `mqtt_connect` /
+    `postgres_startup`.
+  - `registry()` iterates `(parser_kind, SignatureFn)` for the
+    curated set — strings align with
+    `flowscope::parser_kinds::*` so signature matches dispatch
+    back to the existing parsers.
+  - Each signature ships with a splitting-invariance test: any
+    prefix of a `Match` input is `Match` or `NeedMoreData`,
+    never `NoMatch`.
 - **Plan 110 sub-A — rustdoc landing pages + 9 HTTP accessors.**
   Module-level rustdoc on `flowscope::http`, `flowscope::tls`,
   `flowscope::dns`, and `flowscope::icmp` now leads with a
