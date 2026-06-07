@@ -28,32 +28,30 @@ view) is absorbed into the 0.9.0 CHANGELOG header.
 
 Triggered by the 0.9 examples-writing postmortem
 ([`100-examples-postmortem.md`](./100-examples-postmortem.md)).
-Eight DX pain points were catalogued; one detailed plan per
-fix.
+Eight DX pain points; **seven implementation plans** after
+the consolidation pass (three multi-PR plans group tightly
+related work into one cohesive review).
 
 | Plan | Goal | Theme | Sizing |
 |------|------|-------|--------|
 | [`100-examples-postmortem.md`](./100-examples-postmortem.md) | Umbrella audit + cycle rationale. | — | doc |
 | [`101-emit-module.md`](./101-emit-module.md) | `flowscope::emit` — CSV / NDJSON / Zeek `conn.log` writers. | 8 | ~830 LoC, ~21 h |
-| [`102-correlate-extensions.md`](./102-correlate-extensions.md) | `TimeBucketedSet` + `BurstDetector` + `TopK` + `Ewma`. | 5 | ~1,010 LoC, ~20 h |
-| [`103-aggregate-module.md`](./103-aggregate-module.md) | `flowscope::aggregate` — `Histogram` + `Percentile`. | 5 | ~440 LoC, ~11 h |
-| [`104-detect-module.md`](./104-detect-module.md) | `flowscope::detect` — Shannon entropy + light primitives. | 5 | ~295 LoC, ~6 h |
-| [`105-well-known-ports.md`](./105-well-known-ports.md) | `flowscope::well_known` — curated `(proto, port)` → label table. | 5 | ~335 LoC, ~6 h |
+| [`102-utility-modules.md`](./102-utility-modules.md) | `correlate` extensions + `aggregate` + `detect` + `well_known` modules (4 sub-PRs). | 5 | ~2,080 LoC, ~43 h |
 | [`106-parser-ergonomics.md`](./106-parser-ergonomics.md) | `AccumulatingSessionParser` + fallible `feed_*` + `BufferedFrameDrain`. | 7 | ~860 LoC, ~20 h |
 | [`107-exchange-aggregators.md`](./107-exchange-aggregators.md) | `HttpExchangeParser` + `DnsExchangeParser`. | 5 | ~860 LoC, ~16 h |
-| [`110-rustdoc-landing-pages.md`](./110-rustdoc-landing-pages.md) | Module-level rustdoc accessor index for http/tls/dns/icmp + 7 new HTTP accessors. | 4 | ~400 LoC, ~7 h |
-| [`111-quick-wins.md`](./111-quick-wins.md) | `Timestamp` / `FlowStats` / `EndReason` / `LayerKind` / `Layer` / `LayerStack` / `KeyIndexed` helpers. | 1 + 3 + 4 | ~535 LoC, ~10 h |
-| [`112-dynamic-lazy-analysis.md`](./112-dynamic-lazy-analysis.md) | Analysis: does the 0.10 surface allow dynamic / lazy detection? (no — proposal for 113/114/116.) | — | doc |
-| [`113-detection-signatures.md`](./113-detection-signatures.md) | `flowscope::detect::signatures` — 12 magic-byte recognizers for shipped protocols. | (new) | ~720 LoC, ~9 h |
-| [`114-heuristic-routing.md`](./114-heuristic-routing.md) | `Routing::Heuristic` on the unified `Driver` — content-based dispatch with cheap-first cascade + pin-on-match + bounded budget. (Depends on 116.) | (new) | ~850 LoC, ~16 h |
-| [`115-strategic-review.md`](./115-strategic-review.md) | Strategic review proposing the driver+event unification (motivates plan 116; replaces plans 108 + 109). | — | doc |
-| **[`116-driver-event-unification.md`](./116-driver-event-unification.md)** | **`Driver<E, M>` + `Event<K, M>` — collapse 6 drivers and 4 event types into one of each. Absorbs plans 108 + 109.** | **2 + 6** | **~700 LoC net, ~52 h** |
+| [`110-dx-polish.md`](./110-dx-polish.md) | Rustdoc landing pages + quick-win helper sweep (2 sub-PRs). | 1 + 3 + 4 | ~935 LoC, ~17 h |
+| [`112-dynamic-lazy-analysis.md`](./112-dynamic-lazy-analysis.md) | Analysis: does the 0.10 surface allow dynamic / lazy detection? (no — motivates plan 113.) | — | doc |
+| [`113-dynamic-dispatch.md`](./113-dynamic-dispatch.md) | `flowscope::detect::signatures` + `Routing::Heuristic` on the unified `Driver` (2 sub-PRs). Depends on 116. | (new) | ~1,590 LoC, ~25.5 h |
+| [`115-strategic-review.md`](./115-strategic-review.md) | Strategic review motivating the driver+event unification (motivates plan 116; replaces prior plans 108 + 109). | — | doc |
+| **[`116-driver-event-unification.md`](./116-driver-event-unification.md)** | **`Driver<E, M>` + `Event<K, M>` — collapse 6 drivers and 4 event types into one of each. Absorbs prior plans 108 + 109.** | **2 + 6** | **~700 LoC net, ~52 h** |
 
-Total: ~7,830 LoC net, ~225 hours across 12 implementation
-plans. Plan 116 absorbs plans 108 and 109; the +30-hour delta
-over the (108+109)-baseline funds the wider redesign (1 driver,
-1 event) instead of incrementally bolting onto the
-existing surface.
+Total: ~7,855 LoC net, ~194.5 hours across **7 implementation
+plans** (down from 12 pre-consolidation). The cycle work
+itself is unchanged — the consolidation grouped four small
+utility plans (102+103+104+105 → 102), two DX-polish plans
+(110+111 → 110), and the dynamic-detection pair (113+114
+→ 113) into multi-PR plans that share their out-of-scope
+lists, industry research, and acceptance criteria.
 
 Cycle theme: "address the next layer of DX after the 0.9
 big surface choices."
@@ -61,31 +59,35 @@ big surface choices."
 Canonical landing sequence:
 
 ```
-111 (quick wins ship first — other plans lean on them)
+110 sub-B (quick wins ship first — other plans lean on them)
    ↓
-101, 105, 110 (small additive — no dependencies)
+101, 102 (sub-D well-known) (small additive — no dependencies)
    ↓
-102, 103, 104, 113 (correlate + aggregate + detect + signatures)
+102 sub-A/B/C (correlate ext + aggregate + detect),
+   110 sub-A (rustdoc landing pages)
    ↓
 106 (parser ergonomics — feeds plan 107 + plan 116)
    ↓
 107 (exchange aggregators)
    ↓
-116 (driver + event unification — the centerpiece;
-       absorbs plans 108 + 109; depends on 106 + 111)
+113 sub-A (signatures — standalone use; also feeds 113 sub-B)
    ↓
-114 (heuristic routing — extends Driver's builder; depends on 116 + 113)
+116 (driver + event unification — the centerpiece;
+       absorbs prior plans 108 + 109; depends on 106 + 110 sub-B)
+   ↓
+113 sub-B (heuristic routing — extends Driver's builder;
+            depends on 116 + 113 sub-A)
 ```
 
 The user-priority plan is **116** — driver + event
-unification. Land it as a 5-PR series before 114 so the
-routing surface attaches to the new unified `Driver`.
+unification. Land it as a 5-PR series before 113 sub-B so
+the routing surface attaches to the new unified `Driver`.
 
-Plan **112** (dynamic / lazy analysis) is a doc; plans
-**113** + **114** together address the "dynamic detection"
-gap surfaced by the follow-up audit. Plan **115**
-(strategic-review doc) motivates plan 116. A lazy-`Layers`
-sketch from 112 is deferred pending benchmark data.
+Plan **112** (dynamic / lazy analysis) is a doc; plan
+**113** addresses the "dynamic detection" gap surfaced by
+the follow-up audit. Plan **115** (strategic-review doc)
+motivates plan 116. A lazy-`Layers` sketch from 112 is
+deferred pending benchmark data.
 
 ### Deferred / stale
 
@@ -180,9 +182,15 @@ sketch from 112 is deferred pending benchmark data.
 
 Plan numbers retired (implementation shipped, file removed):
 00–04, 12, 20, 22–25, 30–61, 62, 70–73, 74, 75, 76–82, 83–91,
-93, 94, 96, 97, 99. Subsumed (rolled into plan 116): 108, 109.
-Active: 21 (stale-deferred), 100–107, 110–116 (0.10 cycle).
-The next free number for a new plan is 117+.
+93, 94, 96, 97, 99. Subsumed by consolidation:
+- 103, 104, 105 → rolled into plan 102 (utility modules)
+- 111 → rolled into plan 110 (DX polish)
+- 114 → rolled into plan 113 (dynamic dispatch)
+- 108, 109 → rolled into plan 116 (driver+event unification)
+
+Active: 21 (stale-deferred), 100, 101, 102, 106, 107, 110, 112,
+113, 115, 116 (0.10 cycle). The next free number for a new
+plan is 117+.
 
 ---
 

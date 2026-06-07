@@ -32,11 +32,12 @@ reviews stay tractable.
 - **Plan 106** — parser ergonomics
   (`AccumulatingSessionParser` + fallible variants). Plan 116
   consumes the fallible API in its dispatch path.
-- **Plan 111** — quick wins (`Timestamp` / `FlowStats` /
-  `EndReason::as_str` / etc.). The new `Event` shape uses
-  several of these.
-- Plan 113 (signatures) lands independently; plan 114
-  (heuristic routing) builds on 116 not 109.
+- **Plan 110 sub-B** — quick wins (`Timestamp` /
+  `FlowStats` / `EndReason::as_str` / etc.). The new
+  `Event` shape uses several of these.
+- Plan 113 sub-A (signatures) lands independently; plan 113
+  sub-B (heuristic routing) builds on 116 not on the
+  removed plan 109.
 
 ## Out of scope
 
@@ -448,8 +449,8 @@ new code against the existing code side-by-side.
 
 7. Add datagram-parser dispatch.
 8. Add heuristic-routing variant (`Routing::Heuristic`) and
-   per-flow `FlowDetection` state — absorbing plan 114
-   directly into the unified driver.
+   per-flow `FlowDetection` state — landing plan 113 sub-B
+   directly on the unified driver.
 9. Extend `tests/driver.rs` with the new shapes.
 
 ### PR 3 — Migrate internal callers
