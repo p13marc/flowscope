@@ -13,7 +13,7 @@ use pcap_file::pcap::PcapReader;
 
 use crate::error::{Error, Module};
 
-/// A pcap-backed source of [`PacketView`]s.
+/// A pcap-backed source of [`crate::PacketView`]s.
 ///
 /// Wraps [`PcapReader`] from `pcap-file` and exposes ergonomic
 /// iterators that hand off to `netring-flow`.
@@ -40,7 +40,7 @@ impl<R: Read> PcapFlowSource<R> {
         })
     }
 
-    /// Iterate raw [`PacketView`]s. Each call yields the next packet
+    /// Iterate raw [`crate::PacketView`]s. Each call yields the next packet
     /// or `Err` on a malformed record.
     ///
     /// Note: each [`OwnedPacketView`] owns its data (we copy from

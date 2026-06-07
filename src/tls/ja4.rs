@@ -22,7 +22,7 @@
 //! - `hash_b` = SHA-256 of comma-joined hex-sorted extension +
 //!   signature-algorithm list, truncated to 12 hex chars.
 //!
-//! Source: https://github.com/FoxIO-LLC/ja4
+//! Source: <https://github.com/FoxIO-LLC/ja4>
 
 use sha2::{Digest, Sha256};
 

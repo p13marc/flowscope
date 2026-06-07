@@ -27,20 +27,37 @@ the core.
 - **Plan 96** — unified `flowscope::Error` (5 module enums
   collapsed; source-chain preserved; `(module, code)` matching).
 - **Plan 94 Tier 3** — public `flowscope::layers` per-packet
-  view (zero-copy, Layers/Layer/LayerKind + Eth/VLAN/IPv4/IPv6/
-  TCP/UDP slices, dynamic walk + direct accessors, `PacketView::layers()`).
+  view (zero-copy, Layers/Layer/LayerKind + Eth/VLAN/MPLS/
+  IPv4/IPv6/ARP/TCP/UDP/ICMPv4/ICMPv6 slices, dynamic walk +
+  direct accessors, `PacketView::layers()`; tunnel walking for
+  VXLAN/GTP-U/GRE/IP-in-IP via `Layers::has_tunnel()` /
+  `Layers::truncated()`).
 - **Plan 94 Tier 1** — `flowscope::Pipeline` high-level entry
-  point + `flowscope::prelude` (one-import API).
+  point + `flowscope::prelude` (one-import API) + `.reset()`
+  + `.run_iter()` over `OwnedPacketView`.
 - **Plan 75** — `FlowTracker::with_auto_sweep(interval)` for
   live/offline parity.
 - **Plan 99** — MSRV 1.85 → 1.88 + let-chain idiom sweep.
+- **Plan 81** — `flowscope::correlate` module
+  (`TimeBucketedCounter`, `KeyIndexed`, `SequencePattern`).
+- **Plan 97** — TLS modernization: `ja4` feature (FoxIO v1
+  client fingerprint) + `TlsHandshakeParser` aggregator
+  (one `TlsHandshake` event per handshake with
+  SNI / ALPN / JA3 / JA4 / version / cipher /
+  `resumption_attempted` / `HandshakeOutcome`).
+- **Plan 92** — `FlowMultiSessionDriver<E, M>` composite
+  driver (port-set + broadcast routing; user-supplied sum-type
+  lifting).
+- **Plan 74** — `SegmentBufferReassembler` with OOO hole-fill
+  (BTreeMap-backed pending queue; deadline expiry; strict
+  RFC 5722 overlap).
 
 Pending:
-- Plan 92 (multi-parser driver), 74 (OOO reassembly),
-  81 (correlate module), 97 (TLS modernization), plus Tier 2
-  driver-builder consolidation in plan 94.
+- Plan 94 Tier 2 (driver-builder consolidation — collapses 38
+  constructors; deferred as maintainer-facing churn without
+  user-facing capability addition).
 
-Test counts: 457 passing, zero clippy warnings under
+Test counts: 495 passing, zero clippy warnings under
 `--all-features --all-targets -D warnings`, zero rustdoc
 warnings.
 
@@ -61,11 +78,19 @@ src/
 ├── view.rs                      # PacketView<'a> = (frame: &[u8], ts) + .layers() (plan 94, 0.9.0)
 ├── extractor.rs                 # FlowExtractor trait + Extracted/Orientation
 ├── layers/                      # Per-packet layered view (plan 94 Tier 3, 0.9.0)
-│   ├── mod.rs                   # Layers + Layer + accessors + dynamic walk
+│   ├── mod.rs                   # Layers + Layer + accessors + tunnel walk + dynamic walk
 │   ├── kind.rs                  # LayerKind enum + .layer_number()
-│   ├── eth.rs                   # EthernetSlice + VlanSlice
-│   ├── ip.rs                    # Ipv4Slice + Ipv6Slice
-│   └── transport.rs             # TcpSlice + UdpSlice + TcpFlagsView + TcpOption
+│   ├── eth.rs                   # EthernetSlice + VlanSlice + MplsSlice
+│   ├── ip.rs                    # Ipv4Slice + Ipv6Slice + ArpSlice
+│   ├── transport.rs             # TcpSlice + UdpSlice + Icmpv4Slice + Icmpv6Slice + TcpFlagsView + TcpOption
+│   └── tunnel.rs                # GreSlice + VxlanSlice + GtpUSlice
+├── correlate/                   # flowscope::correlate (plan 81, 0.9.0)
+│   ├── mod.rs                   # public re-exports
+│   ├── bucketed.rs              # TimeBucketedCounter<K>
+│   ├── indexed.rs               # KeyIndexed<K, V>
+│   └── sequence.rs              # SequencePattern + KeylessSequencePattern
+├── multi_session_driver.rs      # FlowMultiSessionDriver<E, M> (plan 92, 0.9.0)
+├── segment_reassembler.rs       # SegmentBufferReassembler OOO hole-fill (plan 74, 0.9.0)
 ├── extract/                     # built-in extractors (extractors feature)
 │   ├── parse.rs                 # internal etherparse wrappers
 │   ├── five_tuple.rs            # FiveTuple { proto, a, b }
@@ -106,7 +131,9 @@ src/
 │   ├── parser.rs                # internal step() machine (tls-parser-based)
 │   ├── factory.rs               # TlsFactory / TlsReassembler (callback-style)
 │   ├── session.rs               # TlsParser (SessionParser-style, plan 31)
+│   ├── handshake.rs             # TlsHandshakeParser aggregator (plan 97, 0.9.0)
 │   ├── fingerprint.rs           # JA3 (gated by `ja3` feature)
+│   ├── ja4.rs                   # JA4 (gated by `ja4` feature, plan 97, 0.9.0)
 │   └── types.rs                 # TlsClientHello / TlsServerHello / TlsAlert / TlsHandler
 ├── dns/                         # `dns` feature
 │   ├── parser.rs                # parse_message / parse_message_at (simple-dns-based)
