@@ -15,21 +15,15 @@ record; `plans/` is the working backlog.
 
 ## Active
 
-### 0.9.0 cycle — remaining
+### 0.9.0 cycle
 
-The 0.9 cycle is essentially complete. The shipped plans (74,
-75, 81, 92, 96, 97, 99, plus 94 Tiers 1 + 3) are retired —
-their work lives in commit history and the CHANGELOG. One
-plan retains an unshipped tier:
+The 0.9 cycle is complete. Every implementation plan is
+shipped and the per-plan files retired — the work lives in
+commit history and the CHANGELOG.
 
 | Plan | Goal | Status |
 |------|------|--------|
-| [`94-high-level-api.md`](./94-high-level-api.md) | High-level API: Tier 1 `Pipeline` (shipped), Tier 2 driver builders (pending), Tier 3 `layers` (shipped). | Tier 2 only |
-
-The umbrella ([`93-api-ergonomics-0_9.md`](./93-api-ergonomics-0_9.md))
-also lingers as the durable audit + cycle rationale; it can be
-retired once Tier 2 lands and the 0.9 release notes capture
-the audit numbers.
+| [`93-api-ergonomics-0_9.md`](./93-api-ergonomics-0_9.md) | Umbrella audit + cycle rationale. Lingers as the durable record until 0.9 release notes capture the audit numbers. | doc |
 
 ### Deferred / stale
 
@@ -105,11 +99,6 @@ the audit numbers.
   shared tracker driving N parsers; the storage optimisation
   is a follow-up if a high-throughput consumer profiles and
   needs it.
-- **`LayerParser` zero-alloc fast path** — gopacket
-  `DecodingLayerParser`-shape API for high-throughput
-  consumers. Ergonomic `Layers::parse_ethernet` path covers
-  the 90 % case; add the fast path when profiling shows the
-  per-frame allocation as a hot spot.
 
 ---
 
@@ -128,8 +117,8 @@ the audit numbers.
 
 Plan numbers retired (implementation shipped, file removed):
 00–04, 12, 20, 22–25, 30–61, 62, 70–73, 74, 75, 76–82, 83–91,
-96, 97, 99. Active: 21 (stale-deferred), 93–94. The next free
-number for a new plan is 100+.
+94, 96, 97, 99. Active: 21 (stale-deferred), 93 (umbrella).
+The next free number for a new plan is 100+.
 
 ---
 
