@@ -4,6 +4,19 @@
 
 ### Added
 
+- **Plan 102 sub-B — `flowscope::aggregate`.** Distribution +
+  quantile primitives behind a new `aggregate` Cargo feature.
+  - `Histogram` — explicit-bucket counter with `record` /
+    `quantile` (linear-interp) / `merge` / `buckets()` iterator,
+    plus `log_spaced(low, high, count)` for geometric ranges.
+    No extra deps.
+  - `Percentile` — streaming quantile estimator wrapping the
+    `tdigest` crate. Buffered-record API (`record` is `&mut`,
+    batches into the digest in 512-sample chunks).
+  - `HistogramError` for boundary-validation failures.
+  - `examples/flow_duration_histogram.rs` migrated to
+    `Histogram` (drops the manual bucket-loop + sort-based
+    quantile).
 - **Plan 102 sub-C — `flowscope::detect`.** Small toolkit of
   lightweight detection primitives every detector example
   reinvented:

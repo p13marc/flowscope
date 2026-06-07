@@ -78,6 +78,9 @@ pub use error::{Error, ErrorCode, ErrorKind, Module, Result};
 
 pub mod extractor;
 
+#[cfg(feature = "aggregate")]
+pub mod aggregate;
+
 pub mod detect;
 
 pub mod well_known;

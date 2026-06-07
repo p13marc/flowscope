@@ -3,25 +3,25 @@
 //! idle-timeout config, and finding outlier long-running
 //! sessions.
 //!
-//! Buckets: <1s, 1-10s, 10s-1min, 1-10min, 10min-1h, >1h.
+//! Buckets: <100ms, 100ms-1s, 1-10s, 10s-1min, 1-10min, 10min-1h,
+//! >1h.
+//!
+//! Uses [`flowscope::aggregate::Histogram`] (0.10 — plan 102
+//! sub-B) for bucketing + quantile estimation.
 //!
 //! ```bash
-//! cargo run --features pcap,extractors,tracker --example flow_duration_histogram
+//! cargo run --features pcap,aggregate --example flow_duration_histogram
 //! ```
 
+use flowscope::aggregate::Histogram;
 use flowscope::extract::FiveTuple;
 use flowscope::pcap::PcapFlowSource;
 use flowscope::{FlowEvent, FlowTracker};
 
-const BUCKETS: &[(&str, f64)] = &[
-    ("<100ms",    0.1),
-    ("100ms-1s",  1.0),
-    ("1s-10s",   10.0),
-    ("10s-1min", 60.0),
-    ("1-10min",  600.0),
-    ("10-60min", 3600.0),
-    (">1h",      f64::INFINITY),
+const LABELS: &[&str] = &[
+    "<100ms", "100ms-1s", "1s-10s", "10s-1min", "1-10min", "10-60min", ">1h",
 ];
+const BOUNDARIES: &[f64] = &[0.1, 1.0, 10.0, 60.0, 600.0, 3600.0];
 
 fn main() -> flowscope::Result<()> {
     let path = std::env::args()
@@ -29,63 +29,44 @@ fn main() -> flowscope::Result<()> {
         .unwrap_or_else(|| "tests/data/mixed_short.pcap".to_string());
 
     let mut tracker = FlowTracker::<FiveTuple>::new(FiveTuple::bidirectional());
-    let mut counts = vec![0u64; BUCKETS.len()];
-    let mut durations: Vec<f64> = Vec::new();
+    let mut hist = Histogram::with_buckets(BOUNDARIES);
 
     for owned in PcapFlowSource::open(&path)?.views() {
         let owned = owned?;
         for ev in tracker.track(&owned) {
             if let FlowEvent::Ended { stats, .. } = ev {
-                let dur =
-                    (stats.last_seen.sec as f64 + stats.last_seen.nsec as f64 / 1e9)
-                  - (stats.started.sec as f64 + stats.started.nsec as f64 / 1e9);
-                let dur = dur.max(0.0);
-                durations.push(dur);
-                for (i, (_, ceiling)) in BUCKETS.iter().enumerate() {
-                    if dur < *ceiling {
-                        counts[i] += 1;
-                        break;
-                    }
-                }
+                hist.record(stats.duration_secs());
             }
         }
     }
     for ev in tracker.finish() {
         if let FlowEvent::Ended { stats, .. } = ev {
-            let dur =
-                (stats.last_seen.sec as f64 + stats.last_seen.nsec as f64 / 1e9)
-              - (stats.started.sec as f64 + stats.started.nsec as f64 / 1e9);
-            let dur = dur.max(0.0);
-            durations.push(dur);
-            for (i, (_, ceiling)) in BUCKETS.iter().enumerate() {
-                if dur < *ceiling {
-                    counts[i] += 1;
-                    break;
-                }
-            }
+            hist.record(stats.duration_secs());
         }
     }
 
-    let total: u64 = counts.iter().sum();
+    let total = hist.samples();
     println!("=== Flow duration histogram ({total} flows) ===");
-    let max = *counts.iter().max().unwrap_or(&1);
-    for ((label, _), &c) in BUCKETS.iter().zip(counts.iter()) {
-        let bar_width = c.checked_mul(40).and_then(|n| n.checked_div(max)).unwrap_or(0);
+    let buckets: Vec<(f64, u64)> = hist.buckets().collect();
+    let max = buckets.iter().map(|(_, c)| *c).max().unwrap_or(1);
+    for (label, (_, count)) in LABELS.iter().zip(buckets.iter()) {
+        let bar_width = count.checked_mul(40).and_then(|n| n.checked_div(max)).unwrap_or(0);
         let bar: String = "█".repeat(bar_width as usize);
         let pct = if total == 0 {
             0.0
         } else {
-            c as f64 * 100.0 / total as f64
+            *count as f64 * 100.0 / total as f64
         };
-        println!("  {label:<10} {c:>6} ({pct:>5.1}%) {bar}");
+        println!("  {label:<10} {count:>6} ({pct:>5.1}%) {bar}");
     }
-    if !durations.is_empty() {
-        durations.sort_by(|a, b| a.partial_cmp(b).unwrap());
-        let p50 = durations[durations.len() / 2];
-        let p99 = durations[(durations.len() * 99) / 100];
-        let max = durations.last().copied().unwrap_or(0.0);
+    if total > 0 {
         println!();
-        println!("  p50: {p50:.3}s   p99: {p99:.3}s   max: {max:.3}s");
+        println!(
+            "  p50: {:.3}s   p99: {:.3}s   max: {:.3}s",
+            hist.quantile(0.50),
+            hist.quantile(0.99),
+            hist.max(),
+        );
     }
     Ok(())
 }

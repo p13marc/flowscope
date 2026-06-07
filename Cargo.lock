@@ -359,6 +359,7 @@ dependencies = [
  "sha2",
  "simple-dns",
  "smallvec",
+ "tdigest",
  "thiserror 2.0.18",
  "tls-parser",
  "tracing",
@@ -645,7 +646,7 @@ dependencies = [
  "hashbrown 0.16.1",
  "indexmap",
  "metrics",
- "ordered-float",
+ "ordered-float 5.3.0",
  "quanta",
  "radix_trie",
  "rand 0.9.4",
@@ -752,6 +753,15 @@ name = "oorandom"
 version = "11.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d6790f58c7ff633d8771f42965289203411a5e5c68388703c06e14f24770b41e"
+
+[[package]]
+name = "ordered-float"
+version = "2.10.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "68f19d67e5a2795c94e73e0bb1cc1a7edeb2e28efd39e2e1c9b7a40c1108b11c"
+dependencies = [
+ "num-traits",
+]
 
 [[package]]
 name = "ordered-float"
@@ -1262,6 +1272,15 @@ dependencies = [
  "proc-macro2",
  "quote",
  "unicode-ident",
+]
+
+[[package]]
+name = "tdigest"
+version = "0.2.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c45d225a08ebccf0e0c7d46db4066ea8ab05b29d3750ecc1a04f1675978bf3c8"
+dependencies = [
+ "ordered-float 2.10.1",
 ]
 
 [[package]]

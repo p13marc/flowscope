@@ -61,6 +61,9 @@ serde = { version = "1", features = ["derive"], optional = true }
 # `emit-ndjson` sub-feature
 serde_json = { version = "1", optional = true }
 
+# `aggregate` feature — t-digest streaming quantile estimator
+tdigest = { version = "0.2", optional = true }
+
 [dev-dependencies]
 proptest = "1"
 pcap-file = "2"
@@ -118,8 +121,12 @@ tracing-messages = ["tracing"]
 emit = ["tracker", "extractors"]
 emit-ndjson = ["emit", "serde", "dep:serde_json"]
 
+# Distribution / quantile primitives (plan 102 sub-B). Ships
+# `Histogram` (no deps) + `Percentile` (wraps the `tdigest` crate).
+aggregate = ["dep:tdigest"]
+
 # Convenience: turn everything on.
-full = ["http", "tls", "ja3", "ja4", "dns", "icmp", "pcap", "metrics", "tracing", "tracing-messages", "serde", "emit", "emit-ndjson"]
+full = ["http", "tls", "ja3", "ja4", "dns", "icmp", "pcap", "metrics", "tracing", "tracing-messages", "serde", "emit", "emit-ndjson", "aggregate"]
 
 [package.metadata.docs.rs]
 all-features = true
@@ -207,7 +214,7 @@ required-features = ["pcap", "extractors", "reassembler"]
 
 [[example]]
 name = "flow_duration_histogram"
-required-features = ["pcap", "extractors", "tracker"]
+required-features = ["pcap", "aggregate"]
 
 [[example]]
 name = "bandwidth_by_protocol"
