@@ -4,6 +4,29 @@
 
 ### Added
 
+- **Plan 116 PR 1 — unified `Driver<E, M>` + `Event<K, M>`
+  preview.** First step of the centerpiece API redesign that
+  collapses the 0.9-era 6-driver / 4-event surface into one
+  driver and one event type. Ships under
+  `flowscope::driver_unified::{Driver, Event, DriverBuilder}`
+  alongside the legacy `FlowSessionDriver` /
+  `FlowMultiSessionDriver` / `Pipeline` types for migration.
+  - `Driver::builder(extractor).session_on_ports(parser, ports,
+    lift)` — port-routed session parsers.
+  - `Driver::builder(extractor).session_broadcast(parser, lift)`
+    — fire on every flow regardless of port.
+  - `Driver::track(view) / sweep(now) / finish()` return
+    `Vec<Event<K, M>>` merging the central tracker's flow
+    lifecycle (`FlowStarted` / `FlowEstablished` /
+    `FlowPacket` / `FlowEnded` / `FlowTick` / `FlowAnomaly` /
+    `TrackerAnomaly`) with parser-sourced outputs (`Message` /
+    `ParserClosed`).
+  - `Event::key() / timestamp() / parser_kind() /
+    anomaly_kind() / is_flow_event() / is_parser_event()`
+    accessors.
+  - Follow-up PRs (2-5, not yet started): UDP / datagram
+    dispatch + heuristic routing; Pipeline rewrite; test +
+    example migration; legacy-type deletion.
 - **Plan 107 — HTTP + DNS exchange aggregators.** Mirror of the
   0.9 `TlsHandshakeParser` shape for two more L7 protocols. One
   rich event per logical exchange instead of per-message

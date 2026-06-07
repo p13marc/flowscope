@@ -131,6 +131,9 @@ pub mod datagram_driver;
 #[cfg(all(feature = "extractors", feature = "reassembler", feature = "session"))]
 pub mod multi_session_driver;
 
+#[cfg(all(feature = "extractors", feature = "reassembler", feature = "session"))]
+pub mod driver_unified;
+
 #[cfg(feature = "session")]
 pub mod driver_builder;
 

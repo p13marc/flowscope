@@ -364,6 +364,10 @@ required-features = ["http"]
 name = "dns_exchange"
 required-features = ["dns"]
 
+[[test]]
+name = "driver_unified"
+required-features = ["test-helpers", "extractors", "session"]
+
 [[bench]]
 name = "extractor"
 harness = false
