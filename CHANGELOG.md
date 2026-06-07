@@ -4,6 +4,18 @@
 
 ### Added
 
+- **Plan 110 sub-A — rustdoc landing pages + 9 HTTP accessors.**
+  Module-level rustdoc on `flowscope::http`, `flowscope::tls`,
+  `flowscope::dns`, and `flowscope::icmp` now leads with a
+  curated `# Convenience accessors` table listing every shipped
+  accessor on the main types — same surface, much more
+  discoverable. Plus 9 new accessor methods (per plan: 7; this
+  release: 9 — two extras mirror existing HttpResponse helpers
+  on HttpRequest):
+  - `HttpRequest::referer()` / `accept()` /
+    `content_type()` / `content_length()`
+  - `HttpResponse::status_class()` / `is_success()` /
+    `is_redirect()` / `is_client_error()` / `is_server_error()`
 - **Plan 102 sub-B — `flowscope::aggregate`.** Distribution +
   quantile primitives behind a new `aggregate` Cargo feature.
   - `Histogram` — explicit-bucket counter with `record` /

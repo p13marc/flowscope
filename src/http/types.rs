@@ -63,6 +63,31 @@ impl HttpRequest {
         self.header_str("cookie")
     }
 
+    /// `Referer:` header value as UTF-8. New in 0.10.0.
+    pub fn referer(&self) -> Option<&str> {
+        self.header_str("referer")
+    }
+
+    /// `Accept:` header value as UTF-8 (raw, not parsed into
+    /// media-range list). New in 0.10.0.
+    pub fn accept(&self) -> Option<&str> {
+        self.header_str("accept")
+    }
+
+    /// `Content-Type:` header value as UTF-8 (mirror of
+    /// [`HttpResponse::content_type`]). New in 0.10.0.
+    pub fn content_type(&self) -> Option<&str> {
+        self.header_str("content-type")
+    }
+
+    /// `Content-Length:` header value parsed as `u64`. `None`
+    /// if absent, non-UTF-8, or non-numeric. Mirror of
+    /// [`HttpResponse::content_length`]. New in 0.10.0.
+    pub fn content_length(&self) -> Option<u64> {
+        self.header_str("content-length")
+            .and_then(|v| v.trim().parse().ok())
+    }
+
     /// First match (case-insensitive) for an arbitrary header.
     /// HTTP/1.x allows duplicates; this returns the first
     /// observed. For multi-valued headers use
@@ -101,6 +126,37 @@ impl HttpResponse {
     pub fn set_cookie(&self) -> impl Iterator<Item = &str> + '_ {
         self.headers_all("set-cookie")
             .filter_map(|v| std::str::from_utf8(v).ok())
+    }
+
+    /// Status class — `status / 100`. Returns `None` only if the
+    /// status falls outside `[100, 599]`. New in 0.10.0.
+    pub fn status_class(&self) -> Option<u8> {
+        let cls = self.status / 100;
+        if (1..=5).contains(&cls) {
+            Some(cls as u8)
+        } else {
+            None
+        }
+    }
+
+    /// `2xx` predicate. New in 0.10.0.
+    pub fn is_success(&self) -> bool {
+        self.status_class() == Some(2)
+    }
+
+    /// `3xx` predicate. New in 0.10.0.
+    pub fn is_redirect(&self) -> bool {
+        self.status_class() == Some(3)
+    }
+
+    /// `4xx` predicate. New in 0.10.0.
+    pub fn is_client_error(&self) -> bool {
+        self.status_class() == Some(4)
+    }
+
+    /// `5xx` predicate. New in 0.10.0.
+    pub fn is_server_error(&self) -> bool {
+        self.status_class() == Some(5)
     }
 
     /// First match (case-insensitive) for an arbitrary header.

@@ -76,6 +76,28 @@ mod http_request {
     }
 
     #[test]
+    fn referer_returns_first_header() {
+        let req = fixture_with(vec![("Referer", b"https://example.com/")]);
+        assert_eq!(req.referer(), Some("https://example.com/"));
+    }
+
+    #[test]
+    fn accept_returns_first_header() {
+        let req = fixture_with(vec![("Accept", b"text/html, application/json")]);
+        assert_eq!(req.accept(), Some("text/html, application/json"));
+    }
+
+    #[test]
+    fn request_content_type_and_length() {
+        let req = fixture_with(vec![
+            ("Content-Type", b"application/json"),
+            ("Content-Length", b"42"),
+        ]);
+        assert_eq!(req.content_type(), Some("application/json"));
+        assert_eq!(req.content_length(), Some(42));
+    }
+
+    #[test]
     fn headers_all_yields_all_matches_in_order() {
         let req = fixture_with(vec![
             ("X-Forwarded-For", b"1.2.3.4"),
@@ -146,6 +168,35 @@ mod http_response {
         ]);
         let cookies: Vec<&str> = resp.set_cookie().collect();
         assert_eq!(cookies, vec!["a=1", "b=2", "c=3"]);
+    }
+
+    fn fixture_with_status(status: u16, headers: Vec<(&str, &[u8])>) -> HttpResponse {
+        let mut resp = fixture_with(headers);
+        resp.status = status;
+        resp
+    }
+
+    #[test]
+    fn status_class_buckets() {
+        assert_eq!(fixture_with_status(100, vec![]).status_class(), Some(1));
+        assert_eq!(fixture_with_status(200, vec![]).status_class(), Some(2));
+        assert_eq!(fixture_with_status(301, vec![]).status_class(), Some(3));
+        assert_eq!(fixture_with_status(404, vec![]).status_class(), Some(4));
+        assert_eq!(fixture_with_status(503, vec![]).status_class(), Some(5));
+        assert_eq!(fixture_with_status(0, vec![]).status_class(), None);
+        assert_eq!(fixture_with_status(999, vec![]).status_class(), None);
+    }
+
+    #[test]
+    fn is_success_redirect_client_server_error_predicates() {
+        assert!(fixture_with_status(200, vec![]).is_success());
+        assert!(!fixture_with_status(404, vec![]).is_success());
+        assert!(fixture_with_status(301, vec![]).is_redirect());
+        assert!(!fixture_with_status(200, vec![]).is_redirect());
+        assert!(fixture_with_status(404, vec![]).is_client_error());
+        assert!(!fixture_with_status(503, vec![]).is_client_error());
+        assert!(fixture_with_status(503, vec![]).is_server_error());
+        assert!(!fixture_with_status(200, vec![]).is_server_error());
     }
 
     #[test]

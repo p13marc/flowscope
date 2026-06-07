@@ -35,6 +35,30 @@
 //!   rdata; we don't validate.
 //! - **Common record types** decoded: A, AAAA, CNAME, NS, PTR, MX.
 //!   Everything else: `DnsRdata::Other { rtype, data }`.
+//!
+//! # Convenience accessors
+//!
+//! ## [`DnsQuery`] / [`DnsResponse`]
+//!
+//! | Field / method | Returns | Notes |
+//! |----------------|---------|-------|
+//! | `id` | `u16` | transaction ID (matches query ↔ response) |
+//! | `questions` | `Vec<DnsQuestion>` | name + rtype + rclass per query slot |
+//! | `answers` (response) | `Vec<DnsRecord>` | A / AAAA / CNAME / NS / PTR / MX |
+//! | `rcode` (response) | [`DnsRcode`] | response code |
+//! | `elapsed` (correlated response) | `Option<Duration>` | round-trip time |
+//!
+//! ## [`DnsFlags`]
+//!
+//! | Method | Returns |
+//! |--------|---------|
+//! | [`is_response`](DnsFlags::is_response) | `bool` |
+//! | [`is_authoritative`](DnsFlags::is_authoritative) | `bool` |
+//! | [`is_truncated`](DnsFlags::is_truncated) | `bool` |
+//! | [`is_recursion_desired`](DnsFlags::is_recursion_desired) | `bool` |
+//! | [`is_recursion_available`](DnsFlags::is_recursion_available) | `bool` |
+//! | [`opcode`](DnsFlags::opcode) | `u8` |
+//! | [`rcode_raw`](DnsFlags::rcode_raw) | `u8` |
 
 mod correlate;
 mod correlator;

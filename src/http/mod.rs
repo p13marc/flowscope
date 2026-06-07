@@ -49,6 +49,42 @@
 //! - Pipelined requests on one connection.
 //! - HTTP/2 / HTTP/3: out of scope.
 //! - Chunked Transfer-Encoding: deferred.
+//!
+//! # Convenience accessors
+//!
+//! Every header accessor below skips the boilerplate of "iterate
+//! the `headers: Vec<(String, Vec<u8>)>`, case-insensitive
+//! compare, then `from_utf8`". They cover the headers every
+//! HTTP-monitor example reached for.
+//!
+//! ## [`HttpRequest`]
+//!
+//! | Method | Returns | Equivalent |
+//! |--------|---------|------------|
+//! | [`host`](HttpRequest::host) | `Option<&str>` | first `Host` header |
+//! | [`user_agent`](HttpRequest::user_agent) | `Option<&str>` | first `User-Agent` |
+//! | [`cookie`](HttpRequest::cookie) | `Option<&str>` | first `Cookie` |
+//! | [`content_type`](HttpRequest::content_type) | `Option<&str>` | `Content-Type` (**new in 0.10**) |
+//! | [`content_length`](HttpRequest::content_length) | `Option<u64>` | parsed `Content-Length` (**new in 0.10**) |
+//! | [`referer`](HttpRequest::referer) | `Option<&str>` | `Referer` (**new in 0.10**) |
+//! | [`accept`](HttpRequest::accept) | `Option<&str>` | `Accept` (**new in 0.10**) |
+//! | [`header`](HttpRequest::header) | `Option<&[u8]>` | first matching header (case-insensitive) |
+//! | [`headers_all`](HttpRequest::headers_all) | `impl Iterator<Item = &[u8]>` | every matching header |
+//!
+//! ## [`HttpResponse`]
+//!
+//! | Method | Returns | Equivalent |
+//! |--------|---------|------------|
+//! | [`status_class`](HttpResponse::status_class) | `Option<u8>` | `status / 100` (**new in 0.10**) |
+//! | [`is_success`](HttpResponse::is_success) | `bool` | `2xx` (**new in 0.10**) |
+//! | [`is_redirect`](HttpResponse::is_redirect) | `bool` | `3xx` (**new in 0.10**) |
+//! | [`is_client_error`](HttpResponse::is_client_error) | `bool` | `4xx` (**new in 0.10**) |
+//! | [`is_server_error`](HttpResponse::is_server_error) | `bool` | `5xx` (**new in 0.10**) |
+//! | [`content_type`](HttpResponse::content_type) | `Option<&str>` | `Content-Type` |
+//! | [`content_length`](HttpResponse::content_length) | `Option<u64>` | parsed `Content-Length` |
+//! | [`set_cookie`](HttpResponse::set_cookie) | `impl Iterator<Item = &str>` | every `Set-Cookie` header |
+//! | [`header`](HttpResponse::header) | `Option<&[u8]>` | first matching header |
+//! | [`headers_all`](HttpResponse::headers_all) | `impl Iterator<Item = &[u8]>` | every matching header |
 
 mod parser;
 mod session;

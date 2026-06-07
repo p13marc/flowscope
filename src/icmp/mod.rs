@@ -49,6 +49,24 @@
 //!   src/dst, protocol number, TCP/UDP src+dst ports. Anything
 //!   malformed in the embed returns `None` (best-effort, never
 //!   panics).
+//!
+//! # Convenience accessors
+//!
+//! ## [`IcmpMessage`]
+//!
+//! | Method | Returns | Notes |
+//! |--------|---------|-------|
+//! | [`is_error`](IcmpMessage::is_error) | `bool` | `true` for Unreachable / Time Exceeded / Redirect / Parameter Problem |
+//! | [`error_inner`](IcmpMessage::error_inner) | `Option<(&str, &IcmpInner)>` | embedded `(src, dst, proto, sport, dport)` |
+//! | [`short_kind`](IcmpMessage::short_kind) | `&'static str` | label suitable for metric vocab |
+//!
+//! ## [`IcmpType`]
+//!
+//! | Method | Returns | Notes |
+//! |--------|---------|-------|
+//! | [`is_error`](IcmpType::is_error) | `bool` | mirror of `IcmpMessage::is_error` |
+//! | [`error_inner`](IcmpType::error_inner) | `Option<(&str, &IcmpInner)>` | mirror |
+//! | [`short_kind`](IcmpType::short_kind) | `&'static str` | mirror |
 
 mod datagram;
 mod parser;
