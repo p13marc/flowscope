@@ -21,6 +21,55 @@ the core.
 
 ## Implementation Status
 
+**0.10.0 cycle** (in progress at 2026-06). Plan-of-record in
+`plans/INDEX.md`. Triggered by the 0.9 examples-writing
+postmortem (plan 100). Shipped so far:
+
+- **Plan 110 sub-B** — quick-win helper sweep. New methods on
+  `Timestamp` (`to_unix_f64` / `from_unix_f64` / `relative_to`
+  / `from_system_time`), `FlowStats` (rollup helpers),
+  `EndReason::as_str()`, `LayerKind::is_l2 / l3 / l4 / tunnel`,
+  `Layer<'_>::Display`, `LayerStack::depth / iter_kinds`,
+  `KeyIndexed::peek`.
+- **Plan 102 sub-D** — `flowscope::well_known` curated
+  `(L4Proto, port) → label` table (~70 entries) + accessors on
+  `FiveTupleKey` (`well_known_port` / `protocol_label`).
+- **Plan 101** — `flowscope::emit` structured event sinks:
+  `FlowEventCsvWriter` (RFC-4180 quoting), `ZeekConnLogWriter`
+  (tab-separated, `#fields`/`#types`/`#close` headers, UID
+  generation) behind `emit`; `FlowEventNdjsonWriter` behind
+  `emit-ndjson` (pulls `serde_json`). Plus
+  `EndReason::as_zeek_state()`.
+- **Plan 102 sub-C** — `flowscope::detect` (Shannon entropy +
+  5 light primitives + `NgramDist`).
+- **Plan 102 sub-B** — `flowscope::aggregate` (Histogram +
+  Percentile / t-digest) behind `aggregate` feature.
+- **Plan 110 sub-A** — rustdoc landing pages on
+  `flowscope::http` / `tls` / `dns` / `icmp` with curated
+  convenience-accessor tables. Plus 9 new HTTP accessors
+  (`HttpRequest::referer/accept/content_type/content_length`;
+  `HttpResponse::status_class/is_success/is_redirect/
+  is_client_error/is_server_error`).
+- **Plan 113 sub-A** — `flowscope::detect::signatures` (10
+  pure-function magic-byte recognizers + `registry()`).
+- **Plan 102 sub-A** — `correlate` extensions (`TimeBucketedSet`
+  / `BurstDetector` / `BurstHit` / `TopK` / `Ewma`).
+- **Plan 106** — parser ergonomics (`BufferedFrameDrain` +
+  `AccumulatingSessionParser` + `PerDatagramParser` +
+  `FrameDrainError`).
+- **Plan 107** — exchange aggregators (`HttpExchangeParser` +
+  `HttpExchange` + `HttpOutcome`; `DnsExchangeParser` +
+  `DnsExchange` + `DnsOutcome`).
+
+Plan 102 (utility modules) and Plan 110 (DX polish) are fully
+complete (all sub-plans landed). Plan 113 has sub-A landed;
+sub-B (heuristic routing) is blocked on Plan 116 (driver +
+event unification — the centerpiece, not yet started).
+
+Test count after 0.10 work-in-progress: ~410 passing, zero
+clippy warnings under `--all-features --all-targets -D
+warnings`, zero rustdoc warnings.
+
 **0.9.0 cycle** (in progress at 2026-06). Plan-of-record in
 `plans/INDEX.md`. Shipped so far:
 
@@ -92,11 +141,29 @@ src/
 │   ├── ip.rs                    # Ipv4Slice + Ipv6Slice + ArpSlice
 │   ├── transport.rs             # TcpSlice + UdpSlice + Icmpv4Slice + Icmpv6Slice + TcpFlagsView + TcpOption
 │   └── tunnel.rs                # GreSlice + VxlanSlice + GtpUSlice
-├── correlate/                   # flowscope::correlate (plan 81, 0.9.0)
+├── correlate/                   # flowscope::correlate (plan 81, 0.9.0; extended in plan 102 sub-A, 0.10)
 │   ├── mod.rs                   # public re-exports
 │   ├── bucketed.rs              # TimeBucketedCounter<K>
-│   ├── indexed.rs               # KeyIndexed<K, V>
-│   └── sequence.rs              # SequencePattern + KeylessSequencePattern
+│   ├── burst.rs                 # BurstDetector<K, E> + BurstHit<K>             (plan 102 sub-A, 0.10)
+│   ├── ewma.rs                  # Ewma<K>                                       (plan 102 sub-A, 0.10)
+│   ├── indexed.rs               # KeyIndexed<K, V>     (.peek added in plan 110 sub-B, 0.10)
+│   ├── sequence.rs              # SequencePattern + KeylessSequencePattern
+│   ├── set.rs                   # TimeBucketedSet<K, V>                         (plan 102 sub-A, 0.10)
+│   └── topk.rs                  # TopK<K> (Misra-Gries)                         (plan 102 sub-A, 0.10)
+├── detect/                      # flowscope::detect (plan 102 sub-C, 0.10)
+│   ├── mod.rs                   # shannon_entropy + 5 light primitives + NgramDist
+│   └── signatures.rs            # 10 magic-byte recognizers + registry          (plan 113 sub-A, 0.10)
+├── aggregate/                   # flowscope::aggregate (plan 102 sub-B, 0.10; `aggregate` feature)
+│   ├── mod.rs                   # public re-exports
+│   ├── histogram.rs             # Histogram + HistogramError
+│   └── percentile.rs            # Percentile (wraps `tdigest` crate)
+├── emit/                        # flowscope::emit (plan 101, 0.10; `emit` / `emit-ndjson` features)
+│   ├── mod.rs                   # public re-exports
+│   ├── csv.rs                   # FlowEventCsvWriter + CsvOptions
+│   ├── ndjson.rs                # FlowEventNdjsonWriter + NdjsonOptions (gated on `emit-ndjson`)
+│   └── zeek.rs                  # ZeekConnLogWriter + ZeekOptions
+├── well_known/                  # flowscope::well_known (plan 102 sub-D, 0.10)
+│   └── mod.rs                   # protocol_label / entries / curated table
 ├── driver_builder.rs            # Driver::builder(ext) entry (plan 94 Tier 2, 0.9.0)
 ├── layers/fast.rs               # LayerParser + LayerStack zero-alloc (plan 94 Tier 3 fast path, 0.9.0)
 ├── multi_session_driver.rs      # FlowMultiSessionDriver<E, M> (plan 92, 0.9.0)
@@ -126,6 +193,8 @@ src/
 │                                # diagnostics patch + BufferOverflow synthesis +
 │                                # with_emit_anomalies      (plan 42 §2/§3, 0.2.0)
 ├── session.rs                   # SessionParser / DatagramParser traits + factories + SessionEvent
+│                                # + AccumulatingSessionParser / PerDatagramParser /
+│                                #   BufferedFrameDrain / FrameDrainError (plan 106, 0.10)
 ├── session_driver.rs            # FlowSessionDriver — sync mirror of session_stream (plan 25, 0.2.0)
 │                                # Refactored to wrap FlowDriver (plan 51, 0.3.0)
 ├── datagram_driver.rs           # FlowDatagramDriver — sync UDP mirror (plan 57, 0.3.0)
@@ -133,9 +202,11 @@ src/
 ├── obs.rs                       # metrics / tracing hooks (plan 40, 0.2.0)
 │                                # tracing-messages sub-feature (plan 56, 0.3.0)
 ├── http/                        # `http` feature
+│   ├── exchange.rs              # HttpExchangeParser + HttpExchange + HttpOutcome (plan 107, 0.10)
 │   ├── parser.rs                # internal step() machine (httparse-based)
 │   ├── session.rs               # HttpParser (SessionParser, plan 31, the only public shape since 0.9.0)
 │   └── types.rs                 # HttpRequest / HttpResponse / HttpConfig
+│                                # + 9 new accessors                              (plan 110 sub-A, 0.10)
 ├── tls/                         # `tls` feature
 │   ├── parser.rs                # internal step() machine (tls-parser-based)
 │   ├── session.rs               # TlsParser (SessionParser, the only public shape since 0.9.0)
@@ -147,6 +218,7 @@ src/
 │   ├── parser.rs                # parse_message / parse_message_at (simple-dns-based)
 │   ├── correlator.rs            # Correlator<S> — query/response matching
 │   ├── datagram.rs              # DnsUdpParser (DatagramParser; correlating, plan 37)
+│   ├── exchange.rs              # DnsExchangeParser + DnsExchange + DnsOutcome   (plan 107, 0.10)
 │   ├── session.rs               # DnsTcpParser (SessionParser, RFC 1035 §4.2.2 framing)
 │   └── types.rs                 # DnsQuery / DnsResponse / DnsRdata / DnsConfig
 ├── icmp/                        # `icmp` feature
@@ -190,6 +262,19 @@ The legacy `HttpFactory` / `TlsFactory` callback-handler shape
   75, 0.9.0).
 - `tests/error_chain.rs` — unified `flowscope::Error` source
   chain across pcap I/O, ICMP, DNS (plan 96, 0.9.0).
+- `tests/quick_wins.rs` — Timestamp/FlowStats/EndReason/
+  LayerKind/Layer/LayerStack/KeyIndexed helpers (plan 110
+  sub-B, 0.10).
+- `tests/well_known.rs` — `FiveTupleKey` `well_known_port` /
+  `protocol_label` (plan 102 sub-D, 0.10).
+- `tests/emit_csv.rs`, `tests/emit_ndjson.rs`,
+  `tests/emit_zeek.rs` — three writers in `flowscope::emit`
+  (plan 101, 0.10).
+- `tests/parser_helpers.rs` — `BufferedFrameDrain` /
+  `AccumulatingSessionParser` / `PerDatagramParser` (plan
+  106, 0.10).
+- `tests/http_exchange.rs`, `tests/dns_exchange.rs` —
+  exchange aggregators (plan 107, 0.10).
 - `benches/{extractor,tracker,reassembler,session_driver,dedup}.rs`
   — criterion benchmark harness (0.3.0). Run with
   `cargo bench --all-features`; baselines in
@@ -359,22 +444,32 @@ RFC notes.
 - `INDEX.md` — backlog index, project conventions, and the
   "Considered but not in the backlog" footnote listing known
   capability gaps without active plans.
-- `21-flow-protolens.md` — protolens bridge sister crate (STALE
-  pre-consolidation draft, pending real consumer ask).
-- `74-rfc-ooo-reassembly.md` — RFC for OOO TCP reassembly
-  (`SegmentBufferReassembler`); implementation deferred pending
-  consumer + maintainer agreement.
-- `75-rfc-tracker-auto-sweep.md` — RFC for
-  `FlowTracker::with_auto_sweep(interval)`.
-- `81-rfc-correlate-module.md` — RFC for `flowscope::correlate`
-  (`TimeBucketedCounter`, `KeyIndexed`, `SequencePattern`).
-- `92-rfc-multi-parser-driver.md` — RFC for
-  `FlowMultiSessionDriver` composite parser driver.
+- `21-flow-protolens.md` — protolens bridge sister crate
+  (STALE pre-consolidation draft, pending real consumer ask).
+- `100-examples-postmortem.md` — umbrella audit + cycle
+  rationale for 0.10 (the postmortem from writing 17 examples
+  in 0.9).
+- `112-dynamic-lazy-analysis.md` — analysis doc motivating
+  plan 113.
+- `113-dynamic-dispatch.md` — `flowscope::detect::signatures`
+  (sub-A: LANDED) + `Routing::Heuristic` on the unified
+  `Driver` (sub-B: blocked on plan 116).
+- `115-strategic-review.md` — strategic review motivating the
+  driver+event unification (replaces prior plans 108 + 109).
+- `116-driver-event-unification.md` — `Driver<E, M>` +
+  `Event<K, M>` collapsing the 6 driver / 4 event types into
+  one of each. 5-PR series, NOT YET STARTED. The user-priority
+  centerpiece of the 0.10 cycle.
 
-Plan numbers 00–04, 12, 20, 22–25, 30–61, 70–73 (everything
-except 21 and 74, which are parked) are retired (implementation
-shipped, file removed). See [`plans/INDEX.md`](plans/INDEX.md)
-for the numbering scheme used by new plans.
+Plans whose implementation has shipped in the 0.10 cycle
+(file kept until the cycle releases, then retired per
+convention): 101, 102, 106, 107, 110.
+
+Plan numbers retired (implementation shipped, file removed):
+00–04, 12, 20, 22–25, 30–61, 62, 70–73, 74, 75, 76–82,
+83–91, 93, 94, 96, 97, 99. See
+[`plans/INDEX.md`](plans/INDEX.md) for the numbering scheme
+used by new plans.
 
 ## Pre-publish checklist
 

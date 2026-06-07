@@ -381,35 +381,60 @@ If your state genuinely lives inside the parser, use the tracker's
 `with_state*` constructors instead — they thread `S` through the
 tracker as `FlowEntry::user`, surfaced via `iter_active()`.
 
-## Structured event output via serde
+## Structured event output
 
-Enable the `serde` feature and pipe events into Vector / Fluentd /
-Loki / any JSON-consuming log pipeline.
+Three drop-in writers in `flowscope::emit` (0.10) cover the
+formats every flow-analysis pipeline ends up emitting. Each
+takes a `std::io::Write` sink and a
+`FlowEvent<FiveTupleKey>`; the constructor writes the header
+(CSV column names; Zeek `#fields` / `#types`); `finish()`
+flushes and recovers the sink.
 
 ```toml
-flowscope = { version = "0.9", features = ["l7", "serde"] }
-serde_json = "1"
+# CSV + Zeek conn.log writers — no extra deps.
+flowscope = { version = "0.10", features = ["emit"] }
+
+# NDJSON writer — adds serde_json.
+flowscope = { version = "0.10", features = ["emit-ndjson"] }
 ```
 
 ```rust,ignore
+use flowscope::emit::{FlowEventCsvWriter, ZeekConnLogWriter};
+
+// CSV — `start_sec, end_sec, duration_sec, proto, src_ip, …, end_reason`
+let mut csv = FlowEventCsvWriter::new(file)?;
 for ev in driver.track(view) {
-    let line = serde_json::to_string(&ev)?;
-    writer.write_all(line.as_bytes())?;
-    writer.write_all(b"\n")?;
+    csv.write_event(&ev)?;
 }
+csv.finish()?;
+
+// Zeek conn.log — tab-separated, `zeek-cut`-compatible
+let mut zeek = ZeekConnLogWriter::new(file)?;
+for ev in driver.track(view) { zeek.write_event(&ev)?; }
+zeek.finish()?;
 ```
 
-The wire format is locked from 0.8 forward:
+The NDJSON writer reuses the locked 0.8 serde wire format
+(snake_case + adjacent tagging):
+
+```rust,ignore
+use flowscope::emit::FlowEventNdjsonWriter;
+let mut ndjson = FlowEventNdjsonWriter::new(file);
+for ev in driver.track(view) { ndjson.write_event(&ev)?; }
+ndjson.finish()?;
+```
+
+Wire format details (locked from 0.8):
 
 - snake_case field names everywhere
 - Tagged enums:
-  - All-struct variants use internal tagging: `{"type": "started",
-    "key": ..., "side": "initiator", ...}`.
-  - Tuple variants use adjacent tagging: `{"kind": "tcp"}` /
-    `{"kind": "other", "value": 99}`.
+  - All-struct variants use internal tagging:
+    `{"type": "started", "key": ..., "side": "initiator", ...}`.
+  - Tuple variants use adjacent tagging:
+    `{"kind": "tcp"}` / `{"kind": "other", "value": 99}`.
 - `Timestamp` → `{"sec": u32, "nsec": u32}`
-- `bytes::Bytes` → JSON byte array (use a base64 wrapper if your
-  log shipper prefers it)
+- `bytes::Bytes` → JSON byte array (use a base64 wrapper if
+  your log shipper prefers it).
 
 Once consumers ship dashboards depending on field names,
 renames require a CHANGELOG-documented breaking change.
@@ -555,6 +580,172 @@ if let Some(qname) = pending.get(&tx_id, ts) {
 // Sweep periodically:
 pending.evict_expired(now);
 ```
+
+### Burst-then-trigger detection
+
+0.10 adds `BurstDetector<K, E>` for the canonical "N events
+of kind X within W, optionally followed by event of kind Y"
+pattern — the shape every failed-auth / port-scan /
+SYN-flood detector reinvents.
+
+```rust,ignore
+use flowscope::correlate::{BurstDetector, BurstHit};
+use std::time::Duration;
+
+#[derive(Clone, PartialEq, Eq)]
+enum AuthEvent { Fail, Success }
+
+// 5 failures within 60 s followed by a success → suspicious login.
+let mut d: BurstDetector<std::net::IpAddr, AuthEvent> =
+    BurstDetector::new(
+        AuthEvent::Fail, 5, Duration::from_secs(60),
+        Some(AuthEvent::Success),
+    );
+
+for (src, evt, ts) in event_stream {
+    if let Some(BurstHit { key, burst_count, .. }) = d.observe(&src, &evt, ts) {
+        println!("burst hit on {key}: {burst_count} failures then success");
+    }
+}
+```
+
+Other 0.10 correlate primitives:
+
+- `TimeBucketedSet<K, V>` — distinct values per key over a
+  sliding window (port-scan: distinct destination ports per
+  source).
+- `TopK<K>` — Misra-Gries bounded top-K tracker (top noisy
+  IPs).
+- `Ewma<K>` — per-key exponentially weighted moving average
+  (latency tracking with optional `.evict_stale(now, ttl)`).
+
+## Distribution + quantile reports
+
+0.10 adds `flowscope::aggregate` behind the `aggregate`
+feature — `Histogram` for explicit-bucket distributions
+(flow durations, packet sizes, response times) and
+`Percentile` for streaming t-digest-based p95 / p99 / p999
+reads on unbounded streams.
+
+```toml
+flowscope = { version = "0.10", features = ["aggregate"] }
+```
+
+```rust,ignore
+use flowscope::aggregate::Histogram;
+
+// Log-spaced buckets between 100 ms and 1 h (6 buckets + overflow).
+let mut h = Histogram::log_spaced(0.1, 3600.0, 6);
+for stats in flow_durations() {
+    h.record(stats.duration_secs());
+}
+println!(
+    "p50 {:.3}s   p99 {:.3}s   max {:.3}s",
+    h.quantile(0.5), h.quantile(0.99), h.max(),
+);
+```
+
+## Lightweight detection helpers
+
+0.10 ships `flowscope::detect` (always on) — the small set
+of detection primitives every detector example reinvented:
+
+```rust,ignore
+use flowscope::detect::{shannon_entropy, is_high_entropy, is_hex_string};
+
+assert!(shannon_entropy(b"aaaa") < 0.1);
+assert!(is_high_entropy(b"compressed-payload-bytes", 7.0));
+assert!(is_hex_string("deadbeefcafebabe"));
+```
+
+`flowscope::detect::signatures` adds 10 pure-function
+magic-byte recognizers (`http_request`, `tls_client_hello`,
+`dns_message`, `ssh_banner`, …) — useful standalone for
+"is this flow's first segment HTTP-shaped?" checks. They're
+the building block for the heuristic-routing feature
+shipping under plan 116.
+
+## Protocol labels — `flowscope::well_known`
+
+0.10 adds a curated `(L4Proto, port) → "label"` table (~70
+entries: IANA-aligned plus widely-deployed cloud-native
+services like Kafka, Redis, Elasticsearch, MinIO, MongoDB,
+Postgres, Kubernetes API). Lookup is binary-search-based and
+zero-cost on miss.
+
+```rust,ignore
+use flowscope::well_known::protocol_label;
+use flowscope::L4Proto;
+
+assert_eq!(protocol_label(L4Proto::Tcp, 33000, 80), Some("http"));
+assert_eq!(protocol_label(L4Proto::Udp, 53, 33000), Some("dns"));
+
+// Or directly off a flow key:
+let label = key.protocol_label(); // FiveTupleKey method
+```
+
+The lower-numbered port disambiguates the well-known side
+automatically.
+
+## Aggregating L7 exchanges
+
+0.10 ships per-exchange aggregator parsers for HTTP and DNS,
+mirroring the 0.9 `TlsHandshakeParser` shape — one rich
+event per logical exchange instead of per-message
+decomposition the consumer has to stitch.
+
+```rust,ignore
+use flowscope::http::{HttpExchangeParser, HttpOutcome};
+
+let mut driver = FlowSessionDriver::new(ext, HttpExchangeParser::new());
+
+for ev in driver.track(view) {
+    if let SessionEvent::Application { message: ex, .. } = ev {
+        match ex.outcome {
+            HttpOutcome::Completed if ex.is_success() => { /* 2xx */ }
+            HttpOutcome::Completed if ex.is_error()   => { /* 4xx/5xx */ }
+            HttpOutcome::NoResponse                   => { /* flow ended pending */ }
+            HttpOutcome::Reset                        => { /* RST mid-exchange */ }
+            _ => {}
+        }
+    }
+}
+```
+
+`DnsExchangeParser` is the UDP equivalent (DNS-over-TCP
+variant deferred). `DnsExchange::outcome` is one of
+`Completed` / `NoResponse` / `Failed { rcode }`.
+
+## Writing custom parsers — `AccumulatingSessionParser`
+
+0.10 adds `flowscope::AccumulatingSessionParser<F, M>` for
+the universal "accumulate bytes, repeatedly call a parser
+closure, drain consumed prefix" pattern. Most custom
+binary/text protocols collapse to one constructor call:
+
+```rust,ignore
+use flowscope::AccumulatingSessionParser;
+
+#[derive(Debug, Clone)]
+struct LengthPrefixed(Vec<u8>);
+
+fn parse_one(buf: &[u8]) -> Option<(LengthPrefixed, usize)> {
+    if buf.len() < 4 { return None; }
+    let n = u32::from_be_bytes(buf[..4].try_into().ok()?) as usize;
+    if buf.len() < 4 + n { return None; }
+    Some((LengthPrefixed(buf[4..4 + n].to_vec()), 4 + n))
+}
+
+let parser = AccumulatingSessionParser::new("len-prefixed", parse_one);
+```
+
+The closure must be `Clone + Send + 'static` for per-session
+reuse via the `SessionParserFactory` blanket impl. For more
+control, use `BufferedFrameDrain` directly inside your own
+`SessionParser` impl.
+
+`PerDatagramParser<F, M>` is the UDP parity:
+`Fn(&[u8]) -> Option<M>` → one message per datagram.
 
 ## Re-exporting flowscope types
 
