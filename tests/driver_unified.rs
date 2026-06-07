@@ -286,6 +286,100 @@ enum MixedMsg {
     Udp(usize),
 }
 
+// ── heuristic routing (plan 116 PR 2b) ─────────────────────────────
+
+/// Toy "always matches" signature.
+fn always_match(_b: &[u8]) -> flowscope::detect::signatures::SignatureMatch {
+    flowscope::detect::signatures::SignatureMatch::Match
+}
+
+/// Toy "never matches" signature.
+fn never_match(_b: &[u8]) -> flowscope::detect::signatures::SignatureMatch {
+    flowscope::detect::signatures::SignatureMatch::NoMatch
+}
+
+#[test]
+fn session_heuristic_dispatches_on_match() {
+    let mut driver = Driver::<_, Msg>::builder(FiveTuple::bidirectional())
+        .session_heuristic(CountParser::named("h"), always_match, |(side, len)| {
+            Msg::Counted { name: "h", side, len }
+        })
+        .build();
+    let frame = ipv4_tcp(
+        [1; 6], [2; 6], [10, 0, 0, 1], [10, 0, 0, 2], 33000, 9999, 0, 0, 0x18, b"hello",
+    );
+    let events = driver.track(PacketView::new(&frame, Timestamp::new(0, 0)));
+    let messages = events
+        .iter()
+        .filter(|e| matches!(e, Event::Message { message: Msg::Counted { name: "h", .. }, .. }))
+        .count();
+    assert!(messages > 0, "heuristic slot didn't fire on Match signature");
+}
+
+#[test]
+fn session_heuristic_skips_on_never_match() {
+    let mut driver = Driver::<_, Msg>::builder(FiveTuple::bidirectional())
+        .session_heuristic_with_budget(
+            CountParser::named("h"),
+            never_match,
+            2,
+            |(side, len)| Msg::Counted { name: "h", side, len },
+        )
+        .build();
+    let frame = ipv4_tcp(
+        [1; 6], [2; 6], [10, 0, 0, 1], [10, 0, 0, 2], 33000, 9999, 0, 0, 0x18, b"X",
+    );
+    // First packet — probing; second packet — still probing; third packet — gave up.
+    let frame2 = ipv4_tcp(
+        [1; 6], [2; 6], [10, 0, 0, 1], [10, 0, 0, 2], 33000, 9999, 0, 0, 0x18, b"Y",
+    );
+    let frame3 = ipv4_tcp(
+        [1; 6], [2; 6], [10, 0, 0, 1], [10, 0, 0, 2], 33000, 9999, 0, 0, 0x18, b"Z",
+    );
+    let mut events = driver.track(PacketView::new(&frame, Timestamp::new(0, 0)));
+    events.extend(driver.track(PacketView::new(&frame2, Timestamp::new(1, 0))));
+    events.extend(driver.track(PacketView::new(&frame3, Timestamp::new(2, 0))));
+    let messages = events
+        .iter()
+        .filter(|e| matches!(e, Event::Message { message: Msg::Counted { name: "h", .. }, .. }))
+        .count();
+    assert_eq!(messages, 0, "heuristic slot wrongly fired on NoMatch signature");
+}
+
+#[test]
+fn datagram_heuristic_dispatches_on_match() {
+    let mut driver = Driver::<_, usize>::builder(FiveTuple::bidirectional())
+        .datagram_heuristic(UdpEcho, always_match, |n| n)
+        .build();
+    let frame = ipv4_udp([10, 0, 0, 1], [10, 0, 0, 2], 33000, 9999, b"yo");
+    let events = driver.track(PacketView::new(&frame, Timestamp::new(0, 0)));
+    let msgs: Vec<usize> = events
+        .iter()
+        .filter_map(|e| match e {
+            Event::Message { message, .. } => Some(*message),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(msgs, vec![2]);
+}
+
+#[test]
+fn datagram_heuristic_skips_on_never_match() {
+    let mut driver = Driver::<_, usize>::builder(FiveTuple::bidirectional())
+        .datagram_heuristic_with_budget(UdpEcho, never_match, 2, |n| n)
+        .build();
+    let frame = ipv4_udp([10, 0, 0, 1], [10, 0, 0, 2], 33000, 9999, b"yo");
+    let events = driver.track(PacketView::new(&frame, Timestamp::new(0, 0)));
+    let msgs: Vec<usize> = events
+        .iter()
+        .filter_map(|e| match e {
+            Event::Message { message, .. } => Some(*message),
+            _ => None,
+        })
+        .collect();
+    assert!(msgs.is_empty(), "datagram heuristic wrongly fired: {msgs:?}");
+}
+
 #[test]
 fn udp_flow_does_not_emit_established() {
     let mut driver = Driver::<_, Msg>::builder(FiveTuple::bidirectional())

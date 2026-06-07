@@ -4,6 +4,21 @@
 
 ### Added
 
+- **Plan 116 PR 2b + Plan 113 sub-B — heuristic routing.**
+  Adds four builder methods on `DriverBuilder` —
+  `session_heuristic`, `session_heuristic_with_budget`,
+  `datagram_heuristic`, `datagram_heuristic_with_budget` —
+  that wire a payload `SignatureFn` (from plan 113 sub-A)
+  into per-flow detection state. Each heuristic slot keeps a
+  Probing / Pinned / GaveUp state per flow:
+  - Probing: buffer up to 64 B per side; evaluate the
+    signature on each side every probe packet.
+  - Pinned (first `Match`): dispatch every subsequent packet
+    directly to the inner driver — O(1) cost.
+  - GaveUp (`max_probe_packets` exhausted with no Match): no
+    further dispatch for that flow.
+  `DEFAULT_PROBE_PACKETS = 4` and `PROBE_BUFFER_CAP = 64`
+  constants are public for consumers wanting to scale.
 - **Plan 116 PR 2a — datagram dispatch on the unified Driver.**
   Adds `DriverBuilder::datagram_on_ports` and
   `DriverBuilder::datagram_broadcast` mirroring their session

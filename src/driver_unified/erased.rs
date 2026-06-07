@@ -215,6 +215,21 @@ fn view_matches_ports(view: PacketView<'_>, ports: &[u16]) -> bool {
     ports.contains(&sport) || ports.contains(&dport)
 }
 
+/// Public-to-the-driver_unified-module wrapper around
+/// [`lift_event`], for slot impls in sibling files
+/// (`heuristic.rs`).
+pub(super) fn lift_event_pub<K, A, B, F>(
+    ev: SessionEvent<K, A>,
+    lift: &F,
+    fallback_ts: Timestamp,
+    slot_kind: &'static str,
+) -> Option<Event<K, B>>
+where
+    F: Fn(A) -> B,
+{
+    lift_event(ev, lift, fallback_ts, slot_kind)
+}
+
 /// Map one [`SessionEvent<K, A>`] into the slot-emitted subset
 /// of [`Event<K, B>`].
 ///

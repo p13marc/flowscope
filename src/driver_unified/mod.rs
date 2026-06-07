@@ -43,8 +43,10 @@
 
 mod erased;
 mod event;
+mod heuristic;
 
 pub use event::Event;
+pub use heuristic::{DEFAULT_PROBE_PACKETS, PROBE_BUFFER_CAP};
 
 use std::hash::Hash;
 use std::marker::PhantomData;
@@ -53,10 +55,12 @@ use crate::PacketView;
 use crate::Timestamp;
 use crate::event::FlowEvent;
 use crate::extractor::FlowExtractor;
+use crate::detect::signatures::SignatureFn;
 use crate::session::{DatagramParser, SessionParser};
 use crate::tracker::{FlowTracker, FlowTrackerConfig};
 
 use erased::{ConcreteDatagramSlot, ConcreteSlot, DriverSlot};
+use heuristic::{HeuristicDatagramSlot, HeuristicSessionSlot};
 
 /// Unified flow + session driver.
 ///
@@ -260,6 +264,86 @@ where
             parser,
             self.config.clone(),
             None,
+            lift,
+        );
+        self.slots.push(Box::new(slot));
+        self
+    }
+
+    /// Register a session parser that fires when a payload
+    /// signature returns
+    /// [`Match`](crate::detect::signatures::SignatureMatch::Match).
+    /// Probes the first [`DEFAULT_PROBE_PACKETS`] packets per
+    /// flow; after a `Match`, the parser is pinned and every
+    /// subsequent packet on that flow goes directly to the
+    /// inner driver (O(1) dispatch).
+    pub fn session_heuristic<P, F>(self, parser: P, signature: SignatureFn, lift: F) -> Self
+    where
+        P: SessionParser + Clone + Send + 'static,
+        P::Message: Send + 'static,
+        F: Fn(P::Message) -> M + Send + 'static,
+    {
+        self.session_heuristic_with_budget(parser, signature, DEFAULT_PROBE_PACKETS, lift)
+    }
+
+    /// [`Self::session_heuristic`] with an explicit probing
+    /// budget. Typical values are 2–8; 4 is the shipping default.
+    pub fn session_heuristic_with_budget<P, F>(
+        mut self,
+        parser: P,
+        signature: SignatureFn,
+        max_probe_packets: u8,
+        lift: F,
+    ) -> Self
+    where
+        P: SessionParser + Clone + Send + 'static,
+        P::Message: Send + 'static,
+        F: Fn(P::Message) -> M + Send + 'static,
+    {
+        let slot = HeuristicSessionSlot::new(
+            self.extractor.clone(),
+            parser,
+            self.config.clone(),
+            signature,
+            max_probe_packets,
+            lift,
+        );
+        self.slots.push(Box::new(slot));
+        self
+    }
+
+    /// Datagram-side equivalent of [`Self::session_heuristic`].
+    /// Each UDP packet is its own probe — no per-side
+    /// buffering; the signature runs on the raw payload.
+    pub fn datagram_heuristic<D, F>(self, parser: D, signature: SignatureFn, lift: F) -> Self
+    where
+        D: DatagramParser + Clone + Send + 'static,
+        D::Message: Send + 'static,
+        F: Fn(D::Message) -> M + Send + 'static,
+    {
+        self.datagram_heuristic_with_budget(parser, signature, DEFAULT_PROBE_PACKETS, lift)
+    }
+
+    /// [`Self::datagram_heuristic`] with an explicit probing
+    /// budget.
+    pub fn datagram_heuristic_with_budget<D, F>(
+        mut self,
+        parser: D,
+        signature: SignatureFn,
+        max_probe_packets: u8,
+        lift: F,
+    ) -> Self
+    where
+        D: DatagramParser + Clone + Send + 'static,
+        D::Message: Send + 'static,
+        F: Fn(D::Message) -> M + Send + 'static,
+    {
+        let slot = HeuristicDatagramSlot::new(
+            self.extractor.clone(),
+            parser,
+            self.config.clone(),
+            signature,
+            max_probe_packets,
             lift,
         );
         self.slots.push(Box::new(slot));
