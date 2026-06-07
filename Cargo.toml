@@ -40,6 +40,9 @@ tls-parser = { version = "0.12", optional = true }
 md-5 = { version = "0.10", optional = true }
 hex = { version = "0.4", optional = true }
 
+# `tls/ja4` sub-feature
+sha2 = { version = "0.10", optional = true }
+
 # `dns` feature
 simple-dns = { version = "0.10", optional = true }
 
@@ -80,6 +83,7 @@ test-helpers = ["extractors"]
 http = ["reassembler", "session", "dep:httparse", "dep:bytes"]
 tls = ["reassembler", "session", "dep:tls-parser", "dep:bytes"]
 ja3 = ["tls", "dep:md-5", "dep:hex"]
+ja4 = ["tls", "dep:sha2", "dep:hex"]
 dns = ["extractors", "tracker", "session", "dep:simple-dns"]
 icmp = ["extractors", "tracker", "session", "dep:bytes"]
 
@@ -106,7 +110,7 @@ tracing = ["tracker", "dep:tracing"]
 tracing-messages = ["tracing"]
 
 # Convenience: turn everything on.
-full = ["http", "tls", "ja3", "dns", "pcap", "metrics", "tracing", "tracing-messages"]
+full = ["http", "tls", "ja3", "ja4", "dns", "icmp", "pcap", "metrics", "tracing", "tracing-messages", "serde"]
 
 [package.metadata.docs.rs]
 all-features = true

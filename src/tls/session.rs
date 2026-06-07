@@ -35,6 +35,15 @@ pub enum TlsMessage {
         /// Canonical string (raw fingerprint, dash-joined fields).
         canonical: String,
     },
+    /// JA4 fingerprint computed from a [`Self::ClientHello`]. Only
+    /// emitted when [`TlsConfig::ja4`] is true (and the `ja4`
+    /// feature is on).
+    #[cfg(feature = "ja4")]
+    Ja4 {
+        /// Underscore-joined fingerprint (e.g.
+        /// `t13d1516h2_8daaf6152771_b186095e22b6`).
+        fingerprint: String,
+    },
 }
 
 /// Per-flow TLS handshake parser. Holds independent state for the
@@ -96,9 +105,14 @@ impl TlsParser {
                     let (canonical, hash) = super::fingerprint::ja3(&ch);
                     out.push(TlsMessage::Ja3 { hash, canonical });
                 }
-                #[cfg(not(feature = "ja3"))]
+                #[cfg(feature = "ja4")]
+                if cfg.ja4 {
+                    let fingerprint = super::ja4::ja4(&ch);
+                    out.push(TlsMessage::Ja4 { fingerprint });
+                }
+                #[cfg(not(any(feature = "ja3", feature = "ja4")))]
                 {
-                    let _ = cfg; // silence unused-warning when ja3 is off
+                    let _ = cfg; // silence unused-warning when both off
                 }
                 out.push(TlsMessage::ClientHello(ch));
             }

@@ -33,13 +33,20 @@
 mod factory;
 #[cfg(feature = "ja3")]
 mod fingerprint;
+mod handshake;
+#[cfg(feature = "ja4")]
+pub mod ja4;
 mod parser;
 mod session;
 mod types;
 
 pub use factory::{TlsFactory, TlsReassembler};
+pub use handshake::{HandshakeOutcome, TlsHandshake, TlsHandshakeParser};
 pub use session::{TlsMessage, TlsParser};
 pub use types::*;
+
+#[cfg(feature = "ja4")]
+pub use ja4::{ja4 as ja4_fingerprint, ja4_parts, Ja4Parts};
 
 /// Slug returned by [`TlsParser`]'s `parser_kind()`. See
 /// `flowscope::parser_kinds::TLS`.

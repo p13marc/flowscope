@@ -25,6 +25,24 @@
   sweep and merges its events into the returned vector. Manual
   `sweep()` resets `last_sweep_ts` so mixing manual + auto
   is safe.
+- **TLS modernization** (plan 97). Two TLS additions behind
+  Cargo features:
+  - **`ja4` Cargo feature** — JA4 client fingerprint (FoxIO
+    v1, 2023): cipher / extension sorting + GREASE removal +
+    human-readable header (`t13d1516h2_8daaf6152771_b186095e22b6`).
+    Public `flowscope::tls::ja4::ja4()` / `ja4_parts()`.
+    Pulls `sha2` only when the feature is on.
+  - **`TlsHandshakeParser`** — `SessionParser` that aggregates
+    ClientHello + ServerHello + Alert into one `TlsHandshake`
+    event per handshake. Carries SNI, ALPN (client + server),
+    JA3/JA4 (when features on), negotiated version, cipher,
+    `resumption_attempted`, and a `HandshakeOutcome` discriminant
+    (`Completed` / `AlertedByServer` / `AlertedByClient` /
+    `Truncated`). Reuses the existing `TlsParser` internally.
+    `parser_kind()` returns `"tls-handshake"`.
+  - `TlsConfig.ja4: bool` defaults to `false`.
+  - `TlsMessage::Ja4 { fingerprint }` joins the existing
+    `TlsMessage::Ja3 { … }` shape on the per-message stream.
 - **`flowscope::layers` extensions** (plan 94 Tier 3 follow-up).
   Tunnel walking for VXLAN (UDP/4789), GTP-U (UDP/2152), GRE,
   and IP-in-IP — `Layers::has_tunnel()` / `Layers::truncated()`

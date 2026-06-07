@@ -145,6 +145,9 @@ pub struct TlsConfig {
     /// Compute JA3 fingerprints for every ClientHello (requires
     /// `ja3` feature). Default: `false` even with the feature on.
     pub ja3: bool,
+    /// Compute JA4 fingerprints for every ClientHello (requires
+    /// `ja4` feature). Default: `false` even with the feature on.
+    pub ja4: bool,
     /// Maximum bytes buffered per direction before the reassembler
     /// gives up and goes Desynced. Defaults to 64 KiB — TLS records
     /// are 16 KiB max each; the handshake usually fits in 1–3 records.
@@ -155,6 +158,7 @@ impl Default for TlsConfig {
     fn default() -> Self {
         Self {
             ja3: false,
+            ja4: false,
             max_buffer: 64 * 1024,
         }
     }
