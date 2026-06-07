@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.10.1
+
+CI / build hygiene patch. Three of the `cargo clippy --no-default-
+features --features X -- -D warnings` matrix entries (`dns`,
+`http,tls`, `icmp`) were failing on 0.10.0 because of stale cfg
+gates:
+
+- `src/driver_builder.rs` imported `session_driver` /
+  `datagram_driver` (both `reassembler`-gated) under `feature =
+  "session"`. Bumped the gates to require `reassembler`.
+- The same module imported `DatagramParser` unconditionally even
+  though the datagram-driver block needs `extractors +
+  reassembler + session`. Split the import.
+- `Error::parse` was cfg-gated to be visible under `feature =
+  "icmp"`, but the icmp parser only calls `Error::parse_with`.
+  Dropped `icmp` from the gate.
+
+No behavioural / API changes; the public surface is identical to
+0.10.0.
+
 ## 0.10.0
 
 Combined 0.9 + 0.10 cycle release. The 0.9 work shipped (high-
