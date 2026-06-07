@@ -139,8 +139,8 @@ fn missing_pcap_returns_io_error() {
 
 #[test]
 fn run_iter_drives_owned_views() {
-    use flowscope::pcap::PcapFlowSource;
     use flowscope::OwnedPacketView;
+    use flowscope::pcap::PcapFlowSource;
 
     // Collect the fixture into owned views.
     let owned: Vec<OwnedPacketView> = PcapFlowSource::open(FIXTURE)
@@ -159,7 +159,10 @@ fn run_iter_drives_owned_views() {
             app_count += 1;
         }
     }
-    assert_eq!(app_count, 10, "run_iter should produce the same 10 messages");
+    assert_eq!(
+        app_count, 10,
+        "run_iter should produce the same 10 messages"
+    );
 }
 
 #[test]

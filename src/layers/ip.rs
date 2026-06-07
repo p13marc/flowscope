@@ -131,9 +131,7 @@ impl<'a> Ipv6Slice<'a> {
 
     /// 20-bit IPv6 flow label.
     pub fn flow_label(&self) -> u32 {
-        ((self.raw[1] as u32 & 0x0F) << 16)
-            | ((self.raw[2] as u32) << 8)
-            | self.raw[3] as u32
+        ((self.raw[1] as u32 & 0x0F) << 16) | ((self.raw[2] as u32) << 8) | self.raw[3] as u32
     }
 
     pub fn payload_length(&self) -> u16 {

@@ -49,13 +49,9 @@ fn main() -> flowscope::Result<()> {
                     };
                     if matches {
                         matched_key = Some(*key);
-                        started_ts = Some(
-                            owned.timestamp.sec as f64 + owned.timestamp.nsec as f64 / 1e9,
-                        );
-                        println!(
-                            "=== flow ({}) {} <-> {} ===",
-                            key.proto, key.a, key.b,
-                        );
+                        started_ts =
+                            Some(owned.timestamp.sec as f64 + owned.timestamp.nsec as f64 / 1e9);
+                        println!("=== flow ({}) {} <-> {} ===", key.proto, key.a, key.b,);
                     }
                 }
             }

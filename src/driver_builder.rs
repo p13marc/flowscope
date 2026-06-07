@@ -144,7 +144,9 @@ where
     ///
     /// Panics if no parser was set via [`Self::parser`].
     pub fn build(self) -> FlowSessionDriver<E, P, ()> {
-        let parser = self.parser.expect("FlowSessionDriverBuilder: parser not set");
+        let parser = self
+            .parser
+            .expect("FlowSessionDriverBuilder: parser not set");
         let mut driver = FlowSessionDriver::with_config(self.extractor, parser, self.config)
             .with_emit_anomalies(self.emit_anomalies)
             .with_monotonic_timestamps(self.monotonic_timestamps);
@@ -238,7 +240,9 @@ where
     }
 
     pub fn build(self) -> FlowDatagramDriver<E, P, ()> {
-        let parser = self.parser.expect("FlowDatagramDriverBuilder: parser not set");
+        let parser = self
+            .parser
+            .expect("FlowDatagramDriverBuilder: parser not set");
         let mut driver = FlowDatagramDriver::with_config(self.extractor, parser, self.config)
             .with_emit_anomalies(self.emit_anomalies)
             .with_monotonic_timestamps(self.monotonic_timestamps);
@@ -290,12 +294,7 @@ mod tests {
 
     impl DatagramParser for NoopDatagram {
         type Message = ();
-        fn parse(
-            &mut self,
-            _b: &[u8],
-            _side: crate::event::FlowSide,
-            _ts: Timestamp,
-        ) -> Vec<()> {
+        fn parse(&mut self, _b: &[u8], _side: crate::event::FlowSide, _ts: Timestamp) -> Vec<()> {
             Vec::new()
         }
     }

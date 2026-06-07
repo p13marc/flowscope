@@ -384,14 +384,8 @@ mod tests {
         assert_table(
             tls_client_hello,
             &[
-                (
-                    &[0x16, 0x03, 0x01, 0x00, 0x42, 0x01],
-                    SignatureMatch::Match,
-                ),
-                (
-                    &[0x16, 0x03, 0x03, 0x00, 0x42, 0x01],
-                    SignatureMatch::Match,
-                ),
+                (&[0x16, 0x03, 0x01, 0x00, 0x42, 0x01], SignatureMatch::Match),
+                (&[0x16, 0x03, 0x03, 0x00, 0x42, 0x01], SignatureMatch::Match),
                 (
                     &[0x16, 0x03, 0x04, 0x00, 0x42, 0x01],
                     SignatureMatch::NoMatch,
@@ -410,10 +404,7 @@ mod tests {
     fn tls_server_hello_signature() {
         assert_table(
             tls_server_hello,
-            &[(
-                &[0x16, 0x03, 0x03, 0x00, 0x42, 0x02],
-                SignatureMatch::Match,
-            )],
+            &[(&[0x16, 0x03, 0x03, 0x00, 0x42, 0x02], SignatureMatch::Match)],
         );
         // ClientHello bytes are rejected.
         assert_eq!(

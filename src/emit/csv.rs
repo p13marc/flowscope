@@ -85,10 +85,7 @@ impl<W: Write> FlowEventCsvWriter<W> {
     pub fn write_event(&mut self, ev: &FlowEvent<FiveTupleKey>) -> io::Result<()> {
         match ev {
             FlowEvent::Ended {
-                key,
-                reason,
-                stats,
-                ..
+                key, reason, stats, ..
             } => {
                 let sep = self.options.sep();
                 if self.options.emit_started {

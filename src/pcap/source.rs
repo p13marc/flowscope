@@ -181,7 +181,11 @@ impl<R: Read> Iterator for ViewIter<R> {
                     timestamp: ts,
                 }))
             }
-            Err(e) => Some(Err(Error::parse_with(Module::Pcap, "malformed pcap record", e))),
+            Err(e) => Some(Err(Error::parse_with(
+                Module::Pcap,
+                "malformed pcap record",
+                e,
+            ))),
         }
     }
 }

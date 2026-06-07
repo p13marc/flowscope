@@ -54,8 +54,16 @@ fn vxlan_wrapped_frame() -> Vec<u8> {
     // Build: outer Eth + IPv4 + UDP(dst=4789) + VXLAN(VNI=42) +
     //        inner Eth + IPv4 + TCP
     let inner = ipv4_tcp(
-        [11; 6], [12; 6], [10, 0, 0, 1], [10, 0, 0, 2],
-        12345, 80, 1000, 0, 0x02, b"",
+        [11; 6],
+        [12; 6],
+        [10, 0, 0, 1],
+        [10, 0, 0, 2],
+        12345,
+        80,
+        1000,
+        0,
+        0x02,
+        b"",
     );
     // VXLAN header: flags 0x08 (Valid), 3-byte reserved, 3-byte VNI=42, 1-byte reserved
     let mut vxlan = vec![0x08, 0, 0, 0, 0, 0, 0x2a, 0];
@@ -86,8 +94,16 @@ fn ipv4_in_ipv4_frame() -> Vec<u8> {
     use etherparse::{EtherType, Ethernet2Header, IpNumber, Ipv4Header};
 
     let inner = ipv4_tcp(
-        [0; 6], [0; 6], [10, 1, 0, 1], [10, 1, 0, 2],
-        80, 443, 0, 0, 0x02, b"hi",
+        [0; 6],
+        [0; 6],
+        [10, 1, 0, 1],
+        [10, 1, 0, 2],
+        80,
+        443,
+        0,
+        0,
+        0x02,
+        b"hi",
     );
     // Strip the inner Ethernet header — IP-in-IP encapsulates an IP packet.
     let inner_ip_plus = &inner[14..];
@@ -147,10 +163,10 @@ fn icmp_echo_frame() -> Vec<u8> {
 
     // ICMP echo request: type=8, code=0, checksum, id, seq, data
     let icmp = vec![
-        8, 0,           // type 8, code 0
-        0, 0,           // checksum (zero — etherparse won't validate)
-        0x12, 0x34,     // id
-        0, 1,           // seq
+        8, 0, // type 8, code 0
+        0, 0, // checksum (zero — etherparse won't validate)
+        0x12, 0x34, // id
+        0, 1, // seq
         b'h', b'i',
     ];
     let ip = Ipv4Header::new(

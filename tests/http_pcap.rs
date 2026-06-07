@@ -15,8 +15,7 @@ const HTTP_SESSION: &[u8] = include_bytes!("data/http_session.pcap");
 
 #[test]
 fn http_pcap_emits_request_and_response() {
-    let mut driver =
-        FlowSessionDriver::new(FiveTuple::bidirectional(), HttpParser::default());
+    let mut driver = FlowSessionDriver::new(FiveTuple::bidirectional(), HttpParser::default());
 
     let src = PcapFlowSource::from_reader(Cursor::new(HTTP_SESSION)).unwrap();
     let mut reqs = Vec::new();

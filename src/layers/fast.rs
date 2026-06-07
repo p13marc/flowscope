@@ -266,16 +266,14 @@ impl LayerParser {
                     let payload_len = v4.payload().payload.len();
                     // Reconstruct contiguous slice from header pointer.
                     let total = header_len + payload_len;
-                    let bytes =
-                        unsafe { std::slice::from_raw_parts(header_slice.as_ptr(), total) };
+                    let bytes = unsafe { std::slice::from_raw_parts(header_slice.as_ptr(), total) };
                     out.store_ipv4(bytes, header_len);
                 }
                 etherparse::NetSlice::Ipv6(v6) if want(LayerKind::Ipv6) => {
                     let header_slice = v6.header().slice();
                     let payload_len = v6.payload().payload.len();
                     let total = 40 + payload_len;
-                    let bytes =
-                        unsafe { std::slice::from_raw_parts(header_slice.as_ptr(), total) };
+                    let bytes = unsafe { std::slice::from_raw_parts(header_slice.as_ptr(), total) };
                     out.store_ipv6(bytes, 40);
                 }
                 _ => {}
@@ -327,7 +325,16 @@ mod tests {
     #[test]
     fn ipv4_tcp_populates_all_slots() {
         let f = ipv4_tcp(
-            [1; 6], [2; 6], [10, 0, 0, 1], [10, 0, 0, 2], 12345, 80, 1000, 0, 0x02, b"",
+            [1; 6],
+            [2; 6],
+            [10, 0, 0, 1],
+            [10, 0, 0, 2],
+            12345,
+            80,
+            1000,
+            0,
+            0x02,
+            b"",
         );
         let parser = LayerParser::new();
         let mut stack = LayerStack::new();
@@ -343,7 +350,18 @@ mod tests {
 
     #[test]
     fn reset_clears_state() {
-        let f1 = ipv4_tcp([0; 6], [0; 6], [1, 2, 3, 4], [5, 6, 7, 8], 10, 20, 0, 0, 0, b"");
+        let f1 = ipv4_tcp(
+            [0; 6],
+            [0; 6],
+            [1, 2, 3, 4],
+            [5, 6, 7, 8],
+            10,
+            20,
+            0,
+            0,
+            0,
+            b"",
+        );
         let f2 = ipv4_udp([10, 0, 0, 1], [10, 0, 0, 2], 5353, 53, b"x");
         let parser = LayerParser::new();
         let mut stack = LayerStack::new();
@@ -357,7 +375,18 @@ mod tests {
 
     #[test]
     fn only_mask_skips_unrequested_slots() {
-        let f = ipv4_tcp([0; 6], [0; 6], [1, 2, 3, 4], [5, 6, 7, 8], 10, 20, 0, 0, 0, b"");
+        let f = ipv4_tcp(
+            [0; 6],
+            [0; 6],
+            [1, 2, 3, 4],
+            [5, 6, 7, 8],
+            10,
+            20,
+            0,
+            0,
+            0,
+            b"",
+        );
         let parser = LayerParser::new().only(&[LayerKind::Ipv4, LayerKind::Tcp]);
         let mut stack = LayerStack::new();
         parser.parse_ethernet(&f, &mut stack).unwrap();

@@ -419,14 +419,11 @@ impl<'a> Layers<'a> {
         // GRE / IP-in-IP detection — look at the *last* IP layer's
         // protocol byte. Re-parse via etherparse for the inner.
         if tunnel_inner.is_none()
-            && let Some(last_ip) = stack
-                .iter()
-                .rev()
-                .find_map(|l| match l {
-                    Layer::Ipv4(ip) => Some((ip.protocol(), ip.payload())),
-                    Layer::Ipv6(ip) => Some((ip.next_header(), ip.payload())),
-                    _ => None,
-                })
+            && let Some(last_ip) = stack.iter().rev().find_map(|l| match l {
+                Layer::Ipv4(ip) => Some((ip.protocol(), ip.payload())),
+                Layer::Ipv6(ip) => Some((ip.next_header(), ip.payload())),
+                _ => None,
+            })
         {
             let (proto, ip_payload) = last_ip;
             match proto {
@@ -509,17 +506,15 @@ impl<'a> Layers<'a> {
     /// `true` if this frame includes a recognised tunnel
     /// (VXLAN, GTP-U, GRE, IP-in-IP).
     pub fn has_tunnel(&self) -> bool {
-        self.stack.iter().any(|l| {
-            matches!(
-                l,
-                Layer::Gre(_) | Layer::Vxlan(_) | Layer::GtpU(_)
-            )
-        }) || self
-            .stack
+        self.stack
             .iter()
-            .filter(|l| matches!(l, Layer::Ipv4(_) | Layer::Ipv6(_)))
-            .count()
-            >= 2
+            .any(|l| matches!(l, Layer::Gre(_) | Layer::Vxlan(_) | Layer::GtpU(_)))
+            || self
+                .stack
+                .iter()
+                .filter(|l| matches!(l, Layer::Ipv4(_) | Layer::Ipv6(_)))
+                .count()
+                >= 2
     }
 
     /// Iterate the layer stack, outer to inner.
@@ -754,7 +749,18 @@ mod tests {
 
     #[test]
     fn iter_outer_to_inner() {
-        let f = ipv4_tcp([0; 6], [0; 6], [1, 2, 3, 4], [5, 6, 7, 8], 10, 20, 0, 0, 0, b"x");
+        let f = ipv4_tcp(
+            [0; 6],
+            [0; 6],
+            [1, 2, 3, 4],
+            [5, 6, 7, 8],
+            10,
+            20,
+            0,
+            0,
+            0,
+            b"x",
+        );
         let layers = Layers::parse_ethernet(&f).unwrap();
         let kinds: Vec<LayerKind> = layers.iter().map(|l| l.kind()).collect();
         assert_eq!(
@@ -770,7 +776,18 @@ mod tests {
 
     #[test]
     fn find_returns_first_match() {
-        let f = ipv4_tcp([0; 6], [0; 6], [1, 2, 3, 4], [5, 6, 7, 8], 10, 20, 0, 0, 0, b"");
+        let f = ipv4_tcp(
+            [0; 6],
+            [0; 6],
+            [1, 2, 3, 4],
+            [5, 6, 7, 8],
+            10,
+            20,
+            0,
+            0,
+            0,
+            b"",
+        );
         let layers = Layers::parse_ethernet(&f).unwrap();
         let ip = layers.find(LayerKind::Ipv4).unwrap();
         assert!(matches!(ip, Layer::Ipv4(_)));
@@ -778,7 +795,18 @@ mod tests {
 
     #[test]
     fn find_all_iterates_matching() {
-        let f = ipv4_tcp([0; 6], [0; 6], [1, 2, 3, 4], [5, 6, 7, 8], 10, 20, 0, 0, 0, b"");
+        let f = ipv4_tcp(
+            [0; 6],
+            [0; 6],
+            [1, 2, 3, 4],
+            [5, 6, 7, 8],
+            10,
+            20,
+            0,
+            0,
+            0,
+            b"",
+        );
         let layers = Layers::parse_ethernet(&f).unwrap();
         let count = layers.find_all(LayerKind::Ipv4).count();
         assert_eq!(count, 1);
@@ -786,7 +814,18 @@ mod tests {
 
     #[test]
     fn l_group_helpers() {
-        let f = ipv4_tcp([0; 6], [0; 6], [1, 2, 3, 4], [5, 6, 7, 8], 10, 20, 0, 0, 0, b"");
+        let f = ipv4_tcp(
+            [0; 6],
+            [0; 6],
+            [1, 2, 3, 4],
+            [5, 6, 7, 8],
+            10,
+            20,
+            0,
+            0,
+            0,
+            b"",
+        );
         let layers = Layers::parse_ethernet(&f).unwrap();
         assert!(matches!(layers.l2().unwrap(), Layer::Ethernet(_)));
         assert!(matches!(layers.l3().unwrap(), Layer::Ipv4(_)));
@@ -803,7 +842,18 @@ mod tests {
     #[test]
     fn payload_accessor_on_tcp_payload() {
         let payload = b"hello-flowscope";
-        let f = ipv4_tcp([0; 6], [0; 6], [1, 2, 3, 4], [5, 6, 7, 8], 10, 20, 0, 0, 0, payload);
+        let f = ipv4_tcp(
+            [0; 6],
+            [0; 6],
+            [1, 2, 3, 4],
+            [5, 6, 7, 8],
+            10,
+            20,
+            0,
+            0,
+            0,
+            payload,
+        );
         let layers = Layers::parse_ethernet(&f).unwrap();
         assert_eq!(layers.payload(), payload);
         assert_eq!(layers.tcp().unwrap().payload(), payload);

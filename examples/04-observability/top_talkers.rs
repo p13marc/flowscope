@@ -59,23 +59,27 @@ fn main() -> flowscope::Result<()> {
         let _ = ts;
     }
 
-    print_topn(&rollup, "Top 10 talkers by bytes", |r| r.total_bytes(), |r| {
-        format!(
-            "{:>12} bytes ({:>5} flows, init→{} resp→{})",
-            r.total_bytes(),
-            r.flows,
-            r.bytes_init,
-            r.bytes_resp,
-        )
-    });
+    print_topn(
+        &rollup,
+        "Top 10 talkers by bytes",
+        |r| r.total_bytes(),
+        |r| {
+            format!(
+                "{:>12} bytes ({:>5} flows, init→{} resp→{})",
+                r.total_bytes(),
+                r.flows,
+                r.bytes_init,
+                r.bytes_resp,
+            )
+        },
+    );
     println!();
-    print_topn(&rollup, "Top 10 talkers by packets", |r| r.total_packets(), |r| {
-        format!(
-            "{:>8} pkts ({:>5} flows)",
-            r.total_packets(),
-            r.flows,
-        )
-    });
+    print_topn(
+        &rollup,
+        "Top 10 talkers by packets",
+        |r| r.total_packets(),
+        |r| format!("{:>8} pkts ({:>5} flows)", r.total_packets(), r.flows,),
+    );
     Ok(())
 }
 
@@ -91,12 +95,8 @@ fn account(rollup: &mut HashMap<IpAddr, Rollup>, ev: &FlowEvent<flowscope::extra
     entry.flows += 1;
 }
 
-fn print_topn<F, S>(
-    rollup: &HashMap<IpAddr, Rollup>,
-    title: &str,
-    sort_key: F,
-    fmt: S,
-) where
+fn print_topn<F, S>(rollup: &HashMap<IpAddr, Rollup>, title: &str, sort_key: F, fmt: S)
+where
     F: Fn(&Rollup) -> u64,
     S: Fn(&Rollup) -> String,
 {

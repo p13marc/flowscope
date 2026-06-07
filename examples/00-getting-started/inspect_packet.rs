@@ -12,9 +12,9 @@
 //!
 //! Falls back to `tests/data/mixed_short.pcap` if no path is given.
 
+use flowscope::PacketView;
 use flowscope::layers::{Layer, LayerKind};
 use flowscope::pcap::PcapFlowSource;
-use flowscope::PacketView;
 
 fn main() -> flowscope::Result<()> {
     let path = std::env::args()
@@ -37,10 +37,15 @@ fn main() -> flowscope::Result<()> {
 
         let depth = layers.depth();
         let tunnel = if layers.has_tunnel() { " [tunnel]" } else { "" };
-        let trunc = if layers.truncated() { " [truncated]" } else { "" };
+        let trunc = if layers.truncated() {
+            " [truncated]"
+        } else {
+            ""
+        };
         println!(
             "[{packet_no}] ts={}.{:09} {} bytes, {} layers{tunnel}{trunc}",
-            owned.timestamp.sec, owned.timestamp.nsec,
+            owned.timestamp.sec,
+            owned.timestamp.nsec,
             owned.frame.len(),
             depth,
         );
@@ -135,7 +140,11 @@ fn describe_layer(layer: &Layer<'_>) {
             print_pair("icmpv6", "code", &icmp.code().to_string());
         }
         Layer::Gre(g) => {
-            print_pair("gre", "protocol_type", &format!("0x{:04x}", g.protocol_type()));
+            print_pair(
+                "gre",
+                "protocol_type",
+                &format!("0x{:04x}", g.protocol_type()),
+            );
         }
         Layer::Vxlan(v) => {
             print_pair("vxlan", "vni", &v.vni().to_string());
@@ -175,13 +184,29 @@ fn arp_oper(o: u16) -> String {
 
 fn fmt_tcp_flags(f: &flowscope::layers::TcpFlagsView) -> String {
     let mut s = String::new();
-    if f.syn { s.push('S'); }
-    if f.ack { s.push('A'); }
-    if f.fin { s.push('F'); }
-    if f.rst { s.push('R'); }
-    if f.psh { s.push('P'); }
-    if f.urg { s.push('U'); }
-    if f.ece { s.push('E'); }
-    if f.cwr { s.push('C'); }
+    if f.syn {
+        s.push('S');
+    }
+    if f.ack {
+        s.push('A');
+    }
+    if f.fin {
+        s.push('F');
+    }
+    if f.rst {
+        s.push('R');
+    }
+    if f.psh {
+        s.push('P');
+    }
+    if f.urg {
+        s.push('U');
+    }
+    if f.ece {
+        s.push('E');
+    }
+    if f.cwr {
+        s.push('C');
+    }
     if s.is_empty() { "-".into() } else { s }
 }

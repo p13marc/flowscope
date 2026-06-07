@@ -1,9 +1,42 @@
 # Changelog
 
-## Unreleased — 0.10.0 cycle (in progress)
+## 0.10.0
 
-### Added
+Combined 0.9 + 0.10 cycle release. The 0.9 work shipped (high-
+level `Pipeline`, public `flowscope::layers`, unified `Error`,
+`flowscope::correlate`, multi-parser driver, OOO TCP reassembly,
+JA4 + `TlsHandshakeParser`, auto-sweep, MSRV 1.88, callback-
+factory removal) PLUS the full 0.10 DX cycle (emit / aggregate /
+detect / well_known / correlate ext / exchange aggregators /
+parser ergonomics / DX polish / signatures / heuristic routing)
+PLUS the centerpiece plan 116 (unified `Driver<E, M>` +
+`Event<K, M>` + `Pipeline` over the new `driver_unified`
+namespace, with all 6 builder knobs shipped: `config` /
+`monotonic_timestamps` / `emit_anomalies` / `emit_packet_details`
+/ `dedup` / `idle_timeout_fn`).
 
+The 0.10.0 release ships the legacy `FlowDriver` /
+`FlowSessionDriver` / `FlowDatagramDriver` /
+`FlowMultiSessionDriver` / `flowscope::Pipeline` (with
+`Event<K, SM, DM>`) / `FlowEvent` / `SessionEvent` types
+alongside the unified equivalents. Consumers can migrate at
+their own pace; the legacy deletion sweep (plan 117) is queued
+for the next major release with at least a 4-week migration
+window.
+
+Test count: ~430 passing, zero clippy warnings under
+`--all-features --all-targets -D warnings`, zero rustdoc
+warnings.
+
+### Added — plan 116 unified driver
+
+- **Plan 116 — all builder knobs shipped.** `NoopReassembler` +
+  `NoopReassemblerFactory` in `flowscope::reassembler`. The
+  unified `Driver` now runs a central `FlowDriver` over the noop
+  factory, giving it `emit_anomalies` / `dedup` /
+  `idle_timeout_fn` / `monotonic_timestamps` /
+  `emit_packet_details` builder methods, all proxied through
+  `PipelineBuilder`.
 - **Plan 116 — `emit_packet_details` + `Event::FlowPacket`
   enrichment (plan 108 absorbed).** `DriverBuilder` and
   `PipelineBuilder` gain `emit_packet_details(bool)`. When set,
@@ -283,7 +316,7 @@
     `&self` rather than `&mut self`, or when the access is
     incidental (logging / metrics).
 
-## Unreleased — 0.9.0 cycle (in progress)
+### Added — plan 94 / 96 / 97 / 74 / 75 / 81 / 92 / 99 (0.9 cycle absorbed)
 
 The biggest release since 0.1: a high-level `Pipeline` entry
 point, a public per-packet layered view (`flowscope::layers`),
@@ -293,7 +326,7 @@ handshake aggregator, packet-clock auto-sweep for live/offline
 parity, MSRV 1.85 → 1.88, and removal of the legacy
 callback-factory L7 APIs.
 
-### 0.9 audit (measured against 0.8.0, 2026-06-06)
+#### 0.9 audit (measured against 0.8.0, 2026-06-06)
 
 Per the umbrella that drove the cycle:
 
@@ -322,7 +355,7 @@ Per the umbrella that drove the cycle:
   trait. Collapsed into one `flowscope::Error` carrying
   `Module` + `ErrorCode` + source chain.
 
-### Added
+#### 0.9 cycle features
 
 - **`flowscope::correlate` module** (plan 81). Three composable
   primitives for cross-flow correlation patterns:
@@ -455,7 +488,7 @@ Per the umbrella that drove the cycle:
   parsers, and the rest of the common surface so a
   hello-world program needs one `use`.
 
-### Breaking
+### Breaking (0.9 cycle)
 
 - **Callback-factory L7 APIs removed** (plan 94 acceptance).
   The legacy `HttpFactory` / `HttpReassembler` / `HttpHandler`

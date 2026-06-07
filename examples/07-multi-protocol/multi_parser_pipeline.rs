@@ -11,9 +11,7 @@
 
 use flowscope::extract::FiveTuple;
 use flowscope::pcap::PcapFlowSource;
-use flowscope::{
-    FlowMultiSessionDriver, FlowSide, SessionEvent, SessionParser, Timestamp,
-};
+use flowscope::{FlowMultiSessionDriver, FlowSide, SessionEvent, SessionParser, Timestamp};
 
 /// Synthetic "parser A" — first byte → message.
 #[derive(Default, Clone)]

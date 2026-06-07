@@ -38,16 +38,17 @@ fn main() -> flowscope::Result<()> {
         .nth(1)
         .unwrap_or_else(|| "tests/data/dns_queries.pcap".to_string());
 
-    let mut driver =
-        FlowDatagramDriver::new(FiveTuple::bidirectional(), DnsUdpParser::default());
-    let mut counter: TimeBucketedCounter<IpAddr> =
-        TimeBucketedCounter::new(WINDOW, BUCKET, 10_000);
+    let mut driver = FlowDatagramDriver::new(FiveTuple::bidirectional(), DnsUdpParser::default());
+    let mut counter: TimeBucketedCounter<IpAddr> = TimeBucketedCounter::new(WINDOW, BUCKET, 10_000);
     let mut reported: HashMap<IpAddr, usize> = HashMap::new();
 
     for owned in PcapFlowSource::open(&path)?.views() {
         let owned = owned?;
         for ev in driver.track(&owned) {
-            let SessionEvent::Application { key, message, ts, .. } = ev else {
+            let SessionEvent::Application {
+                key, message, ts, ..
+            } = ev
+            else {
                 continue;
             };
             let names = match message {
@@ -55,11 +56,7 @@ fn main() -> flowscope::Result<()> {
                 _ => Vec::<String>::new(),
             };
             for name in names {
-                let max_label = name
-                    .split('.')
-                    .map(|l| l.len())
-                    .max()
-                    .unwrap_or(0);
+                let max_label = name.split('.').map(|l| l.len()).max().unwrap_or(0);
                 let entropy = shannon_entropy(name.as_bytes());
                 if entropy < ENTROPY_THRESHOLD || max_label < MIN_LABEL_LEN {
                     continue;

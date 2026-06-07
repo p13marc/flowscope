@@ -29,7 +29,9 @@ fn match_on_module_and_code() {
 fn io_error_carries_source() {
     let r = flowscope::pcap::PcapFlowSource::open("/no/such/path.pcap");
     let err = r.err().unwrap();
-    let src = err.source().expect("io error should chain to std::io::Error");
+    let src = err
+        .source()
+        .expect("io error should chain to std::io::Error");
     let s = src.to_string();
     assert!(!s.is_empty(), "source must display non-empty");
     let io = src

@@ -67,7 +67,10 @@ fn without_auto_sweep_offline_replay_never_idle_ends() {
         .iter()
         .filter(|e| matches!(e, FlowEvent::Ended { .. }))
         .count();
-    assert_eq!(ended_count, 0, "without auto_sweep no idle-end fires inline");
+    assert_eq!(
+        ended_count, 0,
+        "without auto_sweep no idle-end fires inline"
+    );
 }
 
 #[test]
@@ -78,8 +81,8 @@ fn auto_sweep_produces_inline_ended_event() {
     // first flow.
     let mut cfg = FlowTrackerConfig::default();
     cfg.idle_timeout_tcp = Duration::from_secs(60);
-    let mut t: FlowTracker<FiveTuple> =
-        FlowTracker::with_config(FiveTuple::bidirectional(), cfg).with_auto_sweep(Duration::from_secs(1));
+    let mut t: FlowTracker<FiveTuple> = FlowTracker::with_config(FiveTuple::bidirectional(), cfg)
+        .with_auto_sweep(Duration::from_secs(1));
 
     let f = syn(1000);
     let _ = t.track(view(&f, 0));
@@ -112,8 +115,8 @@ fn manual_sweep_resets_auto_sweep_clock() {
     // the manual sweep should not trigger another implicit sweep.
     let mut cfg = FlowTrackerConfig::default();
     cfg.idle_timeout_tcp = Duration::from_secs(60);
-    let mut t: FlowTracker<FiveTuple> =
-        FlowTracker::with_config(FiveTuple::bidirectional(), cfg).with_auto_sweep(Duration::from_secs(10));
+    let mut t: FlowTracker<FiveTuple> = FlowTracker::with_config(FiveTuple::bidirectional(), cfg)
+        .with_auto_sweep(Duration::from_secs(10));
 
     let f = syn(1000);
     let _ = t.track(view(&f, 0));

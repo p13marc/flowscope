@@ -15,9 +15,9 @@ use flowscope::{FlowSessionDriver, SessionEvent};
 
 #[derive(Default, Clone, Copy)]
 struct Bucket {
-    info: u32,    // 1xx
-    success: u32, // 2xx
-    redirect: u32, // 3xx
+    info: u32,       // 1xx
+    success: u32,    // 2xx
+    redirect: u32,   // 3xx
     client_err: u32, // 4xx
     server_err: u32, // 5xx
 }

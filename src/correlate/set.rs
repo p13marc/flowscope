@@ -178,7 +178,10 @@ mod tests {
             s.insert(1, p, Timestamp::new(0, 0));
         }
         s.insert(2, 80, Timestamp::new(0, 0));
-        let big: Vec<u32> = s.entries_above(3, Timestamp::new(5, 0)).map(|(k, _)| k).collect();
+        let big: Vec<u32> = s
+            .entries_above(3, Timestamp::new(5, 0))
+            .map(|(k, _)| k)
+            .collect();
         assert_eq!(big, vec![1]);
     }
 

@@ -190,7 +190,9 @@ where
         self.driver
             .finish()
             .into_iter()
-            .filter_map(|e| super::erased::lift_event_pub(e, &self.lift, Timestamp::MAX, parser_kind))
+            .filter_map(|e| {
+                super::erased::lift_event_pub(e, &self.lift, Timestamp::MAX, parser_kind)
+            })
             .collect()
     }
 }
@@ -301,7 +303,9 @@ where
         self.driver
             .finish()
             .into_iter()
-            .filter_map(|e| super::erased::lift_event_pub(e, &self.lift, Timestamp::MAX, parser_kind))
+            .filter_map(|e| {
+                super::erased::lift_event_pub(e, &self.lift, Timestamp::MAX, parser_kind)
+            })
             .collect()
     }
 }
@@ -339,4 +343,3 @@ fn udp_payload(frame: &[u8]) -> Option<Vec<u8>> {
     }
     Some(frame[u.payload_offset..end].to_vec())
 }
-

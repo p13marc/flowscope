@@ -219,10 +219,7 @@ fn ja4_fires_when_enabled() {
         ..Default::default()
     });
     let captured = std::cell::RefCell::new(Vec::new());
-    for msg in parser.feed_initiator(
-        &client_hello_with_sni("example.com"),
-        Timestamp::default(),
-    ) {
+    for msg in parser.feed_initiator(&client_hello_with_sni("example.com"), Timestamp::default()) {
         if let TlsMessage::Ja4 { fingerprint } = msg {
             captured.borrow_mut().push(fingerprint);
         }

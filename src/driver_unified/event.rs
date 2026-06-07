@@ -110,10 +110,7 @@ pub enum Event<K, M> {
 
     /// Live tracker-global anomaly forwarded from the underlying
     /// tracker.
-    TrackerAnomaly {
-        kind: AnomalyKind,
-        ts: Timestamp,
-    },
+    TrackerAnomaly { kind: AnomalyKind, ts: Timestamp },
 }
 
 impl<K, M> Event<K, M> {

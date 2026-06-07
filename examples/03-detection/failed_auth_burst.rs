@@ -81,11 +81,7 @@ fn main() -> flowscope::Result<()> {
                         println!(
                             "[{}.{:09}] *** SUSPECTED CREDENTIAL STUFFING *** \
                              {} hit {} from {host} after {} prior 401/403s",
-                            ts.sec,
-                            ts.nsec,
-                            hit.key,
-                            resp.status,
-                            hit.burst_count,
+                            ts.sec, ts.nsec, hit.key, resp.status, hit.burst_count,
                         );
                     }
                 }

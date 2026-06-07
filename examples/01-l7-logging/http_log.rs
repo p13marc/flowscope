@@ -16,8 +16,7 @@ use flowscope::{FlowSessionDriver, SessionEvent};
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let path = env::args().nth(1).ok_or("usage: http_log <trace.pcap>")?;
 
-    let mut driver =
-        FlowSessionDriver::new(FiveTuple::bidirectional(), HttpParser::default());
+    let mut driver = FlowSessionDriver::new(FiveTuple::bidirectional(), HttpParser::default());
 
     let mut reqs = 0u64;
     let mut resps = 0u64;

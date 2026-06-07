@@ -34,9 +34,9 @@ use crate::session::{DatagramParser, SessionEvent, SessionParser};
 use crate::tracker::FlowTrackerConfig;
 
 #[cfg(feature = "session")]
-use crate::session_driver::FlowSessionDriver;
-#[cfg(feature = "session")]
 use crate::datagram_driver::FlowDatagramDriver;
+#[cfg(feature = "session")]
+use crate::session_driver::FlowSessionDriver;
 
 /// Type-state marker — no session parser registered yet.
 ///
@@ -369,10 +369,7 @@ where
     /// yielding the merged event stream until end-of-input, then
     /// drains the still-open flows via the underlying drivers'
     /// `finish()` methods.
-    pub fn run_pcap(
-        &mut self,
-        path: impl AsRef<Path>,
-    ) -> crate::Result<PipelineIter<'_, E, S, D>> {
+    pub fn run_pcap(&mut self, path: impl AsRef<Path>) -> crate::Result<PipelineIter<'_, E, S, D>> {
         let source = PcapFlowSource::open(path)?;
         Ok(PipelineIter {
             views: Box::new(source.views()),

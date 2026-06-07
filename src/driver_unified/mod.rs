@@ -190,7 +190,9 @@ where
     pub fn sweep(&mut self, now: Timestamp) -> Vec<Event<E::Key, M>> {
         let mut out: Vec<Event<E::Key, M>> = Vec::new();
         for flow_ev in self.central.sweep(now) {
-            out.extend(map_flow_event_with_details::<E::Key, M>(flow_ev, None, None));
+            out.extend(map_flow_event_with_details::<E::Key, M>(
+                flow_ev, None, None,
+            ));
         }
         for slot in &mut self.slots {
             out.extend(slot.sweep(now));
@@ -203,7 +205,9 @@ where
     pub fn finish(&mut self) -> Vec<Event<E::Key, M>> {
         let mut out: Vec<Event<E::Key, M>> = Vec::new();
         for flow_ev in self.central.finish() {
-            out.extend(map_flow_event_with_details::<E::Key, M>(flow_ev, None, None));
+            out.extend(map_flow_event_with_details::<E::Key, M>(
+                flow_ev, None, None,
+            ));
         }
         for slot in &mut self.slots {
             out.extend(slot.finish());
@@ -487,18 +491,17 @@ where
 
     /// Finalize the builder.
     pub fn build(self) -> Driver<E, M> {
-        let mut central = FlowDriver::with_config(
-            self.extractor.clone(),
-            NoopReassemblerFactory,
-            self.config,
-        )
-        .with_emit_anomalies(self.emit_anomalies)
-        .with_monotonic_timestamps(self.monotonic_timestamps);
+        let mut central =
+            FlowDriver::with_config(self.extractor.clone(), NoopReassemblerFactory, self.config)
+                .with_emit_anomalies(self.emit_anomalies)
+                .with_monotonic_timestamps(self.monotonic_timestamps);
         if let Some(d) = self.dedup {
             central = central.with_dedup(d);
         }
         if let Some(f) = self.idle_timeout_fn {
-            central.tracker_mut().set_idle_timeout_fn(move |k, l4| f(k, l4));
+            central
+                .tracker_mut()
+                .set_idle_timeout_fn(move |k, l4| f(k, l4));
         }
         Driver {
             central,
@@ -525,15 +528,8 @@ fn map_flow_event_with_details<K, M>(
 ) -> Option<Event<K, M>> {
     match ev {
         FlowEvent::Started { key, ts, l4, .. } => Some(Event::FlowStarted { key, ts, l4 }),
-        FlowEvent::Established { key, ts, l4 } => {
-            Some(Event::FlowEstablished { key, ts, l4 })
-        }
-        FlowEvent::Packet {
-            key,
-            side,
-            len,
-            ts,
-        } => Some(Event::FlowPacket {
+        FlowEvent::Established { key, ts, l4 } => Some(Event::FlowEstablished { key, ts, l4 }),
+        FlowEvent::Packet { key, side, len, ts } => Some(Event::FlowPacket {
             key,
             side,
             len,

@@ -23,10 +23,8 @@ fn main() -> flowscope::Result<()> {
         .nth(1)
         .unwrap_or_else(|| "tests/data/mixed_short.pcap".to_string());
 
-    let mut driver = FlowSessionDriver::new(
-        FiveTuple::bidirectional(),
-        TlsHandshakeParser::default(),
-    );
+    let mut driver =
+        FlowSessionDriver::new(FiveTuple::bidirectional(), TlsHandshakeParser::default());
 
     let mut handshakes = Vec::new();
     let mut sni_counts: HashMap<String, u32> = HashMap::new();
@@ -38,13 +36,27 @@ fn main() -> flowscope::Result<()> {
         let owned = owned?;
         for ev in driver.track(&owned) {
             if let SessionEvent::Application { message, .. } = ev {
-                account(&mut handshakes, &mut sni_counts, &mut ja3_counts, &mut ja4_counts, &mut outcomes, message);
+                account(
+                    &mut handshakes,
+                    &mut sni_counts,
+                    &mut ja3_counts,
+                    &mut ja4_counts,
+                    &mut outcomes,
+                    message,
+                );
             }
         }
     }
     for ev in driver.finish() {
         if let SessionEvent::Application { message, .. } = ev {
-            account(&mut handshakes, &mut sni_counts, &mut ja3_counts, &mut ja4_counts, &mut outcomes, message);
+            account(
+                &mut handshakes,
+                &mut sni_counts,
+                &mut ja3_counts,
+                &mut ja4_counts,
+                &mut outcomes,
+                message,
+            );
         }
     }
 

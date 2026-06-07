@@ -137,10 +137,10 @@ pub mod driver_unified;
 #[cfg(feature = "session")]
 pub mod driver_builder;
 
-#[cfg(feature = "session")]
-pub use driver_builder::FlowSessionDriverBuilder;
 #[cfg(all(feature = "extractors", feature = "session"))]
 pub use driver_builder::FlowDatagramDriverBuilder;
+#[cfg(feature = "session")]
+pub use driver_builder::FlowSessionDriverBuilder;
 
 #[cfg(all(feature = "extractors", feature = "reassembler", feature = "session"))]
 pub use multi_session_driver::FlowMultiSessionDriver;
@@ -149,7 +149,9 @@ pub use multi_session_driver::FlowMultiSessionDriver;
 pub mod pipeline;
 
 #[cfg(all(feature = "extractors", feature = "reassembler", feature = "session"))]
-pub use pipeline::{Event, EventKind, NoDatagramParser, NoSessionParser, Pipeline, PipelineBuilder};
+pub use pipeline::{
+    Event, EventKind, NoDatagramParser, NoSessionParser, Pipeline, PipelineBuilder,
+};
 
 #[cfg(feature = "emit")]
 pub mod emit;

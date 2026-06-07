@@ -22,7 +22,7 @@ use flowscope::dns::{DnsMessage, DnsUdpParser};
 use flowscope::extract::FiveTuple;
 use flowscope::http::{HttpMessage, HttpParser};
 use flowscope::pcap::PcapFlowSource;
-use flowscope::tls::{TlsHandshakeParser, TlsHandshake};
+use flowscope::tls::{TlsHandshake, TlsHandshakeParser};
 use flowscope::{FlowDatagramDriver, FlowSessionDriver, FlowTracker, SessionEvent};
 
 #[derive(Default)]
@@ -40,8 +40,7 @@ fn main() -> flowscope::Result<()> {
         .unwrap_or_else(|| "tests/data/mixed_short.pcap".to_string());
 
     // Run three drivers in parallel: HTTP/TLS (TCP) + DNS (UDP).
-    let mut http_driver =
-        FlowSessionDriver::new(FiveTuple::bidirectional(), HttpParser::default());
+    let mut http_driver = FlowSessionDriver::new(FiveTuple::bidirectional(), HttpParser::default());
     let mut tls_driver =
         FlowSessionDriver::new(FiveTuple::bidirectional(), TlsHandshakeParser::default());
     let mut dns_driver =
@@ -68,9 +67,15 @@ fn main() -> flowscope::Result<()> {
             handle_dns(&mut iocs, ev);
         }
     }
-    for ev in http_driver.finish() { handle_http(&mut iocs, ev); }
-    for ev in tls_driver.finish() { handle_tls(&mut iocs, ev); }
-    for ev in dns_driver.finish() { handle_dns(&mut iocs, ev); }
+    for ev in http_driver.finish() {
+        handle_http(&mut iocs, ev);
+    }
+    for ev in tls_driver.finish() {
+        handle_tls(&mut iocs, ev);
+    }
+    for ev in dns_driver.finish() {
+        handle_dns(&mut iocs, ev);
+    }
 
     println!("=== Hostnames ({}) ===", iocs.hostnames.len());
     let mut h: Vec<_> = iocs.hostnames.into_iter().collect();
@@ -99,11 +104,10 @@ fn main() -> flowscope::Result<()> {
     Ok(())
 }
 
-fn handle_http(
-    iocs: &mut Iocs,
-    ev: SessionEvent<flowscope::extract::FiveTupleKey, HttpMessage>,
-) {
-    let SessionEvent::Application { message, .. } = ev else { return };
+fn handle_http(iocs: &mut Iocs, ev: SessionEvent<flowscope::extract::FiveTupleKey, HttpMessage>) {
+    let SessionEvent::Application { message, .. } = ev else {
+        return;
+    };
     if let HttpMessage::Request(req) = message {
         for (name, val) in &req.headers {
             if name.eq_ignore_ascii_case("host") {
@@ -119,11 +123,10 @@ fn handle_http(
     }
 }
 
-fn handle_tls(
-    iocs: &mut Iocs,
-    ev: SessionEvent<flowscope::extract::FiveTupleKey, TlsHandshake>,
-) {
-    let SessionEvent::Application { message, .. } = ev else { return };
+fn handle_tls(iocs: &mut Iocs, ev: SessionEvent<flowscope::extract::FiveTupleKey, TlsHandshake>) {
+    let SessionEvent::Application { message, .. } = ev else {
+        return;
+    };
     if let Some(sni) = message.sni {
         let entry = iocs.hostnames.entry(sni).or_insert((0, "tls"));
         entry.0 += 1;
@@ -136,11 +139,10 @@ fn handle_tls(
     }
 }
 
-fn handle_dns(
-    iocs: &mut Iocs,
-    ev: SessionEvent<flowscope::extract::FiveTupleKey, DnsMessage>,
-) {
-    let SessionEvent::Application { message, .. } = ev else { return };
+fn handle_dns(iocs: &mut Iocs, ev: SessionEvent<flowscope::extract::FiveTupleKey, DnsMessage>) {
+    let SessionEvent::Application { message, .. } = ev else {
+        return;
+    };
     let names: Vec<String> = match message {
         DnsMessage::Query(q) => q.questions.iter().map(|q| q.name.clone()).collect(),
         DnsMessage::Response(r) => r.questions.iter().map(|q| q.name.clone()).collect(),

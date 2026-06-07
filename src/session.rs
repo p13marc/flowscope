@@ -94,9 +94,7 @@ pub enum FrameDrainError {
 impl std::fmt::Display for FrameDrainError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            FrameDrainError::BufferFull => {
-                f.write_str("parser buffer exceeded max_buffer cap")
-            }
+            FrameDrainError::BufferFull => f.write_str("parser buffer exceeded max_buffer cap"),
             FrameDrainError::ZeroByteAdvance => {
                 f.write_str("parse_one returned Some((_, 0)) — zero-byte advance")
             }
@@ -308,7 +306,10 @@ where
             .field("parser_kind", &self.parser_kind)
             .field("init_buffered", &self.init.buffered_len())
             .field("resp_buffered", &self.resp.buffered_len())
-            .field("poisoned", &(self.init.is_poisoned() || self.resp.is_poisoned()))
+            .field(
+                "poisoned",
+                &(self.init.is_poisoned() || self.resp.is_poisoned()),
+            )
             .finish()
     }
 }
@@ -344,11 +345,7 @@ where
     }
 
     /// Construct with a custom per-side buffer cap.
-    pub fn with_max_buffer(
-        parser_kind: &'static str,
-        parse_one: F,
-        max_buffer: usize,
-    ) -> Self {
+    pub fn with_max_buffer(parser_kind: &'static str, parse_one: F, max_buffer: usize) -> Self {
         Self {
             parser_kind,
             parse_one,

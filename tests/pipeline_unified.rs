@@ -78,14 +78,20 @@ fn pipeline_run_iter_dispatches_to_session_and_datagram() {
 
     let tcp = owned_view(
         ipv4_tcp(
-            [1; 6], [2; 6], [10, 0, 0, 1], [10, 0, 0, 2], 33000, 80, 0, 0, 0x18, b"hi",
+            [1; 6],
+            [2; 6],
+            [10, 0, 0, 1],
+            [10, 0, 0, 2],
+            33000,
+            80,
+            0,
+            0,
+            0x18,
+            b"hi",
         ),
         0,
     );
-    let udp = owned_view(
-        ipv4_udp([10, 0, 0, 3], [10, 0, 0, 4], 5353, 53, b"yo"),
-        1,
-    );
+    let udp = owned_view(ipv4_udp([10, 0, 0, 3], [10, 0, 0, 4], 5353, 53, b"yo"), 1);
 
     let events: Vec<_> = p
         .run_iter(vec![tcp, udp])
@@ -94,11 +100,27 @@ fn pipeline_run_iter_dispatches_to_session_and_datagram() {
 
     let tcp_msgs = events
         .iter()
-        .filter(|e| matches!(e, Event::Message { message: Msg::Tcp(..), .. }))
+        .filter(|e| {
+            matches!(
+                e,
+                Event::Message {
+                    message: Msg::Tcp(..),
+                    ..
+                }
+            )
+        })
         .count();
     let udp_msgs = events
         .iter()
-        .filter(|e| matches!(e, Event::Message { message: Msg::Udp(_), .. }))
+        .filter(|e| {
+            matches!(
+                e,
+                Event::Message {
+                    message: Msg::Udp(_),
+                    ..
+                }
+            )
+        })
         .count();
     let flow_started = events
         .iter()
@@ -123,7 +145,16 @@ fn pipeline_session_heuristic_proxies_through_to_driver() {
 
     let tcp = owned_view(
         ipv4_tcp(
-            [1; 6], [2; 6], [10, 0, 0, 1], [10, 0, 0, 2], 33000, 9999, 0, 0, 0x18, b"x",
+            [1; 6],
+            [2; 6],
+            [10, 0, 0, 1],
+            [10, 0, 0, 2],
+            33000,
+            9999,
+            0,
+            0,
+            0x18,
+            b"x",
         ),
         0,
     );
@@ -133,7 +164,15 @@ fn pipeline_session_heuristic_proxies_through_to_driver() {
         .unwrap();
     let tcp_msgs = events
         .iter()
-        .filter(|e| matches!(e, Event::Message { message: Msg::Tcp(..), .. }))
+        .filter(|e| {
+            matches!(
+                e,
+                Event::Message {
+                    message: Msg::Tcp(..),
+                    ..
+                }
+            )
+        })
         .count();
     assert!(tcp_msgs > 0, "session_heuristic proxy didn't dispatch");
 }
@@ -160,7 +199,15 @@ fn pipeline_datagram_heuristic_proxies_through_to_driver() {
         .unwrap();
     let udp_msgs = events
         .iter()
-        .filter(|e| matches!(e, Event::Message { message: Msg::Udp(_), .. }))
+        .filter(|e| {
+            matches!(
+                e,
+                Event::Message {
+                    message: Msg::Udp(_),
+                    ..
+                }
+            )
+        })
         .count();
     assert!(udp_msgs > 0, "datagram_heuristic proxy didn't dispatch");
 }
@@ -173,7 +220,16 @@ fn pipeline_reset_clears_flow_state() {
 
     let tcp = owned_view(
         ipv4_tcp(
-            [1; 6], [2; 6], [10, 0, 0, 1], [10, 0, 0, 2], 33000, 80, 0, 0, 0x18, b"a",
+            [1; 6],
+            [2; 6],
+            [10, 0, 0, 1],
+            [10, 0, 0, 2],
+            33000,
+            80,
+            0,
+            0,
+            0x18,
+            b"a",
         ),
         0,
     );

@@ -42,7 +42,9 @@ impl std::fmt::Display for RespValue {
             RespValue::Array(Some(items)) => {
                 write!(f, "[")?;
                 for (i, v) in items.iter().enumerate() {
-                    if i > 0 { write!(f, " ")?; }
+                    if i > 0 {
+                        write!(f, " ")?;
+                    }
                     write!(f, "{v}")?;
                 }
                 write!(f, "]")
@@ -94,11 +96,17 @@ fn parse_one(buf: &[u8]) -> Option<(RespValue, usize)> {
     match buf[0] {
         b'+' => {
             let (line, end) = read_line(&buf[1..])?;
-            Some((RespValue::SimpleString(String::from_utf8_lossy(line).into_owned()), 1 + end))
+            Some((
+                RespValue::SimpleString(String::from_utf8_lossy(line).into_owned()),
+                1 + end,
+            ))
         }
         b'-' => {
             let (line, end) = read_line(&buf[1..])?;
-            Some((RespValue::Error(String::from_utf8_lossy(line).into_owned()), 1 + end))
+            Some((
+                RespValue::Error(String::from_utf8_lossy(line).into_owned()),
+                1 + end,
+            ))
         }
         b':' => {
             let (line, end) = read_line(&buf[1..])?;

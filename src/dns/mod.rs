@@ -87,4 +87,3 @@ pub const PARSER_KIND_UDP: &str = "dns-udp";
 ///
 /// Stability: locked from 0.8 forward.
 pub const PARSER_KIND_TCP: &str = "dns-tcp";
-

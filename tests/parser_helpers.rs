@@ -60,7 +60,10 @@ fn zero_byte_advance_poisons() {
     // Pathological closure that returns Some(_, 0) → poison.
     drain.drain_with(|_| Some(("zero", 0)));
     assert!(drain.is_poisoned());
-    assert_eq!(drain.poison_reason(), Some(&FrameDrainError::ZeroByteAdvance));
+    assert_eq!(
+        drain.poison_reason(),
+        Some(&FrameDrainError::ZeroByteAdvance)
+    );
     // One message was still recorded before the poison flag tripped.
     assert_eq!(drain.take_messages(), vec!["zero"]);
 }
@@ -87,8 +90,7 @@ fn accumulating_parser_buffers_partial_messages() {
 
 #[test]
 fn accumulating_parser_poisons_on_overflow() {
-    let mut parser =
-        AccumulatingSessionParser::with_max_buffer("line", parse_one_line, 4);
+    let mut parser = AccumulatingSessionParser::with_max_buffer("line", parse_one_line, 4);
     let _ = parser.feed_initiator(b"hello world\n", Timestamp::default());
     assert!(parser.is_poisoned());
     assert!(parser.poison_reason().is_some());
@@ -115,13 +117,12 @@ fn accumulating_parser_clones_with_fresh_state() {
 
 #[test]
 fn per_datagram_parser_emits_one_per_packet() {
-    let mut parser = PerDatagramParser::new("len", |b: &[u8]| {
-        if b.is_empty() {
-            None
-        } else {
-            Some(b.len())
-        }
-    });
+    let mut parser = PerDatagramParser::new(
+        "len",
+        |b: &[u8]| {
+            if b.is_empty() { None } else { Some(b.len()) }
+        },
+    );
     let msgs = parser.parse(b"hello", FlowSide::Initiator, Timestamp::default());
     assert_eq!(msgs, vec![5]);
     let msgs = parser.parse(b"", FlowSide::Initiator, Timestamp::default());

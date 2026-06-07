@@ -205,10 +205,7 @@ mod tests {
     #[test]
     fn known_labels() {
         assert_eq!(protocol_label(L4Proto::Tcp, 80, 33000), Some("http"));
-        assert_eq!(
-            protocol_label(L4Proto::Tcp, 33000, 443),
-            Some("tls/https")
-        );
+        assert_eq!(protocol_label(L4Proto::Tcp, 33000, 443), Some("tls/https"));
         assert_eq!(protocol_label(L4Proto::Udp, 33000, 53), Some("dns"));
         assert_eq!(protocol_label(L4Proto::Tcp, 33000, 6379), Some("redis"));
     }

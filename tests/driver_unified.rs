@@ -46,14 +46,22 @@ impl SessionParser for CountParser {
     }
 
     fn parser_kind(&self) -> &'static str {
-        if self.name.is_empty() { "count" } else { self.name }
+        if self.name.is_empty() {
+            "count"
+        } else {
+            self.name
+        }
     }
 }
 
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
 enum Msg {
-    Counted { name: &'static str, side: FlowSide, len: usize },
+    Counted {
+        name: &'static str,
+        side: FlowSide,
+        len: usize,
+    },
 }
 
 #[test]
@@ -76,26 +84,42 @@ fn single_session_parser_emits_flow_lifecycle_and_messages() {
 
     // SYN — first packet of a new flow.
     let syn = ipv4_tcp(
-        [1; 6], [2; 6], [10, 0, 0, 1], [10, 0, 0, 2], 1234, 80, 1000, 0, 0x02, b"",
+        [1; 6],
+        [2; 6],
+        [10, 0, 0, 1],
+        [10, 0, 0, 2],
+        1234,
+        80,
+        1000,
+        0,
+        0x02,
+        b"",
     );
     let events = driver.track(PacketView::new(&syn, Timestamp::new(0, 0)));
 
-    let started = events.iter().filter(|e| matches!(e, Event::FlowStarted { .. })).count();
+    let started = events
+        .iter()
+        .filter(|e| matches!(e, Event::FlowStarted { .. }))
+        .count();
     assert_eq!(started, 1, "expected one FlowStarted: {events:?}");
 }
 
 #[test]
 fn port_routed_parser_fires_only_on_matching_flows() {
     let mut driver = Driver::<_, Msg>::builder(FiveTuple::bidirectional())
-        .session_on_ports(CountParser::named("http"), [80], |(side, len)| Msg::Counted {
-            name: "http",
-            side,
-            len,
+        .session_on_ports(CountParser::named("http"), [80], |(side, len)| {
+            Msg::Counted {
+                name: "http",
+                side,
+                len,
+            }
         })
-        .session_on_ports(CountParser::named("ssh"), [22], |(side, len)| Msg::Counted {
-            name: "ssh",
-            side,
-            len,
+        .session_on_ports(CountParser::named("ssh"), [22], |(side, len)| {
+            Msg::Counted {
+                name: "ssh",
+                side,
+                len,
+            }
         })
         .build();
 
@@ -103,7 +127,16 @@ fn port_routed_parser_fires_only_on_matching_flows() {
     // see it (the SSH slot's port filter rejects the frame
     // before even hitting its inner driver).
     let frame = ipv4_tcp(
-        [1; 6], [2; 6], [10, 0, 0, 1], [10, 0, 0, 2], 33000, 80, 1000, 0, 0x18, b"GET /\r\n",
+        [1; 6],
+        [2; 6],
+        [10, 0, 0, 1],
+        [10, 0, 0, 2],
+        33000,
+        80,
+        1000,
+        0,
+        0x18,
+        b"GET /\r\n",
     );
     let events = driver.track(PacketView::new(&frame, Timestamp::new(0, 0)));
 
@@ -127,8 +160,14 @@ fn port_routed_parser_fires_only_on_matching_flows() {
             _ => None,
         })
         .collect();
-    assert!(!http_msgs.is_empty(), "HTTP slot didn't fire on port-80 flow");
-    assert!(ssh_msgs.is_empty(), "SSH slot wrongly fired on port-80 flow");
+    assert!(
+        !http_msgs.is_empty(),
+        "HTTP slot didn't fire on port-80 flow"
+    );
+    assert!(
+        ssh_msgs.is_empty(),
+        "SSH slot wrongly fired on port-80 flow"
+    );
 }
 
 #[test]
@@ -142,12 +181,29 @@ fn broadcast_parser_fires_regardless_of_port() {
         .build();
 
     let frame = ipv4_tcp(
-        [1; 6], [2; 6], [10, 0, 0, 1], [10, 0, 0, 2], 33000, 9999, 1000, 0, 0x18, b"hello",
+        [1; 6],
+        [2; 6],
+        [10, 0, 0, 1],
+        [10, 0, 0, 2],
+        33000,
+        9999,
+        1000,
+        0,
+        0x18,
+        b"hello",
     );
     let events = driver.track(PacketView::new(&frame, Timestamp::new(0, 0)));
     let any: usize = events
         .iter()
-        .filter(|e| matches!(e, Event::Message { message: Msg::Counted { name: "any", .. }, .. }))
+        .filter(|e| {
+            matches!(
+                e,
+                Event::Message {
+                    message: Msg::Counted { name: "any", .. },
+                    ..
+                }
+            )
+        })
         .count();
     assert!(any > 0, "broadcast slot didn't fire on arbitrary-port flow");
 }
@@ -185,12 +241,7 @@ struct UdpEcho;
 
 impl DatagramParser for UdpEcho {
     type Message = usize;
-    fn parse(
-        &mut self,
-        payload: &[u8],
-        _side: FlowSide,
-        _ts: Timestamp,
-    ) -> Vec<Self::Message> {
+    fn parse(&mut self, payload: &[u8], _side: FlowSide, _ts: Timestamp) -> Vec<Self::Message> {
         if payload.is_empty() {
             Vec::new()
         } else {
@@ -250,30 +301,59 @@ fn datagram_on_ports_skips_non_matching() {
             _ => None,
         })
         .collect();
-    assert!(msgs.is_empty(), "wrongly fired on non-matching port: {msgs:?}");
+    assert!(
+        msgs.is_empty(),
+        "wrongly fired on non-matching port: {msgs:?}"
+    );
 }
 
 #[test]
 fn session_and_datagram_slots_coexist() {
     let mut driver = Driver::<_, MixedMsg>::builder(FiveTuple::bidirectional())
-        .session_broadcast(CountParser::named("tcp"), |(s, n)| {
-            MixedMsg::Tcp { side: s, len: n }
+        .session_broadcast(CountParser::named("tcp"), |(s, n)| MixedMsg::Tcp {
+            side: s,
+            len: n,
         })
         .datagram_broadcast(UdpEcho, MixedMsg::Udp)
         .build();
     let tcp = ipv4_tcp(
-        [1; 6], [2; 6], [10, 0, 0, 1], [10, 0, 0, 2], 33000, 80, 0, 0, 0x18, b"x",
+        [1; 6],
+        [2; 6],
+        [10, 0, 0, 1],
+        [10, 0, 0, 2],
+        33000,
+        80,
+        0,
+        0,
+        0x18,
+        b"x",
     );
     let udp = ipv4_udp([10, 0, 0, 3], [10, 0, 0, 4], 5353, 53, b"yz");
     let mut events = driver.track(PacketView::new(&tcp, Timestamp::new(0, 0)));
     events.extend(driver.track(PacketView::new(&udp, Timestamp::new(1, 0))));
     let tcp_msgs = events
         .iter()
-        .filter(|e| matches!(e, Event::Message { message: MixedMsg::Tcp { .. }, .. }))
+        .filter(|e| {
+            matches!(
+                e,
+                Event::Message {
+                    message: MixedMsg::Tcp { .. },
+                    ..
+                }
+            )
+        })
         .count();
     let udp_msgs = events
         .iter()
-        .filter(|e| matches!(e, Event::Message { message: MixedMsg::Udp(_), .. }))
+        .filter(|e| {
+            matches!(
+                e,
+                Event::Message {
+                    message: MixedMsg::Udp(_),
+                    ..
+                }
+            )
+        })
         .count();
     assert!(tcp_msgs > 0, "no TCP messages emitted");
     assert!(udp_msgs > 0, "no UDP messages emitted");
@@ -302,48 +382,111 @@ fn never_match(_b: &[u8]) -> flowscope::detect::signatures::SignatureMatch {
 fn session_heuristic_dispatches_on_match() {
     let mut driver = Driver::<_, Msg>::builder(FiveTuple::bidirectional())
         .session_heuristic(CountParser::named("h"), always_match, |(side, len)| {
-            Msg::Counted { name: "h", side, len }
+            Msg::Counted {
+                name: "h",
+                side,
+                len,
+            }
         })
         .build();
     let frame = ipv4_tcp(
-        [1; 6], [2; 6], [10, 0, 0, 1], [10, 0, 0, 2], 33000, 9999, 0, 0, 0x18, b"hello",
+        [1; 6],
+        [2; 6],
+        [10, 0, 0, 1],
+        [10, 0, 0, 2],
+        33000,
+        9999,
+        0,
+        0,
+        0x18,
+        b"hello",
     );
     let events = driver.track(PacketView::new(&frame, Timestamp::new(0, 0)));
     let messages = events
         .iter()
-        .filter(|e| matches!(e, Event::Message { message: Msg::Counted { name: "h", .. }, .. }))
+        .filter(|e| {
+            matches!(
+                e,
+                Event::Message {
+                    message: Msg::Counted { name: "h", .. },
+                    ..
+                }
+            )
+        })
         .count();
-    assert!(messages > 0, "heuristic slot didn't fire on Match signature");
+    assert!(
+        messages > 0,
+        "heuristic slot didn't fire on Match signature"
+    );
 }
 
 #[test]
 fn session_heuristic_skips_on_never_match() {
     let mut driver = Driver::<_, Msg>::builder(FiveTuple::bidirectional())
-        .session_heuristic_with_budget(
-            CountParser::named("h"),
-            never_match,
-            2,
-            |(side, len)| Msg::Counted { name: "h", side, len },
-        )
+        .session_heuristic_with_budget(CountParser::named("h"), never_match, 2, |(side, len)| {
+            Msg::Counted {
+                name: "h",
+                side,
+                len,
+            }
+        })
         .build();
     let frame = ipv4_tcp(
-        [1; 6], [2; 6], [10, 0, 0, 1], [10, 0, 0, 2], 33000, 9999, 0, 0, 0x18, b"X",
+        [1; 6],
+        [2; 6],
+        [10, 0, 0, 1],
+        [10, 0, 0, 2],
+        33000,
+        9999,
+        0,
+        0,
+        0x18,
+        b"X",
     );
     // First packet — probing; second packet — still probing; third packet — gave up.
     let frame2 = ipv4_tcp(
-        [1; 6], [2; 6], [10, 0, 0, 1], [10, 0, 0, 2], 33000, 9999, 0, 0, 0x18, b"Y",
+        [1; 6],
+        [2; 6],
+        [10, 0, 0, 1],
+        [10, 0, 0, 2],
+        33000,
+        9999,
+        0,
+        0,
+        0x18,
+        b"Y",
     );
     let frame3 = ipv4_tcp(
-        [1; 6], [2; 6], [10, 0, 0, 1], [10, 0, 0, 2], 33000, 9999, 0, 0, 0x18, b"Z",
+        [1; 6],
+        [2; 6],
+        [10, 0, 0, 1],
+        [10, 0, 0, 2],
+        33000,
+        9999,
+        0,
+        0,
+        0x18,
+        b"Z",
     );
     let mut events = driver.track(PacketView::new(&frame, Timestamp::new(0, 0)));
     events.extend(driver.track(PacketView::new(&frame2, Timestamp::new(1, 0))));
     events.extend(driver.track(PacketView::new(&frame3, Timestamp::new(2, 0))));
     let messages = events
         .iter()
-        .filter(|e| matches!(e, Event::Message { message: Msg::Counted { name: "h", .. }, .. }))
+        .filter(|e| {
+            matches!(
+                e,
+                Event::Message {
+                    message: Msg::Counted { name: "h", .. },
+                    ..
+                }
+            )
+        })
         .count();
-    assert_eq!(messages, 0, "heuristic slot wrongly fired on NoMatch signature");
+    assert_eq!(
+        messages, 0,
+        "heuristic slot wrongly fired on NoMatch signature"
+    );
 }
 
 #[test]
@@ -377,7 +520,10 @@ fn datagram_heuristic_skips_on_never_match() {
             _ => None,
         })
         .collect();
-    assert!(msgs.is_empty(), "datagram heuristic wrongly fired: {msgs:?}");
+    assert!(
+        msgs.is_empty(),
+        "datagram heuristic wrongly fired: {msgs:?}"
+    );
 }
 
 #[test]
@@ -389,7 +535,16 @@ fn idle_timeout_fn_applies_to_central_tracker() {
         .idle_timeout_fn(|_, _| Some(Duration::from_secs(1)))
         .build();
     let frame = ipv4_tcp(
-        [1; 6], [2; 6], [10, 0, 0, 1], [10, 0, 0, 2], 33000, 80, 0, 0, 0x02, b"",
+        [1; 6],
+        [2; 6],
+        [10, 0, 0, 1],
+        [10, 0, 0, 2],
+        33000,
+        80,
+        0,
+        0,
+        0x02,
+        b"",
     );
     let _ = driver.track(PacketView::new(&frame, Timestamp::new(0, 0)));
     let evs = driver.sweep(Timestamp::new(5, 0));
@@ -404,17 +559,21 @@ fn idle_timeout_fn_applies_to_central_tracker() {
 fn emit_anomalies_off_by_default_yields_no_anomalies() {
     let mut driver = Driver::<_, Msg>::builder(FiveTuple::bidirectional()).build();
     let frame = ipv4_tcp(
-        [1; 6], [2; 6], [10, 0, 0, 1], [10, 0, 0, 2], 33000, 80, 0, 0, 0x02, b"",
+        [1; 6],
+        [2; 6],
+        [10, 0, 0, 1],
+        [10, 0, 0, 2],
+        33000,
+        80,
+        0,
+        0,
+        0x02,
+        b"",
     );
     let evs = driver.track(PacketView::new(&frame, Timestamp::new(0, 0)));
     let anomalies = evs
         .iter()
-        .filter(|e| {
-            matches!(
-                e,
-                Event::FlowAnomaly { .. } | Event::TrackerAnomaly { .. }
-            )
-        })
+        .filter(|e| matches!(e, Event::FlowAnomaly { .. } | Event::TrackerAnomaly { .. }))
         .count();
     assert_eq!(anomalies, 0);
 }
@@ -443,7 +602,16 @@ fn one_flow_started_per_flow_regardless_of_parser_count() {
         .build();
 
     let frame = ipv4_tcp(
-        [1; 6], [2; 6], [10, 0, 0, 1], [10, 0, 0, 2], 33000, 80, 1000, 0, 0x02, b"",
+        [1; 6],
+        [2; 6],
+        [10, 0, 0, 1],
+        [10, 0, 0, 2],
+        33000,
+        80,
+        1000,
+        0,
+        0x02,
+        b"",
     );
     let events = driver.track(PacketView::new(&frame, Timestamp::new(0, 0)));
     let started = events
@@ -477,7 +645,16 @@ fn parser_closed_fires_per_parser_on_flow_end() {
 
     // SYN to start the flow.
     let syn = ipv4_tcp(
-        [1; 6], [2; 6], [10, 0, 0, 1], [10, 0, 0, 2], 33000, 80, 1000, 0, 0x02, b"",
+        [1; 6],
+        [2; 6],
+        [10, 0, 0, 1],
+        [10, 0, 0, 2],
+        33000,
+        80,
+        1000,
+        0,
+        0x02,
+        b"",
     );
     let _ = driver.track(PacketView::new(&syn, Timestamp::new(0, 0)));
 
@@ -514,7 +691,16 @@ fn emit_packet_details_populates_tcp_and_frame() {
         .build();
 
     let frame = ipv4_tcp(
-        [1; 6], [2; 6], [10, 0, 0, 1], [10, 0, 0, 2], 33000, 80, 1000, 0, 0x18, b"data",
+        [1; 6],
+        [2; 6],
+        [10, 0, 0, 1],
+        [10, 0, 0, 2],
+        33000,
+        80,
+        1000,
+        0,
+        0x18,
+        b"data",
     );
     let events = driver.track(PacketView::new(&frame, Timestamp::new(0, 0)));
     let packet_events: Vec<_> = events
@@ -534,7 +720,16 @@ fn emit_packet_details_populates_tcp_and_frame() {
 fn emit_packet_details_off_leaves_tcp_and_frame_none() {
     let mut driver = Driver::<_, Msg>::builder(FiveTuple::bidirectional()).build();
     let frame = ipv4_tcp(
-        [1; 6], [2; 6], [10, 0, 0, 1], [10, 0, 0, 2], 33000, 80, 1000, 0, 0x18, b"data",
+        [1; 6],
+        [2; 6],
+        [10, 0, 0, 1],
+        [10, 0, 0, 2],
+        33000,
+        80,
+        1000,
+        0,
+        0x18,
+        b"data",
     );
     let events = driver.track(PacketView::new(&frame, Timestamp::new(0, 0)));
     let packet_events: Vec<_> = events
@@ -561,6 +756,9 @@ fn udp_flow_does_not_emit_established() {
         .build();
     let frame = ipv4_udp([10, 0, 0, 1], [10, 0, 0, 2], 5353, 53, b"x");
     let events = driver.track(PacketView::new(&frame, Timestamp::new(0, 0)));
-    let established = events.iter().filter(|e| matches!(e, Event::FlowEstablished { .. })).count();
+    let established = events
+        .iter()
+        .filter(|e| matches!(e, Event::FlowEstablished { .. }))
+        .count();
     assert_eq!(established, 0);
 }

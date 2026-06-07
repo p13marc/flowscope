@@ -196,11 +196,8 @@ impl SegmentBufferReassembler {
 
     fn evict_oldest_ooo(&mut self, target_bytes: usize) {
         // Drop the oldest (by arrival ts) until we're under cap.
-        let mut by_age: Vec<(Timestamp, u32)> = self
-            .pending
-            .iter()
-            .map(|(k, (_, ts))| (*ts, *k))
-            .collect();
+        let mut by_age: Vec<(Timestamp, u32)> =
+            self.pending.iter().map(|(k, (_, ts))| (*ts, *k)).collect();
         by_age.sort();
         for (_, key) in by_age {
             if self.pending_bytes <= target_bytes {
@@ -328,8 +325,7 @@ mod tests {
 
     #[test]
     fn ooo_expires_past_deadline() {
-        let mut r = SegmentBufferReassembler::new()
-            .with_ooo_deadline(Duration::from_millis(500));
+        let mut r = SegmentBufferReassembler::new().with_ooo_deadline(Duration::from_millis(500));
         r.segment(1000, b"hello", ts(0));
         // Future OOO segment arriving at t=0.
         r.segment(1010, b"future", ts(0));

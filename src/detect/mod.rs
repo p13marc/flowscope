@@ -112,7 +112,10 @@ pub struct NgramDist {
 impl NgramDist {
     /// The most-common n-gram + its count. `None` if no samples.
     pub fn mode(&self) -> Option<(&Vec<u8>, u64)> {
-        self.counts.iter().max_by_key(|(_, c)| **c).map(|(k, v)| (k, *v))
+        self.counts
+            .iter()
+            .max_by_key(|(_, c)| **c)
+            .map(|(k, v)| (k, *v))
     }
 
     /// Entropy of the n-gram distribution in bits per n-gram.
@@ -154,11 +157,7 @@ pub fn ngram_distribution(bytes: &[u8], n: usize) -> NgramDist {
         *counts.entry(window.to_vec()).or_insert(0) += 1;
         samples += 1;
     }
-    NgramDist {
-        n,
-        samples,
-        counts,
-    }
+    NgramDist { n, samples, counts }
 }
 
 #[cfg(test)]

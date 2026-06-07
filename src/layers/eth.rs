@@ -111,9 +111,7 @@ impl<'a> MplsSlice<'a> {
 
     /// 20-bit MPLS label.
     pub fn label(&self) -> u32 {
-        ((self.raw[0] as u32) << 12)
-            | ((self.raw[1] as u32) << 4)
-            | ((self.raw[2] as u32) >> 4)
+        ((self.raw[0] as u32) << 12) | ((self.raw[1] as u32) << 4) | ((self.raw[2] as u32) >> 4)
     }
 
     /// Traffic Class (3 bits).

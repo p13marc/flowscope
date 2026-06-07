@@ -87,24 +87,18 @@ impl DatagramParser for DnsExchangeParser {
                     // does. The inner Correlator records the query.
                 }
                 DnsMessage::Response(r) => {
-                    let question = r
-                        .questions
-                        .first()
-                        .cloned()
-                        .unwrap_or(DnsQuestion {
-                            name: String::new(),
-                            qtype: 0,
-                            qclass: 0,
-                        });
+                    let question = r.questions.first().cloned().unwrap_or(DnsQuestion {
+                        name: String::new(),
+                        qtype: 0,
+                        qclass: 0,
+                    });
                     let query_ts = r
                         .elapsed
                         .and_then(|e| {
                             r.timestamp
                                 .to_duration()
                                 .checked_sub(e)
-                                .map(|d| {
-                                    Timestamp::new(d.as_secs() as u32, d.subsec_nanos())
-                                })
+                                .map(|d| Timestamp::new(d.as_secs() as u32, d.subsec_nanos()))
                         })
                         .unwrap_or(r.timestamp);
                     let outcome = match r.rcode {
@@ -169,4 +163,3 @@ impl DatagramParser for DnsExchangeParser {
         "dns-exchange"
     }
 }
-

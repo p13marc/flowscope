@@ -33,9 +33,7 @@ fn main() -> flowscope::Result<()> {
         collect(&mut report, &ev);
     }
 
-    report.sort_by_key(|(_, retx_rate, _)| {
-        std::cmp::Reverse((retx_rate * 1_000.0) as u64)
-    });
+    report.sort_by_key(|(_, retx_rate, _)| std::cmp::Reverse((retx_rate * 1_000.0) as u64));
 
     println!(
         "{:<22} {:<22} {:>5} {:>5} {:>5} {:>5} {:>9}",

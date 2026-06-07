@@ -119,10 +119,7 @@ where
     }
 }
 
-fn lift_event<K, A, B, F: Fn(A) -> B>(
-    ev: SessionEvent<K, A>,
-    lift: &F,
-) -> SessionEvent<K, B> {
+fn lift_event<K, A, B, F: Fn(A) -> B>(ev: SessionEvent<K, A>, lift: &F) -> SessionEvent<K, B> {
     match ev {
         SessionEvent::Application {
             key,
@@ -150,9 +147,7 @@ fn lift_event<K, A, B, F: Fn(A) -> B>(
             l4,
         },
         SessionEvent::FlowAnomaly { key, kind, ts } => SessionEvent::FlowAnomaly { key, kind, ts },
-        SessionEvent::TrackerAnomaly { kind, ts } => {
-            SessionEvent::TrackerAnomaly { kind, ts }
-        }
+        SessionEvent::TrackerAnomaly { kind, ts } => SessionEvent::TrackerAnomaly { kind, ts },
         SessionEvent::FlowTick { key, stats, ts } => SessionEvent::FlowTick { key, stats, ts },
     }
 }
@@ -202,11 +197,8 @@ where
         I: IntoIterator<Item = u16>,
         F: Fn(P::Message) -> M + Send + 'static,
     {
-        let driver = FlowSessionDriver::with_config(
-            self.extractor.clone(),
-            parser,
-            self.config.clone(),
-        );
+        let driver =
+            FlowSessionDriver::with_config(self.extractor.clone(), parser, self.config.clone());
         let port_set: smallvec::SmallVec<[u16; 4]> = ports.into_iter().collect();
         self.parsers.push(ParserSlot {
             routing: Routing::Ports(port_set),
@@ -226,11 +218,8 @@ where
         P::Message: Send + 'static,
         F: Fn(P::Message) -> M + Send + 'static,
     {
-        let driver = FlowSessionDriver::with_config(
-            self.extractor.clone(),
-            parser,
-            self.config.clone(),
-        );
+        let driver =
+            FlowSessionDriver::with_config(self.extractor.clone(), parser, self.config.clone());
         self.parsers.push(ParserSlot {
             routing: Routing::Broadcast,
             driver: Box::new(ConcreteSlot {
@@ -346,7 +335,18 @@ mod tests {
             .with_parser_on_ports(CountingParser::default(), [443], L7::Tls);
 
         // Port 80 packet — http parser fires.
-        let f = ipv4_tcp([0; 6], [0; 6], [1, 2, 3, 4], [5, 6, 7, 8], 12345, 80, 0, 0, 0x18, b"x");
+        let f = ipv4_tcp(
+            [0; 6],
+            [0; 6],
+            [1, 2, 3, 4],
+            [5, 6, 7, 8],
+            12345,
+            80,
+            0,
+            0,
+            0x18,
+            b"x",
+        );
         let ts = Timestamp::new(0, 0);
         let pv = PacketView::new(&f, ts);
         let _ = d.track(pv);

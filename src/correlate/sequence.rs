@@ -52,11 +52,7 @@ pub trait KeylessSequencePattern: Send + 'static {
     type Event;
     type Anomaly;
 
-    fn observe(
-        &mut self,
-        event: &Self::Event,
-        now: Timestamp,
-    ) -> SmallVec<[Self::Anomaly; 1]>;
+    fn observe(&mut self, event: &Self::Event, now: Timestamp) -> SmallVec<[Self::Anomaly; 1]>;
 
     fn on_tick(&mut self, now: Timestamp) -> SmallVec<[Self::Anomaly; 4]>;
 }
@@ -103,11 +99,7 @@ mod tests {
         type Event = AuthEvent;
         type Anomaly = SuspiciousFlip;
 
-        fn observe(
-            &mut self,
-            event: &AuthEvent,
-            now: Timestamp,
-        ) -> SmallVec<[SuspiciousFlip; 1]> {
+        fn observe(&mut self, event: &AuthEvent, now: Timestamp) -> SmallVec<[SuspiciousFlip; 1]> {
             match event {
                 AuthEvent::Fail => {
                     self.last_failure = Some(now);

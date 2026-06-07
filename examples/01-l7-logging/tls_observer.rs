@@ -16,8 +16,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .nth(1)
         .ok_or("usage: tls_observer <trace.pcap>")?;
 
-    let mut driver =
-        FlowSessionDriver::new(FiveTuple::bidirectional(), TlsParser::default());
+    let mut driver = FlowSessionDriver::new(FiveTuple::bidirectional(), TlsParser::default());
 
     let mut client_hellos = 0u64;
     let mut server_hellos = 0u64;

@@ -45,7 +45,8 @@ sweep) is queued for the next major release.
 | [`112-dynamic-lazy-analysis.md`](./112-dynamic-lazy-analysis.md) | Analysis motivating plan 113. | doc — retires with cycle release |
 | 113 (retired) | `flowscope::detect::signatures` + `Routing::Heuristic` on the unified `Driver` (2 sub-PRs). | ✅ shipped (commits `a13a0a6` / `9685b59` + `ec9fa1b` PipelineBuilder proxies) |
 | [`115-strategic-review.md`](./115-strategic-review.md) | Strategic review motivating plan 116. | doc — retires with cycle release |
-| **[`116-driver-event-unification.md`](./116-driver-event-unification.md)** | **`Driver<E, M>` + `Event<K, M>` — collapse the 6-driver / 4-event surface into one of each.** | 🟡 **PR 1-4 partial shipped** (commits `0b20c05` / `c74a974` / `9685b59` / `97e0852` / `743d191` / `ec9fa1b`); PR 5 (legacy-type deletion sweep) queued for next major |
+| [`116-driver-event-unification.md`](./116-driver-event-unification.md) | `Driver<E, M>` + `Event<K, M>` — collapse the 6-driver / 4-event surface into one of each. | ✅ **PR 1-4 fully shipped including all 6 builder knobs** (commits `0b20c05` / `c74a974` / `9685b59` / `97e0852` / `743d191` / `ec9fa1b` / `5fd7a87` / `2b96103` / `720e919` / `d2ce55b`); PR 5 carved into plan 117 |
+| **[`117-legacy-driver-deletion.md`](./117-legacy-driver-deletion.md)** | **Post-0.10: delete legacy driver / event types; rename `driver_unified::Driver` → `flowscope::Driver` at crate root; migrate every test + example.** | 📋 queued for next major |
 
 Cycle theme: "address the next layer of DX after the 0.9
 big surface choices."
@@ -181,8 +182,10 @@ consolidation:
 
 Active: 21 (stale-deferred), 100 (postmortem doc), 112
 (dynamic-lazy analysis doc), 115 (strategic review doc), 116
-(driver+event unification — PR 5 deferred to next major).
-The next free number for a new plan is 117+.
+(driver+event unification — substantially complete; deletion
+sweep carved into plan 117), 117 (legacy driver/event deletion
+— queued for next major release). The next free number for a
+new plan is 118+.
 
 ---
 

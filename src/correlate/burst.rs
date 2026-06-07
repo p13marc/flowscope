@@ -45,12 +45,7 @@ where
     K: Hash + Eq + Clone,
     E: Eq + Clone,
 {
-    pub fn new(
-        burst_kind: E,
-        threshold: u32,
-        window: Duration,
-        trigger_kind: Option<E>,
-    ) -> Self {
+    pub fn new(burst_kind: E, threshold: u32, window: Duration, trigger_kind: Option<E>) -> Self {
         Self {
             burst_kind,
             threshold,
@@ -115,8 +110,7 @@ where
 
 fn drop_expired(q: &mut VecDeque<Timestamp>, now: Timestamp, window: Duration) {
     let cutoff_dur = now.to_duration().saturating_sub(window);
-    let cutoff =
-        Timestamp::new(cutoff_dur.as_secs() as u32, cutoff_dur.subsec_nanos());
+    let cutoff = Timestamp::new(cutoff_dur.as_secs() as u32, cutoff_dur.subsec_nanos());
     while let Some(&t) = q.front() {
         if t < cutoff {
             q.pop_front();
@@ -149,12 +143,8 @@ mod tests {
 
     #[test]
     fn burst_then_trigger_fires_only_on_trigger() {
-        let mut d: BurstDetector<u32, Auth> = BurstDetector::new(
-            Auth::Fail,
-            3,
-            Duration::from_secs(60),
-            Some(Auth::Success),
-        );
+        let mut d: BurstDetector<u32, Auth> =
+            BurstDetector::new(Auth::Fail, 3, Duration::from_secs(60), Some(Auth::Success));
         for t in [0, 1, 2] {
             assert!(d.observe(&1, &Auth::Fail, Timestamp::new(t, 0)).is_none());
         }
@@ -166,12 +156,8 @@ mod tests {
 
     #[test]
     fn burst_past_window_does_not_fire() {
-        let mut d: BurstDetector<u32, Auth> = BurstDetector::new(
-            Auth::Fail,
-            3,
-            Duration::from_secs(10),
-            Some(Auth::Success),
-        );
+        let mut d: BurstDetector<u32, Auth> =
+            BurstDetector::new(Auth::Fail, 3, Duration::from_secs(10), Some(Auth::Success));
         for t in [0, 1, 2] {
             d.observe(&1, &Auth::Fail, Timestamp::new(t, 0));
         }
@@ -184,17 +170,19 @@ mod tests {
 
     #[test]
     fn per_key_isolation() {
-        let mut d: BurstDetector<u32, Auth> = BurstDetector::new(
-            Auth::Fail,
-            3,
-            Duration::from_secs(60),
-            Some(Auth::Success),
-        );
+        let mut d: BurstDetector<u32, Auth> =
+            BurstDetector::new(Auth::Fail, 3, Duration::from_secs(60), Some(Auth::Success));
         d.observe(&1, &Auth::Fail, Timestamp::new(0, 0));
         d.observe(&1, &Auth::Fail, Timestamp::new(1, 0));
         d.observe(&2, &Auth::Fail, Timestamp::new(2, 0));
         // Source 1 has 2 fails (not enough). Source 2 has 1.
-        assert!(d.observe(&1, &Auth::Success, Timestamp::new(3, 0)).is_none());
-        assert!(d.observe(&2, &Auth::Success, Timestamp::new(3, 0)).is_none());
+        assert!(
+            d.observe(&1, &Auth::Success, Timestamp::new(3, 0))
+                .is_none()
+        );
+        assert!(
+            d.observe(&2, &Auth::Success, Timestamp::new(3, 0))
+                .is_none()
+        );
     }
 }

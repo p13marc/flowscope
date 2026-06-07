@@ -28,7 +28,18 @@ fn pv_layers_accessor() {
 
 #[test]
 fn dynamic_walk_outer_to_inner() {
-    let f = ipv4_tcp([0; 6], [0; 6], [1, 2, 3, 4], [5, 6, 7, 8], 10, 20, 0, 0, 0, b"x");
+    let f = ipv4_tcp(
+        [0; 6],
+        [0; 6],
+        [1, 2, 3, 4],
+        [5, 6, 7, 8],
+        10,
+        20,
+        0,
+        0,
+        0,
+        b"x",
+    );
     let layers = Layers::parse_ethernet(&f).unwrap();
     let kinds: Vec<_> = layers.iter().map(|l| l.kind()).collect();
     assert_eq!(
@@ -54,7 +65,18 @@ fn find_returns_first_by_kind() {
 
 #[test]
 fn l_group_helpers_pick_outermost() {
-    let f = ipv4_tcp([0; 6], [0; 6], [1, 2, 3, 4], [5, 6, 7, 8], 10, 20, 0, 0, 0, b"");
+    let f = ipv4_tcp(
+        [0; 6],
+        [0; 6],
+        [1, 2, 3, 4],
+        [5, 6, 7, 8],
+        10,
+        20,
+        0,
+        0,
+        0,
+        b"",
+    );
     let layers = Layers::parse_ethernet(&f).unwrap();
     assert!(matches!(layers.l2().unwrap(), Layer::Ethernet(_)));
     assert!(matches!(layers.l3().unwrap(), Layer::Ipv4(_)));
@@ -82,7 +104,18 @@ fn ipv6_flow_label_exposed() {
 #[test]
 fn tcp_options_default_frame_is_empty() {
     // ipv4_tcp does not insert TCP options.
-    let f = ipv4_tcp([0; 6], [0; 6], [1, 2, 3, 4], [5, 6, 7, 8], 10, 20, 0, 0, 0x02, b"");
+    let f = ipv4_tcp(
+        [0; 6],
+        [0; 6],
+        [1, 2, 3, 4],
+        [5, 6, 7, 8],
+        10,
+        20,
+        0,
+        0,
+        0x02,
+        b"",
+    );
     let layers = Layers::parse_ethernet(&f).unwrap();
     let tcp = layers.tcp().unwrap();
     let opts: Vec<_> = tcp.options().collect();
@@ -120,7 +153,18 @@ fn payload_is_what_l4_left() {
 
 #[test]
 fn depth_counts_real_layers_not_payload() {
-    let f = ipv4_tcp([0; 6], [0; 6], [1, 2, 3, 4], [5, 6, 7, 8], 10, 20, 0, 0, 0, b"x");
+    let f = ipv4_tcp(
+        [0; 6],
+        [0; 6],
+        [1, 2, 3, 4],
+        [5, 6, 7, 8],
+        10,
+        20,
+        0,
+        0,
+        0,
+        b"x",
+    );
     let layers = Layers::parse_ethernet(&f).unwrap();
     // Eth + IPv4 + TCP = 3 real layers (Payload doesn't count).
     assert_eq!(layers.depth(), 3);
@@ -150,4 +194,3 @@ fn parse_ip_raw_datagram() {
     assert!(layers.udp().is_some());
     assert_eq!(layers.udp().unwrap().payload(), payload);
 }
-

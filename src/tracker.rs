@@ -466,10 +466,7 @@ impl<E: FlowExtractor, S: Send + 'static> FlowTracker<E, S> {
         if let Some(interval) = self.config.auto_sweep_interval {
             let should_sweep = match self.last_sweep_ts {
                 None => true,
-                Some(last) => ts
-                    .to_duration()
-                    .saturating_sub(last.to_duration())
-                    >= interval,
+                Some(last) => ts.to_duration().saturating_sub(last.to_duration()) >= interval,
             };
             if should_sweep {
                 let swept = self.sweep(ts);

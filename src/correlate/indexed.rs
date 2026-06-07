@@ -59,11 +59,7 @@ where
     pub fn get(&mut self, key: &K, now: Timestamp) -> Option<&V> {
         let entry = self.inner.get(key)?;
         let inserted = entry.1;
-        if now
-            .to_duration()
-            .saturating_sub(inserted.to_duration())
-            > self.ttl
-        {
+        if now.to_duration().saturating_sub(inserted.to_duration()) > self.ttl {
             return None;
         }
         Some(&entry.0)
@@ -81,11 +77,7 @@ where
     pub fn peek(&self, key: &K, now: Timestamp) -> Option<&V> {
         let entry = self.inner.peek(key)?;
         let inserted = entry.1;
-        if now
-            .to_duration()
-            .saturating_sub(inserted.to_duration())
-            > self.ttl
-        {
+        if now.to_duration().saturating_sub(inserted.to_duration()) > self.ttl {
             return None;
         }
         Some(&entry.0)
@@ -137,7 +129,10 @@ mod tests {
     fn get_within_ttl() {
         let mut q: KeyIndexed<u16, String> = KeyIndexed::new(Duration::from_secs(5), 16);
         q.insert(42, "ok".into(), Timestamp::new(0, 0));
-        assert_eq!(q.get(&42, Timestamp::new(3, 0)).map(|s| s.as_str()), Some("ok"));
+        assert_eq!(
+            q.get(&42, Timestamp::new(3, 0)).map(|s| s.as_str()),
+            Some("ok")
+        );
     }
 
     #[test]

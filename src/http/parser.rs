@@ -202,7 +202,12 @@ fn snapshot_request(req: &httparse::Request<'_, '_>) -> crate::Result<BodyStart>
     let version = match version {
         0 => HttpVersion::Http1_0,
         1 => HttpVersion::Http1_1,
-        _ => return Err(Error::parse(Module::Http, format!("unknown version: {version}"))),
+        _ => {
+            return Err(Error::parse(
+                Module::Http,
+                format!("unknown version: {version}"),
+            ));
+        }
     };
     let headers: Vec<(String, Vec<u8>)> = req
         .headers
@@ -232,7 +237,12 @@ fn snapshot_response(resp: &httparse::Response<'_, '_>) -> crate::Result<BodySta
     let version = match version {
         0 => HttpVersion::Http1_0,
         1 => HttpVersion::Http1_1,
-        _ => return Err(Error::parse(Module::Http, format!("unknown version: {version}"))),
+        _ => {
+            return Err(Error::parse(
+                Module::Http,
+                format!("unknown version: {version}"),
+            ));
+        }
     };
     let headers: Vec<(String, Vec<u8>)> = resp
         .headers

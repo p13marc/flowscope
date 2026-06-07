@@ -70,7 +70,7 @@ Plus always-on modules that don't need a feature flag:
 
 ```toml
 [dependencies]
-flowscope = { version = "0.9", features = ["full"] }
+flowscope = { version = "0.10", features = ["full"] }
 ```
 
 MSRV is Rust 1.88.
@@ -159,8 +159,9 @@ while let Some(evt) = s.next().await { /* ... */ }
 
 ## Status
 
-0.10.0 (in progress) — DX polish + structured-output cycle on
-top of the 0.9 surface. Modules: `flowscope::emit` (CSV /
+0.10.0 — Combined 0.9 + 0.10 cycle release. DX polish +
+structured-output cycle on top of the 0.9 surface plus the
+centerpiece plan 116 unified `Driver<E, M>` + `Event<K, M>`. Modules: `flowscope::emit` (CSV /
 NDJSON / Zeek `conn.log` writers), `flowscope::aggregate`
 (Histogram / Percentile), `flowscope::detect` (entropy
 primitives + 10-protocol signature recognizers),
@@ -175,7 +176,11 @@ and a quick-win helper sweep across `Timestamp` /
 `FlowStats` / `EndReason` / `LayerKind` / `Layer` /
 `LayerStack` / `KeyIndexed`. Centerpiece — driver+event
 unification (`Driver<E, M>` + `Event<K, M>` replacing the
-6-driver / 4-event surface) — still in flight.
+6-driver / 4-event surface) — shipped at
+`flowscope::driver_unified::{Driver, DriverBuilder, Event,
+Pipeline, PipelineBuilder}` alongside the legacy types for
+migration. The legacy types remain shipped in 0.10; deletion is
+queued for the next major release (plan 117).
 
 0.9.0 (also in flight) — biggest release since 0.1:
 high-level `Pipeline` entry point, public

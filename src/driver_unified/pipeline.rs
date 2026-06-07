@@ -103,10 +103,7 @@ where
     /// yielding the merged event stream until end-of-input, then
     /// drains live flows via the driver's `finish()`.
     #[cfg(feature = "pcap")]
-    pub fn run_pcap(
-        &mut self,
-        path: impl AsRef<Path>,
-    ) -> crate::Result<PipelineIter<'_, E, M>> {
+    pub fn run_pcap(&mut self, path: impl AsRef<Path>) -> crate::Result<PipelineIter<'_, E, M>> {
         let source = PcapFlowSource::open(path)?;
         Ok(PipelineIter {
             views: Box::new(source.views()),
@@ -137,8 +134,7 @@ where
 /// `Driver` build; `reset()` replays the same chain to get a
 /// fresh driver. The boxed closures store the parser + lift +
 /// routing for replay.
-type RegisterStep<E, M> =
-    Box<dyn Fn(DriverBuilder<E, M>) -> DriverBuilder<E, M> + 'static>;
+type RegisterStep<E, M> = Box<dyn Fn(DriverBuilder<E, M>) -> DriverBuilder<E, M> + 'static>;
 
 type IdleTimeoutFn<K> =
     std::sync::Arc<dyn Fn(&K, Option<L4Proto>) -> Option<Duration> + Send + Sync + 'static>;

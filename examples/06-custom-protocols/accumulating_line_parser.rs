@@ -47,9 +47,7 @@ fn main() -> flowscope::Result<()> {
         let owned = owned?;
         for ev in driver.track(&owned) {
             if let SessionEvent::Application {
-                key,
-                message: line,
-                ..
+                key, message: line, ..
             } = ev
             {
                 lines += 1;

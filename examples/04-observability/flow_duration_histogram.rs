@@ -50,7 +50,10 @@ fn main() -> flowscope::Result<()> {
     let buckets: Vec<(f64, u64)> = hist.buckets().collect();
     let max = buckets.iter().map(|(_, c)| *c).max().unwrap_or(1);
     for (label, (_, count)) in LABELS.iter().zip(buckets.iter()) {
-        let bar_width = count.checked_mul(40).and_then(|n| n.checked_div(max)).unwrap_or(0);
+        let bar_width = count
+            .checked_mul(40)
+            .and_then(|n| n.checked_div(max))
+            .unwrap_or(0);
         let bar: String = "█".repeat(bar_width as usize);
         let pct = if total == 0 {
             0.0

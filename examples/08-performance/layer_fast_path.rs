@@ -67,6 +67,9 @@ fn main() -> flowscope::Result<()> {
         println!("Speedup: {speedup:.2}× (fewer frames or larger captures show more)");
     }
 
-    assert_eq!(ergo_tcp, fast_tcp, "both paths should yield identical results");
+    assert_eq!(
+        ergo_tcp, fast_tcp,
+        "both paths should yield identical results"
+    );
     Ok(())
 }

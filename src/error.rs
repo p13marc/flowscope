@@ -172,6 +172,7 @@ pub struct Error {
 }
 
 impl Error {
+    #[allow(dead_code)] // used only on feature-gated paths
     pub(crate) fn parse(module: Module, message: impl Into<String>) -> Self {
         Self {
             kind: ErrorKind {
@@ -197,6 +198,7 @@ impl Error {
         }
     }
 
+    #[allow(dead_code)] // used only on feature-gated paths
     pub(crate) fn buffer_overflow(module: Module, cap: usize) -> Self {
         Self {
             kind: ErrorKind {
@@ -208,6 +210,7 @@ impl Error {
         }
     }
 
+    #[allow(dead_code)] // used only on feature-gated paths
     pub(crate) fn io(module: Module, source: std::io::Error) -> Self {
         Self {
             kind: ErrorKind {
@@ -276,7 +279,9 @@ impl fmt::Display for Error {
 
 impl StdError for Error {
     fn source(&self) -> Option<&(dyn StdError + 'static)> {
-        self.source.as_deref().map(|s| s as &(dyn StdError + 'static))
+        self.source
+            .as_deref()
+            .map(|s| s as &(dyn StdError + 'static))
     }
 }
 

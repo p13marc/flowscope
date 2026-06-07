@@ -10,9 +10,9 @@
 use crate::Timestamp;
 use crate::session::SessionParser;
 
+use super::TlsParser;
 use super::session::TlsMessage;
 use super::types::{TlsConfig, TlsVersion};
-use super::TlsParser;
 
 /// Outcome of an observed handshake.
 #[derive(Debug, Clone, PartialEq)]
@@ -151,11 +151,9 @@ impl TlsHandshakeParser {
                         // to whichever side was "expected" given
                         // current state.
                         let outcome = match self.state {
-                            State::AwaitingServerHello => {
-                                HandshakeOutcome::AlertedByServer {
-                                    description: a.description,
-                                }
-                            }
+                            State::AwaitingServerHello => HandshakeOutcome::AlertedByServer {
+                                description: a.description,
+                            },
                             _ => HandshakeOutcome::AlertedByClient {
                                 description: a.description,
                             },

@@ -32,7 +32,10 @@ fn timestamp_to_unix_f64_roundtrip() {
 fn timestamp_from_unix_f64_clamps_negative_and_nan() {
     assert_eq!(Timestamp::from_unix_f64(-1.0), Timestamp::default());
     assert_eq!(Timestamp::from_unix_f64(f64::NAN), Timestamp::default());
-    assert_eq!(Timestamp::from_unix_f64(f64::INFINITY), Timestamp::default());
+    assert_eq!(
+        Timestamp::from_unix_f64(f64::INFINITY),
+        Timestamp::default()
+    );
 }
 
 #[test]
@@ -208,12 +211,18 @@ fn key_indexed_peek_does_not_bump_lru() {
     q.insert(1, "a".into(), Timestamp::new(0, 0));
     q.insert(2, "b".into(), Timestamp::new(0, 0));
     // Peek at 1 — must NOT bump it ahead of 2 in LRU order.
-    assert_eq!(q.peek(&1, Timestamp::new(1, 0)).map(String::as_str), Some("a"));
+    assert_eq!(
+        q.peek(&1, Timestamp::new(1, 0)).map(String::as_str),
+        Some("a")
+    );
     // Insert a third entry; with capacity 2, the LRU (still 1)
     // should be evicted because peek didn't touch recency.
     q.insert(3, "c".into(), Timestamp::new(2, 0));
     // If peek had bumped 1, 2 would be evicted instead.
-    assert!(q.peek(&1, Timestamp::new(3, 0)).is_none(), "1 should have been LRU-evicted");
+    assert!(
+        q.peek(&1, Timestamp::new(3, 0)).is_none(),
+        "1 should have been LRU-evicted"
+    );
     assert!(q.peek(&2, Timestamp::new(3, 0)).is_some());
     assert!(q.peek(&3, Timestamp::new(3, 0)).is_some());
 }
@@ -227,7 +236,10 @@ fn key_indexed_peek_respects_ttl() {
         q.insert(42, "ok".into(), Timestamp::new(0, 0));
         q
     };
-    assert_eq!(q.peek(&42, Timestamp::new(3, 0)).map(String::as_str), Some("ok"));
+    assert_eq!(
+        q.peek(&42, Timestamp::new(3, 0)).map(String::as_str),
+        Some("ok")
+    );
     assert!(q.peek(&42, Timestamp::new(10, 0)).is_none());
 }
 

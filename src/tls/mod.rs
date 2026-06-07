@@ -84,7 +84,7 @@ pub use session::{TlsMessage, TlsParser};
 pub use types::*;
 
 #[cfg(feature = "ja4")]
-pub use ja4::{ja4 as ja4_fingerprint, ja4_parts, Ja4Parts};
+pub use ja4::{Ja4Parts, ja4 as ja4_fingerprint, ja4_parts};
 
 /// Slug returned by [`TlsParser`]'s `parser_kind()`. See
 /// `flowscope::parser_kinds::TLS`.

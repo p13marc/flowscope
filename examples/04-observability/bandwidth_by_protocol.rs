@@ -98,11 +98,17 @@ fn main() -> flowscope::Result<()> {
     let duration = (max_ts.unwrap_or(0.0) - min_ts.unwrap_or(0.0)).max(1e-9);
 
     println!("=== Bandwidth by protocol ===");
-    println!("Total: {total_bytes} bytes over {duration:.3}s (= {:.1} kbps)", 8.0 * total_bytes as f64 / duration / 1000.0);
+    println!(
+        "Total: {total_bytes} bytes over {duration:.3}s (= {:.1} kbps)",
+        8.0 * total_bytes as f64 / duration / 1000.0
+    );
     println!();
     let mut rows: Vec<_> = totals.iter().collect();
     rows.sort_by_key(|(_, t)| std::cmp::Reverse(t.bytes));
-    println!("{:<12} {:>10} {:>10} {:>8} {:>8}", "proto", "bytes", "kbps", "flows", "share");
+    println!(
+        "{:<12} {:>10} {:>10} {:>8} {:>8}",
+        "proto", "bytes", "kbps", "flows", "share"
+    );
     for (label, t) in rows {
         let kbps = 8.0 * t.bytes as f64 / duration / 1000.0;
         let share = if total_bytes == 0 {

@@ -44,7 +44,11 @@ pub struct Ja4Parts {
 
 impl std::fmt::Display for Ja4Parts {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}_{}_{}", self.header, self.cipher_hash, self.extension_hash)
+        write!(
+            f,
+            "{}_{}_{}",
+            self.header, self.cipher_hash, self.extension_hash
+        )
     }
 }
 
@@ -98,9 +102,7 @@ fn build_header(ch: &TlsClientHello) -> String {
         })
         .unwrap_or_else(|| "00".to_string());
 
-    format!(
-        "{transport}{version_code}{sni_flag}{cipher_count:02}{ext_count:02}{alpn}"
-    )
+    format!("{transport}{version_code}{sni_flag}{cipher_count:02}{ext_count:02}{alpn}")
 }
 
 fn pick_version(ch: &TlsClientHello) -> TlsVersion {
