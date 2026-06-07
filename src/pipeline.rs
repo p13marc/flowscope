@@ -191,14 +191,14 @@ where
         let datagram_parser = self.datagram_parser.unwrap_or_default();
         let session = FlowSessionDriver::with_config(
             self.extractor.clone(),
-            session_parser,
+            session_parser.clone(),
             self.config.clone(),
         )
         .with_emit_anomalies(self.emit_anomalies)
         .with_monotonic_timestamps(self.monotonic);
         let datagram = FlowDatagramDriver::with_config(
             self.extractor.clone(),
-            datagram_parser,
+            datagram_parser.clone(),
             self.config.clone(),
         )
         .with_emit_anomalies(self.emit_anomalies)
@@ -206,6 +206,10 @@ where
         Pipeline {
             extractor: self.extractor,
             config: self.config,
+            session_parser,
+            datagram_parser,
+            emit_anomalies: self.emit_anomalies,
+            monotonic: self.monotonic,
             session: Some(session),
             datagram: Some(datagram),
             _markers: PhantomData,
@@ -293,10 +297,16 @@ where
     S: SessionParser,
     D: DatagramParser,
 {
-    #[allow(dead_code)] // kept for future reset() / run_iter() variants
     extractor: E,
-    #[allow(dead_code)]
     config: FlowTrackerConfig,
+    /// Saved parser prototype; cloned into the driver on
+    /// construction and again on `reset()`.
+    session_parser: S,
+    /// Saved datagram parser prototype.
+    datagram_parser: D,
+    /// Saved builder option for rebuild.
+    emit_anomalies: bool,
+    monotonic: bool,
     session: Option<FlowSessionDriver<E, S, ()>>,
     datagram: Option<FlowDatagramDriver<E, D, ()>>,
     _markers: PhantomData<()>,
@@ -310,6 +320,40 @@ where
     /// a `Pipeline`.
     pub fn builder(extractor: E) -> PipelineBuilder<E> {
         PipelineBuilder::new(extractor)
+    }
+}
+
+#[cfg(feature = "session")]
+impl<E, S, D> Pipeline<E, S, D>
+where
+    E: FlowExtractor + Clone,
+    E::Key: Hash + Eq + Clone + Send + 'static,
+    S: SessionParser + Clone + Send + 'static,
+    D: DatagramParser + Clone + Send + 'static,
+{
+    /// Reset the underlying tracker / reassemblers / parsers to
+    /// the initial state. The configured extractor, parsers, and
+    /// builder options stay; just the per-flow state is dropped.
+    ///
+    /// Lets the same `Pipeline` instance run against multiple
+    /// pcaps in sequence without leaking flow state across runs.
+    pub fn reset(&mut self) {
+        let session = FlowSessionDriver::with_config(
+            self.extractor.clone(),
+            self.session_parser.clone(),
+            self.config.clone(),
+        )
+        .with_emit_anomalies(self.emit_anomalies)
+        .with_monotonic_timestamps(self.monotonic);
+        let datagram = FlowDatagramDriver::with_config(
+            self.extractor.clone(),
+            self.datagram_parser.clone(),
+            self.config.clone(),
+        )
+        .with_emit_anomalies(self.emit_anomalies)
+        .with_monotonic_timestamps(self.monotonic);
+        self.session = Some(session);
+        self.datagram = Some(datagram);
     }
 }
 
@@ -339,21 +383,51 @@ where
     }
 }
 
+#[cfg(all(feature = "session", feature = "reassembler"))]
+impl<E, S, D> Pipeline<E, S, D>
+where
+    E: FlowExtractor + Clone,
+    E::Key: Hash + Eq + Clone + Send + 'static,
+    S: SessionParser + Clone + Send + 'static,
+    D: DatagramParser + Clone + Send + 'static,
+{
+    /// Drive the pipeline over an arbitrary iterator of owned
+    /// packet views. Useful for custom sources (eBPF userspace,
+    /// embedded, synthetic / test fixtures, netring's batched
+    /// recv re-rolled into owned views).
+    ///
+    /// Like `run_pcap`, the end-of-input flush is folded into
+    /// the returned iterator: when the source iterator returns
+    /// `None`, the drivers' `finish()` methods drain still-open
+    /// flows.
+    pub fn run_iter<I>(&mut self, iter: I) -> PipelineIter<'_, E, S, D>
+    where
+        I: IntoIterator<Item = crate::OwnedPacketView> + 'static,
+    {
+        PipelineIter {
+            views: Box::new(iter.into_iter().map(Ok)),
+            pipeline: self,
+            pending: VecDeque::new(),
+            finished: false,
+        }
+    }
+}
+
 /// Iterator over pipeline events.
-#[cfg(all(feature = "pcap", feature = "session", feature = "reassembler"))]
+#[cfg(all(feature = "session", feature = "reassembler"))]
 pub struct PipelineIter<'a, E, S, D>
 where
     E: FlowExtractor,
     S: SessionParser,
     D: DatagramParser,
 {
-    views: Box<dyn Iterator<Item = crate::Result<crate::pcap::OwnedPacketView>> + 'a>,
+    views: Box<dyn Iterator<Item = crate::Result<crate::OwnedPacketView>> + 'a>,
     pipeline: &'a mut Pipeline<E, S, D>,
     pending: VecDeque<Event<E::Key, S::Message, D::Message>>,
     finished: bool,
 }
 
-#[cfg(all(feature = "pcap", feature = "session", feature = "reassembler"))]
+#[cfg(all(feature = "session", feature = "reassembler"))]
 impl<'a, E, S, D> Iterator for PipelineIter<'a, E, S, D>
 where
     E: FlowExtractor + Clone,

@@ -91,6 +91,32 @@ impl<'a, T: AsPacketView + ?Sized> From<&'a T> for PacketView<'a> {
     }
 }
 
+/// An owned [`PacketView`] — frame bytes in a `Vec<u8>` plus
+/// timestamp. Use [`as_view`](Self::as_view) to get a borrowed
+/// `PacketView<'_>`.
+///
+/// Lives outside any feature gate so custom packet sources (eBPF
+/// userspace, embedded, synthetic / test fixtures) can produce
+/// the same owned shape the pcap source uses.
+#[derive(Debug, Clone)]
+pub struct OwnedPacketView {
+    pub frame: Vec<u8>,
+    pub timestamp: Timestamp,
+}
+
+impl OwnedPacketView {
+    /// Borrow as a [`PacketView`].
+    pub fn as_view(&self) -> PacketView<'_> {
+        PacketView::new(&self.frame, self.timestamp)
+    }
+}
+
+impl AsPacketView for OwnedPacketView {
+    fn as_packet_view(&self) -> PacketView<'_> {
+        self.as_view()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

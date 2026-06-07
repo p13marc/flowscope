@@ -136,3 +136,53 @@ fn missing_pcap_returns_io_error() {
     assert_eq!(err.module(), Module::Pcap);
     assert_eq!(err.code(), ErrorCode::Io);
 }
+
+#[test]
+fn run_iter_drives_owned_views() {
+    use flowscope::pcap::PcapFlowSource;
+    use flowscope::OwnedPacketView;
+
+    // Collect the fixture into owned views.
+    let owned: Vec<OwnedPacketView> = PcapFlowSource::open(FIXTURE)
+        .unwrap()
+        .views()
+        .map(|r| r.unwrap())
+        .collect();
+
+    let mut pipeline = Pipeline::builder(FiveTuple::bidirectional())
+        .session(LengthPrefixedParser::default())
+        .build();
+
+    let mut app_count = 0usize;
+    for ev in pipeline.run_iter(owned) {
+        if let flowscope::Event::Tcp(SessionEvent::Application { .. }) = ev.unwrap() {
+            app_count += 1;
+        }
+    }
+    assert_eq!(app_count, 10, "run_iter should produce the same 10 messages");
+}
+
+#[test]
+fn reset_clears_flow_state_between_runs() {
+    let mut pipeline = Pipeline::builder(FiveTuple::bidirectional())
+        .session(LengthPrefixedParser::default())
+        .build();
+
+    // First run.
+    let count_a = pipeline
+        .run_pcap(FIXTURE)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .count();
+
+    // Reset wipes the tracker; second run on the same fixture
+    // should produce the same event count.
+    pipeline.reset();
+    let count_b = pipeline
+        .run_pcap(FIXTURE)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .count();
+
+    assert_eq!(count_a, count_b, "reset should restore initial state");
+}

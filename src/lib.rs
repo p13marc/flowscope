@@ -143,7 +143,7 @@ pub mod tls;
 pub mod test_helpers;
 
 pub use timestamp::Timestamp;
-pub use view::{AsPacketView, PacketView};
+pub use view::{AsPacketView, OwnedPacketView, PacketView};
 
 /// Re-export of every shipped parser-kind constant under one path.
 ///

@@ -5,7 +5,7 @@ use std::path::Path;
 use crate::tracker::FlowEvents;
 #[cfg(all(feature = "session", feature = "reassembler", feature = "extractors"))]
 use crate::{DatagramParser, FlowDatagramDriver};
-use crate::{FlowEvent, FlowExtractor, FlowTracker, PacketView, Timestamp};
+use crate::{FlowEvent, FlowExtractor, FlowTracker, Timestamp};
 #[cfg(all(feature = "session", feature = "reassembler"))]
 use crate::{FlowSessionDriver, SessionEvent, SessionParser};
 
@@ -161,30 +161,7 @@ impl<R: Read> PcapFlowSource<R> {
     }
 }
 
-/// An owned [`PacketView`] — frame bytes in a `Vec<u8>` plus
-/// timestamp. Use [`as_view`](Self::as_view) to get a borrowed
-/// `PacketView<'_>`.
-#[derive(Debug, Clone)]
-pub struct OwnedPacketView {
-    pub frame: Vec<u8>,
-    pub timestamp: Timestamp,
-}
-
-impl OwnedPacketView {
-    /// Borrow as a [`PacketView`].
-    pub fn as_view(&self) -> PacketView<'_> {
-        PacketView::new(&self.frame, self.timestamp)
-    }
-}
-
-impl crate::AsPacketView for OwnedPacketView {
-    /// Borrow an [`OwnedPacketView`] as a [`PacketView`] — combined
-    /// with the blanket `From<&T: AsPacketView> for PacketView`, lets
-    /// `&owned` be passed straight to `track()` without `as_view()`.
-    fn as_packet_view(&self) -> PacketView<'_> {
-        self.as_view()
-    }
-}
+pub use crate::view::OwnedPacketView;
 
 /// Iterator yielding `crate::Result<OwnedPacketView>`.
 pub struct ViewIter<R: Read> {
@@ -382,7 +359,7 @@ mod tests {
             frame: vec![1, 2, 3, 4],
             timestamp: Timestamp::new(7, 42),
         };
-        let pv: PacketView<'_> = (&owned).into();
+        let pv: crate::PacketView<'_> = (&owned).into();
         assert_eq!(pv.frame, &[1, 2, 3, 4]);
         assert_eq!(pv.timestamp, Timestamp::new(7, 42));
     }
