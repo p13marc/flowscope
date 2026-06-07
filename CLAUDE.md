@@ -60,13 +60,25 @@ postmortem (plan 100). Shipped so far:
 - **Plan 107** — exchange aggregators (`HttpExchangeParser` +
   `HttpExchange` + `HttpOutcome`; `DnsExchangeParser` +
   `DnsExchange` + `DnsOutcome`).
+- **Plan 116 PR 1–4 (partial)** — unified
+  `flowscope::driver_unified::{Driver, Event, DriverBuilder,
+  Pipeline, PipelineBuilder}`. One `Driver<E, M>` with
+  session + datagram + heuristic routing under one
+  `Event<K, M>` stream. Includes plan 113 sub-B (heuristic
+  routing — `session_heuristic` / `datagram_heuristic` with
+  per-flow Probing/Pinned/GaveUp state, `PROBE_BUFFER_CAP`
+  64 B, `DEFAULT_PROBE_PACKETS` 4) and a
+  `examples/unified_driver_demo.rs` showcase. The 0.9-era
+  `FlowSessionDriver` / `FlowDatagramDriver` /
+  `FlowMultiSessionDriver` / `Pipeline` (legacy) types stay
+  shipped in 0.10 for migration; PR 5 (deletion sweep) is
+  deferred to the next major release.
 
-Plan 102 (utility modules) and Plan 110 (DX polish) are fully
-complete (all sub-plans landed). Plan 113 has sub-A landed;
-sub-B (heuristic routing) is blocked on Plan 116 (driver +
-event unification — the centerpiece, not yet started).
+The 0.10 cycle's user-priority plan (116) is substantially
+complete. Plan 113 is fully complete (sub-A + sub-B both
+landed). Plans 101, 102, 106, 107, 110 are fully complete.
 
-Test count after 0.10 work-in-progress: ~410 passing, zero
+Test count after 0.10 work-in-progress: ~430 passing, zero
 clippy warnings under `--all-features --all-targets -D
 warnings`, zero rustdoc warnings.
 
@@ -166,7 +178,14 @@ src/
 │   └── mod.rs                   # protocol_label / entries / curated table
 ├── driver_builder.rs            # Driver::builder(ext) entry (plan 94 Tier 2, 0.9.0)
 ├── layers/fast.rs               # LayerParser + LayerStack zero-alloc (plan 94 Tier 3 fast path, 0.9.0)
-├── multi_session_driver.rs      # FlowMultiSessionDriver<E, M> (plan 92, 0.9.0)
+├── multi_session_driver.rs      # FlowMultiSessionDriver<E, M> (plan 92, 0.9.0; legacy from 0.10)
+├── driver_unified/              # flowscope::driver_unified — unified Driver<E, M> + Event<K, M>
+│                                # (plan 116, 0.10; PR 5 deletes legacy in 0.11)
+│   ├── mod.rs                   # Driver + DriverBuilder + map_flow_event
+│   ├── event.rs                 # Event<K, M> + accessors
+│   ├── erased.rs                # DriverSlot + ConcreteSlot + ConcreteDatagramSlot
+│   ├── heuristic.rs             # HeuristicSessionSlot + HeuristicDatagramSlot (FlowDetection FSM)
+│   └── pipeline.rs              # Pipeline + PipelineBuilder + PipelineIter (Driver wrapper)
 ├── segment_reassembler.rs       # SegmentBufferReassembler OOO hole-fill (plan 74, 0.9.0)
 ├── extract/                     # built-in extractors (extractors feature)
 │   ├── parse.rs                 # internal etherparse wrappers
@@ -275,6 +294,8 @@ The legacy `HttpFactory` / `TlsFactory` callback-handler shape
   106, 0.10).
 - `tests/http_exchange.rs`, `tests/dns_exchange.rs` —
   exchange aggregators (plan 107, 0.10).
+- `tests/driver_unified.rs`, `tests/pipeline_unified.rs` —
+  unified `Driver<E, M>` + `Pipeline<E, M>` (plan 116, 0.10).
 - `benches/{extractor,tracker,reassembler,session_driver,dedup}.rs`
   — criterion benchmark harness (0.3.0). Run with
   `cargo bench --all-features`; baselines in
