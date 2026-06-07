@@ -24,70 +24,60 @@ record (38 driver constructors, two duplicated L7 API shapes,
 five error enums, no high-level entry, no per-packet layered
 view) is absorbed into the 0.9.0 CHANGELOG header.
 
-### 0.10.0 cycle — backlog
+### 0.10.0 cycle — substantially complete
 
 Triggered by the 0.9 examples-writing postmortem
 ([`100-examples-postmortem.md`](./100-examples-postmortem.md)).
-Eight DX pain points; **seven implementation plans** after
-the consolidation pass (three multi-PR plans group tightly
-related work into one cohesive review).
+Six implementation plans (101 / 102 / 106 / 107 / 110 / 113)
+have shipped and their plan files are retired per project
+convention. The driver+event unification centerpiece (plan
+**116**) is at PR 1-4 (partial); PR 5 (legacy-type deletion
+sweep) is queued for the next major release.
 
-| Plan | Goal | Theme | Sizing |
-|------|------|-------|--------|
-| [`100-examples-postmortem.md`](./100-examples-postmortem.md) | Umbrella audit + cycle rationale. | — | doc |
-| [`101-emit-module.md`](./101-emit-module.md) | `flowscope::emit` — CSV / NDJSON / Zeek `conn.log` writers. | 8 | ~830 LoC, ~21 h |
-| [`102-utility-modules.md`](./102-utility-modules.md) | `correlate` extensions + `aggregate` + `detect` + `well_known` modules (4 sub-PRs). | 5 | ~2,080 LoC, ~43 h |
-| [`106-parser-ergonomics.md`](./106-parser-ergonomics.md) | `AccumulatingSessionParser` + fallible `feed_*` + `BufferedFrameDrain`. | 7 | ~860 LoC, ~20 h |
-| [`107-exchange-aggregators.md`](./107-exchange-aggregators.md) | `HttpExchangeParser` + `DnsExchangeParser`. | 5 | ~860 LoC, ~16 h |
-| [`110-dx-polish.md`](./110-dx-polish.md) | Rustdoc landing pages + quick-win helper sweep (2 sub-PRs). | 1 + 3 + 4 | ~935 LoC, ~17 h |
-| [`112-dynamic-lazy-analysis.md`](./112-dynamic-lazy-analysis.md) | Analysis: does the 0.10 surface allow dynamic / lazy detection? (no — motivates plan 113.) | — | doc |
-| [`113-dynamic-dispatch.md`](./113-dynamic-dispatch.md) | `flowscope::detect::signatures` + `Routing::Heuristic` on the unified `Driver` (2 sub-PRs). Depends on 116. | (new) | ~1,590 LoC, ~25.5 h |
-| [`115-strategic-review.md`](./115-strategic-review.md) | Strategic review motivating the driver+event unification (motivates plan 116; replaces prior plans 108 + 109). | — | doc |
-| **[`116-driver-event-unification.md`](./116-driver-event-unification.md)** | **`Driver<E, M>` + `Event<K, M>` — collapse 6 drivers and 4 event types into one of each. Absorbs prior plans 108 + 109.** | **2 + 6** | **~700 LoC net, ~52 h** |
-
-Total: ~7,855 LoC net, ~194.5 hours across **7 implementation
-plans** (down from 12 pre-consolidation). The cycle work
-itself is unchanged — the consolidation grouped four small
-utility plans (102+103+104+105 → 102), two DX-polish plans
-(110+111 → 110), and the dynamic-detection pair (113+114
-→ 113) into multi-PR plans that share their out-of-scope
-lists, industry research, and acceptance criteria.
+| Plan | Goal | Status |
+|------|------|--------|
+| [`100-examples-postmortem.md`](./100-examples-postmortem.md) | Umbrella audit + cycle rationale. | doc — retires with cycle release |
+| 101 (retired) | `flowscope::emit` — CSV / NDJSON / Zeek `conn.log` writers. | ✅ shipped (commit `8d91261`) |
+| 102 (retired) | Utility modules — `correlate` ext + `aggregate` + `detect` + `well_known` (4 sub-PRs). | ✅ shipped (commits `c6236ce` / `829fdc7` / `9da63cb` / `6f9ef95`) |
+| 106 (retired) | Parser ergonomics — `AccumulatingSessionParser` + `PerDatagramParser` + `BufferedFrameDrain`. (`FallibleSessionParser` deferred to a future cycle.) | ✅ shipped (commit `792f0f4`) |
+| 107 (retired) | `HttpExchangeParser` + `DnsExchangeParser`. | ✅ shipped (commit `2277655`) |
+| 110 (retired) | DX polish — rustdoc landing pages + quick-win helper sweep (2 sub-PRs). | ✅ shipped (commits `3e99ff9` / `474d09a`) |
+| [`112-dynamic-lazy-analysis.md`](./112-dynamic-lazy-analysis.md) | Analysis motivating plan 113. | doc — retires with cycle release |
+| 113 (retired) | `flowscope::detect::signatures` + `Routing::Heuristic` on the unified `Driver` (2 sub-PRs). | ✅ shipped (commits `a13a0a6` / `9685b59` + `ec9fa1b` PipelineBuilder proxies) |
+| [`115-strategic-review.md`](./115-strategic-review.md) | Strategic review motivating plan 116. | doc — retires with cycle release |
+| **[`116-driver-event-unification.md`](./116-driver-event-unification.md)** | **`Driver<E, M>` + `Event<K, M>` — collapse the 6-driver / 4-event surface into one of each.** | 🟡 **PR 1-4 partial shipped** (commits `0b20c05` / `c74a974` / `9685b59` / `97e0852` / `743d191` / `ec9fa1b`); PR 5 (legacy-type deletion sweep) queued for next major |
 
 Cycle theme: "address the next layer of DX after the 0.9
 big surface choices."
 
-Canonical landing sequence:
+Plan 116 status detail — what's in the unified Driver today:
 
-```
-110 sub-B (quick wins ship first — other plans lean on them)
-   ↓
-101, 102 (sub-D well-known) (small additive — no dependencies)
-   ↓
-102 sub-A/B/C (correlate ext + aggregate + detect),
-   110 sub-A (rustdoc landing pages)
-   ↓
-106 (parser ergonomics — feeds plan 107 + plan 116)
-   ↓
-107 (exchange aggregators)
-   ↓
-113 sub-A (signatures — standalone use; also feeds 113 sub-B)
-   ↓
-116 (driver + event unification — the centerpiece;
-       absorbs prior plans 108 + 109; depends on 106 + 110 sub-B)
-   ↓
-113 sub-B (heuristic routing — extends Driver's builder;
-            depends on 116 + 113 sub-A)
-```
+- `Driver<E, M>` + `Event<K, M>` + `DriverBuilder<E, M>`
+- `session_on_ports` / `session_broadcast` /
+  `session_heuristic[_with_budget]`
+- `datagram_on_ports` / `datagram_broadcast` /
+  `datagram_heuristic[_with_budget]`
+- `config(c)` + `monotonic_timestamps(on)`
+- `flowscope::driver_unified::Pipeline<E, M>` +
+  `PipelineBuilder<E, M>` with full proxies for all
+  registration + knob methods
+- `tracker()` / `tracker_mut()` accessors for direct
+  introspection / advanced config (e.g.
+  `tracker_mut().set_idle_timeout_fn(…)`)
 
-The user-priority plan is **116** — driver + event
-unification. Land it as a 5-PR series before 113 sub-B so
-the routing surface attaches to the new unified `Driver`.
+Known follow-ups (documented in the
+`flowscope::driver_unified` module rustdoc):
 
-Plan **112** (dynamic / lazy analysis) is a doc; plan
-**113** addresses the "dynamic detection" gap surfaced by
-the follow-up audit. Plan **115** (strategic-review doc)
-motivates plan 116. A lazy-`Layers` sketch from 112 is
-deferred pending benchmark data.
+- `emit_anomalies(bool)` / `dedup(Dedup)` /
+  `idle_timeout_fn(F)` / `emit_packet_details(bool)`
+  builder knobs are not yet plumbed through the unified
+  builder; design constraints around the central
+  FlowTracker vs slot inner drivers are documented.
+- PR 5 (legacy type deletion + full example/test migration
+  sweep) — queued for the next major release. Today the
+  legacy `FlowSessionDriver` / `FlowDatagramDriver` /
+  `FlowMultiSessionDriver` / `flowscope::Pipeline` types
+  ship alongside the unified equivalents.
 
 ### Deferred / stale
 
@@ -182,15 +172,17 @@ deferred pending benchmark data.
 
 Plan numbers retired (implementation shipped, file removed):
 00–04, 12, 20, 22–25, 30–61, 62, 70–73, 74, 75, 76–82, 83–91,
-93, 94, 96, 97, 99. Subsumed by consolidation:
+93, 94, 96, 97, 99, 101, 102, 106, 107, 110, 113. Subsumed by
+consolidation:
 - 103, 104, 105 → rolled into plan 102 (utility modules)
 - 111 → rolled into plan 110 (DX polish)
 - 114 → rolled into plan 113 (dynamic dispatch)
 - 108, 109 → rolled into plan 116 (driver+event unification)
 
-Active: 21 (stale-deferred), 100, 101, 102, 106, 107, 110, 112,
-113, 115, 116 (0.10 cycle). The next free number for a new
-plan is 117+.
+Active: 21 (stale-deferred), 100 (postmortem doc), 112
+(dynamic-lazy analysis doc), 115 (strategic review doc), 116
+(driver+event unification — PR 5 deferred to next major).
+The next free number for a new plan is 117+.
 
 ---
 
