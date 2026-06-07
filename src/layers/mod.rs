@@ -10,17 +10,18 @@
 //!    [`Layers::find_all`]) — iterate or look up by
 //!    [`LayerKind`].
 //!
-//! # Coverage (0.9.0)
+//! # Coverage (0.10.0)
 //!
-//! - **L2**: Ethernet II, 802.1Q VLAN.
+//! - **L2**: Ethernet II, 802.1Q VLAN, MPLS label stack
+//!   (EtherType 0x8847 / 0x8848), ARP (EtherType 0x0806).
 //! - **L3**: IPv4, IPv6 (40-byte fixed header; extension headers
 //!   are not parsed but `next_header` is exposed).
-//! - **L4**: TCP (with options iterator), UDP.
+//! - **L4**: TCP (with options iterator), UDP, ICMPv4, ICMPv6.
+//! - **Tunnels**: GRE, VXLAN, GTP-U.
 //!
-//! Out of scope for this cut (planned follow-ups):
-//! ARP, MPLS, ICMPv4/v6 slices, GRE/VXLAN/GTP-U tunnel walking.
-//! Tunnel headers are not followed yet — the L4 view stops at the
-//! outermost transport.
+//! MPLS auto-detection peels the label stack (one
+//! [`MplsSlice`] per 4-byte label entry, BOS bit terminates);
+//! IP re-parse after the MPLS stack is a future plan.
 //!
 //! # Quick start
 //!
@@ -337,6 +338,38 @@ impl<'a> Layers<'a> {
             }
             // ARP frames have no L3/L4 stages.
             let payload: &[u8] = &[];
+            return Self {
+                stack,
+                payload,
+                truncated,
+            };
+        }
+
+        // MPLS detection — etherparse doesn't surface the MPLS
+        // label stack either. EtherType 0x8847 (unicast) /
+        // 0x8848 (multicast) signals MPLS; peel 4-byte label
+        // entries until BOS=1. The inner payload typically
+        // re-parses as IP; for now we push the label stack and
+        // return — IP re-parse after MPLS is queued for a
+        // follow-up plan.
+        if matches!(outer_ether_type, 0x8847 | 0x8848)
+            && let Some(eth_layer) = stack.iter().find_map(|l| match l {
+                Layer::Ethernet(e) => Some(e),
+                _ => None,
+            })
+        {
+            let eth_bytes = eth_layer.bytes();
+            let mut offset = 14; // skip Ethernet II header
+            while offset + 4 <= eth_bytes.len() {
+                let entry = &eth_bytes[offset..offset + 4];
+                let bos = entry[2] & 0x01 != 0;
+                stack.push(Layer::Mpls(MplsSlice::new(entry)));
+                offset += 4;
+                if bos {
+                    break;
+                }
+            }
+            let payload: &[u8] = &eth_bytes[offset.min(eth_bytes.len())..];
             return Self {
                 stack,
                 payload,
@@ -713,6 +746,46 @@ mod tests {
         assert_eq!(tcp.dst_port(), 80);
         assert!(tcp.flags().syn);
         assert_eq!(tcp.seq(), 1000);
+    }
+
+    #[test]
+    fn parse_mpls_single_label() {
+        // Synthetic Ethernet II + single-label MPLS frame.
+        //   14 B Ethernet header (dst, src, ether_type=0x8847)
+        //    4 B MPLS label entry (label=42, tc=0, bos=1, ttl=64)
+        let mut f = vec![
+            // dst MAC
+            0xff, 0xff, 0xff, 0xff, 0xff, 0xff, // src MAC
+            0xaa, 0xbb, 0xcc, 0x00, 0x00, 0x01, // ether_type 0x8847 (MPLS unicast)
+            0x88, 0x47,
+        ];
+        // MPLS label entry: label=42 (0x02A) → 0x00_002A0 (20 bits)
+        // packed as:
+        //   byte0 = label[19:12] = 0x00
+        //   byte1 = label[11:4]  = 0x02
+        //   byte2 = (label[3:0] << 4) | (tc << 1) | bos = (0xA << 4) | (0 << 1) | 1 = 0xA1
+        //   byte3 = ttl = 64 = 0x40
+        f.extend_from_slice(&[0x00, 0x02, 0xA1, 0x40]);
+
+        let layers = Layers::parse_ethernet(&f).unwrap();
+        // Expect 2 layers: Ethernet + Mpls.
+        assert_eq!(
+            layers.iter().count(),
+            2,
+            "expected eth+mpls: {:?}",
+            layers.iter().map(|l| l.kind()).collect::<Vec<_>>(),
+        );
+        let mpls = layers
+            .iter()
+            .find_map(|l| match l {
+                Layer::Mpls(m) => Some(m),
+                _ => None,
+            })
+            .expect("Mpls layer");
+        assert_eq!(mpls.label(), 42);
+        assert_eq!(mpls.tc(), 0);
+        assert!(mpls.bos());
+        assert_eq!(mpls.ttl(), 64);
     }
 
     #[test]

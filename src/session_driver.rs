@@ -755,14 +755,15 @@ mod tests {
     #[test]
     fn with_state_init_threads_s() {
         #[derive(Debug)]
-        #[allow(dead_code)]
         struct MyState(u64);
         let d: FlowSessionDriver<_, _, MyState> = FlowSessionDriver::with_state_init(
             FiveTuple::bidirectional(),
             LineParser::default(),
             |_key| MyState(7),
         );
-        let _: &FlowTracker<FiveTuple, MyState> = d.tracker();
+        let tracker: &FlowTracker<FiveTuple, MyState> = d.tracker();
+        let states: Vec<u64> = tracker.iter_active().map(|f| f.user.0).collect();
+        let _ = states;
     }
 
     /// Plan 58: `with_factory` works with a `!Clone` parser.
@@ -795,11 +796,12 @@ mod tests {
     #[test]
     fn with_state_uses_default() {
         #[derive(Debug, Default)]
-        #[allow(dead_code)]
         struct Counter(u32);
         let d: FlowSessionDriver<_, _, Counter> =
             FlowSessionDriver::with_state(FiveTuple::bidirectional(), LineParser::default());
-        let _: &FlowTracker<FiveTuple, Counter> = d.tracker();
+        let tracker: &FlowTracker<FiveTuple, Counter> = d.tracker();
+        let counts: Vec<u32> = tracker.iter_active().map(|f| f.user.0).collect();
+        let _ = counts;
     }
 
     /// Tiny line-oriented parser: emits one Vec<u8> per newline-terminated frame.

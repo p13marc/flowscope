@@ -104,7 +104,6 @@ pub struct MplsSlice<'a> {
 }
 
 impl<'a> MplsSlice<'a> {
-    #[allow(dead_code)] // constructed by future MPLS detection path
     pub(crate) fn new(raw: &'a [u8]) -> Self {
         Self { raw }
     }

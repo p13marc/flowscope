@@ -18,8 +18,8 @@ pub(crate) struct ParsedIp<'a> {
     pub dst: IpAddr,
     pub proto: u8,
     /// Slice of L4 payload (for inspection or hashing). Lifetime
-    /// borrowed from the original frame.
-    #[allow(dead_code)] // kept for forward-compat with reassembler
+    /// borrowed from the original frame. Consumed by the GRE
+    /// decap combinator and any future inspection paths.
     pub l4_payload: &'a [u8],
 }
 
@@ -45,7 +45,6 @@ pub(crate) struct ParsedUdp {
     pub src_port: u16,
     pub dst_port: u16,
     /// Offset into the original frame where the UDP payload starts.
-    #[allow(dead_code)]
     pub payload_offset: usize,
     pub payload_len: usize,
 }
@@ -54,14 +53,6 @@ pub(crate) struct ParsedUdp {
 /// extensions handled by `etherparse`).
 pub(crate) fn parse_eth(frame: &[u8]) -> Option<ParsedFrame<'_>> {
     let sp = etherparse::SlicedPacket::from_ethernet(frame).ok()?;
-    parse_from_sliced(&sp, frame)
-}
-
-/// Parse a raw IP datagram (no L2 prefix). Used by GTP-U decap where
-/// the inner is a bare IPv4/IPv6 packet.
-#[allow(dead_code)]
-pub(crate) fn parse_from_ip(frame: &[u8]) -> Option<ParsedFrame<'_>> {
-    let sp = etherparse::SlicedPacket::from_ip(frame).ok()?;
     parse_from_sliced(&sp, frame)
 }
 

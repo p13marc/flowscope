@@ -12,8 +12,7 @@ use proptest::prelude::*;
 use flowscope::extract::FiveTuple;
 use flowscope::extract::parse::test_frames;
 use flowscope::{
-    FlowEvent, FlowSide, FlowState, FlowTracker, FlowTrackerConfig, L4Proto, Orientation,
-    PacketView, TcpFlags, Timestamp,
+    FlowEvent, FlowSide, FlowState, FlowTracker, FlowTrackerConfig, PacketView, TcpFlags, Timestamp,
 };
 
 // ── strategies ─────────────────────────────────────────────────────
@@ -263,8 +262,3 @@ proptest! {
         prop_assert!(started_pos < established_pos, "Started must precede Established");
     }
 }
-
-// Suppress unused warnings on Orientation since some properties
-// don't use it directly.
-#[allow(dead_code)]
-fn _unused_orientation_keepalive(_: Orientation, _: L4Proto) {}

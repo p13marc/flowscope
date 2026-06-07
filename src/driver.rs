@@ -790,7 +790,6 @@ mod tests {
     #[test]
     fn with_state_init_threads_s() {
         #[derive(Debug, PartialEq)]
-        #[allow(dead_code)]
         struct MyState(u64);
         let mut d: FlowDriver<_, _, MyState> = FlowDriver::with_state_init(
             FiveTuple::bidirectional(),
@@ -799,20 +798,25 @@ mod tests {
         );
         let _ = d.track(view(b"", 0));
         // tracker() returns &FlowTracker<E, MyState>, not <E, ()>.
-        let _tracker: &crate::FlowTracker<FiveTuple, MyState> = d.tracker();
+        let tracker: &crate::FlowTracker<FiveTuple, MyState> = d.tracker();
+        // Read the inner value through the typed accessor so the
+        // field isn't dead code.
+        let states: Vec<u64> = tracker.iter_active().map(|f| f.user.0).collect();
+        let _ = states;
     }
 
     /// Plan 38: `with_state` works for any `S: Default`.
     #[test]
     fn with_state_uses_default() {
         #[derive(Debug, Default)]
-        #[allow(dead_code)]
         struct Counter(u32);
         let d: FlowDriver<_, _, Counter> = FlowDriver::with_state(
             FiveTuple::bidirectional(),
             BufferedReassemblerFactory::default(),
         );
-        let _tracker: &crate::FlowTracker<FiveTuple, Counter> = d.tracker();
+        let tracker: &crate::FlowTracker<FiveTuple, Counter> = d.tracker();
+        let counts: Vec<u32> = tracker.iter_active().map(|f| f.user.0).collect();
+        let _ = counts;
     }
 
     /// Plan 33: `finish()` ends every still-open flow, and a second

@@ -616,13 +616,19 @@ mod tests {
     #[test]
     fn with_state_init_threads_s() {
         #[derive(Debug)]
-        #[allow(dead_code)]
         struct MyState(u64);
         let d: FlowDatagramDriver<_, _, MyState> =
             FlowDatagramDriver::with_state_init(FiveTuple::bidirectional(), EchoUdp, |_key| {
                 MyState(7)
             });
         let _: &FlowTracker<FiveTuple, MyState> = d.tracker();
+        // Read the inner value so it's not dead code.
+        let snapshot: Vec<u64> = d
+            .tracker()
+            .iter_active()
+            .map(|entry| entry.user.0)
+            .collect();
+        assert!(snapshot.is_empty(), "no flows tracked yet");
     }
 
     /// Plan 33: `finish()` closes every still-open UDP flow.

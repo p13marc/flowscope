@@ -9,7 +9,7 @@ use std::io::Cursor;
 use flowscope::extract::FiveTuple;
 use flowscope::http::{HttpMessage, HttpParser};
 use flowscope::pcap::PcapFlowSource;
-use flowscope::{FlowEvent, FlowSessionDriver, SessionEvent};
+use flowscope::{FlowSessionDriver, SessionEvent};
 
 const HTTP_SESSION: &[u8] = include_bytes!("data/http_session.pcap");
 
@@ -63,7 +63,3 @@ fn http_pcap_emits_request_and_response() {
     assert_eq!(resps[0].reason, "OK");
     assert_eq!(&*resps[0].body, b"Hello, world!");
 }
-
-// silence unused import lint when feature combinations exclude this
-#[allow(dead_code)]
-fn _unused(_: FlowEvent<()>) {}

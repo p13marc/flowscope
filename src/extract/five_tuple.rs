@@ -103,8 +103,7 @@ impl FlowExtractor for FiveTuple {
 }
 
 /// Shared logic between L2 and post-decap (raw IP) entry points.
-/// Used by [`crate::extract::InnerGtpU`] which calls
-/// [`crate::extract::parse::parse_from_ip`].
+/// Used by [`crate::extract::InnerGtpU`] for inner-flow keying.
 pub(crate) fn extract_from_parsed(
     parsed: parse::ParsedFrame<'_>,
     bidirectional: bool,

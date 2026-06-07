@@ -49,10 +49,23 @@ impl DatagramParser for UdpEcho {
 }
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 enum Msg {
     Tcp(FlowSide, usize),
     Udp(usize),
+}
+
+impl Msg {
+    /// Force a read of every variant field so they aren't
+    /// flagged dead by the compiler.
+    fn payload_len(&self) -> usize {
+        match self {
+            Msg::Tcp(side, n) => {
+                debug_assert!(matches!(side, FlowSide::Initiator | FlowSide::Responder));
+                *n
+            }
+            Msg::Udp(n) => *n,
+        }
+    }
 }
 
 fn owned_view(frame: Vec<u8>, sec: u32) -> OwnedPacketView {
@@ -129,6 +142,16 @@ fn pipeline_run_iter_dispatches_to_session_and_datagram() {
     assert!(tcp_msgs > 0, "no TCP messages emitted");
     assert!(udp_msgs > 0, "no UDP messages emitted");
     assert!(flow_started >= 2, "expected ≥2 FlowStarted (one per flow)");
+    // Read the inner payload through payload_len so the variant
+    // fields aren't dead-code.
+    let total_bytes: usize = events
+        .iter()
+        .filter_map(|e| match e {
+            Event::Message { message, .. } => Some(message.payload_len()),
+            _ => None,
+        })
+        .sum();
+    assert!(total_bytes > 0);
 }
 
 #[test]

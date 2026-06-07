@@ -478,18 +478,7 @@ where
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    // Compile-only check: `Pipeline::builder(ext).build()`
-    // (without a `.session(…)` call) must fail to compile.
-    //
-    // This is verified manually for now — a `trybuild` UI test
-    // is a follow-up per plan 94.
-    #[allow(dead_code)]
-    fn compile_only_demonstration<E: FlowExtractor>(_ext: E) {
-        // let b = Pipeline::builder(_ext);
-        // let _p = b.build();  // <-- intentional compile error
-    }
-}
+// Compile-only check: `Pipeline::builder(ext).build()`
+// (without a `.session(…)` call) must fail to compile.
+// Verified manually for now — a `trybuild` UI test is a
+// follow-up per plan 94.

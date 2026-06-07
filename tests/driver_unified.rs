@@ -55,13 +55,22 @@ impl SessionParser for CountParser {
 }
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 enum Msg {
     Counted {
         name: &'static str,
         side: FlowSide,
         len: usize,
     },
+}
+
+impl Msg {
+    /// Accessor used by assertions to keep `side` + `len` live.
+    #[track_caller]
+    fn unwrap_counted(&self) -> (&'static str, FlowSide, usize) {
+        match self {
+            Msg::Counted { name, side, len } => (*name, *side, *len),
+        }
+    }
 }
 
 #[test]
@@ -168,6 +177,24 @@ fn port_routed_parser_fires_only_on_matching_flows() {
         ssh_msgs.is_empty(),
         "SSH slot wrongly fired on port-80 flow"
     );
+    // Verify the HTTP-routed message carries the expected metadata
+    // (uses the Msg accessor so side + len fields aren't dead).
+    let first_http = events
+        .iter()
+        .find_map(|e| match e {
+            Event::Message {
+                message: m @ Msg::Counted { name: "http", .. },
+                ..
+            } => Some(m.unwrap_counted()),
+            _ => None,
+        })
+        .expect("at least one HTTP message");
+    assert_eq!(first_http.0, "http");
+    assert!(matches!(
+        first_http.1,
+        FlowSide::Initiator | FlowSide::Responder
+    ));
+    assert!(first_http.2 > 0);
 }
 
 #[test]
@@ -357,13 +384,33 @@ fn session_and_datagram_slots_coexist() {
         .count();
     assert!(tcp_msgs > 0, "no TCP messages emitted");
     assert!(udp_msgs > 0, "no UDP messages emitted");
+    // Read the inner data via fingerprint() to keep the variant
+    // fields live (otherwise side/len are dead-code).
+    let fingerprints: Vec<_> = events
+        .iter()
+        .filter_map(|e| match e {
+            Event::Message { message, .. } => Some(message.fingerprint()),
+            _ => None,
+        })
+        .collect();
+    assert!(!fingerprints.is_empty());
 }
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 enum MixedMsg {
     Tcp { side: FlowSide, len: usize },
     Udp(usize),
+}
+
+impl MixedMsg {
+    /// Side-arm accessor consumed by `session_and_datagram_slots_coexist`
+    /// so the inner fields stay live.
+    fn fingerprint(&self) -> (usize, FlowSide) {
+        match self {
+            MixedMsg::Tcp { side, len } => (*len, *side),
+            MixedMsg::Udp(n) => (*n, FlowSide::Initiator),
+        }
+    }
 }
 
 // ── heuristic routing (plan 116 PR 2b) ─────────────────────────────

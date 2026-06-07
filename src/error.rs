@@ -172,7 +172,7 @@ pub struct Error {
 }
 
 impl Error {
-    #[allow(dead_code)] // used only on feature-gated paths
+    #[cfg(any(feature = "http", feature = "tls", feature = "dns", feature = "icmp"))]
     pub(crate) fn parse(module: Module, message: impl Into<String>) -> Self {
         Self {
             kind: ErrorKind {
@@ -198,7 +198,7 @@ impl Error {
         }
     }
 
-    #[allow(dead_code)] // used only on feature-gated paths
+    #[cfg(any(feature = "http", feature = "tls"))]
     pub(crate) fn buffer_overflow(module: Module, cap: usize) -> Self {
         Self {
             kind: ErrorKind {
@@ -210,28 +210,13 @@ impl Error {
         }
     }
 
-    #[allow(dead_code)] // used only on feature-gated paths
+    #[cfg(feature = "pcap")]
     pub(crate) fn io(module: Module, source: std::io::Error) -> Self {
         Self {
             kind: ErrorKind {
                 module,
                 code: ErrorCode::Io,
                 message: source.to_string(),
-            },
-            source: Some(Box::new(source)),
-        }
-    }
-
-    #[allow(dead_code)] // kept for future call sites in plan 94 / 92
-    pub(crate) fn other<E>(module: Module, message: impl Into<String>, source: E) -> Self
-    where
-        E: StdError + Send + Sync + 'static,
-    {
-        Self {
-            kind: ErrorKind {
-                module,
-                code: ErrorCode::Other,
-                message: message.into(),
             },
             source: Some(Box::new(source)),
         }

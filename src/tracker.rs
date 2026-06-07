@@ -15,7 +15,7 @@ use smallvec::SmallVec;
 
 use crate::Timestamp;
 use crate::event::{EndReason, FlowEvent, FlowSide, FlowState, FlowStats};
-use crate::extractor::{Extracted, FlowExtractor, L4Proto, Orientation, TcpFlags};
+use crate::extractor::{Extracted, FlowExtractor, L4Proto, Orientation};
 use crate::history::{HistoryString, push_for_flags};
 use crate::tcp_state;
 use crate::view::PacketView;
@@ -870,11 +870,6 @@ impl<E: FlowExtractor, S: Default + Send + 'static> FlowTracker<E, S> {
         Self::with_config_and_state(extractor, config, |_| S::default())
     }
 }
-
-// Hint to clippy: avoid unused warning if a feature combination
-// excludes the TcpFlags users.
-#[allow(dead_code)]
-fn _ensure_tcpflags_used(_: TcpFlags) {}
 
 #[cfg(test)]
 mod tests {

@@ -175,7 +175,6 @@ impl SessionParser for TlsParser {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bytes::Bytes;
 
     fn build_client_hello_record() -> Vec<u8> {
         // Synthetic TLS 1.2 ClientHello record. Reuses the fixture
@@ -254,11 +253,5 @@ mod tests {
         let mut p = TlsParser::default();
         assert!(p.feed_initiator(&[], Timestamp::default()).is_empty());
         assert!(p.feed_responder(&[], Timestamp::default()).is_empty());
-    }
-
-    // Touch private types so cargo doesn't flag them.
-    #[allow(dead_code)]
-    fn _bytes_used() -> Bytes {
-        Bytes::new()
     }
 }
