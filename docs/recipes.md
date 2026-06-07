@@ -127,11 +127,38 @@ side, ts)` instead of `feed_initiator` / `feed_responder`.
 
 ## Multi-protocol monitoring
 
-Running HTTP + TLS + DNS + ICMP against one pcap. The doc-recipe
-fallback for the future composite driver (RFC at
-`plans/92-rfc-multi-parser-driver.md`).
+Running HTTP + TLS + DNS + ICMP against one pcap.
 
-### Simple pattern — one driver per parser, N pcap passes
+### Preferred — `FlowMultiSessionDriver` composite driver (0.9.0)
+
+```rust,ignore
+use flowscope::extract::FiveTuple;
+use flowscope::FlowMultiSessionDriver;
+use flowscope::http::{HttpMessage, HttpParser};
+use flowscope::tls::{TlsMessage, TlsParser};
+
+#[derive(Debug)]
+enum L7 {
+    Http(HttpMessage),
+    Tls(TlsMessage),
+}
+
+let mut driver = FlowMultiSessionDriver::<_, L7>::new(FiveTuple::bidirectional())
+    .with_parser_on_ports(HttpParser::default(), [80, 8080], L7::Http)
+    .with_parser_on_ports(TlsParser::default(),  [443, 8443], L7::Tls);
+
+for view in source.views() {
+    for ev in driver.track(&view?) {
+        // SessionEvent<K, L7>
+    }
+}
+```
+
+Each registered parser sees only the packets whose ports match
+its routing rule. `with_parser_broadcast` registers a parser
+that fires on every packet (use for ICMP).
+
+### Legacy — one driver per parser, N pcap passes
 
 Readable, fully decoupled, every parser sees every flow it might
 apply to. Loads the pcap N times.
@@ -375,6 +402,148 @@ The wire format is locked from 0.8 forward:
 
 Once consumers ship dashboards depending on field names,
 renames require a CHANGELOG-documented breaking change.
+
+## Per-packet introspection — `flowscope::layers`
+
+The 0.9 `layers` module gives every `PacketView` a zero-copy
+layered view: direct typed accessors plus a dynamic walk.
+
+```rust,ignore
+use flowscope::layers::LayerKind;
+
+for view in source.views() {
+    let view = view?;
+    let layers = view.layers()?;
+
+    // Direct accessors.
+    if let Some(tcp)  = layers.tcp()  { println!("seq={}", tcp.seq()); }
+    if let Some(vlan) = layers.vlan() { println!("vid={}", vlan.vid()); }
+
+    // Dynamic walk — outer to inner, tunnel-aware.
+    for layer in layers.iter() {
+        println!("{} ({}B)", layer.kind(), layer.bytes().len());
+    }
+
+    // Tunnel? Inner IPv4 inside VXLAN frames.
+    if layers.has_tunnel() {
+        let inner_ipv4 = layers.find_all(LayerKind::Ipv4).nth(1);
+    }
+}
+```
+
+Tunnel walking covers VXLAN (UDP/4789), GTP-U (UDP/2152), GRE,
+and IP-in-IP. `layers.truncated()` flags a partial tunnel inner
+re-parse (the outer layers stay accessible).
+
+For high-throughput consumers, `LayerParser` + `LayerStack` are
+the zero-allocation fast path (gopacket `DecodingLayerParser`
+shape):
+
+```rust,ignore
+use flowscope::layers::{LayerParser, LayerStack, LayerKind};
+
+let parser = LayerParser::new().only(&[LayerKind::Ipv4, LayerKind::Tcp]);
+let mut stack = LayerStack::new();
+
+for frame in frames {
+    stack.reset();
+    parser.parse_ethernet(&frame, &mut stack)?;
+    if let Some(tcp) = stack.tcp() {
+        // … per-frame zero-alloc hot path …
+    }
+}
+```
+
+## TLS handshakes — aggregator parser
+
+`TlsHandshakeParser` emits one `TlsHandshake` event per
+observed handshake, carrying SNI, ALPN (client + server),
+JA3/JA4 (when their features are on), negotiated version,
+cipher, and a `HandshakeOutcome` discriminant.
+
+```rust,ignore
+use flowscope::tls::{HandshakeOutcome, TlsHandshakeParser};
+use flowscope::extract::FiveTuple;
+use flowscope::{FlowSessionDriver, SessionEvent};
+
+let mut driver = FlowSessionDriver::builder(FiveTuple::bidirectional())
+    .parser(TlsHandshakeParser::default())
+    .build();
+
+for view in source.views() {
+    for ev in driver.track(&view?) {
+        if let SessionEvent::Application { message: hs, .. } = ev {
+            println!("SNI={:?} version={:?} outcome={:?}",
+                hs.sni, hs.version, hs.outcome);
+            match hs.outcome {
+                HandshakeOutcome::Completed => { /* … */ }
+                HandshakeOutcome::AlertedByServer { description } => { /* … */ }
+                _ => {}
+            }
+        }
+    }
+}
+```
+
+Build with `--features tls,ja3,ja4` to get both fingerprints
+populated. `TlsHandshakeParser::default()` turns on JA3/JA4
+when their features are compiled in.
+
+## Cross-flow correlation — `flowscope::correlate`
+
+The 0.9 `correlate` module ships three primitives for
+cross-flow patterns:
+
+- `TimeBucketedCounter<K>` — windowed per-key event counter for
+  rate-limit / threshold detection.
+- `KeyIndexed<K, V>` — TTL'd LRU cache for request/response
+  matching.
+- `SequencePattern` trait — generic FSM for event-stream
+  detectors.
+
+### Rate-limit detection
+
+```rust,ignore
+use flowscope::correlate::TimeBucketedCounter;
+use std::time::Duration;
+
+let mut counter: TimeBucketedCounter<std::net::IpAddr> =
+    TimeBucketedCounter::new(
+        Duration::from_secs(60),  // 60 s window
+        Duration::from_secs(10),  // 10 s buckets
+        10_000,                   // distinct-key cap
+    );
+
+// On every observed source IP:
+counter.bump(src_ip, ts);
+
+// Periodically check for offenders:
+for (ip, count) in counter.entries_above(1_000, now) {
+    println!("rate-limit hit: {ip} = {count} events / 60s");
+}
+```
+
+### Request/response matching
+
+```rust,ignore
+use flowscope::correlate::KeyIndexed;
+use std::time::Duration;
+
+// Key = transaction id, value = question. 5 s TTL, 16 k cache.
+let mut pending: KeyIndexed<u16, String> =
+    KeyIndexed::new(Duration::from_secs(5), 16 * 1024);
+
+// On query observed:
+pending.insert(tx_id, qname, ts);
+
+// On response observed:
+if let Some(qname) = pending.get(&tx_id, ts) {
+    // matched within TTL
+}
+
+// Sweep periodically:
+pending.evict_expired(now);
+```
 
 ## Re-exporting flowscope types
 
