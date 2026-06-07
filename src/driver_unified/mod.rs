@@ -21,6 +21,41 @@
 //! 5. PR 5 — deletes legacy types; renames `driver_unified` →
 //!    top-level `driver`.
 //!
+//! ## Deferred knobs (planned for post-0.10)
+//!
+//! Plan 116's spec lists a handful of optional builder knobs
+//! that ship with the legacy [`crate::FlowSessionDriver`] /
+//! [`crate::FlowDriver`] but are NOT yet plumbed through the
+//! unified [`Driver`]:
+//!
+//! - **`emit_anomalies(bool)`** — would surface
+//!   [`crate::FlowEvent::FlowAnomaly`] /
+//!   [`crate::FlowEvent::TrackerAnomaly`] as
+//!   [`Event::FlowAnomaly`] / [`Event::TrackerAnomaly`].
+//!   Deferred because the central [`crate::FlowTracker`] used
+//!   internally doesn't synthesise anomalies — that lives on
+//!   [`crate::FlowDriver`]. Bringing it up cleanly requires
+//!   either a "primary slot" pattern or replacing the central
+//!   tracker with a wrapping driver. Both approaches need
+//!   measurement; punted to a follow-up plan.
+//! - **`dedup(Dedup)`** — content-hash duplicate filtering.
+//!   Same shape constraint as `emit_anomalies`.
+//! - **`idle_timeout_fn(F)`** — per-key idle-timeout override.
+//!   Can be set on the central tracker via
+//!   [`Driver::tracker_mut`] in the meantime:
+//!   `driver.tracker_mut().set_idle_timeout_fn(f)`.
+//! - **`emit_packet_details(bool)`** — would add `tcp:
+//!   Option<TcpInfo>` and `frame: Option<Bytes>` fields to
+//!   [`Event::FlowPacket`]. Variant-field addition; deferred to
+//!   the post-0.10 follow-up that fully retires the legacy
+//!   types.
+//!
+//! Today the unified [`Driver`] supports
+//! [`DriverBuilder::config`] and
+//! [`DriverBuilder::monotonic_timestamps`] only; the deferred
+//! knobs are documented as known follow-ups so consumers can
+//! file specific requests if needed.
+//!
 //! ```ignore
 //! use flowscope::driver_unified::{Driver, Event};
 //! use flowscope::extract::FiveTuple;
@@ -101,6 +136,7 @@ where
         DriverBuilder {
             extractor,
             config: FlowTrackerConfig::default(),
+            monotonic_timestamps: false,
             slots: Vec::new(),
             _marker: PhantomData,
         }
@@ -173,6 +209,7 @@ where
 {
     extractor: E,
     config: FlowTrackerConfig,
+    monotonic_timestamps: bool,
     slots: Vec<Box<dyn DriverSlot<E::Key, M>>>,
     _marker: PhantomData<M>,
 }
@@ -186,6 +223,17 @@ where
     /// Override the central tracker's config.
     pub fn config(mut self, c: FlowTrackerConfig) -> Self {
         self.config = c;
+        self
+    }
+
+    /// Enable strict-monotonic timestamp clamping on every slot's
+    /// inner driver. Default `false`. Recommended `true` for
+    /// offline pcap replay where timestamps may be slightly
+    /// out-of-order due to capture interleaving.
+    ///
+    /// Mirror of [`crate::FlowSessionDriver::with_monotonic_timestamps`].
+    pub fn monotonic_timestamps(mut self, on: bool) -> Self {
+        self.monotonic_timestamps = on;
         self
     }
 
@@ -205,6 +253,7 @@ where
             parser,
             self.config.clone(),
             Some(port_set),
+            self.monotonic_timestamps,
             lift,
         );
         self.slots.push(Box::new(slot));
@@ -225,6 +274,7 @@ where
             parser,
             self.config.clone(),
             None,
+            self.monotonic_timestamps,
             lift,
         );
         self.slots.push(Box::new(slot));
@@ -246,6 +296,7 @@ where
             parser,
             self.config.clone(),
             Some(port_set),
+            self.monotonic_timestamps,
             lift,
         );
         self.slots.push(Box::new(slot));
@@ -266,6 +317,7 @@ where
             parser,
             self.config.clone(),
             None,
+            self.monotonic_timestamps,
             lift,
         );
         self.slots.push(Box::new(slot));
@@ -308,6 +360,7 @@ where
             self.config.clone(),
             signature,
             max_probe_packets,
+            self.monotonic_timestamps,
             lift,
         );
         self.slots.push(Box::new(slot));
@@ -346,6 +399,7 @@ where
             self.config.clone(),
             signature,
             max_probe_packets,
+            self.monotonic_timestamps,
             lift,
         );
         self.slots.push(Box::new(slot));

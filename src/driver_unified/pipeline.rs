@@ -29,6 +29,7 @@ use std::hash::Hash;
 use std::path::Path;
 
 use crate::OwnedPacketView;
+use crate::detect::signatures::SignatureFn;
 use crate::extractor::FlowExtractor;
 #[cfg(feature = "pcap")]
 use crate::pcap::PcapFlowSource;
@@ -61,10 +62,13 @@ where
     M: Send + 'static,
 {
     /// Construct a [`PipelineBuilder`] for the given extractor.
+    /// Defaults to `monotonic_timestamps(true)` because the
+    /// dominant `Pipeline` consumer is offline pcap replay.
     pub fn builder(extractor: E) -> PipelineBuilder<E, M> {
         PipelineBuilder {
             extractor,
             config: FlowTrackerConfig::default(),
+            monotonic_timestamps: true,
             register: Vec::new(),
         }
     }
@@ -135,6 +139,7 @@ where
 {
     extractor: E,
     config: FlowTrackerConfig,
+    monotonic_timestamps: bool,
     register: Vec<RegisterStep<E, M>>,
 }
 
@@ -147,6 +152,14 @@ where
     /// Override the tracker config.
     pub fn config(mut self, c: FlowTrackerConfig) -> Self {
         self.config = c;
+        self
+    }
+
+    /// Toggle strict-monotonic timestamp clamping. Default for
+    /// `Pipeline` is `true` (pcap replay use case); flip off for
+    /// live-clock-coherent streams.
+    pub fn monotonic_timestamps(mut self, on: bool) -> Self {
+        self.monotonic_timestamps = on;
         self
     }
 
@@ -204,10 +217,86 @@ where
         self
     }
 
+    /// Proxy of [`DriverBuilder::session_heuristic`]. Plan 113
+    /// sub-B.
+    pub fn session_heuristic<P, F>(mut self, parser: P, signature: SignatureFn, lift: F) -> Self
+    where
+        P: SessionParser + Clone + Send + 'static,
+        P::Message: Send + 'static,
+        F: Fn(P::Message) -> M + Clone + Send + 'static,
+    {
+        self.register.push(Box::new(move |b| {
+            b.session_heuristic(parser.clone(), signature, lift.clone())
+        }));
+        self
+    }
+
+    /// Proxy of [`DriverBuilder::session_heuristic_with_budget`].
+    pub fn session_heuristic_with_budget<P, F>(
+        mut self,
+        parser: P,
+        signature: SignatureFn,
+        max_probe_packets: u8,
+        lift: F,
+    ) -> Self
+    where
+        P: SessionParser + Clone + Send + 'static,
+        P::Message: Send + 'static,
+        F: Fn(P::Message) -> M + Clone + Send + 'static,
+    {
+        self.register.push(Box::new(move |b| {
+            b.session_heuristic_with_budget(
+                parser.clone(),
+                signature,
+                max_probe_packets,
+                lift.clone(),
+            )
+        }));
+        self
+    }
+
+    /// Proxy of [`DriverBuilder::datagram_heuristic`].
+    pub fn datagram_heuristic<D, F>(mut self, parser: D, signature: SignatureFn, lift: F) -> Self
+    where
+        D: DatagramParser + Clone + Send + 'static,
+        D::Message: Send + 'static,
+        F: Fn(D::Message) -> M + Clone + Send + 'static,
+    {
+        self.register.push(Box::new(move |b| {
+            b.datagram_heuristic(parser.clone(), signature, lift.clone())
+        }));
+        self
+    }
+
+    /// Proxy of [`DriverBuilder::datagram_heuristic_with_budget`].
+    pub fn datagram_heuristic_with_budget<D, F>(
+        mut self,
+        parser: D,
+        signature: SignatureFn,
+        max_probe_packets: u8,
+        lift: F,
+    ) -> Self
+    where
+        D: DatagramParser + Clone + Send + 'static,
+        D::Message: Send + 'static,
+        F: Fn(D::Message) -> M + Clone + Send + 'static,
+    {
+        self.register.push(Box::new(move |b| {
+            b.datagram_heuristic_with_budget(
+                parser.clone(),
+                signature,
+                max_probe_packets,
+                lift.clone(),
+            )
+        }));
+        self
+    }
+
     /// Materialise the pipeline.
     pub fn build(self) -> Pipeline<E, M> {
         let extractor = self.extractor;
         let config = self.config;
+        let monotonic = self.monotonic_timestamps;
         let register: std::rc::Rc<[RegisterStep<E, M>]> =
             self.register.into_iter().collect::<Vec<_>>().into();
 
@@ -215,8 +304,9 @@ where
         let rebuild_config = config.clone();
         let rebuild_register = register.clone();
         let rebuild: Box<dyn Fn() -> Driver<E, M> + 'static> = Box::new(move || {
-            let mut b: DriverBuilder<E, M> =
-                Driver::builder(rebuild_extractor.clone()).config(rebuild_config.clone());
+            let mut b: DriverBuilder<E, M> = Driver::builder(rebuild_extractor.clone())
+                .config(rebuild_config.clone())
+                .monotonic_timestamps(monotonic);
             for step in rebuild_register.iter() {
                 b = step(b);
             }

@@ -110,6 +110,62 @@ fn pipeline_run_iter_dispatches_to_session_and_datagram() {
 }
 
 #[test]
+fn pipeline_session_heuristic_proxies_through_to_driver() {
+    use flowscope::detect::signatures::SignatureMatch;
+
+    fn always_match(_b: &[u8]) -> SignatureMatch {
+        SignatureMatch::Match
+    }
+
+    let mut p = Pipeline::<_, Msg>::builder(FiveTuple::bidirectional())
+        .session_heuristic(CountParser, always_match, |(s, n)| Msg::Tcp(s, n))
+        .build();
+
+    let tcp = owned_view(
+        ipv4_tcp(
+            [1; 6], [2; 6], [10, 0, 0, 1], [10, 0, 0, 2], 33000, 9999, 0, 0, 0x18, b"x",
+        ),
+        0,
+    );
+    let events: Vec<_> = p
+        .run_iter(vec![tcp])
+        .collect::<flowscope::Result<Vec<_>>>()
+        .unwrap();
+    let tcp_msgs = events
+        .iter()
+        .filter(|e| matches!(e, Event::Message { message: Msg::Tcp(..), .. }))
+        .count();
+    assert!(tcp_msgs > 0, "session_heuristic proxy didn't dispatch");
+}
+
+#[test]
+fn pipeline_datagram_heuristic_proxies_through_to_driver() {
+    use flowscope::detect::signatures::SignatureMatch;
+
+    fn always_match(_b: &[u8]) -> SignatureMatch {
+        SignatureMatch::Match
+    }
+
+    let mut p = Pipeline::<_, Msg>::builder(FiveTuple::bidirectional())
+        .datagram_heuristic(UdpEcho, always_match, Msg::Udp)
+        .build();
+
+    let udp = owned_view(
+        ipv4_udp([10, 0, 0, 1], [10, 0, 0, 2], 33000, 9999, b"yo"),
+        0,
+    );
+    let events: Vec<_> = p
+        .run_iter(vec![udp])
+        .collect::<flowscope::Result<Vec<_>>>()
+        .unwrap();
+    let udp_msgs = events
+        .iter()
+        .filter(|e| matches!(e, Event::Message { message: Msg::Udp(_), .. }))
+        .count();
+    assert!(udp_msgs > 0, "datagram_heuristic proxy didn't dispatch");
+}
+
+#[test]
 fn pipeline_reset_clears_flow_state() {
     let mut p = Pipeline::<_, Msg>::builder(FiveTuple::bidirectional())
         .session_broadcast(CountParser, |(s, n)| Msg::Tcp(s, n))

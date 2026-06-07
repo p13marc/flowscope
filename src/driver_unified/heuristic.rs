@@ -93,11 +93,13 @@ where
         config: FlowTrackerConfig,
         signature: SignatureFn,
         max_probe_packets: u8,
+        monotonic_timestamps: bool,
         lift: F,
     ) -> Self {
         let parser_kind = parser.parser_kind();
         Self {
-            driver: FlowSessionDriver::with_config(extractor.clone(), parser, config),
+            driver: FlowSessionDriver::with_config(extractor.clone(), parser, config)
+                .with_monotonic_timestamps(monotonic_timestamps),
             extractor,
             signature,
             max_probe_packets,
@@ -222,11 +224,13 @@ where
         config: FlowTrackerConfig,
         signature: SignatureFn,
         max_probe_packets: u8,
+        monotonic_timestamps: bool,
         lift: F,
     ) -> Self {
         let parser_kind = parser.parser_kind();
         Self {
-            driver: FlowDatagramDriver::with_config(extractor.clone(), parser, config),
+            driver: FlowDatagramDriver::with_config(extractor.clone(), parser, config)
+                .with_monotonic_timestamps(monotonic_timestamps),
             extractor,
             signature,
             max_probe_packets,

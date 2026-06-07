@@ -58,6 +58,7 @@ where
         parser: P,
         config: FlowTrackerConfig,
         ports: Option<smallvec::SmallVec<[u16; 4]>>,
+        monotonic_timestamps: bool,
         lift: F,
     ) -> Self
     where
@@ -65,7 +66,8 @@ where
     {
         let parser_kind = parser.parser_kind();
         Self {
-            driver: FlowSessionDriver::with_config(extractor, parser, config),
+            driver: FlowSessionDriver::with_config(extractor, parser, config)
+                .with_monotonic_timestamps(monotonic_timestamps),
             lift,
             parser_kind,
             ports,
@@ -141,6 +143,7 @@ where
         parser: D,
         config: FlowTrackerConfig,
         ports: Option<smallvec::SmallVec<[u16; 4]>>,
+        monotonic_timestamps: bool,
         lift: F,
     ) -> Self
     where
@@ -148,7 +151,8 @@ where
     {
         let parser_kind = parser.parser_kind();
         Self {
-            driver: FlowDatagramDriver::with_config(extractor, parser, config),
+            driver: FlowDatagramDriver::with_config(extractor, parser, config)
+                .with_monotonic_timestamps(monotonic_timestamps),
             lift,
             parser_kind,
             ports,
