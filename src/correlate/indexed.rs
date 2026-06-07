@@ -69,6 +69,28 @@ where
         Some(&entry.0)
     }
 
+    /// Read-only get — does NOT bump LRU recency. Use when the
+    /// outer scope holds `&self` rather than `&mut self`, or when
+    /// the access is incidental (logging / metrics) and shouldn't
+    /// influence eviction order.
+    ///
+    /// Same TTL semantics as [`Self::get`]: returns `None` if the
+    /// entry is absent or has aged past `ttl` relative to `now`.
+    ///
+    /// New in 0.10.0.
+    pub fn peek(&self, key: &K, now: Timestamp) -> Option<&V> {
+        let entry = self.inner.peek(key)?;
+        let inserted = entry.1;
+        if now
+            .to_duration()
+            .saturating_sub(inserted.to_duration())
+            > self.ttl
+        {
+            return None;
+        }
+        Some(&entry.0)
+    }
+
     /// Take the value out of the cache, if any.
     pub fn remove(&mut self, key: &K) -> Option<V> {
         self.inner.pop(key).map(|(v, _)| v)

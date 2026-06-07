@@ -1,5 +1,39 @@
 # Changelog
 
+## Unreleased — 0.10.0 cycle (in progress)
+
+### Added
+
+- **Plan 110 sub-B — quick-win helper sweep.** Small additive
+  helpers across `Timestamp`, `FlowStats`, `EndReason`,
+  `LayerKind`, `Layer<'_>`, `LayerStack`, and `KeyIndexed`. No
+  breaking changes; consumers can keep doing what they're doing
+  or opt in to the new helpers as they encounter them.
+  - `Timestamp::to_unix_f64()` / `from_unix_f64()` /
+    `relative_to()` / `from_system_time()`. The existing
+    `Display` impl is unchanged (Zeek-compatible
+    `"{sec}.{nsec:09}"`).
+  - `FlowStats::total_bytes()` / `total_packets()` /
+    `total_retransmits()` / `retransmit_rate()` / `duration()` /
+    `duration_secs()` — convenience over the per-side fields
+    every consumer aggregated by hand.
+  - `EndReason::as_str()` — snake-case short label (canonical
+    source for the metric vocabulary and `Display` output).
+    `Display` continues to render the same slug.
+  - `LayerKind::is_l2()` / `is_l3()` / `is_l4()` / `is_tunnel()`
+    `const` predicates — group dispatch on the layer enum
+    without spelling out variants.
+  - `Layer<'_>::Display` — one-line summary like
+    `tcp src_port=12345 dst_port=80 seq=1000 ack=0 flags=[S]`.
+    Stable, grep-friendly format for ad-hoc tracing /
+    debug logs.
+  - `LayerStack::depth()` / `iter_kinds()` — inspect the
+    zero-alloc parser's populated slots.
+  - `KeyIndexed::peek(&key, now)` — read-only `get` that does
+    NOT bump LRU recency. Use when the outer scope holds
+    `&self` rather than `&mut self`, or when the access is
+    incidental (logging / metrics).
+
 ## Unreleased — 0.9.0 cycle (in progress)
 
 The biggest release since 0.1: a high-level `Pipeline` entry

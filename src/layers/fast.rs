@@ -161,6 +161,26 @@ impl LayerStack {
     pub fn has(&self, kind: LayerKind) -> bool {
         self.decoded_mask & kind_bit(kind) != 0
     }
+
+    /// Number of populated slots. New in 0.10.0.
+    pub fn depth(&self) -> usize {
+        self.decoded_mask.count_ones() as usize
+    }
+
+    /// Iterate the [`LayerKind`]s populated by the most recent
+    /// `parse_*` call, in outer-to-inner order
+    /// (Ethernet → VLAN → IPv4/v6 → TCP/UDP). New in 0.10.0.
+    pub fn iter_kinds(&self) -> impl Iterator<Item = LayerKind> + '_ {
+        const ORDER: [LayerKind; 6] = [
+            LayerKind::Ethernet,
+            LayerKind::Vlan,
+            LayerKind::Ipv4,
+            LayerKind::Ipv6,
+            LayerKind::Tcp,
+            LayerKind::Udp,
+        ];
+        ORDER.into_iter().filter(|k| self.has(*k))
+    }
 }
 
 /// Configurable zero-allocation parser.

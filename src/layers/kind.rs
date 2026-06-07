@@ -61,6 +61,38 @@ impl LayerKind {
             LayerKind::Payload => 7,
         }
     }
+
+    /// `true` if this kind is a link-layer header (Ethernet / VLAN
+    /// / MPLS). New in 0.10.0.
+    pub const fn is_l2(self) -> bool {
+        matches!(
+            self,
+            LayerKind::Ethernet | LayerKind::Vlan | LayerKind::Mpls
+        )
+    }
+
+    /// `true` if this kind is a network-layer header
+    /// (IPv4 / IPv6 / ARP). New in 0.10.0.
+    pub const fn is_l3(self) -> bool {
+        matches!(self, LayerKind::Ipv4 | LayerKind::Ipv6 | LayerKind::Arp)
+    }
+
+    /// `true` if this kind is a transport-layer header
+    /// (TCP / UDP / ICMPv4 / ICMPv6). Tunnel headers are reported
+    /// by [`Self::is_tunnel`], not here, even though they share
+    /// the L4 group via [`Self::layer_number`]. New in 0.10.0.
+    pub const fn is_l4(self) -> bool {
+        matches!(
+            self,
+            LayerKind::Tcp | LayerKind::Udp | LayerKind::Icmpv4 | LayerKind::Icmpv6
+        )
+    }
+
+    /// `true` if this kind wraps another layered stack
+    /// (GRE / VXLAN / GTP-U). New in 0.10.0.
+    pub const fn is_tunnel(self) -> bool {
+        matches!(self, LayerKind::Gre | LayerKind::Vxlan | LayerKind::GtpU)
+    }
 }
 
 impl fmt::Display for LayerKind {

@@ -141,6 +141,120 @@ impl<'a> Layer<'a> {
     }
 }
 
+impl<'a> std::fmt::Display for Layer<'a> {
+    /// One-line summary with the layer kind, then a few defining
+    /// fields. Format is stable and grep-friendly:
+    /// `kind k1=v1 k2=v2 …`. New in 0.10.0.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Layer::Ethernet(e) => write!(
+                f,
+                "ethernet src={} dst={} type=0x{:04x}",
+                format_mac(e.source()),
+                format_mac(e.destination()),
+                e.ether_type(),
+            ),
+            Layer::Vlan(v) => write!(
+                f,
+                "vlan vid={} pri={} type=0x{:04x}",
+                v.vid(),
+                v.priority(),
+                v.inner_ether_type(),
+            ),
+            Layer::Mpls(m) => write!(
+                f,
+                "mpls label={} tc={} bos={} ttl={}",
+                m.label(),
+                m.tc(),
+                m.bos() as u8,
+                m.ttl(),
+            ),
+            Layer::Ipv4(ip) => write!(
+                f,
+                "ipv4 src={} dst={} proto={} ttl={}",
+                ip.source(),
+                ip.destination(),
+                ip.protocol(),
+                ip.ttl(),
+            ),
+            Layer::Ipv6(ip) => write!(
+                f,
+                "ipv6 src={} dst={} next_header={} hop_limit={}",
+                ip.source(),
+                ip.destination(),
+                ip.next_header(),
+                ip.hop_limit(),
+            ),
+            Layer::Arp(a) => write!(f, "arp oper={} htype={}", a.oper(), a.htype()),
+            Layer::Tcp(t) => {
+                let fl = t.flags();
+                let mut flags = String::new();
+                if fl.syn {
+                    flags.push('S');
+                }
+                if fl.ack {
+                    flags.push('A');
+                }
+                if fl.fin {
+                    flags.push('F');
+                }
+                if fl.rst {
+                    flags.push('R');
+                }
+                if fl.psh {
+                    flags.push('P');
+                }
+                if fl.urg {
+                    flags.push('U');
+                }
+                if fl.ece {
+                    flags.push('E');
+                }
+                if fl.cwr {
+                    flags.push('C');
+                }
+                if flags.is_empty() {
+                    flags.push('-');
+                }
+                write!(
+                    f,
+                    "tcp src_port={} dst_port={} seq={} ack={} flags=[{}]",
+                    t.src_port(),
+                    t.dst_port(),
+                    t.seq(),
+                    t.ack(),
+                    flags,
+                )
+            }
+            Layer::Udp(u) => write!(
+                f,
+                "udp src_port={} dst_port={} length={}",
+                u.src_port(),
+                u.dst_port(),
+                u.length(),
+            ),
+            Layer::Icmpv4(i) => write!(f, "icmpv4 type={} code={}", i.icmp_type(), i.code()),
+            Layer::Icmpv6(i) => write!(f, "icmpv6 type={} code={}", i.icmp_type(), i.code()),
+            Layer::Gre(g) => write!(
+                f,
+                "gre proto_type=0x{:04x} header_len={}",
+                g.protocol_type(),
+                g.header_len(),
+            ),
+            Layer::Vxlan(v) => write!(f, "vxlan vni={}", v.vni()),
+            Layer::GtpU(g) => write!(f, "gtpu teid={} msg_type={}", g.teid(), g.msg_type()),
+            Layer::Payload(p) => write!(f, "payload {}B", p.len()),
+        }
+    }
+}
+
+fn format_mac(mac: [u8; 6]) -> String {
+    format!(
+        "{:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
+        mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]
+    )
+}
+
 /// Parsed view of a packet's layers, outer to inner.
 ///
 /// Constructed via [`Layers::parse_ethernet`] (frame with Ethernet

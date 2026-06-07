@@ -59,13 +59,37 @@ pub enum EndReason {
     ForceClosed,
 }
 
+impl EndReason {
+    /// Snake-case short label for this end reason.
+    ///
+    /// Matches the `flowscope_flows_ended_total{reason=…}` metric
+    /// vocabulary AND the [`Display`](std::fmt::Display) output —
+    /// every consumer-facing string surface returns the same slug.
+    ///
+    /// Vocabulary (locked since 0.6 forward):
+    ///
+    /// | Variant | Slug |
+    /// |---------|------|
+    /// | [`Self::Fin`] | `"fin"` |
+    /// | [`Self::Rst`] | `"rst"` |
+    /// | [`Self::IdleTimeout`] | `"idle"` |
+    /// | [`Self::Evicted`] | `"evicted"` |
+    /// | [`Self::BufferOverflow`] | `"buffer_overflow"` |
+    /// | [`Self::ParseError`] | `"parse_error"` |
+    /// | [`Self::ParserDone`] | `"parser_done"` |
+    /// | [`Self::ForceClosed`] | `"force_closed"` |
+    ///
+    /// New in 0.10.0.
+    pub fn as_str(&self) -> &'static str {
+        crate::obs::reason_label(*self)
+    }
+}
+
 impl std::fmt::Display for EndReason {
-    /// Lowercase short label matching the
-    /// `flowscope_flows_ended_total{reason=…}` metric vocabulary
-    /// (`fin` / `rst` / `idle` / `evicted` / `buffer_overflow` /
-    /// `parse_error`).
+    /// Snake-case short label — see [`EndReason::as_str`] for the
+    /// vocabulary.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(crate::obs::reason_label(*self))
+        f.write_str(self.as_str())
     }
 }
 
@@ -133,6 +157,51 @@ pub struct FlowStats {
     /// [`crate::Reassembler::retransmits`].
     pub retransmits_initiator: u64,
     pub retransmits_responder: u64,
+}
+
+impl FlowStats {
+    /// `bytes_initiator + bytes_responder`. New in 0.10.0.
+    #[inline]
+    pub fn total_bytes(&self) -> u64 {
+        self.bytes_initiator + self.bytes_responder
+    }
+
+    /// `packets_initiator + packets_responder`. New in 0.10.0.
+    #[inline]
+    pub fn total_packets(&self) -> u64 {
+        self.packets_initiator + self.packets_responder
+    }
+
+    /// `retransmits_initiator + retransmits_responder`. New in 0.10.0.
+    #[inline]
+    pub fn total_retransmits(&self) -> u64 {
+        self.retransmits_initiator + self.retransmits_responder
+    }
+
+    /// Retransmits as a fraction of [`Self::total_packets`], or
+    /// `0.0` when no packets have been observed. New in 0.10.0.
+    pub fn retransmit_rate(&self) -> f64 {
+        let total = self.total_packets();
+        if total == 0 {
+            0.0
+        } else {
+            self.total_retransmits() as f64 / total as f64
+        }
+    }
+
+    /// `last_seen - started` as a [`std::time::Duration`]. Returns
+    /// [`std::time::Duration::ZERO`] if `last_seen` precedes
+    /// `started` (clock drift / pre-`Started` snapshots). New in
+    /// 0.10.0.
+    pub fn duration(&self) -> std::time::Duration {
+        self.last_seen.saturating_sub(self.started)
+    }
+
+    /// [`Self::duration`] in `f64` seconds — convenient for
+    /// dashboard / divisor arithmetic. New in 0.10.0.
+    pub fn duration_secs(&self) -> f64 {
+        self.duration().as_secs_f64()
+    }
 }
 
 /// Lifecycle state of a flow as tracked by [`crate::FlowTracker`].

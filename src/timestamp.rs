@@ -51,6 +51,56 @@ impl Timestamp {
     pub fn saturating_sub(self, other: Timestamp) -> Duration {
         self.to_duration().saturating_sub(other.to_duration())
     }
+
+    /// Unix epoch seconds with nanosecond precision. Inverse of
+    /// [`Self::from_unix_f64`].
+    ///
+    /// New in 0.10.0. Floating-point precision is enough for
+    /// dashboard-style "seconds since" rendering; round-trip
+    /// fidelity isn't guaranteed beyond ~microseconds for `sec`
+    /// values past 2³².
+    #[inline]
+    pub fn to_unix_f64(self) -> f64 {
+        self.sec as f64 + self.nsec as f64 / 1e9
+    }
+
+    /// Construct from Unix epoch seconds. Truncates the fractional
+    /// part to a `u32` nanosecond count; clamps negative inputs to
+    /// the epoch.
+    ///
+    /// New in 0.10.0.
+    pub fn from_unix_f64(secs: f64) -> Self {
+        if !secs.is_finite() || secs <= 0.0 {
+            return Self::default();
+        }
+        let whole = secs.trunc();
+        let sec = if whole >= u32::MAX as f64 {
+            u32::MAX
+        } else {
+            whole as u32
+        };
+        let nsec = ((secs.fract() * 1e9).round() as i64).clamp(0, 999_999_999) as u32;
+        Self::new(sec, nsec)
+    }
+
+    /// Signed delta in seconds: `self - other`. Negative if `self`
+    /// is earlier than `other`. Useful for relative-time displays
+    /// like Zeek-style `dur` values.
+    ///
+    /// New in 0.10.0.
+    pub fn relative_to(self, other: Timestamp) -> f64 {
+        self.to_unix_f64() - other.to_unix_f64()
+    }
+
+    /// Construct from a [`SystemTime`]. Clamps pre-epoch values to
+    /// the epoch and truncates overflowing seconds to `u32::MAX`.
+    ///
+    /// New in 0.10.0.
+    pub fn from_system_time(ts: SystemTime) -> Self {
+        let dur = ts.duration_since(UNIX_EPOCH).unwrap_or(Duration::ZERO);
+        let sec = u32::try_from(dur.as_secs()).unwrap_or(u32::MAX);
+        Self::new(sec, dur.subsec_nanos())
+    }
 }
 
 impl From<Timestamp> for SystemTime {
