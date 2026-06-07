@@ -4,6 +4,17 @@
 
 ### Added
 
+- **Plan 116 PR 3 — `flowscope::driver_unified::Pipeline`
+  wrapper.** Mirror of the 0.9 `flowscope::Pipeline` shape, but
+  the event stream is the unified `Event<K, M>` and the
+  builder proxies the full session / datagram / heuristic
+  registration API of the underlying `DriverBuilder`. Supports
+  `.config(…)`, `.session_on_ports / .session_broadcast /
+  .datagram_on_ports / .datagram_broadcast`,
+  `.run_pcap(path) / .run_iter(iter)`, and `.reset()` for
+  re-running on multiple inputs. The legacy `flowscope::Pipeline`
+  (with `Event<K, SM, DM>`) stays shipped in 0.10 for
+  migration.
 - **Plan 116 PR 2b + Plan 113 sub-B — heuristic routing.**
   Adds four builder methods on `DriverBuilder` —
   `session_heuristic`, `session_heuristic_with_budget`,

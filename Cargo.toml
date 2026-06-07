@@ -368,6 +368,10 @@ required-features = ["dns"]
 name = "driver_unified"
 required-features = ["test-helpers", "extractors", "session"]
 
+[[test]]
+name = "pipeline_unified"
+required-features = ["test-helpers", "extractors", "session"]
+
 [[bench]]
 name = "extractor"
 harness = false

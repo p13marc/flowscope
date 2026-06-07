@@ -44,9 +44,11 @@
 mod erased;
 mod event;
 mod heuristic;
+mod pipeline;
 
 pub use event::Event;
 pub use heuristic::{DEFAULT_PROBE_PACKETS, PROBE_BUFFER_CAP};
+pub use pipeline::{Pipeline, PipelineBuilder, PipelineIter};
 
 use std::hash::Hash;
 use std::marker::PhantomData;
