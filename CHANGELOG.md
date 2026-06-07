@@ -4,6 +4,19 @@
 
 ### Added
 
+- **Plan 102 sub-D — `flowscope::well_known`.** Curated
+  `(L4Proto, port)` → label table with ~70 entries (IANA-aligned
+  plus widely-deployed cloud-native services like Kafka, Redis,
+  Elasticsearch, MinIO, MongoDB, etc.). Lookup is binary-search
+  based, zero-cost on miss. Lower-numbered port disambiguates
+  the client/server side automatically.
+  - `flowscope::well_known::protocol_label(proto, src_port, dst_port)`
+    → `Option<&'static str>`.
+  - `flowscope::well_known::entries()` iterates every shipped row.
+  - `FiveTupleKey::well_known_port()` → lower-numbered endpoint
+    port.
+  - `FiveTupleKey::protocol_label()` → forwards to
+    `well_known::protocol_label`.
 - **Plan 110 sub-B — quick-win helper sweep.** Small additive
   helpers across `Timestamp`, `FlowStats`, `EndReason`,
   `LayerKind`, `Layer<'_>`, `LayerStack`, and `KeyIndexed`. No

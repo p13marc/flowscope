@@ -70,6 +70,27 @@ impl FiveTupleKey {
     pub fn either_port(&self, port: u16) -> bool {
         self.a.port() == port || self.b.port() == port
     }
+
+    /// Lower-numbered endpoint port — the "well-known" side for
+    /// client/server flows. Useful for protocol labelling without
+    /// having to remember which of `a` / `b` is which.
+    ///
+    /// New in 0.10.0.
+    #[inline]
+    pub fn well_known_port(&self) -> u16 {
+        self.a.port().min(self.b.port())
+    }
+
+    /// Canonical short protocol label (`"http"`, `"tls/https"`,
+    /// `"dns"`, …) for this flow, or `None` if neither endpoint
+    /// hits a known port. See [`crate::well_known::protocol_label`]
+    /// for the curated table and disambiguation rules.
+    ///
+    /// New in 0.10.0.
+    #[inline]
+    pub fn protocol_label(&self) -> Option<&'static str> {
+        crate::well_known::protocol_label(self.proto, self.a.port(), self.b.port())
+    }
 }
 
 impl FlowExtractor for FiveTuple {
