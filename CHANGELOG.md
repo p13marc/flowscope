@@ -25,6 +25,14 @@
   sweep and merges its events into the returned vector. Manual
   `sweep()` resets `last_sweep_ts` so mixing manual + auto
   is safe.
+- **`flowscope::layers` fast path** (plan 94 Tier 3 fast-path
+  follow-up). Mirror of gopacket's `DecodingLayerParser`
+  pattern. `LayerParser` + `LayerStack`: zero per-frame
+  allocation, caller-owned scratch reusable across the
+  packet loop, optional `.only(&[LayerKind…])` mask that
+  skips slots the consumer doesn't care about. The
+  ergonomic `Layers::parse_ethernet` path stays — the fast
+  path is opt-in for consumers who have profiled and need it.
 - **`SegmentBufferReassembler`** (plan 74). TCP reassembler
   with out-of-order hole-fill. Holds OOO segments in a
   `BTreeMap<start_seq, segment>` until the preceding hole is

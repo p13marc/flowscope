@@ -43,7 +43,7 @@ pub use crate::FlowDatagramDriver;
 pub use crate::{Event, EventKind, Pipeline, PipelineBuilder};
 
 #[cfg(feature = "extractors")]
-pub use crate::layers::{Layer, LayerKind, Layers};
+pub use crate::layers::{Layer, LayerKind, LayerParser, LayerStack, Layers};
 
 #[cfg(feature = "pcap")]
 pub use crate::pcap::PcapFlowSource;

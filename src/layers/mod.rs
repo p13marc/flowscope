@@ -48,12 +48,14 @@
 //! ```
 
 mod eth;
+mod fast;
 mod ip;
 mod kind;
 mod transport;
 mod tunnel;
 
 pub use eth::{EthernetSlice, MplsSlice, VlanSlice};
+pub use fast::{LayerParser, LayerStack};
 pub use ip::{ArpSlice, Ipv4Slice, Ipv6Slice};
 pub use kind::LayerKind;
 pub use transport::{
