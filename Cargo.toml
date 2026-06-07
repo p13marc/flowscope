@@ -352,6 +352,10 @@ required-features = ["emit-ndjson"]
 name = "emit_zeek"
 required-features = ["emit"]
 
+[[test]]
+name = "parser_helpers"
+required-features = ["session"]
+
 [[bench]]
 name = "extractor"
 harness = false

@@ -225,7 +225,8 @@ pub use reassembler::{
 
 #[cfg(feature = "session")]
 pub use session::{
-    DatagramParser, DatagramParserFactory, SessionEvent, SessionParser, SessionParserFactory,
+    AccumulatingSessionParser, BufferedFrameDrain, DatagramParser, DatagramParserFactory,
+    FrameDrainError, PerDatagramParser, SessionEvent, SessionParser, SessionParserFactory,
 };
 
 #[cfg(all(feature = "reassembler", feature = "session"))]

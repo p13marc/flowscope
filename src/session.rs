@@ -70,6 +70,409 @@
 use crate::event::{AnomalyKind, EndReason, FlowSide, FlowStats};
 use crate::timestamp::Timestamp;
 
+/// Default per-side buffer cap for [`BufferedFrameDrain`] /
+/// [`AccumulatingSessionParser`]. 64 KiB matches the TCP
+/// receive-buffer scale.
+pub const DEFAULT_FRAME_DRAIN_MAX_BUFFER: usize = 64 * 1024;
+
+/// Reasons [`BufferedFrameDrain`] / [`AccumulatingSessionParser`]
+/// poison themselves.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum FrameDrainError {
+    /// Buffer reached its `max_buffer` ceiling before the parser
+    /// drained a complete message. Indicates protocol desync —
+    /// the parser can't make progress.
+    BufferFull,
+    /// The `parse_one` closure returned `Some((msg, 0))` — a
+    /// zero-byte advance. Reserved for closure-author bugs; the
+    /// drain stops to avoid an infinite loop and the parser is
+    /// poisoned.
+    ZeroByteAdvance,
+}
+
+impl std::fmt::Display for FrameDrainError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            FrameDrainError::BufferFull => {
+                f.write_str("parser buffer exceeded max_buffer cap")
+            }
+            FrameDrainError::ZeroByteAdvance => {
+                f.write_str("parse_one returned Some((_, 0)) — zero-byte advance")
+            }
+        }
+    }
+}
+
+impl std::error::Error for FrameDrainError {}
+
+/// Buffered drain helper for custom parsers.
+///
+/// Encapsulates the "accumulate bytes, repeatedly call a parser
+/// closure, drain consumed prefix, retain partial" pattern that
+/// every custom [`SessionParser`] writes. Catches the off-by-one
+/// bugs around drain offsets.
+///
+/// Typical use inside a [`SessionParser`] impl:
+///
+/// ```rust
+/// # use flowscope::session::BufferedFrameDrain;
+/// # use flowscope::{FlowSide, SessionParser, Timestamp};
+/// # #[derive(Debug, Clone)] struct Msg;
+/// # fn parse_one(b: &[u8]) -> Option<(Msg, usize)> { None }
+/// #[derive(Default, Clone)]
+/// struct MyParser {
+///     init: BufferedFrameDrain<Msg>,
+///     resp: BufferedFrameDrain<Msg>,
+/// }
+///
+/// impl SessionParser for MyParser {
+///     type Message = Msg;
+///     fn feed_initiator(&mut self, b: &[u8], _: Timestamp) -> Vec<Msg> {
+///         self.init.extend(b);
+///         self.init.drain_with(parse_one);
+///         self.init.take_messages()
+///     }
+///     fn feed_responder(&mut self, b: &[u8], _: Timestamp) -> Vec<Msg> {
+///         self.resp.extend(b);
+///         self.resp.drain_with(parse_one);
+///         self.resp.take_messages()
+///     }
+/// }
+/// ```
+///
+/// New in 0.10.0 (plan 106).
+#[derive(Debug)]
+pub struct BufferedFrameDrain<M> {
+    buf: Vec<u8>,
+    out: Vec<M>,
+    max_buffer: usize,
+    poisoned: Option<FrameDrainError>,
+}
+
+impl<M> Default for BufferedFrameDrain<M> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<M> Clone for BufferedFrameDrain<M> {
+    /// Clones the configuration (`max_buffer`) but resets the
+    /// buffer / messages / poison state — typical use is to
+    /// rebuild the helper per session.
+    fn clone(&self) -> Self {
+        Self {
+            buf: Vec::new(),
+            out: Vec::new(),
+            max_buffer: self.max_buffer,
+            poisoned: None,
+        }
+    }
+}
+
+impl<M> BufferedFrameDrain<M> {
+    /// Construct with the [default buffer
+    /// cap](DEFAULT_FRAME_DRAIN_MAX_BUFFER).
+    pub fn new() -> Self {
+        Self::with_max_buffer(DEFAULT_FRAME_DRAIN_MAX_BUFFER)
+    }
+
+    /// Construct with a custom per-side buffer cap.
+    pub fn with_max_buffer(max_buffer: usize) -> Self {
+        Self {
+            buf: Vec::new(),
+            out: Vec::new(),
+            max_buffer,
+            poisoned: None,
+        }
+    }
+
+    /// Append `bytes` to the buffer.
+    ///
+    /// Returns `Err(FrameDrainError::BufferFull)` if the new
+    /// length would exceed `max_buffer`. The helper sets its
+    /// internal poison flag (queryable via [`Self::is_poisoned`]).
+    /// `bytes` are still appended up to the cap before poisoning,
+    /// so consumers that surface poison to the driver get the
+    /// last bit of data they can use.
+    pub fn extend(&mut self, bytes: &[u8]) -> Result<(), FrameDrainError> {
+        if self.poisoned.is_some() {
+            return Err(self.poisoned.clone().unwrap());
+        }
+        let new_len = self.buf.len().saturating_add(bytes.len());
+        if new_len > self.max_buffer {
+            let room = self.max_buffer.saturating_sub(self.buf.len());
+            self.buf.extend_from_slice(&bytes[..room.min(bytes.len())]);
+            self.poisoned = Some(FrameDrainError::BufferFull);
+            return Err(FrameDrainError::BufferFull);
+        }
+        self.buf.extend_from_slice(bytes);
+        Ok(())
+    }
+
+    /// Repeatedly call `parse_one` and drain the consumed prefix.
+    /// Pushes each parsed message into the internal `out` queue
+    /// (drain via [`Self::take_messages`]).
+    ///
+    /// `parse_one(buf) -> Option<(M, usize)>` semantics:
+    /// - `Some((msg, n))` — a complete message; advance `n` bytes.
+    /// - `None` — need more bytes.
+    /// - `Some((_, 0))` is treated as poison (zero-byte advance
+    ///   would loop forever).
+    pub fn drain_with<F>(&mut self, mut parse_one: F)
+    where
+        F: FnMut(&[u8]) -> Option<(M, usize)>,
+    {
+        while self.poisoned.is_none() {
+            match parse_one(&self.buf) {
+                Some((msg, 0)) => {
+                    self.out.push(msg);
+                    self.poisoned = Some(FrameDrainError::ZeroByteAdvance);
+                    return;
+                }
+                Some((msg, n)) => {
+                    self.out.push(msg);
+                    if n >= self.buf.len() {
+                        self.buf.clear();
+                    } else {
+                        self.buf.drain(..n);
+                    }
+                }
+                None => return,
+            }
+        }
+    }
+
+    /// Take the accumulated messages, clearing the queue.
+    pub fn take_messages(&mut self) -> Vec<M> {
+        std::mem::take(&mut self.out)
+    }
+
+    /// Bytes currently held in the buffer.
+    pub fn buffered_len(&self) -> usize {
+        self.buf.len()
+    }
+
+    /// `true` if the helper has poisoned itself (`BufferFull` or
+    /// `ZeroByteAdvance`). Once set, [`Self::extend`] is a no-op.
+    pub fn is_poisoned(&self) -> bool {
+        self.poisoned.is_some()
+    }
+
+    /// Poison reason, if any.
+    pub fn poison_reason(&self) -> Option<&FrameDrainError> {
+        self.poisoned.as_ref()
+    }
+}
+
+/// Convenience [`SessionParser`] impl over a `parse_one` closure
+/// of shape `Fn(&[u8]) -> Option<(M, usize)>`.
+///
+/// Wraps two [`BufferedFrameDrain`]s (one per side) and exposes
+/// the canonical "init + resp + drain-loop" pattern through one
+/// constructor call. Reduces ~25 LoC of boilerplate per custom
+/// parser to:
+///
+/// ```rust
+/// # use flowscope::session::AccumulatingSessionParser;
+/// # #[derive(Debug, Clone)] struct Msg;
+/// # fn parse_one(b: &[u8]) -> Option<(Msg, usize)> { None }
+/// let parser = AccumulatingSessionParser::new("my-protocol", parse_one);
+/// ```
+///
+/// The closure must be `Clone + Send + 'static` so the parser
+/// can be cloned per session (via the [`SessionParserFactory`]
+/// blanket impl). Capturing closures usually satisfy `Clone` if
+/// the captured values do.
+///
+/// New in 0.10.0 (plan 106).
+pub struct AccumulatingSessionParser<F, M>
+where
+    F: Fn(&[u8]) -> Option<(M, usize)> + Clone + Send + 'static,
+    M: Send + std::fmt::Debug + 'static,
+{
+    parser_kind: &'static str,
+    parse_one: F,
+    max_buffer: usize,
+    init: BufferedFrameDrain<M>,
+    resp: BufferedFrameDrain<M>,
+}
+
+impl<F, M> std::fmt::Debug for AccumulatingSessionParser<F, M>
+where
+    F: Fn(&[u8]) -> Option<(M, usize)> + Clone + Send + 'static,
+    M: Send + std::fmt::Debug + 'static,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AccumulatingSessionParser")
+            .field("parser_kind", &self.parser_kind)
+            .field("init_buffered", &self.init.buffered_len())
+            .field("resp_buffered", &self.resp.buffered_len())
+            .field("poisoned", &(self.init.is_poisoned() || self.resp.is_poisoned()))
+            .finish()
+    }
+}
+
+impl<F, M> Clone for AccumulatingSessionParser<F, M>
+where
+    F: Fn(&[u8]) -> Option<(M, usize)> + Clone + Send + 'static,
+    M: Send + std::fmt::Debug + 'static,
+{
+    /// Clones the configuration + parse closure; resets per-session
+    /// buffer state. Use for per-session reuse via the
+    /// [`SessionParserFactory`] blanket impl.
+    fn clone(&self) -> Self {
+        Self {
+            parser_kind: self.parser_kind,
+            parse_one: self.parse_one.clone(),
+            max_buffer: self.max_buffer,
+            init: BufferedFrameDrain::with_max_buffer(self.max_buffer),
+            resp: BufferedFrameDrain::with_max_buffer(self.max_buffer),
+        }
+    }
+}
+
+impl<F, M> AccumulatingSessionParser<F, M>
+where
+    F: Fn(&[u8]) -> Option<(M, usize)> + Clone + Send + 'static,
+    M: Send + std::fmt::Debug + 'static,
+{
+    /// Construct with the [default per-side buffer
+    /// cap](DEFAULT_FRAME_DRAIN_MAX_BUFFER).
+    pub fn new(parser_kind: &'static str, parse_one: F) -> Self {
+        Self::with_max_buffer(parser_kind, parse_one, DEFAULT_FRAME_DRAIN_MAX_BUFFER)
+    }
+
+    /// Construct with a custom per-side buffer cap.
+    pub fn with_max_buffer(
+        parser_kind: &'static str,
+        parse_one: F,
+        max_buffer: usize,
+    ) -> Self {
+        Self {
+            parser_kind,
+            parse_one,
+            max_buffer,
+            init: BufferedFrameDrain::with_max_buffer(max_buffer),
+            resp: BufferedFrameDrain::with_max_buffer(max_buffer),
+        }
+    }
+}
+
+impl<F, M> SessionParser for AccumulatingSessionParser<F, M>
+where
+    F: Fn(&[u8]) -> Option<(M, usize)> + Clone + Send + 'static,
+    M: Send + std::fmt::Debug + 'static,
+{
+    type Message = M;
+
+    fn feed_initiator(&mut self, bytes: &[u8], _ts: Timestamp) -> Vec<M> {
+        if self.init.extend(bytes).is_err() {
+            return self.init.take_messages();
+        }
+        let parse_one = self.parse_one.clone();
+        self.init.drain_with(parse_one);
+        self.init.take_messages()
+    }
+
+    fn feed_responder(&mut self, bytes: &[u8], _ts: Timestamp) -> Vec<M> {
+        if self.resp.extend(bytes).is_err() {
+            return self.resp.take_messages();
+        }
+        let parse_one = self.parse_one.clone();
+        self.resp.drain_with(parse_one);
+        self.resp.take_messages()
+    }
+
+    fn parser_kind(&self) -> &'static str {
+        self.parser_kind
+    }
+
+    fn is_poisoned(&self) -> bool {
+        self.init.is_poisoned() || self.resp.is_poisoned()
+    }
+
+    fn poison_reason(&self) -> Option<&str> {
+        // First poisoned side wins.
+        let err = self.init.poison_reason().or(self.resp.poison_reason())?;
+        Some(match err {
+            FrameDrainError::BufferFull => "buffer cap exceeded",
+            FrameDrainError::ZeroByteAdvance => "parse_one returned zero-byte advance",
+        })
+    }
+}
+
+/// Convenience [`DatagramParser`] impl over a `parse_one` closure
+/// of shape `Fn(&[u8]) -> Option<M>`.
+///
+/// One UDP packet, one optional message. The closure receives the
+/// raw payload; return `Some(message)` to emit one event,
+/// `None` to drop the packet silently.
+///
+/// New in 0.10.0 (plan 106).
+pub struct PerDatagramParser<F, M>
+where
+    F: Fn(&[u8]) -> Option<M> + Clone + Send + 'static,
+    M: Send + std::fmt::Debug + 'static,
+{
+    parser_kind: &'static str,
+    parse_one: F,
+}
+
+impl<F, M> std::fmt::Debug for PerDatagramParser<F, M>
+where
+    F: Fn(&[u8]) -> Option<M> + Clone + Send + 'static,
+    M: Send + std::fmt::Debug + 'static,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PerDatagramParser")
+            .field("parser_kind", &self.parser_kind)
+            .finish()
+    }
+}
+
+impl<F, M> Clone for PerDatagramParser<F, M>
+where
+    F: Fn(&[u8]) -> Option<M> + Clone + Send + 'static,
+    M: Send + std::fmt::Debug + 'static,
+{
+    fn clone(&self) -> Self {
+        Self {
+            parser_kind: self.parser_kind,
+            parse_one: self.parse_one.clone(),
+        }
+    }
+}
+
+impl<F, M> PerDatagramParser<F, M>
+where
+    F: Fn(&[u8]) -> Option<M> + Clone + Send + 'static,
+    M: Send + std::fmt::Debug + 'static,
+{
+    pub fn new(parser_kind: &'static str, parse_one: F) -> Self {
+        Self {
+            parser_kind,
+            parse_one,
+        }
+    }
+}
+
+impl<F, M> DatagramParser for PerDatagramParser<F, M>
+where
+    F: Fn(&[u8]) -> Option<M> + Clone + Send + 'static,
+    M: Send + std::fmt::Debug + 'static,
+{
+    type Message = M;
+
+    fn parse(&mut self, payload: &[u8], _side: FlowSide, _ts: Timestamp) -> Vec<M> {
+        (self.parse_one)(payload).into_iter().collect()
+    }
+
+    fn parser_kind(&self) -> &'static str {
+        self.parser_kind
+    }
+}
+
 /// Parses a stream-oriented L7 protocol session. One instance per
 /// flow; both directions feed through the same parser, allowing
 /// state to interleave.

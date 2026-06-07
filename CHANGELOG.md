@@ -4,6 +4,27 @@
 
 ### Added
 
+- **Plan 106 — parser ergonomics.** Three helpers for writing
+  custom `SessionParser` / `DatagramParser` impls without
+  reinventing the buffer + drain boilerplate that every
+  custom-protocol example writes.
+  - `BufferedFrameDrain<M>` — accumulate bytes, repeatedly call
+    a `parse_one(&[u8]) -> Option<(M, usize)>` closure, drain
+    consumed prefix, retain partial. Catches off-by-one bugs and
+    poisons on overflow / zero-byte advance.
+  - `AccumulatingSessionParser<F, M>` — one-line `SessionParser`
+    impl wrapping two `BufferedFrameDrain`s + the closure +
+    parser_kind label. Reduces ~25 LoC of boilerplate per custom
+    parser to one constructor call.
+  - `PerDatagramParser<F, M>` — one-line `DatagramParser` impl
+    over `Fn(&[u8]) -> Option<M>` — UDP parity.
+  - `FrameDrainError` for `BufferFull` / `ZeroByteAdvance`
+    poison reasons; `DEFAULT_FRAME_DRAIN_MAX_BUFFER` constant
+    (64 KiB) for the default per-side cap.
+
+  Fallible `feed_*` trait extension was scoped out of this PR —
+  driver-level Err routing is folded into plan 116 (unified
+  Driver).
 - **Plan 102 sub-A — `flowscope::correlate` extensions.** Four
   cross-flow correlation primitives that every detector example
   reinvented:
