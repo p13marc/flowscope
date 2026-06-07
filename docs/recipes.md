@@ -747,6 +747,66 @@ control, use `BufferedFrameDrain` directly inside your own
 `PerDatagramParser<F, M>` is the UDP parity:
 `Fn(&[u8]) -> Option<M>` → one message per datagram.
 
+## Migrating to the unified `Driver<E, M>` (0.10+)
+
+0.10 ships a preview of the centerpiece API redesign at
+`flowscope::driver_unified` — one `Driver<E, M>` that
+replaces the 0.9-era 5-driver / 4-event surface
+(`FlowDriver`, `FlowSessionDriver`, `FlowDatagramDriver`,
+`FlowMultiSessionDriver`, `Pipeline`) with one driver and
+one event type.
+
+The old types remain shipped in 0.10 for migration; the
+deletion sweep is queued for the next major release.
+
+```rust,ignore
+use flowscope::driver_unified::{Driver, Event};
+use flowscope::detect::signatures::http_request;
+use flowscope::dns::DnsUdpParser;
+use flowscope::extract::FiveTuple;
+use flowscope::http::HttpParser;
+
+let mut driver = Driver::<_, MyL7>::builder(FiveTuple::bidirectional())
+    .session_on_ports(HttpParser::default(), [80, 8080], MyL7::Http)
+    .datagram_on_ports(DnsUdpParser::default(), [53], MyL7::Dns)
+    // Heuristic — catches HTTP on unusual ports.
+    .session_heuristic(HttpParser::default(), http_request, MyL7::Http)
+    .build();
+
+for owned in source.views() {
+    for event in driver.track(&owned?) {
+        match event {
+            Event::FlowStarted { key, .. } => /* lifecycle */ {}
+            Event::Message { message, parser_kind, .. } => /* L7 */ {}
+            Event::ParserClosed { parser_kind, .. } => /* per-parser close */ {}
+            Event::FlowEnded { key, reason, stats, .. } => /* lifecycle */ {}
+            _ => {}
+        }
+    }
+}
+```
+
+Migration table (legacy → unified):
+
+| 0.9 type | 0.10 unified equivalent |
+|----------|-------------------------|
+| `FlowSessionDriver::new(ext, parser)` | `Driver::builder(ext).session_broadcast(parser, identity).build()` |
+| `FlowDatagramDriver::new(ext, parser)` | `Driver::builder(ext).datagram_broadcast(parser, identity).build()` |
+| `FlowMultiSessionDriver` | `Driver` with multiple `.session_on_ports(…)` / `.session_broadcast(…)` |
+| `Pipeline::builder(ext).session(p)` | `flowscope::driver_unified::Pipeline::builder(ext).session_broadcast(p, identity)` |
+| `SessionEvent::Started` | `Event::FlowStarted` (from the central tracker) |
+| `SessionEvent::Closed` | `Event::FlowEnded` (lifecycle) + `Event::ParserClosed` (per-parser) |
+| `SessionEvent::Application` | `Event::Message { parser_kind, .. }` |
+| `SessionEvent::FlowTick` | `Event::FlowTick` |
+| `FlowEvent::Established` | `Event::FlowEstablished` |
+| `FlowEvent::Packet` | `Event::FlowPacket` |
+| `FlowEvent::StateChange` | (dropped in the new shape; `FlowEstablished` is the only transition surfaced) |
+
+Heuristic routing (plan 113 sub-B) is folded in as
+`.session_heuristic(parser, signature, lift)` /
+`.datagram_heuristic(…)`; see `examples/unified_driver_demo.rs`
+for an end-to-end example.
+
 ## Re-exporting flowscope types
 
 When a downstream crate re-exports flowscope types, intra-doc

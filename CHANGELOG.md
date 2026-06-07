@@ -4,6 +4,15 @@
 
 ### Added
 
+- **Plan 116 PR 4 partial — unified-driver demo + migration
+  recipe.** New `examples/unified_driver_demo.rs` showcases the
+  unified `Driver` with port-routed HTTP + DNS dispatch plus a
+  signature-based heuristic catch-all under one driver and one
+  `Event<K, M>` stream. `docs/recipes.md` gains a "Migrating to
+  the unified Driver (0.10+)" section with a full legacy →
+  unified mapping table. The legacy driver / event types remain
+  shipped in 0.10 for migration; the deletion sweep is deferred
+  to the next major release.
 - **Plan 116 PR 3 — `flowscope::driver_unified::Pipeline`
   wrapper.** Mirror of the 0.9 `flowscope::Pipeline` shape, but
   the event stream is the unified `Event<K, M>` and the

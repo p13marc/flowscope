@@ -256,6 +256,10 @@ required-features = ["pcap", "emit"]
 name = "layer_fast_path"
 required-features = ["pcap", "extractors"]
 
+[[example]]
+name = "unified_driver_demo"
+required-features = ["pcap", "http", "dns"]
+
 [[test]]
 name = "http_parser"
 required-features = ["http"]
