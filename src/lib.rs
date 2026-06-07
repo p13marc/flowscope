@@ -106,6 +106,12 @@ pub mod driver;
 #[cfg(feature = "reassembler")]
 pub mod reassembler;
 
+#[cfg(feature = "reassembler")]
+pub mod segment_reassembler;
+
+#[cfg(feature = "reassembler")]
+pub use segment_reassembler::SegmentBufferReassembler;
+
 #[cfg(feature = "tracker")]
 pub mod dedup;
 

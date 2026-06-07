@@ -25,6 +25,17 @@
   sweep and merges its events into the returned vector. Manual
   `sweep()` resets `last_sweep_ts` so mixing manual + auto
   is safe.
+- **`SegmentBufferReassembler`** (plan 74). TCP reassembler
+  with out-of-order hole-fill. Holds OOO segments in a
+  `BTreeMap<start_seq, segment>` until the preceding hole is
+  filled, then drains the contiguous prefix into the ready
+  buffer. Segments older than `ooo_deadline` (default 1s) are
+  expired; the `holes_expired` counter ticks. Defaults: 256 KiB
+  OOO cap, 1s deadline, strict overlap (RFC 5722). Implements
+  the [`Reassembler`] trait; pair with `FlowSessionDriver` /
+  `BufferedReassemblerFactory` builders. Drop-in for binary
+  protocols (HTTP/2 HPACK, TLS record alignment) where
+  `BufferedReassembler`'s OOO-drop strategy desyncs the parser.
 - **`FlowMultiSessionDriver<E, M>`** (plan 92). Composite
   driver running N session parsers against the same packet
   stream in one pass. Each registered parser observes packets
