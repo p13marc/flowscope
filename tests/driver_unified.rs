@@ -11,7 +11,7 @@
 use flowscope::driver_unified::{Driver, Event};
 use flowscope::extract::FiveTuple;
 use flowscope::extract::parse::test_frames::{ipv4_tcp, ipv4_udp};
-use flowscope::{FlowSide, PacketView, SessionParser, Timestamp};
+use flowscope::{DatagramParser, FlowSide, PacketView, SessionParser, Timestamp};
 
 /// Toy session parser: counts bytes per side, emits one
 /// "byte-count" message per feed.
@@ -177,6 +177,113 @@ fn event_accessors_smoke_test() {
     };
     assert!(ev.is_parser_event());
     assert_eq!(ev.parser_kind(), Some("x"));
+}
+
+/// Toy datagram parser that emits one event per non-empty payload.
+#[derive(Default, Clone)]
+struct UdpEcho;
+
+impl DatagramParser for UdpEcho {
+    type Message = usize;
+    fn parse(
+        &mut self,
+        payload: &[u8],
+        _side: FlowSide,
+        _ts: Timestamp,
+    ) -> Vec<Self::Message> {
+        if payload.is_empty() {
+            Vec::new()
+        } else {
+            vec![payload.len()]
+        }
+    }
+    fn parser_kind(&self) -> &'static str {
+        "udp-echo"
+    }
+}
+
+#[test]
+fn datagram_on_ports_fires_on_matching_udp_flows() {
+    let mut driver = Driver::<_, usize>::builder(FiveTuple::bidirectional())
+        .datagram_on_ports(UdpEcho, [53], |n| n)
+        .build();
+    let frame = ipv4_udp([10, 0, 0, 1], [10, 0, 0, 2], 33000, 53, b"hello");
+    let events = driver.track(PacketView::new(&frame, Timestamp::new(0, 0)));
+    let msgs: Vec<usize> = events
+        .iter()
+        .filter_map(|e| match e {
+            Event::Message { message, .. } => Some(*message),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(msgs, vec![5]);
+}
+
+#[test]
+fn datagram_broadcast_fires_regardless_of_port() {
+    let mut driver = Driver::<_, usize>::builder(FiveTuple::bidirectional())
+        .datagram_broadcast(UdpEcho, |n| n)
+        .build();
+    let frame = ipv4_udp([10, 0, 0, 1], [10, 0, 0, 2], 33000, 7777, b"abcd");
+    let events = driver.track(PacketView::new(&frame, Timestamp::new(0, 0)));
+    let msgs: Vec<usize> = events
+        .iter()
+        .filter_map(|e| match e {
+            Event::Message { message, .. } => Some(*message),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(msgs, vec![4]);
+}
+
+#[test]
+fn datagram_on_ports_skips_non_matching() {
+    let mut driver = Driver::<_, usize>::builder(FiveTuple::bidirectional())
+        .datagram_on_ports(UdpEcho, [53], |n| n)
+        .build();
+    let frame = ipv4_udp([10, 0, 0, 1], [10, 0, 0, 2], 33000, 7777, b"abcd");
+    let events = driver.track(PacketView::new(&frame, Timestamp::new(0, 0)));
+    let msgs: Vec<usize> = events
+        .iter()
+        .filter_map(|e| match e {
+            Event::Message { message, .. } => Some(*message),
+            _ => None,
+        })
+        .collect();
+    assert!(msgs.is_empty(), "wrongly fired on non-matching port: {msgs:?}");
+}
+
+#[test]
+fn session_and_datagram_slots_coexist() {
+    let mut driver = Driver::<_, MixedMsg>::builder(FiveTuple::bidirectional())
+        .session_broadcast(CountParser::named("tcp"), |(s, n)| {
+            MixedMsg::Tcp { side: s, len: n }
+        })
+        .datagram_broadcast(UdpEcho, MixedMsg::Udp)
+        .build();
+    let tcp = ipv4_tcp(
+        [1; 6], [2; 6], [10, 0, 0, 1], [10, 0, 0, 2], 33000, 80, 0, 0, 0x18, b"x",
+    );
+    let udp = ipv4_udp([10, 0, 0, 3], [10, 0, 0, 4], 5353, 53, b"yz");
+    let mut events = driver.track(PacketView::new(&tcp, Timestamp::new(0, 0)));
+    events.extend(driver.track(PacketView::new(&udp, Timestamp::new(1, 0))));
+    let tcp_msgs = events
+        .iter()
+        .filter(|e| matches!(e, Event::Message { message: MixedMsg::Tcp { .. }, .. }))
+        .count();
+    let udp_msgs = events
+        .iter()
+        .filter(|e| matches!(e, Event::Message { message: MixedMsg::Udp(_), .. }))
+        .count();
+    assert!(tcp_msgs > 0, "no TCP messages emitted");
+    assert!(udp_msgs > 0, "no UDP messages emitted");
+}
+
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+enum MixedMsg {
+    Tcp { side: FlowSide, len: usize },
+    Udp(usize),
 }
 
 #[test]

@@ -53,10 +53,10 @@ use crate::PacketView;
 use crate::Timestamp;
 use crate::event::FlowEvent;
 use crate::extractor::FlowExtractor;
-use crate::session::SessionParser;
+use crate::session::{DatagramParser, SessionParser};
 use crate::tracker::{FlowTracker, FlowTrackerConfig};
 
-use erased::{ConcreteSlot, DriverSlot};
+use erased::{ConcreteDatagramSlot, ConcreteSlot, DriverSlot};
 
 /// Unified flow + session driver.
 ///
@@ -215,6 +215,47 @@ where
         F: Fn(P::Message) -> M + Send + 'static,
     {
         let slot = ConcreteSlot::new(
+            self.extractor.clone(),
+            parser,
+            self.config.clone(),
+            None,
+            lift,
+        );
+        self.slots.push(Box::new(slot));
+        self
+    }
+
+    /// Register a datagram (UDP) parser bound to a fixed port
+    /// set. Mirror of [`Self::session_on_ports`].
+    pub fn datagram_on_ports<D, I, F>(mut self, parser: D, ports: I, lift: F) -> Self
+    where
+        D: DatagramParser + Clone + Send + 'static,
+        D::Message: Send + 'static,
+        I: IntoIterator<Item = u16>,
+        F: Fn(D::Message) -> M + Send + 'static,
+    {
+        let port_set: smallvec::SmallVec<[u16; 4]> = ports.into_iter().collect();
+        let slot = ConcreteDatagramSlot::new(
+            self.extractor.clone(),
+            parser,
+            self.config.clone(),
+            Some(port_set),
+            lift,
+        );
+        self.slots.push(Box::new(slot));
+        self
+    }
+
+    /// Register a datagram (UDP) parser that fires on every
+    /// flow regardless of port. Mirror of
+    /// [`Self::session_broadcast`].
+    pub fn datagram_broadcast<D, F>(mut self, parser: D, lift: F) -> Self
+    where
+        D: DatagramParser + Clone + Send + 'static,
+        D::Message: Send + 'static,
+        F: Fn(D::Message) -> M + Send + 'static,
+    {
+        let slot = ConcreteDatagramSlot::new(
             self.extractor.clone(),
             parser,
             self.config.clone(),

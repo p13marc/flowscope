@@ -12,8 +12,9 @@ use std::marker::PhantomData;
 
 use crate::PacketView;
 use crate::Timestamp;
+use crate::datagram_driver::FlowDatagramDriver;
 use crate::extractor::FlowExtractor;
-use crate::session::{SessionEvent, SessionParser};
+use crate::session::{DatagramParser, SessionEvent, SessionParser};
 use crate::session_driver::FlowSessionDriver;
 use crate::tracker::FlowTrackerConfig;
 
@@ -80,6 +81,89 @@ where
     P: SessionParser + Send + 'static,
     P::Message: Send + 'static,
     F: Fn(P::Message) -> M + Send + 'static,
+    M: Send + 'static,
+{
+    fn track(&mut self, view: PacketView<'_>, ts: Timestamp) -> Vec<Event<E::Key, M>> {
+        if let Some(ports) = &self.ports
+            && !view_matches_ports(view, ports)
+        {
+            return Vec::new();
+        }
+        let parser_kind = self.parser_kind;
+        self.driver
+            .track(view)
+            .into_iter()
+            .filter_map(|e| lift_event(e, &self.lift, ts, parser_kind))
+            .collect()
+    }
+
+    fn sweep(&mut self, now: Timestamp) -> Vec<Event<E::Key, M>> {
+        let parser_kind = self.parser_kind;
+        self.driver
+            .sweep(now)
+            .into_iter()
+            .filter_map(|e| lift_event(e, &self.lift, now, parser_kind))
+            .collect()
+    }
+
+    fn finish(&mut self) -> Vec<Event<E::Key, M>> {
+        let parser_kind = self.parser_kind;
+        self.driver
+            .finish()
+            .into_iter()
+            .filter_map(|e| lift_event(e, &self.lift, Timestamp::MAX, parser_kind))
+            .collect()
+    }
+}
+
+/// Concrete datagram slot wrapping one
+/// `FlowDatagramDriver<E, D, ()>` + a lift closure. UDP
+/// equivalent of [`ConcreteSlot`].
+pub(super) struct ConcreteDatagramSlot<E, D, M, F>
+where
+    E: FlowExtractor,
+    D: DatagramParser,
+{
+    pub(super) driver: FlowDatagramDriver<E, D, ()>,
+    pub(super) lift: F,
+    pub(super) parser_kind: &'static str,
+    pub(super) ports: Option<smallvec::SmallVec<[u16; 4]>>,
+    pub(super) _marker: PhantomData<M>,
+}
+
+impl<E, D, M, F> ConcreteDatagramSlot<E, D, M, F>
+where
+    E: FlowExtractor,
+    D: DatagramParser + Clone,
+{
+    pub(super) fn new(
+        extractor: E,
+        parser: D,
+        config: FlowTrackerConfig,
+        ports: Option<smallvec::SmallVec<[u16; 4]>>,
+        lift: F,
+    ) -> Self
+    where
+        E: Clone,
+    {
+        let parser_kind = parser.parser_kind();
+        Self {
+            driver: FlowDatagramDriver::with_config(extractor, parser, config),
+            lift,
+            parser_kind,
+            ports,
+            _marker: PhantomData,
+        }
+    }
+}
+
+impl<E, D, M, F> DriverSlot<E::Key, M> for ConcreteDatagramSlot<E, D, M, F>
+where
+    E: FlowExtractor + Send,
+    E::Key: Hash + Eq + Clone + Send + 'static,
+    D: DatagramParser + Send + 'static,
+    D::Message: Send + 'static,
+    F: Fn(D::Message) -> M + Send + 'static,
     M: Send + 'static,
 {
     fn track(&mut self, view: PacketView<'_>, ts: Timestamp) -> Vec<Event<E::Key, M>> {

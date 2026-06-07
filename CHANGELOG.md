@@ -4,6 +4,14 @@
 
 ### Added
 
+- **Plan 116 PR 2a — datagram dispatch on the unified Driver.**
+  Adds `DriverBuilder::datagram_on_ports` and
+  `DriverBuilder::datagram_broadcast` mirroring their session
+  counterparts. UDP parsers (DnsUdpParser, IcmpParser,
+  PerDatagramParser, etc.) compose with TCP parsers under one
+  `Driver<E, M>`. Internal `ConcreteDatagramSlot` wraps a
+  `FlowDatagramDriver`; same lift-and-filter behaviour as the
+  session path.
 - **Plan 116 PR 1 — unified `Driver<E, M>` + `Event<K, M>`
   preview.** First step of the centerpiece API redesign that
   collapses the 0.9-era 6-driver / 4-event surface into one
