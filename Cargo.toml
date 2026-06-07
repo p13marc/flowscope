@@ -140,125 +140,181 @@ ignored = ["md-5"]
 
 # ─── Examples (see examples/README.md for a catalog) ───
 
-[[example]]
-name = "gen_fixtures"
-required-features = ["test-helpers"]
-
-[[example]]
-name = "gen_length_prefixed_pcap"
-required-features = ["test-helpers", "pcap"]
-
-[[example]]
-name = "pcap_buffered_reassembly"
-required-features = ["pcap", "reassembler"]
-
-[[example]]
-name = "pcap_flow_keys"
-required-features = ["pcap"]
-
-[[example]]
-name = "pcap_flow_summary"
-required-features = ["pcap"]
-
-[[example]]
-name = "http_log"
-required-features = ["http", "pcap"]
-
-[[example]]
-name = "tls_observer"
-required-features = ["tls", "pcap"]
-
-[[example]]
-name = "dns_log"
-required-features = ["dns", "pcap"]
-
-[[example]]
-name = "length_prefixed_pcap"
-required-features = ["pcap", "session"]
-
+# ── 00 getting started ──────────────────────────────
 [[example]]
 name = "hello_pipeline"
+path = "examples/00-getting-started/hello_pipeline.rs"
 required-features = ["pcap", "extractors", "reassembler", "session"]
-
-[[example]]
-name = "multi_parser_pipeline"
-required-features = ["pcap", "extractors", "reassembler", "session"]
-
-[[example]]
-name = "multi_protocol_monitor"
-required-features = ["l7", "pcap"]
 
 [[example]]
 name = "inspect_packet"
-required-features = ["pcap", "extractors"]
-
-[[example]]
-name = "top_talkers"
-required-features = ["pcap", "extractors", "tracker"]
-
-[[example]]
-name = "port_scan_detector"
-required-features = ["pcap", "extractors", "tracker"]
-
-[[example]]
-name = "dns_tunnel_detector"
-required-features = ["pcap", "dns", "extractors"]
-
-[[example]]
-name = "tcp_retransmit_audit"
-required-features = ["pcap", "extractors", "reassembler"]
-
-[[example]]
-name = "conversation_timeline"
-required-features = ["pcap", "extractors", "reassembler"]
-
-[[example]]
-name = "flow_duration_histogram"
-required-features = ["pcap", "aggregate"]
-
-[[example]]
-name = "bandwidth_by_protocol"
-required-features = ["pcap", "extractors", "tracker"]
-
-[[example]]
-name = "http_error_rate"
-required-features = ["pcap", "http"]
-
-[[example]]
-name = "failed_auth_burst"
-required-features = ["pcap", "http"]
-
-[[example]]
-name = "redis_protocol"
-required-features = ["pcap", "extractors", "reassembler"]
-
-[[example]]
-name = "tls_inventory"
-required-features = ["tls", "ja3", "ja4", "pcap"]
-
-[[example]]
-name = "extract_iocs"
-required-features = ["pcap", "http", "tls", "ja3", "ja4", "dns", "extractors"]
-
-[[example]]
-name = "flow_csv_export"
-required-features = ["pcap", "emit"]
-
-[[example]]
-name = "flow_json_export"
-required-features = ["pcap", "emit-ndjson"]
-
-[[example]]
-name = "zeek_style_conn_log"
-required-features = ["pcap", "emit"]
-
-[[example]]
-name = "layer_fast_path"
+path = "examples/00-getting-started/inspect_packet.rs"
 required-features = ["pcap", "extractors"]
 
 [[example]]
 name = "unified_driver_demo"
+path = "examples/00-getting-started/unified_driver_demo.rs"
 required-features = ["pcap", "http", "dns"]
+
+# ── 01 L7 message logging ────────────────────────────
+[[example]]
+name = "http_log"
+path = "examples/01-l7-logging/http_log.rs"
+required-features = ["http", "pcap"]
+
+[[example]]
+name = "http_exchanges"
+path = "examples/01-l7-logging/http_exchanges.rs"
+required-features = ["http", "pcap"]
+
+[[example]]
+name = "tls_observer"
+path = "examples/01-l7-logging/tls_observer.rs"
+required-features = ["tls", "pcap"]
+
+[[example]]
+name = "dns_log"
+path = "examples/01-l7-logging/dns_log.rs"
+required-features = ["dns", "pcap"]
+
+# ── 02 forensics / IoC extraction ────────────────────
+[[example]]
+name = "extract_iocs"
+path = "examples/02-forensics/extract_iocs.rs"
+required-features = ["pcap", "http", "tls", "ja3", "ja4", "dns", "extractors"]
+
+[[example]]
+name = "tls_inventory"
+path = "examples/02-forensics/tls_inventory.rs"
+required-features = ["tls", "ja3", "ja4", "pcap"]
+
+# ── 03 security / detection ──────────────────────────
+[[example]]
+name = "port_scan_detector"
+path = "examples/03-detection/port_scan_detector.rs"
+required-features = ["pcap", "extractors", "tracker"]
+
+[[example]]
+name = "dns_tunnel_detector"
+path = "examples/03-detection/dns_tunnel_detector.rs"
+required-features = ["pcap", "dns", "extractors"]
+
+[[example]]
+name = "failed_auth_burst"
+path = "examples/03-detection/failed_auth_burst.rs"
+required-features = ["pcap", "http"]
+
+[[example]]
+name = "tcp_retransmit_audit"
+path = "examples/03-detection/tcp_retransmit_audit.rs"
+required-features = ["pcap", "extractors", "reassembler"]
+
+# ── 04 observability / SRE ───────────────────────────
+[[example]]
+name = "top_talkers"
+path = "examples/04-observability/top_talkers.rs"
+required-features = ["pcap", "extractors", "tracker"]
+
+[[example]]
+name = "top_talkers_topk"
+path = "examples/04-observability/top_talkers_topk.rs"
+required-features = ["pcap", "extractors", "tracker"]
+
+[[example]]
+name = "http_error_rate"
+path = "examples/04-observability/http_error_rate.rs"
+required-features = ["pcap", "http"]
+
+[[example]]
+name = "bandwidth_by_protocol"
+path = "examples/04-observability/bandwidth_by_protocol.rs"
+required-features = ["pcap", "extractors", "tracker"]
+
+[[example]]
+name = "flow_duration_histogram"
+path = "examples/04-observability/flow_duration_histogram.rs"
+required-features = ["pcap", "aggregate"]
+
+[[example]]
+name = "conversation_timeline"
+path = "examples/04-observability/conversation_timeline.rs"
+required-features = ["pcap", "extractors", "reassembler"]
+
+# ── 05 data export ───────────────────────────────────
+[[example]]
+name = "flow_csv_export"
+path = "examples/05-export/flow_csv_export.rs"
+required-features = ["pcap", "emit"]
+
+[[example]]
+name = "flow_json_export"
+path = "examples/05-export/flow_json_export.rs"
+required-features = ["pcap", "emit-ndjson"]
+
+[[example]]
+name = "zeek_style_conn_log"
+path = "examples/05-export/zeek_style_conn_log.rs"
+required-features = ["pcap", "emit"]
+
+# ── 06 custom protocols ──────────────────────────────
+[[example]]
+name = "length_prefixed_pcap"
+path = "examples/06-custom-protocols/length_prefixed_pcap.rs"
+required-features = ["pcap", "session"]
+
+[[example]]
+name = "redis_protocol"
+path = "examples/06-custom-protocols/redis_protocol.rs"
+required-features = ["pcap", "extractors", "reassembler"]
+
+[[example]]
+name = "accumulating_line_parser"
+path = "examples/06-custom-protocols/accumulating_line_parser.rs"
+required-features = ["pcap", "extractors", "session"]
+
+# ── 07 multi-protocol pipelines ──────────────────────
+[[example]]
+name = "multi_parser_pipeline"
+path = "examples/07-multi-protocol/multi_parser_pipeline.rs"
+required-features = ["pcap", "extractors", "reassembler", "session"]
+
+[[example]]
+name = "multi_protocol_monitor"
+path = "examples/07-multi-protocol/multi_protocol_monitor.rs"
+required-features = ["l7", "pcap"]
+
+# ── 08 performance ───────────────────────────────────
+[[example]]
+name = "layer_fast_path"
+path = "examples/08-performance/layer_fast_path.rs"
+required-features = ["pcap", "extractors"]
+
+# ── 09 reassembly / low-level ────────────────────────
+[[example]]
+name = "pcap_flow_summary"
+path = "examples/09-low-level/pcap_flow_summary.rs"
+required-features = ["pcap"]
+
+[[example]]
+name = "pcap_flow_keys"
+path = "examples/09-low-level/pcap_flow_keys.rs"
+required-features = ["pcap"]
+
+[[example]]
+name = "pcap_buffered_reassembly"
+path = "examples/09-low-level/pcap_buffered_reassembly.rs"
+required-features = ["pcap", "reassembler"]
+
+# ── utilities (fixture generators) ───────────────────
+[[example]]
+name = "gen_fixtures"
+path = "examples/utilities/gen_fixtures.rs"
+required-features = ["test-helpers"]
+
+[[example]]
+name = "gen_length_prefixed_pcap"
+path = "examples/utilities/gen_length_prefixed_pcap.rs"
+required-features = ["test-helpers", "pcap"]
 
 [[test]]
 name = "http_parser"
