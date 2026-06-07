@@ -1,10 +1,8 @@
-//! Unit-style tests for the HTTP parser, driven via a synthetic
-//! handler.
+//! Unit-style tests for the HTTP parser, driven via the
+//! `SessionParser` API.
 
-use std::sync::{Arc, Mutex};
-
-use flowscope::http::{HttpFactory, HttpHandler, HttpRequest, HttpResponse};
-use flowscope::{FlowSide, Reassembler, ReassemblerFactory, Timestamp};
+use flowscope::http::{HttpMessage, HttpParser, HttpRequest, HttpResponse};
+use flowscope::{SessionParser, Timestamp};
 
 #[derive(Default)]
 struct Captured {
@@ -12,151 +10,132 @@ struct Captured {
     resps: Vec<HttpResponse>,
 }
 
-#[derive(Clone)]
-struct CapturingHandler {
-    inner: Arc<Mutex<Captured>>,
-}
-impl CapturingHandler {
-    fn new() -> (Self, Arc<Mutex<Captured>>) {
-        let inner = Arc::new(Mutex::new(Captured::default()));
-        (
-            Self {
-                inner: inner.clone(),
-            },
-            inner,
-        )
-    }
-}
-impl HttpHandler for CapturingHandler {
-    fn on_request(&self, req: &HttpRequest) {
-        self.inner.lock().unwrap().reqs.push(req.clone());
-    }
-    fn on_response(&self, resp: &HttpResponse) {
-        self.inner.lock().unwrap().resps.push(resp.clone());
+impl Captured {
+    fn ingest(&mut self, msgs: Vec<HttpMessage>) {
+        for m in msgs {
+            match m {
+                HttpMessage::Request(r) => self.reqs.push(r),
+                HttpMessage::Response(r) => self.resps.push(r),
+            }
+        }
     }
 }
 
-fn build(
-    side: FlowSide,
-) -> (
-    flowscope::http::HttpReassembler<CapturingHandler>,
-    Arc<Mutex<Captured>>,
-) {
-    let (h, captured) = CapturingHandler::new();
-    let mut factory = HttpFactory::with_handler(h);
-    let r = factory.new_reassembler(&(), side);
-    (r, captured)
+fn feed_init(parser: &mut HttpParser, captured: &mut Captured, bytes: &[u8]) {
+    captured.ingest(parser.feed_initiator(bytes, Timestamp::default()));
+}
+
+fn feed_resp(parser: &mut HttpParser, captured: &mut Captured, bytes: &[u8]) {
+    captured.ingest(parser.feed_responder(bytes, Timestamp::default()));
 }
 
 #[test]
 fn simple_get_request() {
-    let (mut r, captured) = build(FlowSide::Initiator);
-    r.segment(
-        0,
+    let mut parser = HttpParser::default();
+    let mut captured = Captured::default();
+    feed_init(
+        &mut parser,
+        &mut captured,
         b"GET /index.html HTTP/1.1\r\nHost: example.com\r\n\r\n",
-        Timestamp::default(),
     );
-    let c = captured.lock().unwrap();
-    assert_eq!(c.reqs.len(), 1);
-    assert_eq!(c.reqs[0].method, "GET");
-    assert_eq!(c.reqs[0].path, "/index.html");
-    assert!(c.reqs[0].body.is_empty());
+    assert_eq!(captured.reqs.len(), 1);
+    assert_eq!(captured.reqs[0].method, "GET");
+    assert_eq!(captured.reqs[0].path, "/index.html");
+    assert!(captured.reqs[0].body.is_empty());
 }
 
 #[test]
 fn pipelined_requests() {
-    let (mut r, captured) = build(FlowSide::Initiator);
-    r.segment(
-        0,
+    let mut parser = HttpParser::default();
+    let mut captured = Captured::default();
+    feed_init(
+        &mut parser,
+        &mut captured,
         b"GET /a HTTP/1.1\r\nHost: x\r\n\r\n",
-        Timestamp::default(),
     );
-    r.segment(
-        0,
+    feed_init(
+        &mut parser,
+        &mut captured,
         b"GET /b HTTP/1.1\r\nHost: x\r\n\r\n",
-        Timestamp::default(),
     );
-    r.segment(
-        0,
+    feed_init(
+        &mut parser,
+        &mut captured,
         b"GET /c HTTP/1.1\r\nHost: x\r\n\r\n",
-        Timestamp::default(),
     );
-    let c = captured.lock().unwrap();
-    assert_eq!(c.reqs.len(), 3);
-    assert_eq!(c.reqs[0].path, "/a");
-    assert_eq!(c.reqs[1].path, "/b");
-    assert_eq!(c.reqs[2].path, "/c");
+    assert_eq!(captured.reqs.len(), 3);
+    assert_eq!(captured.reqs[0].path, "/a");
+    assert_eq!(captured.reqs[1].path, "/b");
+    assert_eq!(captured.reqs[2].path, "/c");
 }
 
 #[test]
 fn response_with_content_length_body() {
-    let (mut r, captured) = build(FlowSide::Responder);
-    let raw = b"HTTP/1.1 200 OK\r\nContent-Length: 13\r\n\r\nHello, world!";
-    r.segment(0, raw, Timestamp::default());
-    let c = captured.lock().unwrap();
-    assert_eq!(c.resps.len(), 1);
-    assert_eq!(c.resps[0].status, 200);
-    assert_eq!(&*c.resps[0].body, b"Hello, world!");
+    let mut parser = HttpParser::default();
+    let mut captured = Captured::default();
+    feed_resp(
+        &mut parser,
+        &mut captured,
+        b"HTTP/1.1 200 OK\r\nContent-Length: 13\r\n\r\nHello, world!",
+    );
+    assert_eq!(captured.resps.len(), 1);
+    assert_eq!(captured.resps[0].status, 200);
+    assert_eq!(&*captured.resps[0].body, b"Hello, world!");
 }
 
 #[test]
 fn split_across_segments() {
-    let (mut r, captured) = build(FlowSide::Initiator);
-    r.segment(0, b"GET /index.html HTTP/1.1\r\n", Timestamp::default());
-    r.segment(0, b"Host: ex", Timestamp::default());
-    r.segment(0, b"ample.com\r\n\r\n", Timestamp::default());
-    let c = captured.lock().unwrap();
-    assert_eq!(c.reqs.len(), 1);
-    assert_eq!(c.reqs[0].path, "/index.html");
+    let mut parser = HttpParser::default();
+    let mut captured = Captured::default();
+    feed_init(&mut parser, &mut captured, b"GET /index.html HTTP/1.1\r\n");
+    feed_init(&mut parser, &mut captured, b"Host: ex");
+    feed_init(&mut parser, &mut captured, b"ample.com\r\n\r\n");
+    assert_eq!(captured.reqs.len(), 1);
+    assert_eq!(captured.reqs[0].path, "/index.html");
 }
 
 #[test]
 fn body_split_across_segments() {
-    let (mut r, captured) = build(FlowSide::Responder);
-    r.segment(
-        0,
+    let mut parser = HttpParser::default();
+    let mut captured = Captured::default();
+    feed_resp(
+        &mut parser,
+        &mut captured,
         b"HTTP/1.1 200 OK\r\nContent-Length: 13\r\n\r\nHello",
-        Timestamp::default(),
     );
-    {
-        let c = captured.lock().unwrap();
-        assert!(c.resps.is_empty(), "should wait for full body");
-    }
-    r.segment(0, b", world!", Timestamp::default());
-    let c = captured.lock().unwrap();
-    assert_eq!(c.resps.len(), 1);
-    assert_eq!(&*c.resps[0].body, b"Hello, world!");
+    assert!(captured.resps.is_empty(), "should wait for full body");
+    feed_resp(&mut parser, &mut captured, b", world!");
+    assert_eq!(captured.resps.len(), 1);
+    assert_eq!(&*captured.resps[0].body, b"Hello, world!");
 }
 
 #[test]
 fn connection_close_body_extends_to_fin() {
-    let (mut r, captured) = build(FlowSide::Responder);
-    r.segment(
-        0,
+    let mut parser = HttpParser::default();
+    let mut captured = Captured::default();
+    feed_resp(
+        &mut parser,
+        &mut captured,
         b"HTTP/1.0 200 OK\r\nConnection: close\r\n\r\n",
-        Timestamp::default(),
     );
-    r.segment(0, b"hello", Timestamp::default());
-    {
-        let c = captured.lock().unwrap();
-        assert!(c.resps.is_empty(), "still waiting for FIN");
-    }
-    r.segment(0, b" world", Timestamp::default());
-    r.fin();
-    let c = captured.lock().unwrap();
-    assert_eq!(c.resps.len(), 1);
-    assert_eq!(&*c.resps[0].body, b"hello world");
+    feed_resp(&mut parser, &mut captured, b"hello");
+    assert!(captured.resps.is_empty(), "still waiting for FIN");
+    feed_resp(&mut parser, &mut captured, b" world");
+    // FIN flush.
+    captured.ingest(parser.fin_responder());
+    assert_eq!(captured.resps.len(), 1);
+    assert_eq!(&*captured.resps[0].body, b"hello world");
 }
 
 #[test]
 fn malformed_doesnt_panic() {
-    let (mut r, _captured) = build(FlowSide::Initiator);
-    // Garbage.
-    r.segment(
-        0,
+    let mut parser = HttpParser::default();
+    let mut captured = Captured::default();
+    feed_init(
+        &mut parser,
+        &mut captured,
         b"\xff\xff\xffNOT HTTP\xff\xff\r\n\r\n",
-        Timestamp::default(),
     );
-    // Should not panic; reassembler enters Desynced.
-    r.fin();
+    // Should not panic; the parser enters Desynced state.
+    let _ = parser.fin_initiator();
 }

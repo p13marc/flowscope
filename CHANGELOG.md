@@ -2,6 +2,43 @@
 
 ## Unreleased — 0.9.0 cycle (in progress)
 
+The biggest release since 0.1: a high-level `Pipeline` entry
+point, a public per-packet layered view (`flowscope::layers`),
+unified errors, cross-flow correlation primitives, a composite
+multi-parser driver, OOO TCP reassembly, JA4 + a TLS
+handshake aggregator, packet-clock auto-sweep for live/offline
+parity, MSRV 1.85 → 1.88, and removal of the legacy
+callback-factory L7 APIs.
+
+### 0.9 audit (measured against 0.8.0, 2026-06-06)
+
+Per the umbrella that drove the cycle:
+
+- **38 driver constructors** across the three sync driver
+  structs (`FlowDriver` 6+4, `FlowSessionDriver` 10+4,
+  `FlowDatagramDriver` 10+4). New
+  `Driver::builder(extractor)` shape consolidates the common
+  case; existing constructors stay for 0.9 (deletion deferred
+  to 0.10).
+- **No "start here" entry point** — every prior example began
+  `FlowSessionDriver::new(…)`. The 0.9 introduces
+  `flowscope::Pipeline` + `flowscope::prelude` so a new
+  program needs one `use flowscope::prelude::*;`.
+- **No public per-packet layered view** — `etherparse::SlicedPacket`
+  was parsed internally by the FiveTuple extractor and
+  discarded. The 0.9 `flowscope::layers` module exposes a
+  zero-copy view with tunnel walking, ARP / MPLS / ICMP
+  slices, and a `LayerParser` + `LayerStack` zero-allocation
+  fast path.
+- **Two duplicated L7 API shapes** — every L7 module shipped
+  both a callback-style `*Factory` / `*Handler` surface and
+  the strategic `SessionParser` shape. The legacy column is
+  deleted (see Breaking).
+- **Five separate `Error` enums** (`http::Error`, `tls::Error`,
+  `dns::Error`, `pcap::Error`, `icmp::Error`) with no shared
+  trait. Collapsed into one `flowscope::Error` carrying
+  `Module` + `ErrorCode` + source chain.
+
 ### Added
 
 - **`flowscope::correlate` module** (plan 81). Three composable
@@ -137,6 +174,51 @@
 
 ### Breaking
 
+- **Callback-factory L7 APIs removed** (plan 94 acceptance).
+  The legacy `HttpFactory` / `HttpReassembler` / `HttpHandler`
+  and `TlsFactory` / `TlsReassembler` / `TlsHandler` types are
+  deleted. They predated the strategic `SessionParser` trait
+  (0.1.0) and have been redundant since. Every callback use
+  case is strictly subsumed by a `SessionParser` + a consumer
+  loop on `SessionEvent::Application`. Migration:
+
+  ```diff
+  - use flowscope::http::{HttpFactory, HttpHandler, HttpRequest, HttpResponse};
+  - use flowscope::FlowDriver;
+  -
+  - struct Logger;
+  - impl HttpHandler for Logger {
+  -     fn on_request(&self, req: &HttpRequest) { /* … */ }
+  -     fn on_response(&self, resp: &HttpResponse) { /* … */ }
+  - }
+  -
+  - let factory = HttpFactory::with_handler(Logger);
+  - let mut driver = FlowDriver::new(ext, factory);
+  - for view in source.views() {
+  -     for _ev in driver.track(&view?) { /* lifecycle only */ }
+  - }
+  + use flowscope::extract::FiveTuple;
+  + use flowscope::http::{HttpMessage, HttpParser};
+  + use flowscope::{FlowSessionDriver, SessionEvent};
+  +
+  + let mut driver = FlowSessionDriver::new(ext, HttpParser::default());
+  + for view in source.views() {
+  +     for ev in driver.track(&view?) {
+  +         if let SessionEvent::Application { message, .. } = ev {
+  +             match message {
+  +                 HttpMessage::Request(r)  => { /* … */ }
+  +                 HttpMessage::Response(r) => { /* … */ }
+  +             }
+  +         }
+  +     }
+  + }
+  ```
+
+  Same shape for TLS: `TlsFactory` / `TlsHandler` →
+  `TlsParser` + `for ev in driver.track(…)` consumer loop with
+  `TlsMessage::ClientHello` / `ServerHello` / `Alert` arms.
+  For one-shot handshake aggregation, use the new
+  `TlsHandshakeParser` (plan 97).
 - **MSRV bumped 1.85 → 1.88** (plan 99). Rust 1.88 (June 2025)
   stabilised let-chains at expression position
   (`if let Some(a) = x && let Some(b) = y { … }`), which

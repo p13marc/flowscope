@@ -1,33 +1,43 @@
 //! Passive HTTP/1.x observer.
 //!
 //! Bridges [`httparse`](https://crates.io/crates/httparse)'s
-//! zero-copy parser into `flowscope`'s [`Reassembler`](crate::Reassembler)
-//! and [`SessionParser`](crate::SessionParser) abstractions.
-//! Receives bytes from the per-flow TCP stream, emits parsed
-//! [`HttpRequest`] / [`HttpResponse`] events.
-//!
-//! Two integration shapes ship side by side:
-//!
-//! - [`HttpFactory`] — callback-style. Pair with
-//!   `with_async_reassembler(...)` from `netring` (or
-//!   [`FlowDriver`](crate::FlowDriver) for sync use).
-//! - [`HttpParser`] — typed message stream. Pair with
-//!   `session_stream(...)` from `netring`.
-//!
-//! Pick whichever fits your async/sync style.
+//! zero-copy parser into `flowscope`'s
+//! [`SessionParser`](crate::SessionParser) abstraction. Receives
+//! bytes from the per-flow TCP stream, emits parsed
+//! [`HttpRequest`] / [`HttpResponse`] events as
+//! [`HttpMessage`] variants.
 //!
 //! # Quick start
 //!
 //! ```no_run
-//! use flowscope::http::{HttpFactory, HttpHandler, HttpRequest, HttpResponse};
+//! use flowscope::extract::FiveTuple;
+//! use flowscope::http::{HttpMessage, HttpParser};
+//! use flowscope::{FlowSessionDriver, SessionEvent, SessionParser, Timestamp};
 //!
-//! struct Logger;
-//! impl HttpHandler for Logger {
-//!     fn on_request(&self, req: &HttpRequest) {
-//!         println!("{} {}", req.method, req.path);
-//!     }
-//!     fn on_response(&self, resp: &HttpResponse) {
-//!         println!("  -> {} {}", resp.status, resp.reason);
+//! let _driver = FlowSessionDriver::new(
+//!     FiveTuple::bidirectional(),
+//!     HttpParser::default(),
+//! );
+//! ```
+//!
+//! For a callback-shaped interface, drive a `SessionParser` from
+//! a consumer loop — `Application` events carry the parsed
+//! `HttpMessage` directly:
+//!
+//! ```no_run
+//! # use flowscope::extract::FiveTuple;
+//! # use flowscope::http::{HttpMessage, HttpParser};
+//! # use flowscope::{FlowSessionDriver, SessionEvent};
+//! # let mut driver = FlowSessionDriver::new(FiveTuple::bidirectional(), HttpParser::default());
+//! # fn views() -> impl IntoIterator<Item = flowscope::PacketView<'static>> { std::iter::empty() }
+//! for view in views() {
+//!     for ev in driver.track(view) {
+//!         if let SessionEvent::Application { message, .. } = ev {
+//!             match message {
+//!                 HttpMessage::Request(r)  => { /* handle request */ }
+//!                 HttpMessage::Response(r) => { /* handle response */ }
+//!             }
+//!         }
 //!     }
 //! }
 //! ```
@@ -40,14 +50,12 @@
 //! - HTTP/2 / HTTP/3: out of scope.
 //! - Chunked Transfer-Encoding: deferred.
 
-mod factory;
 mod parser;
 mod session;
 mod types;
 
-pub use factory::{HttpFactory, HttpReassembler};
 pub use session::{HttpMessage, HttpParser};
-pub use types::{HttpConfig, HttpHandler, HttpRequest, HttpResponse, HttpVersion};
+pub use types::{HttpConfig, HttpRequest, HttpResponse, HttpVersion};
 
 /// Slug returned by [`HttpParser`]'s `parser_kind()`. Use at
 /// match sites in place of a string literal so typos fail to

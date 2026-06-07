@@ -124,21 +124,6 @@ impl TlsVersion {
     }
 }
 
-/// User implements this to receive parsed TLS handshake events.
-pub trait TlsHandler: Send + Sync + 'static {
-    /// ClientHello observed (initiator side).
-    fn on_client_hello(&self, _hello: &TlsClientHello) {}
-    /// ServerHello observed (responder side).
-    fn on_server_hello(&self, _hello: &TlsServerHello) {}
-    /// Alert observed in either direction.
-    fn on_alert(&self, _alert: &TlsAlert) {}
-
-    /// Optional: receive the JA3 fingerprint for a ClientHello.
-    /// Only fires when the `ja3` feature is enabled.
-    #[cfg(feature = "ja3")]
-    fn on_ja3(&self, _hash_md5: &str, _canonical: &str) {}
-}
-
 /// Tunables for the TLS observer.
 #[derive(Debug, Clone)]
 pub struct TlsConfig {

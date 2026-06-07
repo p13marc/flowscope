@@ -17,13 +17,12 @@ record; `plans/` is the working backlog.
 
 ### 0.9.0 cycle
 
-The 0.9 cycle is complete. Every implementation plan is
-shipped and the per-plan files retired — the work lives in
-commit history and the CHANGELOG.
-
-| Plan | Goal | Status |
-|------|------|--------|
-| [`93-api-ergonomics-0_9.md`](./93-api-ergonomics-0_9.md) | Umbrella audit + cycle rationale. Lingers as the durable record until 0.9 release notes capture the audit numbers. | doc |
+The 0.9 cycle is complete. Every implementation plan shipped
+and every plan file is retired — the work lives in commit
+history and the CHANGELOG. The umbrella audit's durable
+record (38 driver constructors, two duplicated L7 API shapes,
+five error enums, no high-level entry, no per-packet layered
+view) is absorbed into the 0.9.0 CHANGELOG header.
 
 ### Deferred / stale
 
@@ -117,8 +116,8 @@ commit history and the CHANGELOG.
 
 Plan numbers retired (implementation shipped, file removed):
 00–04, 12, 20, 22–25, 30–61, 62, 70–73, 74, 75, 76–82, 83–91,
-94, 96, 97, 99. Active: 21 (stale-deferred), 93 (umbrella).
-The next free number for a new plan is 100+.
+93, 94, 96, 97, 99. Active: 21 (stale-deferred). The next
+free number for a new plan is 100+.
 
 ---
 

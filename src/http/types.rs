@@ -138,12 +138,6 @@ fn header_lookup<'h, 'n>(
         .map(|(_, v)| v.as_slice())
 }
 
-/// User implements this to receive parsed HTTP messages.
-pub trait HttpHandler: Send + Sync + 'static {
-    fn on_request(&self, _req: &HttpRequest) {}
-    fn on_response(&self, _resp: &HttpResponse) {}
-}
-
 /// Configuration knobs for the HTTP parser.
 #[derive(Debug, Clone)]
 pub struct HttpConfig {

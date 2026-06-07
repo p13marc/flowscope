@@ -1,15 +1,46 @@
 # Concepts
 
-flowscope is a layered library. Every layer ships a trait you can
-plug into, and a sensible default. You can stop at any layer and
-still get something useful — flow lifecycle without bytes, bytes
-without typed messages, typed messages without async.
+flowscope is a layered library. Every layer ships a trait you
+can plug into, and a sensible default. You can stop at any
+layer and still get something useful — flow lifecycle without
+bytes, bytes without typed messages, typed messages without
+async.
 
-This document is the conceptual reference: what each layer does,
-how they compose, and what the events look like. For an
+This document is the conceptual reference: what each layer
+does, how they compose, and what the events look like. For an
 opinionated decision tree on which layer to reach for, see
 [`recipes.md`](recipes.md). For a working hello-world, see
 [`getting-started.md`](getting-started.md).
+
+## The three-tier API surface (0.9.0)
+
+The library exposes three tiers of API, ranked by how much it
+gives you out of the box:
+
+```
+┌─ Tier 1 — flowscope::Pipeline ──────────────────────────────┐
+│  One import, one builder chain, one iterator.               │
+│  90 % of users; offline + simple online pipelines.          │
+│  `Pipeline::builder(ext).session(p).build().run_pcap(path)` │
+└─────────────────────────────────────────────────────────────┘
+┌─ Tier 2 — driver builders ──────────────────────────────────┐
+│  Typed builders for the three sync drivers.                 │
+│  Per-flow state, per-flow parser factories, custom drainers.│
+│  Power users who outgrow Pipeline.                          │
+│  `FlowSessionDriver::builder(ext).parser(p).build()`        │
+└─────────────────────────────────────────────────────────────┘
+┌─ Tier 3 — flowscope::layers ────────────────────────────────┐
+│  Per-packet zero-copy L2/L3/L4 view + dynamic walk.         │
+│  Anyone wanting raw header access on a frame.               │
+│  `pv.layers()?.tcp()` / `.iter()` / `.find(LayerKind::…)`   │
+└─────────────────────────────────────────────────────────────┘
+```
+
+Tier 1 is the recommended entry point for new programs. Each
+tier sits atop the same `FlowExtractor` / `FlowTracker` /
+`Reassembler` / `SessionParser` / `DatagramParser` traits — the
+layered design below — and exposes a higher-level surface for
+common cases.
 
 ## The pipeline
 

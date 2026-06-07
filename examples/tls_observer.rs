@@ -1,59 +1,60 @@
 //! Print SNI / ALPN / cipher list for every TLS ClientHello in a
-//! pcap. Demonstrates the netring-flow-pcap + netring-flow +
-//! netring-flow-tls pipeline.
+//! pcap. Uses the `TlsParser` typed-stream API.
 //!
 //! Usage:
-//!     cargo run -p netring-flow-tls --example tls_observer -- trace.pcap
+//!     cargo run --features tls,pcap --example tls_observer -- trace.pcap
 
 use std::env;
 
 use flowscope::extract::FiveTuple;
 use flowscope::pcap::PcapFlowSource;
-use flowscope::tls::{TlsClientHello, TlsFactory, TlsHandler, TlsServerHello};
-use flowscope::{FlowDriver, FlowEvent};
-
-struct Logger;
-
-impl TlsHandler for Logger {
-    fn on_client_hello(&self, h: &TlsClientHello) {
-        let sni = h.sni.as_deref().unwrap_or("(no SNI)");
-        let alpn = if h.alpn.is_empty() {
-            "(no ALPN)".to_string()
-        } else {
-            h.alpn.join(",")
-        };
-        println!(
-            "→ ClientHello sni={sni:?} alpn={alpn} ciphers={n} ext_count={ec}",
-            n = h.cipher_suites.len(),
-            ec = h.extension_types.len()
-        );
-    }
-    fn on_server_hello(&self, h: &TlsServerHello) {
-        println!(
-            "← ServerHello cipher=0x{c:04x} alpn={alpn:?}",
-            c = h.cipher_suite,
-            alpn = h.alpn
-        );
-    }
-}
+use flowscope::tls::{TlsMessage, TlsParser};
+use flowscope::{FlowSessionDriver, SessionEvent};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let path = env::args()
         .nth(1)
         .ok_or("usage: tls_observer <trace.pcap>")?;
 
-    let factory = TlsFactory::with_handler(Logger);
-    let mut driver = FlowDriver::new(FiveTuple::bidirectional(), factory);
+    let mut driver =
+        FlowSessionDriver::new(FiveTuple::bidirectional(), TlsParser::default());
 
-    let mut started = 0u64;
+    let mut client_hellos = 0u64;
+    let mut server_hellos = 0u64;
+
     for view in PcapFlowSource::open(&path)?.views() {
         let view = view?;
         for ev in driver.track(&view) {
-            if matches!(ev, FlowEvent::Started { .. }) {
-                started += 1;
+            if let SessionEvent::Application { message, .. } = ev {
+                match message {
+                    TlsMessage::ClientHello(h) => {
+                        client_hellos += 1;
+                        let sni = h.sni.as_deref().unwrap_or("(no SNI)");
+                        let alpn = if h.alpn.is_empty() {
+                            "(no ALPN)".to_string()
+                        } else {
+                            h.alpn.join(",")
+                        };
+                        println!(
+                            "→ ClientHello sni={sni:?} alpn={alpn} ciphers={n} ext_count={ec}",
+                            n = h.cipher_suites.len(),
+                            ec = h.extension_types.len()
+                        );
+                    }
+                    TlsMessage::ServerHello(h) => {
+                        server_hellos += 1;
+                        println!(
+                            "← ServerHello cipher=0x{c:04x} alpn={alpn:?}",
+                            c = h.cipher_suite,
+                            alpn = h.alpn
+                        );
+                    }
+                    _ => {}
+                }
             }
         }
     }
-    eprintln!("\n--- summary: {started} flows seen");
+
+    eprintln!("\n--- summary: {client_hellos} ClientHellos, {server_hellos} ServerHellos");
     Ok(())
 }
