@@ -41,18 +41,19 @@ fix.
 | [`105-well-known-ports.md`](./105-well-known-ports.md) | `flowscope::well_known` — curated `(proto, port)` → label table. | 5 | ~335 LoC, ~6 h |
 | [`106-parser-ergonomics.md`](./106-parser-ergonomics.md) | `AccumulatingSessionParser` + fallible `feed_*` + `BufferedFrameDrain`. | 7 | ~860 LoC, ~20 h |
 | [`107-exchange-aggregators.md`](./107-exchange-aggregators.md) | `HttpExchangeParser` + `DnsExchangeParser`. | 5 | ~860 LoC, ~16 h |
-| [`108-packet-event-enrichment.md`](./108-packet-event-enrichment.md) | `FlowEvent::Packet` gains `tcp: Option<TcpInfo>` + `frame: Option<Bytes>`. | 2 | ~435 LoC, ~13.5 h |
-| **[`109-cross-l4-multi-driver.md`](./109-cross-l4-multi-driver.md)** | **`FlowMultiDriver<E, M>` — shared-tracker, spans TCP+UDP.** | **6** | **~1,330 LoC, ~38 h** |
 | [`110-rustdoc-landing-pages.md`](./110-rustdoc-landing-pages.md) | Module-level rustdoc accessor index for http/tls/dns/icmp + 7 new HTTP accessors. | 4 | ~400 LoC, ~7 h |
 | [`111-quick-wins.md`](./111-quick-wins.md) | `Timestamp` / `FlowStats` / `EndReason` / `LayerKind` / `Layer` / `LayerStack` / `KeyIndexed` helpers. | 1 + 3 + 4 | ~535 LoC, ~10 h |
-| [`112-dynamic-lazy-analysis.md`](./112-dynamic-lazy-analysis.md) | Analysis: does the 0.10 surface allow dynamic / lazy detection? (no — proposal for 113/114/115.) | — | doc |
+| [`112-dynamic-lazy-analysis.md`](./112-dynamic-lazy-analysis.md) | Analysis: does the 0.10 surface allow dynamic / lazy detection? (no — proposal for 113/114/116.) | — | doc |
 | [`113-detection-signatures.md`](./113-detection-signatures.md) | `flowscope::detect::signatures` — 12 magic-byte recognizers for shipped protocols. | (new) | ~720 LoC, ~9 h |
-| [`114-heuristic-routing.md`](./114-heuristic-routing.md) | `Routing::Heuristic` on `FlowMultiDriver` — content-based dispatch with cheap-first cascade + pin-on-match + bounded budget. | (new) | ~850 LoC, ~16 h |
+| [`114-heuristic-routing.md`](./114-heuristic-routing.md) | `Routing::Heuristic` on the unified `Driver` — content-based dispatch with cheap-first cascade + pin-on-match + bounded budget. (Depends on 116.) | (new) | ~850 LoC, ~16 h |
+| [`115-strategic-review.md`](./115-strategic-review.md) | Strategic review proposing the driver+event unification (motivates plan 116; replaces plans 108 + 109). | — | doc |
+| **[`116-driver-event-unification.md`](./116-driver-event-unification.md)** | **`Driver<E, M>` + `Event<K, M>` — collapse 6 drivers and 4 event types into one of each. Absorbs plans 108 + 109.** | **2 + 6** | **~700 LoC net, ~52 h** |
 
-Total: ~8,900 LoC, ~194 hours across 13 implementation
-plans. The +25 hour delta over the original 11-plan budget
-covers the dynamic-detection capability surfaced by the
-follow-up audit (plan 112).
+Total: ~7,830 LoC net, ~225 hours across 12 implementation
+plans. Plan 116 absorbs plans 108 and 109; the +30-hour delta
+over the (108+109)-baseline funds the wider redesign (1 driver,
+1 event) instead of incrementally bolting onto the
+existing surface.
 
 Cycle theme: "address the next layer of DX after the 0.9
 big surface choices."
@@ -66,25 +67,25 @@ Canonical landing sequence:
    ↓
 102, 103, 104, 113 (correlate + aggregate + detect + signatures)
    ↓
-106 (parser ergonomics — feed plan 107 + plan 109)
+106 (parser ergonomics — feeds plan 107 + plan 116)
    ↓
 107 (exchange aggregators)
    ↓
-108 (packet enrichment — affects every consumer)
+116 (driver + event unification — the centerpiece;
+       absorbs plans 108 + 109; depends on 106 + 111)
    ↓
-109 (cross-L4 driver — the centerpiece; depends on 106)
-   ↓
-114 (heuristic routing — depends on 109 + 113)
+114 (heuristic routing — extends Driver's builder; depends on 116 + 113)
 ```
 
-The user-priority plan is **109** — cross-L4 multi-driver.
-Land it before 114 so the routing surface is in place.
+The user-priority plan is **116** — driver + event
+unification. Land it as a 5-PR series before 114 so the
+routing surface attaches to the new unified `Driver`.
 
 Plan **112** (dynamic / lazy analysis) is a doc; plans
 **113** + **114** together address the "dynamic detection"
-gap surfaced by the follow-up audit. Plan 115 (lazy
-`Layers`) is sketched in 112 but deferred pending benchmark
-data.
+gap surfaced by the follow-up audit. Plan **115**
+(strategic-review doc) motivates plan 116. A lazy-`Layers`
+sketch from 112 is deferred pending benchmark data.
 
 ### Deferred / stale
 
@@ -179,8 +180,9 @@ data.
 
 Plan numbers retired (implementation shipped, file removed):
 00–04, 12, 20, 22–25, 30–61, 62, 70–73, 74, 75, 76–82, 83–91,
-93, 94, 96, 97, 99. Active: 21 (stale-deferred), 100–114
-(0.10 cycle). The next free number for a new plan is 115+.
+93, 94, 96, 97, 99. Subsumed (rolled into plan 116): 108, 109.
+Active: 21 (stale-deferred), 100–107, 110–116 (0.10 cycle).
+The next free number for a new plan is 117+.
 
 ---
 

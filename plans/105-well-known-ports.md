@@ -24,8 +24,9 @@ None.
 
 - **Dynamic protocol detection from payload.** Suricata /
   Zeek do this; flowscope intentionally stays at port-based.
-  Real protocol detection is the `FlowMultiDriver` route
-  (plan 109) where consumers register parsers.
+  Real protocol detection is the unified `Driver` route
+  (plan 116) where consumers register parsers, with
+  signature-based heuristic dispatch added by plan 114.
 - **Negotiated port labels** (e.g. SCTP per-association
   ports). Out of scope.
 

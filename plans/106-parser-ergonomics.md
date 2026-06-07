@@ -25,8 +25,9 @@ The `redis_protocol.rs` example exposed all three pain points.
 ## Status
 
 **Ready to implement.** Targets 0.10.0. Independent of other
-0.10 plans except for the small overlap with plan 108 — both
-touch the `session.rs` module.
+0.10 plans. The unified `Driver` (plan 116) consumes the
+fallible `feed_*` shape this plan introduces, so plan 106
+should land before plan 116 starts its dispatch implementation.
 
 ## Prerequisites
 

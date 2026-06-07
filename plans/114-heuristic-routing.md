@@ -1,11 +1,12 @@
-# Plan 114 — `Routing::Heuristic` for `FlowMultiDriver`
+# Plan 114 — `Routing::Heuristic` for the unified `Driver`
 
 ## Summary
 
-Add a new routing mode to plan 109's `FlowMultiDriver` —
-`Routing::Heuristic { signatures, max_probe_packets }` —
-that uses payload signatures (plan 113) to choose a parser
-when port-based routing doesn't match.
+Add a payload-signature routing mode to plan 116's unified
+`Driver<E, M>` — `Routing::Heuristic { signature,
+max_probe_packets }` — that uses payload signatures (plan
+113) to choose a parser when port-based routing doesn't
+match.
 
 Implements the **cheap-first cascade + pin-on-first-match +
 bounded packet budget** pattern that every production DPI
@@ -16,13 +17,13 @@ as port-routed today.
 ## Status
 
 **Ready to implement.** Targets 0.10.0. Depends on plans
-109 (FlowMultiDriver) and 113 (signatures); 114 lands after
+116 (unified Driver) and 113 (signatures); 114 lands after
 both.
 
 ## Prerequisites
 
-- **Plan 109** — `FlowMultiDriver<E, M>`. The shared-tracker
-  composite this plan extends. Hard prerequisite.
+- **Plan 116** — `Driver<E, M>` + `DriverBuilder<E, M>`. The
+  unified driver this plan extends. Hard prerequisite.
 - **Plan 113** — `flowscope::detect::signatures`. Optional —
   consumers can register custom signatures; the shipped
   table is the convenience.
@@ -60,9 +61,9 @@ both.
 ### New routing variant
 
 ```rust
-// src/multi_driver/routing.rs
+// src/driver/routing.rs (file landed by plan 116)
 pub enum Routing {
-    // … existing variants from plan 109 …
+    // … existing variants from plan 116 …
     /// Port-set routing — fires when `dst_port ∈ ports || src_port ∈ ports`.
     Ports(SmallVec<[u16; 4]>),
     /// Fire on every packet matching this L4.
@@ -86,8 +87,8 @@ pub enum Routing {
 ### Builder API additions
 
 ```rust
-impl<E, M> FlowMultiDriverBuilder<E, M> {
-    // … existing methods from plan 109 …
+impl<E, M> DriverBuilder<E, M> {
+    // … existing methods from plan 116 …
 
     /// Register a session parser that fires when `signature`
     /// matches on the flow's first segments. Defaults to
@@ -121,10 +122,14 @@ impl<E, M> FlowMultiDriverBuilder<E, M> {
 }
 ```
 
+`PipelineBuilder<E, M>` (plan 116) proxies all three
+methods through to its inner `DriverBuilder` — heuristic
+routing works equally from the `Pipeline` entry point.
+
 ### Convenience: dispatch by registry
 
 ```rust
-impl<E, M> FlowMultiDriverBuilder<E, M> {
+impl<E, M> DriverBuilder<E, M> {
     /// Register every parser in `registry()` with its
     /// canonical heuristic signature. Convenience for
     /// "give me detection for everything flowscope ships."
@@ -172,7 +177,8 @@ enum FlowDetection {
 ```
 
 Stored in a `HashMap<E::Key, FlowDetection>` parallel to
-the existing flow tracker.
+the existing flow tracker — owned by the unified `Driver`'s
+internal state (plan 116's `src/driver/dispatch.rs`).
 
 Memory cost per active flow:
 - `Probing`: ~140 bytes (two 64-byte ArrayVecs + counter).
@@ -191,7 +197,7 @@ dominated by `Pinned` (4 bytes/flow) — negligible.
 ```text
 On packet receipt for flow K:
   1. tracker.track(view) → emit Flow events as before.
-  2. Run port-based routing (existing plan-109 path).
+  2. Run port-based routing (existing plan-116 path).
      Each matching port-routed parser fires.
   3. Look up FlowDetection[K]:
      a. Probing: append payload to per-side buffer (capped),
@@ -205,13 +211,13 @@ On packet receipt for flow K:
         - Else: seen += 1, continue.
      b. Pinned(slot): dispatch directly to the slot's parser.
      c. GaveUp: no heuristic dispatch.
-  4. Run broadcast routing (existing plan-109 path).
-  5. Return merged Vec<MultiEvent>.
+  4. Run broadcast routing (existing plan-116 path).
+  5. Return merged Vec<Event<K, M>>.
 ```
 
 ### Per-flow cleanup
 
-On `FlowEvent::Ended` from the tracker, drop the
+On `Event::FlowEnded` from the tracker, drop the
 `FlowDetection` entry for that key. Memory bounded by the
 flow tracker's `max_flows`.
 
@@ -224,7 +230,7 @@ use flowscope::detect::signatures::{
     http_request, tls_client_hello, dns_message,
 };
 
-let mut driver = FlowMultiDriver::<_, MyL7>::builder(ext)
+let mut driver = Driver::<_, MyL7>::builder(ext)
     // Port-routed: covers the common case.
     .session_on_ports(HttpParser::default(),         [80, 8080], MyL7::Http)
     .session_on_ports(TlsHandshakeParser::default(), [443],       MyL7::Tls)
@@ -252,9 +258,9 @@ packet of the flow. Identical to port-routed cost after.
 ## Files
 
 ```
-src/multi_driver/routing.rs  # add Heuristic variant
-src/multi_driver/mod.rs      # add detection state + dispatch
-                             # + new builder methods
+src/driver/routing.rs        # add Heuristic variant (file landed by 116)
+src/driver/dispatch.rs       # add detection state + dispatch (file landed by 116)
+src/driver/mod.rs            # add new builder methods
 tests/heuristic_routing.rs   # 6+ end-to-end scenarios
 examples/extract_iocs.rs     # extend example with both modes
 docs/recipes.md              # update "Multi-protocol monitoring"
@@ -264,9 +270,9 @@ CHANGELOG.md                 # 0.10 entry
 ## Implementation steps
 
 1. Add `Routing::Heuristic { signature, max_probe_packets }`
-   variant to the routing enum (added in plan 109's PR 2).
+   variant to the routing enum (file added by plan 116).
 2. Add `FlowDetection` enum + `HashMap<K, FlowDetection>`
-   storage to `FlowMultiDriver`.
+   storage to `Driver`'s dispatch state.
 3. Add the four builder methods
    (`session_heuristic`, `session_heuristic_with_budget`,
    same for datagram).
@@ -280,8 +286,10 @@ CHANGELOG.md                 # 0.10 entry
      accumulated buffer to that parser.
    - On exhaustion, transition to `GaveUp`.
    - If `Pinned`, dispatch directly.
-5. On `FlowEvent::Ended`, drop the detection state.
-6. `tests/heuristic_routing.rs`:
+5. On `Event::FlowEnded`, drop the detection state.
+6. Proxy the three new builder methods through
+   `PipelineBuilder<E, M>` (plan 116) for parity.
+7. `tests/heuristic_routing.rs`:
    - HTTP on port 9000 → pinned + parsed correctly.
    - TLS on port 8443 → pinned + ClientHello parsed.
    - Encrypted random bytes on port 80 → port-routed HTTP
@@ -294,11 +302,11 @@ CHANGELOG.md                 # 0.10 entry
    - Two heuristic parsers registered for the same protocol
      (e.g. two HTTP parsers with different lifts) → first
      in registration order wins on Match.
-7. Extend `examples/extract_iocs.rs` to register both
+8. Extend `examples/extract_iocs.rs` to register both
    port-based and heuristic-routed copies of each parser.
-8. Update `docs/recipes.md` "Multi-protocol monitoring"
+9. Update `docs/recipes.md` "Multi-protocol monitoring"
    section.
-9. CHANGELOG entry under 0.10.0 "Added."
+10. CHANGELOG entry under 0.10.0 "Added."
 
 ## Tests
 
@@ -307,7 +315,7 @@ CHANGELOG.md                 # 0.10 entry
 ```rust
 #[test]
 fn heuristic_matches_http_on_unusual_port() {
-    let mut driver = FlowMultiDriver::<_, HttpMessage>::builder(ext)
+    let mut driver = Driver::<_, HttpMessage>::builder(ext)
         .session_heuristic(HttpParser::default(), http_request, |m| m)
         .build();
 
@@ -319,7 +327,7 @@ fn heuristic_matches_http_on_unusual_port() {
 
 #[test]
 fn heuristic_gives_up_after_budget() {
-    let mut driver = FlowMultiDriver::<_, HttpMessage>::builder(ext)
+    let mut driver = Driver::<_, HttpMessage>::builder(ext)
         .session_heuristic_with_budget(HttpParser::default(), http_request, 2, |m| m)
         .build();
 
@@ -339,7 +347,7 @@ fn port_route_wins_when_both_apply() {
     // For a port-80 flow, port-routed dispatches first; the
     // heuristic dispatcher should NOT also fire (else we'd
     // get duplicate events).
-    let mut driver = FlowMultiDriver::<_, HttpMessage>::builder(ext)
+    let mut driver = Driver::<_, HttpMessage>::builder(ext)
         .session_on_ports(HttpParser::default(), [80], |m| m)
         .session_heuristic(HttpParser::default(), http_request, |m| m)
         .build();
@@ -358,7 +366,7 @@ fn pinning_persists_across_packets() {
     // payload mid-flow — the HTTP parser should receive it
     // (and presumably fail to parse), not the TLS parser
     // claim it.
-    let mut driver = FlowMultiDriver::<_, AnyL7Message>::builder(ext)
+    let mut driver = Driver::<_, AnyL7Message>::builder(ext)
         .session_heuristic(HttpParser::default(), http_request, AnyL7Message::Http)
         .session_heuristic(TlsHandshakeParser::default(), tls_client_hello, AnyL7Message::Tls)
         .build();
@@ -386,7 +394,8 @@ the per-side buffer fills.
 ## Acceptance criteria
 
 - `Routing::Heuristic` variant ships.
-- Four builder methods land.
+- Four builder methods land (three on `DriverBuilder`, all
+  three proxied through `PipelineBuilder`).
 - Per-flow detection state machine works correctly across
   the test scenarios.
 - 6+ integration tests pass.
@@ -431,25 +440,25 @@ the per-side buffer fills.
 |---------|-----|-------|
 | `Routing::Heuristic` variant | ~30 | 0.5 |
 | `FlowDetection` state + storage | ~80 | 2 |
-| Four builder methods | ~100 | 2 |
+| Four builder methods + PipelineBuilder proxies | ~120 | 2.5 |
 | Per-packet dispatch update | ~140 | 4 |
-| Per-flow cleanup on FlowEvent::Ended | ~30 | 1 |
+| Per-flow cleanup on Event::FlowEnded | ~30 | 1 |
 | Tests (6+ scenarios + 1 proptest) | ~360 | 5 |
 | Example extension | ~30 | 0.5 |
 | Docs + CHANGELOG | ~80 | 1 |
-| **Total** | **~850 LoC** | **~16 hours** |
+| **Total** | **~870 LoC** | **~16.5 hours** |
 
-(Higher than the postmortem's "~600 LoC" estimate because
-the per-flow detection state turned out to need more
-machinery than initially scoped.)
+(Slightly higher than the original 109-tied estimate
+because builder proxies now span both `DriverBuilder` and
+`PipelineBuilder` after plan 116's unification.)
 
 ## Provenance
 
 Plan 112 (the analysis document) — recommendation
-adopted verbatim:
+adopted, adapted for plan 116's unified driver:
 
 > Plan 114 — `Routing::Heuristic { signatures }` on
-> the plan-109 `FlowMultiDriver`. Adds a new routing mode
+> the unified `Driver`. Adds a new routing mode
 > that runs a list of signatures over the first N bytes of
 > payload per flow; pins on first match. After the pin, the
 > parser receives subsequent packets directly (zero
@@ -460,3 +469,7 @@ adopted verbatim:
 Industry pattern adopted: Wireshark conversation pinning
 (Wikipedia/Wireshark docs) plus nDPI's FPC budget plus
 Suricata's pattern-then-probe sequencing.
+
+Plan 115 (strategic review) — re-targeted from
+`FlowMultiDriver` (plan 109, deleted) to the unified
+`Driver<E, M>` (plan 116).
