@@ -24,6 +24,58 @@ record (38 driver constructors, two duplicated L7 API shapes,
 five error enums, no high-level entry, no per-packet layered
 view) is absorbed into the 0.9.0 CHANGELOG header.
 
+### 0.10.0 cycle — backlog
+
+Triggered by the 0.9 examples-writing postmortem
+([`100-examples-postmortem.md`](./100-examples-postmortem.md)).
+Eight DX pain points were catalogued; one detailed plan per
+fix.
+
+| Plan | Goal | Theme | Sizing |
+|------|------|-------|--------|
+| [`100-examples-postmortem.md`](./100-examples-postmortem.md) | Umbrella audit + cycle rationale. | — | doc |
+| [`101-emit-module.md`](./101-emit-module.md) | `flowscope::emit` — CSV / NDJSON / Zeek `conn.log` writers. | 8 | ~830 LoC, ~21 h |
+| [`102-correlate-extensions.md`](./102-correlate-extensions.md) | `TimeBucketedSet` + `BurstDetector` + `TopK` + `Ewma`. | 5 | ~1,010 LoC, ~20 h |
+| [`103-aggregate-module.md`](./103-aggregate-module.md) | `flowscope::aggregate` — `Histogram` + `Percentile`. | 5 | ~440 LoC, ~11 h |
+| [`104-detect-module.md`](./104-detect-module.md) | `flowscope::detect` — Shannon entropy + light primitives. | 5 | ~295 LoC, ~6 h |
+| [`105-well-known-ports.md`](./105-well-known-ports.md) | `flowscope::well_known` — curated `(proto, port)` → label table. | 5 | ~335 LoC, ~6 h |
+| [`106-parser-ergonomics.md`](./106-parser-ergonomics.md) | `AccumulatingSessionParser` + fallible `feed_*` + `BufferedFrameDrain`. | 7 | ~860 LoC, ~20 h |
+| [`107-exchange-aggregators.md`](./107-exchange-aggregators.md) | `HttpExchangeParser` + `DnsExchangeParser`. | 5 | ~860 LoC, ~16 h |
+| [`108-packet-event-enrichment.md`](./108-packet-event-enrichment.md) | `FlowEvent::Packet` gains `tcp: Option<TcpInfo>` + `frame: Option<Bytes>`. | 2 | ~435 LoC, ~13.5 h |
+| **[`109-cross-l4-multi-driver.md`](./109-cross-l4-multi-driver.md)** | **`FlowMultiDriver<E, M>` — shared-tracker, spans TCP+UDP.** | **6** | **~1,330 LoC, ~38 h** |
+| [`110-rustdoc-landing-pages.md`](./110-rustdoc-landing-pages.md) | Module-level rustdoc accessor index for http/tls/dns/icmp + 7 new HTTP accessors. | 4 | ~400 LoC, ~7 h |
+| [`111-quick-wins.md`](./111-quick-wins.md) | `Timestamp` / `FlowStats` / `EndReason` / `LayerKind` / `Layer` / `LayerStack` / `KeyIndexed` helpers. | 1 + 3 + 4 | ~535 LoC, ~10 h |
+
+Total: ~7,330 LoC, ~169 hours across 11 implementation
+plans. Comparable to the 0.9 cycle (~5,880 LoC, ~174 h);
+distributed more evenly across multiple smaller plans than
+0.9's plan-94-dominated shape.
+
+Cycle theme: "address the next layer of DX after the 0.9
+big surface choices."
+
+Canonical landing sequence:
+
+```
+111 (quick wins ship first — other plans lean on them)
+   ↓
+101, 105, 110 (small additive — no dependencies)
+   ↓
+102, 103, 104 (aggregation primitives — feed plan 107)
+   ↓
+106 (parser ergonomics — feed plan 107 + plan 109)
+   ↓
+107 (exchange aggregators)
+   ↓
+108 (packet enrichment — affects every consumer)
+   ↓
+109 (cross-L4 driver — the centerpiece; depends on 106)
+```
+
+The user-priority plan is **109** — cross-L4 multi-driver.
+Land it last in the cycle so the supporting infrastructure
+(parser ergonomics, packet enrichment) is in place first.
+
 ### Deferred / stale
 
 | Plan | Goal | Status |
@@ -113,11 +165,12 @@ view) is absorbed into the 0.9.0 CHANGELOG header.
 | 60–69 | Tooling (CLIs) |
 | 70–79 | 0.5.0 production-hardening v2 (simple-nms wishlist) |
 | 90–99 | 0.9.0 ergonomics cycle (umbrella + breaks + additions) |
+| 100–199 | 0.10.0 DX-polish cycle (postmortem-driven) |
 
 Plan numbers retired (implementation shipped, file removed):
 00–04, 12, 20, 22–25, 30–61, 62, 70–73, 74, 75, 76–82, 83–91,
-93, 94, 96, 97, 99. Active: 21 (stale-deferred). The next
-free number for a new plan is 100+.
+93, 94, 96, 97, 99. Active: 21 (stale-deferred), 100–111
+(0.10 cycle). The next free number for a new plan is 112+.
 
 ---
 
