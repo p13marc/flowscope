@@ -51,9 +51,17 @@
 //! ```
 
 mod bucketed;
+mod burst;
+mod ewma;
 mod indexed;
 mod sequence;
+mod set;
+mod topk;
 
 pub use bucketed::TimeBucketedCounter;
+pub use burst::{BurstDetector, BurstHit};
+pub use ewma::Ewma;
 pub use indexed::KeyIndexed;
 pub use sequence::{KeylessSequencePattern, SequencePattern};
+pub use set::TimeBucketedSet;
+pub use topk::TopK;

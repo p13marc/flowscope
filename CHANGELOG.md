@@ -4,6 +4,23 @@
 
 ### Added
 
+- **Plan 102 sub-A — `flowscope::correlate` extensions.** Four
+  cross-flow correlation primitives that every detector example
+  reinvented:
+  - `TimeBucketedSet<K, V>` — TTL'd set keyed by `K` with value
+    set `V`; cardinality + entries-above-threshold queries.
+    For port-scan detection ("distinct destination ports per
+    source within window") and DNS-tunnel detection ("distinct
+    labels per source").
+  - `BurstDetector<K, E>` + `BurstHit<K>` — N events of kind X
+    within window, optionally followed by event of kind Y.
+    Pure-burst (SYN floods) and burst-then-trigger (failed-auth
+    burst → success) modes.
+  - `TopK<K>` — bounded "top K by count" Misra-Gries tracker.
+    Exact under capacity; bounded-error after. `.observe` /
+    `.observe_n(weight)` / `.top()` / `.estimate(&K)`.
+  - `Ewma<K>` — per-key exponentially weighted moving average
+    with optional `.evict_stale(now, ttl)` for memory bounding.
 - **Plan 113 sub-A — `flowscope::detect::signatures`.** Pure-
   function magic-byte recognizers for 10 protocols. Each
   signature returns `Match` / `NoMatch` / `NeedMoreData`; no
