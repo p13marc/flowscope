@@ -172,7 +172,7 @@ pub struct Error {
 }
 
 impl Error {
-    #[cfg(any(feature = "http", feature = "tls", feature = "dns", feature = "icmp"))]
+    #[cfg(any(feature = "http", feature = "tls", feature = "dns"))]
     pub(crate) fn parse(module: Module, message: impl Into<String>) -> Self {
         Self {
             kind: ErrorKind {
@@ -184,6 +184,7 @@ impl Error {
         }
     }
 
+    #[cfg(any(feature = "extractors", feature = "pcap", feature = "http"))]
     pub(crate) fn parse_with<E>(module: Module, message: impl Into<String>, source: E) -> Self
     where
         E: StdError + Send + Sync + 'static,

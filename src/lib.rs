@@ -134,12 +134,12 @@ pub mod multi_session_driver;
 #[cfg(all(feature = "extractors", feature = "reassembler", feature = "session"))]
 pub mod driver_unified;
 
-#[cfg(feature = "session")]
+#[cfg(all(feature = "reassembler", feature = "session"))]
 pub mod driver_builder;
 
-#[cfg(all(feature = "extractors", feature = "session"))]
+#[cfg(all(feature = "extractors", feature = "reassembler", feature = "session"))]
 pub use driver_builder::FlowDatagramDriverBuilder;
-#[cfg(feature = "session")]
+#[cfg(all(feature = "reassembler", feature = "session"))]
 pub use driver_builder::FlowSessionDriverBuilder;
 
 #[cfg(all(feature = "extractors", feature = "reassembler", feature = "session"))]

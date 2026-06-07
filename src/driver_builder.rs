@@ -43,18 +43,20 @@ use std::time::Duration;
 
 use crate::Timestamp;
 use crate::extractor::FlowExtractor;
-use crate::session::{DatagramParser, SessionParser};
+use crate::session::SessionParser;
 use crate::tracker::FlowTrackerConfig;
+
+#[cfg(all(feature = "extractors", feature = "reassembler", feature = "session"))]
+use crate::session::DatagramParser;
 
 /// Boxed per-key idle-timeout predicate. Aliased to keep the
 /// builder field shape readable.
 type IdleTimeoutFn<K> =
     Box<dyn Fn(&K, Option<crate::L4Proto>) -> Option<Duration> + Send + 'static>;
 
-#[cfg(feature = "session")]
 use crate::session_driver::FlowSessionDriver;
 
-#[cfg(all(feature = "extractors", feature = "session"))]
+#[cfg(all(feature = "extractors", feature = "reassembler", feature = "session"))]
 use crate::datagram_driver::FlowDatagramDriver;
 
 /// Builder for [`FlowSessionDriver`].
@@ -63,7 +65,7 @@ use crate::datagram_driver::FlowDatagramDriver;
 /// module's `impl` block). Chainable axes mirror the existing
 /// `with_*` constructors but with a single discoverable entry
 /// point.
-#[cfg(feature = "session")]
+#[cfg(all(feature = "reassembler", feature = "session"))]
 pub struct FlowSessionDriverBuilder<E, P>
 where
     E: FlowExtractor,
@@ -78,7 +80,7 @@ where
     idle_timeout_fn: Option<IdleTimeoutFn<E::Key>>,
 }
 
-#[cfg(feature = "session")]
+#[cfg(all(feature = "reassembler", feature = "session"))]
 impl<E, P> FlowSessionDriverBuilder<E, P>
 where
     E: FlowExtractor,
@@ -160,7 +162,7 @@ where
     }
 }
 
-#[cfg(feature = "session")]
+#[cfg(all(feature = "reassembler", feature = "session"))]
 impl<E, P, S> FlowSessionDriver<E, P, S>
 where
     E: FlowExtractor,
@@ -182,7 +184,7 @@ where
 // ─── FlowDatagramDriver builder ────────────────────────────────
 
 /// Builder for [`FlowDatagramDriver`].
-#[cfg(all(feature = "extractors", feature = "session"))]
+#[cfg(all(feature = "extractors", feature = "reassembler", feature = "session"))]
 pub struct FlowDatagramDriverBuilder<E, P>
 where
     E: FlowExtractor,
@@ -196,7 +198,7 @@ where
     dedup: Option<crate::dedup::Dedup>,
 }
 
-#[cfg(all(feature = "extractors", feature = "session"))]
+#[cfg(all(feature = "extractors", feature = "reassembler", feature = "session"))]
 impl<E, P> FlowDatagramDriverBuilder<E, P>
 where
     E: FlowExtractor,
@@ -253,7 +255,7 @@ where
     }
 }
 
-#[cfg(all(feature = "extractors", feature = "session"))]
+#[cfg(all(feature = "extractors", feature = "reassembler", feature = "session"))]
 impl<E, P, S> FlowDatagramDriver<E, P, S>
 where
     E: FlowExtractor,
@@ -300,7 +302,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "session")]
+    #[cfg(all(feature = "reassembler", feature = "session"))]
     fn session_builder_yields_working_driver() {
         let _d = FlowSessionDriver::<_, NoopParser, ()>::builder(FiveTuple::bidirectional())
             .parser(NoopParser)
@@ -310,7 +312,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(all(feature = "extractors", feature = "session"))]
+    #[cfg(all(feature = "extractors", feature = "reassembler", feature = "session"))]
     fn datagram_builder_yields_working_driver() {
         let _d = FlowDatagramDriver::<_, NoopDatagram, ()>::builder(FiveTuple::bidirectional())
             .parser(NoopDatagram)
@@ -319,7 +321,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "session")]
+    #[cfg(all(feature = "reassembler", feature = "session"))]
     #[should_panic(expected = "parser not set")]
     fn missing_parser_panics_on_build() {
         let _ = FlowSessionDriver::<_, NoopParser, ()>::builder(FiveTuple::bidirectional()).build();
