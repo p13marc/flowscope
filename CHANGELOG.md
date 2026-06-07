@@ -4,6 +4,24 @@
 
 ### Added
 
+- **Plan 102 sub-C — `flowscope::detect`.** Small toolkit of
+  lightweight detection primitives every detector example
+  reinvented:
+  - `shannon_entropy(&[u8]) -> f64` — DNS tunnel detection,
+    encoded-payload spotting.
+  - `is_high_entropy(&[u8], threshold) -> bool` — entropy +
+    threshold convenience.
+  - `ngram_distribution(&[u8], n) -> NgramDist` — n-gram
+    frequency table with built-in `mode()` / `entropy()` /
+    `distinct()`.
+  - `is_base64ish(&str) -> bool` — base64-shaped string
+    detection (≥16 chars).
+  - `is_hex_string(&str) -> bool` — hex-shaped string detection
+    (≥16 chars).
+  - `hamming_distance(a, b) -> Option<usize>` — fixed-length
+    byte comparison.
+  - `examples/dns_tunnel_detector.rs` migrated to the shipped
+    `shannon_entropy` helper (drops a 19-line local copy).
 - **Plan 101 — `flowscope::emit`.** Structured event sinks for
   the three log formats every flow-analysis pipeline ends up
   emitting. Each writer takes a `std::io::Write` sink and a

@@ -78,6 +78,8 @@ pub use error::{Error, ErrorCode, ErrorKind, Module, Result};
 
 pub mod extractor;
 
+pub mod detect;
+
 pub mod well_known;
 
 #[cfg(feature = "extractors")]

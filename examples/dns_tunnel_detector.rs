@@ -21,6 +21,7 @@ use std::net::IpAddr;
 use std::time::Duration;
 
 use flowscope::correlate::TimeBucketedCounter;
+use flowscope::detect::shannon_entropy;
 use flowscope::dns::{DnsMessage, DnsUdpParser};
 use flowscope::extract::FiveTuple;
 use flowscope::pcap::PcapFlowSource;
@@ -92,24 +93,4 @@ fn main() -> flowscope::Result<()> {
         println!("(no suspected tunneling in this capture — try a known-bad pcap)");
     }
     Ok(())
-}
-
-fn shannon_entropy(bytes: &[u8]) -> f64 {
-    if bytes.is_empty() {
-        return 0.0;
-    }
-    let mut counts = [0u32; 256];
-    for &b in bytes {
-        counts[b as usize] += 1;
-    }
-    let len = bytes.len() as f64;
-    let mut h = 0.0;
-    for &c in &counts {
-        if c == 0 {
-            continue;
-        }
-        let p = c as f64 / len;
-        h -= p * p.log2();
-    }
-    h
 }
