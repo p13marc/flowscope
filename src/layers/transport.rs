@@ -236,3 +236,90 @@ impl<'a> UdpSlice<'a> {
         LayerKind::Udp
     }
 }
+
+/// ICMPv4 message slice.
+#[derive(Debug, Clone, Copy)]
+pub struct Icmpv4Slice<'a> {
+    raw: &'a [u8],
+}
+
+impl<'a> Icmpv4Slice<'a> {
+    pub(crate) fn new(raw: &'a [u8]) -> Self {
+        Self { raw }
+    }
+
+    /// ICMP type byte.
+    pub fn icmp_type(&self) -> u8 {
+        self.raw[0]
+    }
+
+    /// ICMP code byte.
+    pub fn code(&self) -> u8 {
+        self.raw[1]
+    }
+
+    pub fn checksum(&self) -> u16 {
+        u16::from_be_bytes([self.raw[2], self.raw[3]])
+    }
+
+    /// Bytes after the 4-byte ICMPv4 header (type/code/checksum) —
+    /// for echo, this includes id/seq + data; for unreachables,
+    /// this is the offending packet's IP+L4 head.
+    pub fn payload(&self) -> &'a [u8] {
+        &self.raw[4..]
+    }
+
+    pub fn header(&self) -> &'a [u8] {
+        &self.raw[..4.min(self.raw.len())]
+    }
+
+    pub fn bytes(&self) -> &'a [u8] {
+        self.raw
+    }
+
+    pub fn kind(&self) -> LayerKind {
+        LayerKind::Icmpv4
+    }
+}
+
+/// ICMPv6 message slice.
+#[derive(Debug, Clone, Copy)]
+pub struct Icmpv6Slice<'a> {
+    raw: &'a [u8],
+}
+
+impl<'a> Icmpv6Slice<'a> {
+    pub(crate) fn new(raw: &'a [u8]) -> Self {
+        Self { raw }
+    }
+
+    /// ICMPv6 type byte.
+    pub fn icmp_type(&self) -> u8 {
+        self.raw[0]
+    }
+
+    pub fn code(&self) -> u8 {
+        self.raw[1]
+    }
+
+    pub fn checksum(&self) -> u16 {
+        u16::from_be_bytes([self.raw[2], self.raw[3]])
+    }
+
+    /// Body after the 4-byte ICMPv6 header.
+    pub fn payload(&self) -> &'a [u8] {
+        &self.raw[4..]
+    }
+
+    pub fn header(&self) -> &'a [u8] {
+        &self.raw[..4.min(self.raw.len())]
+    }
+
+    pub fn bytes(&self) -> &'a [u8] {
+        self.raw
+    }
+
+    pub fn kind(&self) -> LayerKind {
+        LayerKind::Icmpv6
+    }
+}

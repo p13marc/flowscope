@@ -51,14 +51,27 @@ mod eth;
 mod ip;
 mod kind;
 mod transport;
+mod tunnel;
 
-pub use eth::{EthernetSlice, VlanSlice};
-pub use ip::{Ipv4Slice, Ipv6Slice};
+pub use eth::{EthernetSlice, MplsSlice, VlanSlice};
+pub use ip::{ArpSlice, Ipv4Slice, Ipv6Slice};
 pub use kind::LayerKind;
-pub use transport::{TcpFlagsView, TcpOption, TcpOptionsIter, TcpSlice, UdpSlice};
+pub use transport::{
+    Icmpv4Slice, Icmpv6Slice, TcpFlagsView, TcpOption, TcpOptionsIter, TcpSlice, UdpSlice,
+};
+pub use tunnel::{GreSlice, GtpUSlice, VxlanSlice};
 
 use crate::error::{Error, Module};
 use smallvec::SmallVec;
+
+/// UDP destination port that triggers VXLAN tunnel parsing.
+const VXLAN_UDP_PORT: u16 = 4789;
+/// UDP destination port that triggers GTP-U tunnel parsing.
+const GTPU_UDP_PORT: u16 = 2152;
+/// IP protocol numbers we recognise for tunnel walking.
+const IP_PROTO_GRE: u8 = 47;
+const IP_PROTO_IPV4: u8 = 4;
+const IP_PROTO_IPV6: u8 = 41;
 
 /// One parsed layer of a packet.
 ///
@@ -69,10 +82,17 @@ use smallvec::SmallVec;
 pub enum Layer<'a> {
     Ethernet(EthernetSlice<'a>),
     Vlan(VlanSlice<'a>),
+    Mpls(MplsSlice<'a>),
     Ipv4(Ipv4Slice<'a>),
     Ipv6(Ipv6Slice<'a>),
+    Arp(ArpSlice<'a>),
     Tcp(TcpSlice<'a>),
     Udp(UdpSlice<'a>),
+    Icmpv4(Icmpv4Slice<'a>),
+    Icmpv6(Icmpv6Slice<'a>),
+    Gre(GreSlice<'a>),
+    Vxlan(VxlanSlice<'a>),
+    GtpU(GtpUSlice<'a>),
     /// Unparsed bytes after the last recognised header.
     Payload(&'a [u8]),
 }
@@ -83,10 +103,17 @@ impl<'a> Layer<'a> {
         match self {
             Layer::Ethernet(_) => LayerKind::Ethernet,
             Layer::Vlan(_) => LayerKind::Vlan,
+            Layer::Mpls(_) => LayerKind::Mpls,
             Layer::Ipv4(_) => LayerKind::Ipv4,
             Layer::Ipv6(_) => LayerKind::Ipv6,
+            Layer::Arp(_) => LayerKind::Arp,
             Layer::Tcp(_) => LayerKind::Tcp,
             Layer::Udp(_) => LayerKind::Udp,
+            Layer::Icmpv4(_) => LayerKind::Icmpv4,
+            Layer::Icmpv6(_) => LayerKind::Icmpv6,
+            Layer::Gre(_) => LayerKind::Gre,
+            Layer::Vxlan(_) => LayerKind::Vxlan,
+            Layer::GtpU(_) => LayerKind::GtpU,
             Layer::Payload(_) => LayerKind::Payload,
         }
     }
@@ -96,10 +123,17 @@ impl<'a> Layer<'a> {
         match self {
             Layer::Ethernet(e) => e.bytes(),
             Layer::Vlan(v) => v.bytes(),
+            Layer::Mpls(m) => m.bytes(),
             Layer::Ipv4(ip) => ip.bytes(),
             Layer::Ipv6(ip) => ip.bytes(),
+            Layer::Arp(a) => a.bytes(),
             Layer::Tcp(t) => t.bytes(),
             Layer::Udp(u) => u.bytes(),
+            Layer::Icmpv4(i) => i.bytes(),
+            Layer::Icmpv6(i) => i.bytes(),
+            Layer::Gre(g) => g.bytes(),
+            Layer::Vxlan(v) => v.bytes(),
+            Layer::GtpU(g) => g.bytes(),
             Layer::Payload(p) => p,
         }
     }
@@ -112,11 +146,14 @@ impl<'a> Layer<'a> {
 /// `PacketView::layers()` is the convenient entry point.
 #[derive(Debug, Clone)]
 pub struct Layers<'a> {
-    /// 0..6 layers inline; 7+ heap-allocates. Tunnel-heavy
-    /// pipelines would benefit from a larger inline buffer; the
-    /// six-layer default covers ~99 % of frames.
-    stack: SmallVec<[Layer<'a>; 6]>,
+    /// 0..8 layers inline; 9+ heap-allocates. Eight handles the
+    /// typical tunnel case (outer Eth+IP+UDP+VXLAN + inner
+    /// Eth+IP+TCP+Payload = 8) without spilling.
+    stack: SmallVec<[Layer<'a>; 8]>,
     payload: &'a [u8],
+    /// `true` if a tunnel inner-payload re-parse failed
+    /// partway through. The outer layers stay accessible.
+    truncated: bool,
 }
 
 impl<'a> Layers<'a> {
@@ -135,11 +172,15 @@ impl<'a> Layers<'a> {
     }
 
     fn from_sliced(sp: etherparse::SlicedPacket<'a>, frame: &'a [u8]) -> Self {
-        let mut stack: SmallVec<[Layer<'a>; 6]> = SmallVec::new();
+        let mut stack: SmallVec<[Layer<'a>; 8]> = SmallVec::new();
+        let mut truncated = false;
 
         // L2: link + (optional) VLAN.
+        let mut outer_ether_type: u16 = 0;
         if let Some(etherparse::LinkSlice::Ethernet2(eth)) = &sp.link {
-            stack.push(Layer::Ethernet(EthernetSlice::new(eth.slice())));
+            let eth_slice = EthernetSlice::new(eth.slice());
+            outer_ether_type = eth_slice.ether_type();
+            stack.push(Layer::Ethernet(eth_slice));
         }
         // LinuxSll / EthPayload — no Ethernet II header to expose.
 
@@ -148,18 +189,43 @@ impl<'a> Layers<'a> {
                 etherparse::VlanSlice::SingleVlan(v) => {
                     let s = v.slice();
                     if s.len() >= 4 {
-                        stack.push(Layer::Vlan(VlanSlice::new(&s[..4])));
+                        let slice = VlanSlice::new(&s[..4]);
+                        outer_ether_type = slice.inner_ether_type();
+                        stack.push(Layer::Vlan(slice));
                     }
                 }
                 etherparse::VlanSlice::DoubleVlan(d) => {
-                    // Outer + inner tags.
                     let bytes = d.slice();
                     if bytes.len() >= 8 {
                         stack.push(Layer::Vlan(VlanSlice::new(&bytes[..4])));
-                        stack.push(Layer::Vlan(VlanSlice::new(&bytes[4..8])));
+                        let inner = VlanSlice::new(&bytes[4..8]);
+                        outer_ether_type = inner.inner_ether_type();
+                        stack.push(Layer::Vlan(inner));
                     }
                 }
             }
+        }
+
+        // ARP detection — etherparse stops at the link layer for
+        // ARP frames, so detect via outer EtherType and synthesise
+        // an ArpSlice. (etherparse 0.16 doesn't expose ARP.)
+        if outer_ether_type == 0x0806
+            && let Some(eth_layer) = stack.iter().find_map(|l| match l {
+                Layer::Ethernet(e) => Some(e),
+                _ => None,
+            })
+        {
+            let eth_bytes = eth_layer.bytes();
+            if eth_bytes.len() >= 14 + 28 {
+                stack.push(Layer::Arp(ArpSlice::new(&eth_bytes[14..14 + 28])));
+            }
+            // ARP frames have no L3/L4 stages.
+            let payload: &[u8] = &[];
+            return Self {
+                stack,
+                payload,
+                truncated,
+            };
         }
 
         // L3 — reconstruct full slice from header().slice() + payload.
@@ -187,8 +253,9 @@ impl<'a> Layers<'a> {
             }
         }
 
-        // L4.
+        // L4 + tunnel detection.
         let mut payload: &[u8] = &[];
+        let mut tunnel_inner: Option<TunnelInner<'a>> = None;
         if let Some(transport) = &sp.transport {
             match transport {
                 etherparse::TransportSlice::Tcp(tcp) => {
@@ -199,10 +266,110 @@ impl<'a> Layers<'a> {
                 }
                 etherparse::TransportSlice::Udp(udp) => {
                     let bytes = udp.slice();
+                    let dst = udp.destination_port();
+                    let udp_payload = udp.payload();
                     stack.push(Layer::Udp(UdpSlice::new(bytes)));
-                    payload = udp.payload();
+                    payload = udp_payload;
+                    // Tunnel detection on UDP dst-port.
+                    if dst == VXLAN_UDP_PORT && udp_payload.len() >= 8 {
+                        let vx = VxlanSlice::new(&udp_payload[..8]);
+                        stack.push(Layer::Vxlan(vx));
+                        tunnel_inner = Some(TunnelInner::Ethernet(&udp_payload[8..]));
+                    } else if dst == GTPU_UDP_PORT && udp_payload.len() >= 8 {
+                        let gt = GtpUSlice::new(udp_payload);
+                        let inner_off = gt.header_len();
+                        if udp_payload.len() > inner_off {
+                            stack.push(Layer::GtpU(gt));
+                            tunnel_inner = Some(TunnelInner::Ip(&udp_payload[inner_off..]));
+                        } else {
+                            stack.push(Layer::GtpU(gt));
+                            truncated = true;
+                        }
+                    }
+                }
+                etherparse::TransportSlice::Icmpv4(icmp) => {
+                    let bytes = icmp.slice();
+                    stack.push(Layer::Icmpv4(Icmpv4Slice::new(bytes)));
+                    payload = icmp.payload();
+                }
+                etherparse::TransportSlice::Icmpv6(icmp) => {
+                    let bytes = icmp.slice();
+                    stack.push(Layer::Icmpv6(Icmpv6Slice::new(bytes)));
+                    payload = icmp.payload();
+                }
+            }
+        }
+
+        // GRE / IP-in-IP detection — look at the *last* IP layer's
+        // protocol byte. Re-parse via etherparse for the inner.
+        if tunnel_inner.is_none()
+            && let Some(last_ip) = stack
+                .iter()
+                .rev()
+                .find_map(|l| match l {
+                    Layer::Ipv4(ip) => Some((ip.protocol(), ip.payload())),
+                    Layer::Ipv6(ip) => Some((ip.next_header(), ip.payload())),
+                    _ => None,
+                })
+        {
+            let (proto, ip_payload) = last_ip;
+            match proto {
+                IP_PROTO_GRE if ip_payload.len() >= 4 => {
+                    let gre = GreSlice::new(ip_payload);
+                    let inner_off = gre.header_len();
+                    if ip_payload.len() > inner_off {
+                        let inner = &ip_payload[inner_off..];
+                        let inner_kind = match gre.protocol_type() {
+                            0x0800 | 0x86dd => TunnelInner::Ip(inner),
+                            0x6558 => TunnelInner::Ethernet(inner), // Transparent Ethernet Bridging
+                            _ => {
+                                stack.push(Layer::Gre(gre));
+                                return Self {
+                                    stack,
+                                    payload: inner,
+                                    truncated,
+                                };
+                            }
+                        };
+                        stack.push(Layer::Gre(gre));
+                        tunnel_inner = Some(inner_kind);
+                    } else {
+                        stack.push(Layer::Gre(gre));
+                        truncated = true;
+                    }
+                }
+                IP_PROTO_IPV4 | IP_PROTO_IPV6 if !ip_payload.is_empty() => {
+                    tunnel_inner = Some(TunnelInner::Ip(ip_payload));
                 }
                 _ => {}
+            }
+        }
+
+        // Walk the tunnel — recurse with a tunnel-aware parse on
+        // the inner frame. Append its layers to ours.
+        if let Some(inner) = tunnel_inner {
+            let inner_layers_result = match inner {
+                TunnelInner::Ethernet(b) => Layers::parse_ethernet(b),
+                TunnelInner::Ip(b) => Layers::parse_ip(b),
+            };
+            match inner_layers_result {
+                Ok(mut inner_layers) => {
+                    payload = inner_layers.payload;
+                    if inner_layers.truncated {
+                        truncated = true;
+                    }
+                    // Drop the outer Payload entry that we might
+                    // have appended speculatively, and append inner
+                    // layers in order.
+                    for layer in inner_layers.stack.drain(..) {
+                        if !matches!(layer, Layer::Payload(_)) {
+                            stack.push(layer);
+                        }
+                    }
+                }
+                Err(_) => {
+                    truncated = true;
+                }
             }
         }
 
@@ -210,7 +377,33 @@ impl<'a> Layers<'a> {
             stack.push(Layer::Payload(payload));
         }
 
-        Self { stack, payload }
+        Self {
+            stack,
+            payload,
+            truncated,
+        }
+    }
+
+    /// `true` if a tunnel's inner-payload re-parse failed
+    /// partway through. The outer layers stay accessible.
+    pub fn truncated(&self) -> bool {
+        self.truncated
+    }
+
+    /// `true` if this frame includes a recognised tunnel
+    /// (VXLAN, GTP-U, GRE, IP-in-IP).
+    pub fn has_tunnel(&self) -> bool {
+        self.stack.iter().any(|l| {
+            matches!(
+                l,
+                Layer::Gre(_) | Layer::Vxlan(_) | Layer::GtpU(_)
+            )
+        }) || self
+            .stack
+            .iter()
+            .filter(|l| matches!(l, Layer::Ipv4(_) | Layer::Ipv6(_)))
+            .count()
+            >= 2
     }
 
     /// Iterate the layer stack, outer to inner.
@@ -286,6 +479,55 @@ impl<'a> Layers<'a> {
         })
     }
 
+    pub fn arp(&self) -> Option<&ArpSlice<'a>> {
+        self.stack.iter().find_map(|l| match l {
+            Layer::Arp(a) => Some(a),
+            _ => None,
+        })
+    }
+
+    pub fn mpls(&self) -> Option<&MplsSlice<'a>> {
+        self.stack.iter().find_map(|l| match l {
+            Layer::Mpls(m) => Some(m),
+            _ => None,
+        })
+    }
+
+    pub fn icmpv4(&self) -> Option<&Icmpv4Slice<'a>> {
+        self.stack.iter().find_map(|l| match l {
+            Layer::Icmpv4(i) => Some(i),
+            _ => None,
+        })
+    }
+
+    pub fn icmpv6(&self) -> Option<&Icmpv6Slice<'a>> {
+        self.stack.iter().find_map(|l| match l {
+            Layer::Icmpv6(i) => Some(i),
+            _ => None,
+        })
+    }
+
+    pub fn gre(&self) -> Option<&GreSlice<'a>> {
+        self.stack.iter().find_map(|l| match l {
+            Layer::Gre(g) => Some(g),
+            _ => None,
+        })
+    }
+
+    pub fn vxlan(&self) -> Option<&VxlanSlice<'a>> {
+        self.stack.iter().find_map(|l| match l {
+            Layer::Vxlan(v) => Some(v),
+            _ => None,
+        })
+    }
+
+    pub fn gtpu(&self) -> Option<&GtpUSlice<'a>> {
+        self.stack.iter().find_map(|l| match l {
+            Layer::GtpU(g) => Some(g),
+            _ => None,
+        })
+    }
+
     // ─── L-number group helpers ──────────────────────────────────
 
     /// First L2 layer (Ethernet or VLAN), outermost.
@@ -302,6 +544,12 @@ impl<'a> Layers<'a> {
     pub fn l4(&self) -> Option<&Layer<'a>> {
         self.stack.iter().find(|l| l.kind().layer_number() == 4)
     }
+}
+
+/// Inner-frame kind for tunnel walking.
+enum TunnelInner<'a> {
+    Ethernet(&'a [u8]),
+    Ip(&'a [u8]),
 }
 
 /// Compute the byte offset of `inner` inside `outer`, if `inner` is

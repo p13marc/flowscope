@@ -1,4 +1,4 @@
-//! Network-layer slices: IPv4 + IPv6.
+//! Network-layer slices: IPv4 + IPv6 + ARP.
 //!
 //! Each slice wraps a `&[u8]` borrowed from the original frame
 //! and exposes typed field accessors. No allocation; `Copy`.
@@ -176,5 +176,104 @@ impl<'a> Ipv6Slice<'a> {
 
     pub fn kind(&self) -> LayerKind {
         LayerKind::Ipv6
+    }
+}
+
+/// ARP packet slice (RFC 826).
+///
+/// Fixed-format 28-byte ARP for Ethernet/IPv4: 8-byte header
+/// (htype, ptype, hlen, plen, oper) + sender HA/PA + target HA/PA.
+#[derive(Debug, Clone, Copy)]
+pub struct ArpSlice<'a> {
+    raw: &'a [u8],
+}
+
+impl<'a> ArpSlice<'a> {
+    pub(crate) fn new(raw: &'a [u8]) -> Self {
+        Self { raw }
+    }
+
+    /// Hardware type (Ethernet = 1).
+    pub fn htype(&self) -> u16 {
+        u16::from_be_bytes([self.raw[0], self.raw[1]])
+    }
+
+    /// Protocol type (IPv4 = 0x0800).
+    pub fn ptype(&self) -> u16 {
+        u16::from_be_bytes([self.raw[2], self.raw[3]])
+    }
+
+    /// Hardware address length (6 for Ethernet).
+    pub fn hlen(&self) -> u8 {
+        self.raw[4]
+    }
+
+    /// Protocol address length (4 for IPv4).
+    pub fn plen(&self) -> u8 {
+        self.raw[5]
+    }
+
+    /// Operation (1 = request, 2 = reply).
+    pub fn oper(&self) -> u16 {
+        u16::from_be_bytes([self.raw[6], self.raw[7]])
+    }
+
+    /// Sender hardware address. Returns `None` if hlen ≠ 6.
+    pub fn sender_ha(&self) -> Option<[u8; 6]> {
+        if self.hlen() != 6 || self.raw.len() < 14 {
+            return None;
+        }
+        let mut o = [0u8; 6];
+        o.copy_from_slice(&self.raw[8..14]);
+        Some(o)
+    }
+
+    /// Sender protocol address (assumes IPv4 — returns `None`
+    /// if plen ≠ 4).
+    pub fn sender_pa(&self) -> Option<std::net::Ipv4Addr> {
+        if self.plen() != 4 || self.raw.len() < 18 {
+            return None;
+        }
+        Some(std::net::Ipv4Addr::new(
+            self.raw[14],
+            self.raw[15],
+            self.raw[16],
+            self.raw[17],
+        ))
+    }
+
+    /// Target hardware address (assumes hlen=6).
+    pub fn target_ha(&self) -> Option<[u8; 6]> {
+        if self.hlen() != 6 || self.raw.len() < 24 {
+            return None;
+        }
+        let mut o = [0u8; 6];
+        o.copy_from_slice(&self.raw[18..24]);
+        Some(o)
+    }
+
+    /// Target protocol address (assumes IPv4).
+    pub fn target_pa(&self) -> Option<std::net::Ipv4Addr> {
+        if self.plen() != 4 || self.raw.len() < 28 {
+            return None;
+        }
+        Some(std::net::Ipv4Addr::new(
+            self.raw[24],
+            self.raw[25],
+            self.raw[26],
+            self.raw[27],
+        ))
+    }
+
+    pub fn header(&self) -> &'a [u8] {
+        &self.raw[..self.raw.len().min(28)]
+    }
+
+    pub fn bytes(&self) -> &'a [u8] {
+        self.raw
+    }
+
+    pub fn kind(&self) -> LayerKind {
+        LayerKind::Arp
     }
 }

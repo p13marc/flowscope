@@ -1,4 +1,4 @@
-//! Link-layer slices: Ethernet II + 802.1Q VLAN.
+//! Link-layer slices: Ethernet II + 802.1Q VLAN + MPLS.
 
 use super::LayerKind;
 
@@ -91,5 +91,55 @@ impl<'a> VlanSlice<'a> {
 
     pub fn kind(&self) -> LayerKind {
         LayerKind::Vlan
+    }
+}
+
+/// MPLS label-stack entry (single 4-byte label).
+///
+/// A stack of multiple labels is represented as multiple
+/// `MplsSlice` layers in the same `Layers`.
+#[derive(Debug, Clone, Copy)]
+pub struct MplsSlice<'a> {
+    raw: &'a [u8],
+}
+
+impl<'a> MplsSlice<'a> {
+    #[allow(dead_code)] // constructed by future MPLS detection path
+    pub(crate) fn new(raw: &'a [u8]) -> Self {
+        Self { raw }
+    }
+
+    /// 20-bit MPLS label.
+    pub fn label(&self) -> u32 {
+        ((self.raw[0] as u32) << 12)
+            | ((self.raw[1] as u32) << 4)
+            | ((self.raw[2] as u32) >> 4)
+    }
+
+    /// Traffic Class (3 bits).
+    pub fn tc(&self) -> u8 {
+        (self.raw[2] >> 1) & 0x07
+    }
+
+    /// Bottom-of-stack flag.
+    pub fn bos(&self) -> bool {
+        self.raw[2] & 0x01 == 1
+    }
+
+    /// Time-to-live.
+    pub fn ttl(&self) -> u8 {
+        self.raw[3]
+    }
+
+    pub fn header(&self) -> &'a [u8] {
+        &self.raw[..4]
+    }
+
+    pub fn bytes(&self) -> &'a [u8] {
+        self.raw
+    }
+
+    pub fn kind(&self) -> LayerKind {
+        LayerKind::Mpls
     }
 }

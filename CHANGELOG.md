@@ -25,6 +25,25 @@
   sweep and merges its events into the returned vector. Manual
   `sweep()` resets `last_sweep_ts` so mixing manual + auto
   is safe.
+- **`flowscope::layers` extensions** (plan 94 Tier 3 follow-up).
+  Tunnel walking for VXLAN (UDP/4789), GTP-U (UDP/2152), GRE,
+  and IP-in-IP — `Layers::has_tunnel()` / `Layers::truncated()`
+  signal the outcome. New slice types: `ArpSlice`, `MplsSlice`,
+  `Icmpv4Slice`, `Icmpv6Slice`, `GreSlice`, `VxlanSlice`,
+  `GtpUSlice`. New convenience accessors: `.arp()`, `.mpls()`,
+  `.icmpv4()`, `.icmpv6()`, `.gre()`, `.vxlan()`, `.gtpu()`.
+  Inline `SmallVec` capacity grew from 6 → 8 to cover the
+  outer-Eth+IP+UDP+VXLAN + inner-Eth+IP+TCP+Payload tunnel
+  case without spilling.
+- **`Pipeline::reset()` + `Pipeline::run_iter(iter)`** (plan 94
+  Tier 1 follow-up). `reset()` drops per-flow tracker state so
+  the same Pipeline can be re-run against multiple sources.
+  `run_iter` drives the pipeline over any `IntoIterator<Item =
+  OwnedPacketView>` — useful for custom sources (eBPF
+  userspace, embedded, synthetic / test fixtures, netring's
+  batched recv re-rolled into owned views). `OwnedPacketView`
+  promoted from `pcap::source` to `view.rs` so `run_iter` is
+  usable without the `pcap` feature.
 - **`flowscope::layers` module** (plan 94 Tier 3). Public per-
   packet introspection: `Layers<'a>` with direct accessors
   (`.tcp()`, `.ipv4()`, `.vlan()`, …) and a dynamic walk
