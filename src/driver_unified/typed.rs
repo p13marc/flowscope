@@ -1,9 +1,7 @@
 //! Plan 121 architectural shape — `Driver<E>` with typed slot
-//! drain handles. Lives alongside the existing closed-`M`
-//! [`super::Driver`] during the migration cycle; takes over the
-//! `flowscope::driver::Driver` slot at the end of the cycle.
+//! drain handles.
 //!
-//! Differences from the legacy [`super::Driver<E, M>`]:
+//! Replaces the 0.10-era closed-`M` `Driver<E, M>` shape:
 //!
 //! - **No `M` parameter.** The driver emits flow-lifecycle
 //!   [`Event<K>`] only. Per-parser typed messages flow through
@@ -405,7 +403,11 @@ where
         P: SessionParser + Clone + Send + 'static,
         P::Message: 'static,
     {
-        self.session_heuristic_with_budget(parser, signature, super::DEFAULT_PROBE_PACKETS)
+        self.session_heuristic_with_budget(
+            parser,
+            signature,
+            super::typed_slot_heuristic::DEFAULT_PROBE_PACKETS,
+        )
     }
 
     /// Register a session parser with a custom probe-packet
@@ -479,7 +481,11 @@ where
         D: DatagramParser + Clone + Send + 'static,
         D::Message: 'static,
     {
-        self.datagram_heuristic_with_budget(parser, signature, super::DEFAULT_PROBE_PACKETS)
+        self.datagram_heuristic_with_budget(
+            parser,
+            signature,
+            super::typed_slot_heuristic::DEFAULT_PROBE_PACKETS,
+        )
     }
 
     /// Register a datagram parser with a custom probe-packet

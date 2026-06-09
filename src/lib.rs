@@ -129,29 +129,7 @@ pub mod session_driver;
 pub mod datagram_driver;
 
 #[cfg(all(feature = "extractors", feature = "reassembler", feature = "session"))]
-pub mod multi_session_driver;
-
-#[cfg(all(feature = "extractors", feature = "reassembler", feature = "session"))]
 pub mod driver_unified;
-
-#[cfg(all(feature = "reassembler", feature = "session"))]
-pub mod driver_builder;
-
-#[cfg(all(feature = "extractors", feature = "reassembler", feature = "session"))]
-pub use driver_builder::FlowDatagramDriverBuilder;
-#[cfg(all(feature = "reassembler", feature = "session"))]
-pub use driver_builder::FlowSessionDriverBuilder;
-
-#[cfg(all(feature = "extractors", feature = "reassembler", feature = "session"))]
-pub use multi_session_driver::FlowMultiSessionDriver;
-
-#[cfg(all(feature = "extractors", feature = "reassembler", feature = "session"))]
-pub mod pipeline;
-
-#[cfg(all(feature = "extractors", feature = "reassembler", feature = "session"))]
-pub use pipeline::{
-    Event, EventKind, NoDatagramParser, NoSessionParser, Pipeline, PipelineBuilder,
-};
 
 #[cfg(feature = "emit")]
 pub mod emit;

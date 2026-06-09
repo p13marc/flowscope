@@ -24,10 +24,37 @@ use crate::session::{DatagramParser, SessionEvent, SessionParser};
 use crate::session_driver::FlowSessionDriver;
 use crate::tracker::FlowTrackerConfig;
 
-use super::heuristic::{FlowDetection, PROBE_BUFFER_CAP};
 use super::slot::{SlotBuf, SlotHandle};
 use super::typed::Event;
 use super::typed_slot::{ErasedSlot, route_session_event_pub};
+
+/// Buffer cap per side during the probing phase. Every shipped
+/// signature decides within ≤ 64 B.
+pub const PROBE_BUFFER_CAP: usize = 64;
+
+/// Default probing-budget if the user doesn't override.
+pub const DEFAULT_PROBE_PACKETS: u8 = 4;
+
+/// Per-flow detection state inside a heuristic slot.
+pub(super) enum FlowDetection {
+    Probing {
+        seen: u8,
+        init_buf: ArrayVec<u8, PROBE_BUFFER_CAP>,
+        resp_buf: ArrayVec<u8, PROBE_BUFFER_CAP>,
+    },
+    Pinned,
+    GaveUp,
+}
+
+impl Default for FlowDetection {
+    fn default() -> Self {
+        Self::Probing {
+            seen: 0,
+            init_buf: ArrayVec::new(),
+            resp_buf: ArrayVec::new(),
+        }
+    }
+}
 
 /// Heuristic-routed session slot.
 pub(super) struct TypedHeuristicSessionSlot<E, P>

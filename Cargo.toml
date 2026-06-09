@@ -424,12 +424,8 @@ name = "dns_exchange"
 required-features = ["dns"]
 
 [[test]]
-name = "driver_unified"
-required-features = ["test-helpers", "extractors", "session"]
-
-[[test]]
-name = "pipeline_unified"
-required-features = ["test-helpers", "extractors", "session"]
+name = "typed_driver"
+required-features = ["test-helpers", "extractors", "session", "reassembler"]
 
 [[bench]]
 name = "extractor"

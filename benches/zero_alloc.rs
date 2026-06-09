@@ -55,19 +55,20 @@ fn synth_tcp_stream() -> Vec<Vec<u8>> {
     feature = "http"
 ))]
 fn bench_track_into_with_slots_steady_state(c: &mut Criterion) {
-    use flowscope::driver_unified::{Driver, Event};
-    use flowscope::http::{HttpMessage, HttpParser};
+    use flowscope::driver_unified::typed::{Driver, Event};
+    use flowscope::extract::FiveTupleKey;
+    use flowscope::http::HttpParser;
 
-    let mut driver = Driver::<_, HttpMessage>::builder(FiveTuple::bidirectional())
-        .session_on_ports(HttpParser::default(), [80], |m| m)
-        .session_on_ports(HttpParser::default(), [8080], |m| m)
-        .session_on_ports(HttpParser::default(), [443], |m| m)
-        .session_on_ports(HttpParser::default(), [8443], |m| m)
-        .session_on_ports(HttpParser::default(), [3000], |m| m)
-        .build();
+    let mut builder = Driver::builder(FiveTuple::bidirectional());
+    let _s1 = builder.session_on_ports(HttpParser::default(), [80]);
+    let _s2 = builder.session_on_ports(HttpParser::default(), [8080]);
+    let _s3 = builder.session_on_ports(HttpParser::default(), [443]);
+    let _s4 = builder.session_on_ports(HttpParser::default(), [8443]);
+    let _s5 = builder.session_on_ports(HttpParser::default(), [3000]);
+    let mut driver = builder.build();
 
     let frames = synth_tcp_stream();
-    let mut scratch: Vec<Event<_, HttpMessage>> = Vec::with_capacity(8);
+    let mut scratch: Vec<Event<FiveTupleKey>> = Vec::with_capacity(8);
 
     for frame in frames.iter().take(128) {
         let v = PacketView::new(frame, Timestamp::default());
@@ -104,11 +105,12 @@ fn bench_track_into_with_slots_steady_state(c: &mut Criterion) {
 
 #[cfg(all(feature = "session", feature = "reassembler", feature = "extractors"))]
 fn bench_track_into_steady_state(c: &mut Criterion) {
-    use flowscope::driver_unified::{Driver, Event};
+    use flowscope::driver_unified::typed::{Driver, Event};
+    use flowscope::extract::FiveTupleKey;
 
-    let mut driver = Driver::<_, ()>::builder(FiveTuple::bidirectional()).build();
+    let mut driver = Driver::builder(FiveTuple::bidirectional()).build();
     let frames = synth_tcp_stream();
-    let mut scratch: Vec<Event<_, ()>> = Vec::with_capacity(8);
+    let mut scratch: Vec<Event<FiveTupleKey>> = Vec::with_capacity(8);
 
     for frame in frames.iter().take(64) {
         let v = PacketView::new(frame, Timestamp::default());

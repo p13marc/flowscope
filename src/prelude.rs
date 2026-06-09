@@ -1,19 +1,15 @@
 //! `use flowscope::prelude::*;` — one import for the common types.
 //!
 //! Re-exports the types most users want without typing
-//! `use flowscope::{Pipeline, Event, Timestamp, …};` every time.
+//! `use flowscope::{Driver, Event, Timestamp, …};` every time.
 //! Power users can keep the explicit imports; this module is the
 //! "I'm starting a new project" convenience.
 //!
-//! ```no_run
+//! ```ignore
 //! use flowscope::prelude::*;
 //!
-//! # fn main() -> flowscope::Result<()> {
-//! let mut pipeline = Pipeline::builder(FiveTuple::bidirectional()).build();
-//! for event in pipeline.run_pcap("trace.pcap")? {
-//!     let _ = event?;
-//! }
-//! # Ok(()) }
+//! let mut builder = Driver::builder(FiveTuple::bidirectional());
+//! let mut driver = builder.build();
 //! ```
 
 pub use crate::{AsPacketView, Error, ErrorCode, ErrorKind, Module, PacketView, Result, Timestamp};
@@ -39,8 +35,12 @@ pub use crate::FlowSessionDriver;
 #[cfg(all(feature = "extractors", feature = "reassembler", feature = "session"))]
 pub use crate::FlowDatagramDriver;
 
+/// The typed [`crate::driver_unified::typed::Driver`] +
+/// [`crate::driver_unified::SlotHandle`] shape (plan 121).
 #[cfg(all(feature = "extractors", feature = "reassembler", feature = "session"))]
-pub use crate::{Event, EventKind, Pipeline, PipelineBuilder};
+pub use crate::driver_unified::SlotMessage;
+#[cfg(all(feature = "extractors", feature = "reassembler", feature = "session"))]
+pub use crate::driver_unified::typed::{Driver, DriverBuilder, Event};
 
 #[cfg(feature = "extractors")]
 pub use crate::layers::{Layer, LayerKind, LayerParser, LayerStack, Layers};
