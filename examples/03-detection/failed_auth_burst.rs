@@ -17,10 +17,11 @@ use std::net::IpAddr;
 use std::time::Duration;
 
 use flowscope::correlate::{BurstDetector, KeyIndexed};
-use flowscope::extract::FiveTuple;
+use flowscope::driver_unified::SlotMessage;
+use flowscope::driver_unified::typed::{Driver, Event};
+use flowscope::extract::{FiveTuple, FiveTupleKey};
 use flowscope::http::{HttpMessage, HttpParser};
 use flowscope::pcap::PcapFlowSource;
-use flowscope::{FlowSessionDriver, SessionEvent};
 
 const WINDOW: Duration = Duration::from_secs(60);
 const FAIL_THRESHOLD: u32 = 5;
@@ -36,7 +37,9 @@ fn main() -> flowscope::Result<()> {
         .nth(1)
         .unwrap_or_else(|| "tests/data/http_session.pcap".to_string());
 
-    let mut driver = FlowSessionDriver::new(FiveTuple::bidirectional(), HttpParser::default());
+    let mut builder = Driver::builder(FiveTuple::bidirectional());
+    let mut http_slot = builder.session_on_ports(HttpParser::default(), [80, 8080]);
+    let mut driver = builder.build();
 
     // The canonical pattern: ≥5 fails within 60 s, then a success
     // → BurstHit fires once per (source, success) pair.
@@ -49,26 +52,32 @@ fn main() -> flowscope::Result<()> {
 
     // Side cache: remember the most recent Host header per flow
     // so we can annotate the alert with the targeted host.
-    let mut last_host_per_flow: KeyIndexed<flowscope::extract::FiveTupleKey, String> =
+    let mut last_host_per_flow: KeyIndexed<FiveTupleKey, String> =
         KeyIndexed::new(WINDOW, 16 * 1024);
+
+    let mut events: Vec<Event<FiveTupleKey>> = Vec::new();
+    let mut msgs: Vec<SlotMessage<HttpMessage, FiveTupleKey>> = Vec::new();
 
     for owned in PcapFlowSource::open(&path)?.views() {
         let owned = owned?;
         let ts = owned.timestamp;
-        for ev in driver.track(&owned) {
-            let SessionEvent::Application { key, message, .. } = ev else {
-                continue;
-            };
-            match message {
+
+        events.clear();
+        driver.track_into(&owned, &mut events);
+        msgs.clear();
+        http_slot.drain(&mut msgs);
+
+        for m in msgs.drain(..) {
+            match m.message {
                 HttpMessage::Request(req) => {
                     if let Some(host) = req.host() {
-                        last_host_per_flow.insert(key, host.to_string(), ts);
+                        last_host_per_flow.insert(m.key, host.to_string(), ts);
                     }
                 }
                 HttpMessage::Response(resp) => {
-                    let src = key.a.ip();
+                    let src = m.key.a.ip();
                     let host = last_host_per_flow
-                        .get(&key, ts)
+                        .get(&m.key, ts)
                         .cloned()
                         .unwrap_or_else(|| "?".to_string());
                     let event = match resp.status {

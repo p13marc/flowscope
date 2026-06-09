@@ -15,32 +15,39 @@
 //! cargo run --features http,pcap --example http_exchanges
 //! ```
 
-use flowscope::extract::FiveTuple;
-use flowscope::http::{HttpExchangeParser, HttpOutcome};
+use flowscope::driver_unified::SlotMessage;
+use flowscope::driver_unified::typed::{Driver, Event};
+use flowscope::extract::{FiveTuple, FiveTupleKey};
+use flowscope::http::{HttpExchange, HttpExchangeParser, HttpOutcome};
 use flowscope::pcap::PcapFlowSource;
-use flowscope::{FlowSessionDriver, SessionEvent};
 
 fn main() -> flowscope::Result<()> {
     let path = std::env::args()
         .nth(1)
         .unwrap_or_else(|| "tests/data/http_session.pcap".to_string());
 
-    let mut driver = FlowSessionDriver::new(FiveTuple::bidirectional(), HttpExchangeParser::new());
+    let mut builder = Driver::builder(FiveTuple::bidirectional());
+    let mut ex_slot = builder.session_on_ports(HttpExchangeParser::new(), [80, 8080]);
+    let mut driver = builder.build();
 
     println!(
         "{:<8} {:<6} {:<24} {:<32} {:<8} {:>5} {:>9}",
         "outcome", "status", "src → dst", "host + method + path", "ua", "ms", "bytes"
     );
 
+    let mut events: Vec<Event<FiveTupleKey>> = Vec::new();
+    let mut msgs: Vec<SlotMessage<HttpExchange, FiveTupleKey>> = Vec::new();
+
     for owned in PcapFlowSource::open(&path)?.views() {
         let owned = owned?;
-        for ev in driver.track(&owned) {
-            let SessionEvent::Application {
-                key, message: ex, ..
-            } = ev
-            else {
-                continue;
-            };
+        events.clear();
+        driver.track_into(&owned, &mut events);
+        msgs.clear();
+        ex_slot.drain(&mut msgs);
+
+        for m in &msgs {
+            let key = &m.key;
+            let ex = &m.message;
             let outcome = match ex.outcome {
                 HttpOutcome::Completed if ex.is_success() => "2xx",
                 HttpOutcome::Completed if ex.status_class() == Some(3) => "3xx",
@@ -79,6 +86,38 @@ fn main() -> flowscope::Result<()> {
                 ),
             );
         }
+    }
+
+    // Final flush.
+    events.clear();
+    driver.finish_into(&mut events);
+    msgs.clear();
+    ex_slot.drain(&mut msgs);
+    let _ = events; // events drained — exchanges may also flush.
+    for m in &msgs {
+        let key = &m.key;
+        let ex = &m.message;
+        let status = ex
+            .response
+            .as_ref()
+            .map(|r| r.status.to_string())
+            .unwrap_or_else(|| "-".to_string());
+        let host = ex.request.host().unwrap_or("?");
+        let bytes = ex.response.as_ref().map(|r| r.body.len()).unwrap_or(0);
+        println!(
+            "{:<8} {:<6} {:<24} {:<32} {:<8} {:>5} {:>9}",
+            "flush",
+            status,
+            format!("{} → {}", key.a.ip(), key.b.ip()),
+            format!(
+                "{host} {} {}",
+                ex.request.method_str().unwrap_or("?"),
+                ex.request.path_str().unwrap_or("?")
+            ),
+            "-",
+            "-",
+            bytes,
+        );
     }
     Ok(())
 }

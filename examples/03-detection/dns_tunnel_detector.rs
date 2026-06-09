@@ -23,9 +23,10 @@ use std::time::Duration;
 use flowscope::correlate::TimeBucketedCounter;
 use flowscope::detect::shannon_entropy;
 use flowscope::dns::{DnsMessage, DnsUdpParser};
-use flowscope::extract::FiveTuple;
+use flowscope::driver_unified::SlotMessage;
+use flowscope::driver_unified::typed::{Driver, Event};
+use flowscope::extract::{FiveTuple, FiveTupleKey};
 use flowscope::pcap::PcapFlowSource;
-use flowscope::{FlowDatagramDriver, SessionEvent};
 
 const ENTROPY_THRESHOLD: f64 = 4.0;
 const MIN_LABEL_LEN: usize = 30;
@@ -38,30 +39,36 @@ fn main() -> flowscope::Result<()> {
         .nth(1)
         .unwrap_or_else(|| "tests/data/dns_queries.pcap".to_string());
 
-    let mut driver = FlowDatagramDriver::new(FiveTuple::bidirectional(), DnsUdpParser::default());
+    let mut builder = Driver::builder(FiveTuple::bidirectional());
+    let mut dns_slot = builder.datagram_on_ports(DnsUdpParser::default(), [53]);
+    let mut driver = builder.build();
+
     let mut counter: TimeBucketedCounter<IpAddr> = TimeBucketedCounter::new(WINDOW, BUCKET, 10_000);
     let mut reported: HashMap<IpAddr, usize> = HashMap::new();
 
+    let mut events: Vec<Event<FiveTupleKey>> = Vec::new();
+    let mut msgs: Vec<SlotMessage<DnsMessage, FiveTupleKey>> = Vec::new();
+
     for owned in PcapFlowSource::open(&path)?.views() {
         let owned = owned?;
-        for ev in driver.track(&owned) {
-            let SessionEvent::Application {
-                key, message, ts, ..
-            } = ev
-            else {
-                continue;
-            };
-            let names = match message {
+        events.clear();
+        driver.track_into(&owned, &mut events);
+        msgs.clear();
+        dns_slot.drain(&mut msgs);
+
+        for m in &msgs {
+            let names = match &m.message {
                 DnsMessage::Query(q) => q.questions.iter().map(|q| q.name.clone()).collect(),
                 _ => Vec::<String>::new(),
             };
+            let ts = m.ts;
             for name in names {
                 let max_label = name.split('.').map(|l| l.len()).max().unwrap_or(0);
                 let entropy = shannon_entropy(name.as_bytes());
                 if entropy < ENTROPY_THRESHOLD || max_label < MIN_LABEL_LEN {
                     continue;
                 }
-                let src = key.a.ip();
+                let src = m.key.a.ip();
                 counter.bump(src, ts);
                 let rate = counter.count(&src, ts);
                 if rate >= RATE_THRESHOLD {

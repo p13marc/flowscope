@@ -8,10 +8,11 @@
 
 use std::collections::HashMap;
 
-use flowscope::extract::FiveTuple;
+use flowscope::driver_unified::SlotMessage;
+use flowscope::driver_unified::typed::{Driver, Event};
+use flowscope::extract::{FiveTuple, FiveTupleKey};
 use flowscope::http::{HttpMessage, HttpParser};
 use flowscope::pcap::PcapFlowSource;
-use flowscope::{FlowSessionDriver, SessionEvent};
 
 #[derive(Default, Clone, Copy)]
 struct Bucket {
@@ -54,21 +55,35 @@ fn main() -> flowscope::Result<()> {
         .nth(1)
         .unwrap_or_else(|| "tests/data/http_session.pcap".to_string());
 
-    let mut driver = FlowSessionDriver::new(FiveTuple::bidirectional(), HttpParser::default());
+    let mut builder = Driver::builder(FiveTuple::bidirectional());
+    let mut http_slot = builder.session_on_ports(HttpParser::default(), [80, 8080]);
+    let mut driver = builder.build();
 
     // Track the most recent Host header per flow; when a response
     // for the same flow arrives, charge the bucket.
-    let mut host_per_flow: HashMap<flowscope::extract::FiveTupleKey, String> = HashMap::new();
+    let mut host_per_flow: HashMap<FiveTupleKey, String> = HashMap::new();
     let mut buckets: HashMap<String, Bucket> = HashMap::new();
+
+    let mut events: Vec<Event<FiveTupleKey>> = Vec::new();
+    let mut msgs: Vec<SlotMessage<HttpMessage, FiveTupleKey>> = Vec::new();
 
     for owned in PcapFlowSource::open(&path)?.views() {
         let owned = owned?;
-        for ev in driver.track(&owned) {
-            handle(&mut host_per_flow, &mut buckets, ev);
+        events.clear();
+        driver.track_into(&owned, &mut events);
+        msgs.clear();
+        http_slot.drain(&mut msgs);
+        for m in msgs.drain(..) {
+            handle(&mut host_per_flow, &mut buckets, m);
         }
     }
-    for ev in driver.finish() {
-        handle(&mut host_per_flow, &mut buckets, ev);
+
+    events.clear();
+    driver.finish_into(&mut events);
+    msgs.clear();
+    http_slot.drain(&mut msgs);
+    for m in msgs.drain(..) {
+        handle(&mut host_per_flow, &mut buckets, m);
     }
 
     let mut rows: Vec<_> = buckets.iter().collect();
@@ -93,22 +108,19 @@ fn main() -> flowscope::Result<()> {
 }
 
 fn handle(
-    host_per_flow: &mut HashMap<flowscope::extract::FiveTupleKey, String>,
+    host_per_flow: &mut HashMap<FiveTupleKey, String>,
     buckets: &mut HashMap<String, Bucket>,
-    ev: SessionEvent<flowscope::extract::FiveTupleKey, HttpMessage>,
+    m: SlotMessage<HttpMessage, FiveTupleKey>,
 ) {
-    let SessionEvent::Application { key, message, .. } = ev else {
-        return;
-    };
-    match message {
+    match m.message {
         HttpMessage::Request(req) => {
             if let Some(host) = req.host() {
-                host_per_flow.insert(key, host.to_string());
+                host_per_flow.insert(m.key, host.to_string());
             }
         }
         HttpMessage::Response(resp) => {
             let host = host_per_flow
-                .get(&key)
+                .get(&m.key)
                 .cloned()
                 .unwrap_or_else(|| "(unknown)".to_string());
             buckets.entry(host).or_default().add_status(resp.status);

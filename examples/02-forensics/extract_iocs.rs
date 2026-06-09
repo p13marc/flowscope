@@ -19,11 +19,12 @@ use std::collections::{BTreeSet, HashMap};
 use std::net::IpAddr;
 
 use flowscope::dns::{DnsMessage, DnsUdpParser};
-use flowscope::extract::FiveTuple;
+use flowscope::driver_unified::SlotMessage;
+use flowscope::driver_unified::typed::{Driver, Event};
+use flowscope::extract::{FiveTuple, FiveTupleKey};
 use flowscope::http::{HttpMessage, HttpParser};
 use flowscope::pcap::PcapFlowSource;
 use flowscope::tls::{TlsHandshake, TlsHandshakeParser};
-use flowscope::{FlowDatagramDriver, FlowSessionDriver, FlowTracker, SessionEvent};
 
 #[derive(Default)]
 struct Iocs {
@@ -39,42 +40,64 @@ fn main() -> flowscope::Result<()> {
         .nth(1)
         .unwrap_or_else(|| "tests/data/mixed_short.pcap".to_string());
 
-    // Run three drivers in parallel: HTTP/TLS (TCP) + DNS (UDP).
-    let mut http_driver = FlowSessionDriver::new(FiveTuple::bidirectional(), HttpParser::default());
-    let mut tls_driver =
-        FlowSessionDriver::new(FiveTuple::bidirectional(), TlsHandshakeParser::default());
-    let mut dns_driver =
-        FlowDatagramDriver::new(FiveTuple::bidirectional(), DnsUdpParser::default());
-    let mut flow_tracker = FlowTracker::<FiveTuple>::new(FiveTuple::bidirectional());
+    // One unified driver with HTTP (TCP/80,8080), TLS handshake
+    // (TCP/443,8443), and DNS (UDP/53) slots.
+    let mut builder = Driver::builder(FiveTuple::bidirectional());
+    let mut http_slot = builder.session_on_ports(HttpParser::default(), [80, 8080]);
+    let mut tls_slot = builder.session_on_ports(TlsHandshakeParser::default(), [443, 8443]);
+    let mut dns_slot = builder.datagram_on_ports(DnsUdpParser::default(), [53]);
+    let mut driver = builder.build();
 
     let mut iocs = Iocs::default();
+    let mut events: Vec<Event<FiveTupleKey>> = Vec::new();
+    let mut http_msgs: Vec<SlotMessage<HttpMessage, FiveTupleKey>> = Vec::new();
+    let mut tls_msgs: Vec<SlotMessage<TlsHandshake, FiveTupleKey>> = Vec::new();
+    let mut dns_msgs: Vec<SlotMessage<DnsMessage, FiveTupleKey>> = Vec::new();
 
     for owned in PcapFlowSource::open(&path)?.views() {
         let owned = owned?;
-        for ev in flow_tracker.track(&owned) {
-            if let flowscope::FlowEvent::Started { key, .. } = ev {
+        events.clear();
+        driver.track_into(&owned, &mut events);
+        http_msgs.clear();
+        http_slot.drain(&mut http_msgs);
+        tls_msgs.clear();
+        tls_slot.drain(&mut tls_msgs);
+        dns_msgs.clear();
+        dns_slot.drain(&mut dns_msgs);
+
+        for ev in &events {
+            if let Event::FlowStarted { key, .. } = ev {
                 iocs.ips.insert(key.a.ip());
                 iocs.ips.insert(key.b.ip());
             }
         }
-        for ev in http_driver.track(&owned) {
-            handle_http(&mut iocs, ev);
+        for m in &http_msgs {
+            handle_http(&mut iocs, &m.message);
         }
-        for ev in tls_driver.track(&owned) {
-            handle_tls(&mut iocs, ev);
+        for m in &tls_msgs {
+            handle_tls(&mut iocs, &m.message);
         }
-        for ev in dns_driver.track(&owned) {
-            handle_dns(&mut iocs, ev);
+        for m in &dns_msgs {
+            handle_dns(&mut iocs, &m.message);
         }
     }
-    for ev in http_driver.finish() {
-        handle_http(&mut iocs, ev);
+
+    events.clear();
+    driver.finish_into(&mut events);
+    http_msgs.clear();
+    http_slot.drain(&mut http_msgs);
+    tls_msgs.clear();
+    tls_slot.drain(&mut tls_msgs);
+    dns_msgs.clear();
+    dns_slot.drain(&mut dns_msgs);
+    for m in &http_msgs {
+        handle_http(&mut iocs, &m.message);
     }
-    for ev in tls_driver.finish() {
-        handle_tls(&mut iocs, ev);
+    for m in &tls_msgs {
+        handle_tls(&mut iocs, &m.message);
     }
-    for ev in dns_driver.finish() {
-        handle_dns(&mut iocs, ev);
+    for m in &dns_msgs {
+        handle_dns(&mut iocs, &m.message);
     }
 
     println!("=== Hostnames ({}) ===", iocs.hostnames.len());
@@ -104,10 +127,7 @@ fn main() -> flowscope::Result<()> {
     Ok(())
 }
 
-fn handle_http(iocs: &mut Iocs, ev: SessionEvent<flowscope::extract::FiveTupleKey, HttpMessage>) {
-    let SessionEvent::Application { message, .. } = ev else {
-        return;
-    };
+fn handle_http(iocs: &mut Iocs, message: &HttpMessage) {
     if let HttpMessage::Request(req) = message {
         for (name, val) in &req.headers {
             if name.as_ref().eq_ignore_ascii_case(b"host") {
@@ -123,26 +143,20 @@ fn handle_http(iocs: &mut Iocs, ev: SessionEvent<flowscope::extract::FiveTupleKe
     }
 }
 
-fn handle_tls(iocs: &mut Iocs, ev: SessionEvent<flowscope::extract::FiveTupleKey, TlsHandshake>) {
-    let SessionEvent::Application { message, .. } = ev else {
-        return;
-    };
-    if let Some(sni) = message.sni {
+fn handle_tls(iocs: &mut Iocs, message: &TlsHandshake) {
+    if let Some(sni) = message.sni.clone() {
         let entry = iocs.hostnames.entry(sni).or_insert((0, "tls"));
         entry.0 += 1;
     }
-    if let Some(ja3) = message.ja3 {
+    if let Some(ja3) = message.ja3.clone() {
         *iocs.ja3s.entry(ja3).or_default() += 1;
     }
-    if let Some(ja4) = message.ja4 {
+    if let Some(ja4) = message.ja4.clone() {
         *iocs.ja4s.entry(ja4).or_default() += 1;
     }
 }
 
-fn handle_dns(iocs: &mut Iocs, ev: SessionEvent<flowscope::extract::FiveTupleKey, DnsMessage>) {
-    let SessionEvent::Application { message, .. } = ev else {
-        return;
-    };
+fn handle_dns(iocs: &mut Iocs, message: &DnsMessage) {
     let names: Vec<String> = match message {
         DnsMessage::Query(q) => q.questions.iter().map(|q| q.name.clone()).collect(),
         DnsMessage::Response(r) => r.questions.iter().map(|q| q.name.clone()).collect(),

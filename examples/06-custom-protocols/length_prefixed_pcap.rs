@@ -24,9 +24,11 @@
 //!     while let Some(ev) = events.next().await { ... }
 //! ```
 
-use flowscope::extract::FiveTuple;
+use flowscope::driver_unified::SlotMessage;
+use flowscope::driver_unified::typed::{Driver, Event};
+use flowscope::extract::{FiveTuple, FiveTupleKey};
 use flowscope::pcap::PcapFlowSource;
-use flowscope::{FlowSessionDriver, FlowSide, SessionEvent, SessionParser, Timestamp};
+use flowscope::{FlowSide, SessionParser, Timestamp};
 use std::env;
 
 const MARKER_2: &[u8] = b"PFX2,";
@@ -109,20 +111,26 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .nth(1)
         .ok_or("usage: length_prefixed_pcap <trace.pcap>")?;
 
-    let mut driver =
-        FlowSessionDriver::new(FiveTuple::bidirectional(), LengthPrefixedParser::default());
+    let mut builder = Driver::builder(FiveTuple::bidirectional());
+    let mut slot = builder.session_broadcast(LengthPrefixedParser::default());
+    let mut driver = builder.build();
+
+    let mut events: Vec<Event<FiveTupleKey>> = Vec::new();
+    let mut msgs: Vec<SlotMessage<Record, FiveTupleKey>> = Vec::new();
 
     for view in PcapFlowSource::open(&path)?.views() {
         let view = view?;
-        for ev in driver.track(&view) {
-            if let SessionEvent::Application { message, .. } = ev {
-                let arrow = if message.side == FlowSide::Initiator {
-                    "→"
-                } else {
-                    "←"
-                };
-                println!("{} {} bytes", arrow, message.body.len());
-            }
+        events.clear();
+        driver.track_into(&view, &mut events);
+        msgs.clear();
+        slot.drain(&mut msgs);
+        for m in &msgs {
+            let arrow = if m.message.side == FlowSide::Initiator {
+                "→"
+            } else {
+                "←"
+            };
+            println!("{} {} bytes", arrow, m.message.body.len());
         }
     }
     Ok(())

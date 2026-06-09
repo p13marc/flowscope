@@ -1,12 +1,15 @@
 //! `cargo run --example hello_pipeline --features pcap,extractors,reassembler,session`
 //!
-//! The shortest hello-world for `flowscope::Pipeline`.
+//! The shortest hello-world for the plan-121 typed [`Driver`].
 //!
 //! Reads a pcap, registers an echo `SessionParser` that returns
-//! every payload chunk verbatim, and prints each `Event` to
-//! stdout.
+//! every payload chunk verbatim, and prints each event to stdout.
 
-use flowscope::prelude::*;
+use flowscope::driver_unified::SlotMessage;
+use flowscope::driver_unified::typed::{Driver, Event};
+use flowscope::extract::{FiveTuple, FiveTupleKey};
+use flowscope::pcap::PcapFlowSource;
+use flowscope::{SessionParser, Timestamp};
 
 #[derive(Default, Clone)]
 struct EchoParser;
@@ -30,20 +33,40 @@ fn main() -> flowscope::Result<()> {
         .nth(1)
         .unwrap_or_else(|| "tests/fixtures/length_prefixed/sample.pcap".to_string());
 
-    let mut pipeline = Pipeline::builder(FiveTuple::bidirectional())
-        .session(EchoParser)
-        .build();
+    let mut builder = Driver::builder(FiveTuple::bidirectional());
+    let mut echo_slot = builder.session_broadcast(EchoParser);
+    let mut driver = builder.build();
+
+    let mut events: Vec<Event<FiveTupleKey>> = Vec::new();
+    let mut msgs: Vec<SlotMessage<Vec<u8>, FiveTupleKey>> = Vec::new();
 
     let mut event_count = 0usize;
     let mut app_count = 0usize;
-    for event in pipeline.run_pcap(&path)? {
-        let event = event?;
-        event_count += 1;
-        if let Event::Tcp(SessionEvent::Application { message, .. }) = event {
+
+    for owned in PcapFlowSource::open(&path)?.views() {
+        let owned = owned?;
+        events.clear();
+        driver.track_into(&owned, &mut events);
+        msgs.clear();
+        echo_slot.drain(&mut msgs);
+
+        event_count += events.len();
+        for m in &msgs {
             app_count += 1;
-            println!("application: {} bytes", message.len());
+            println!("application: {} bytes", m.message.len());
         }
     }
+
+    events.clear();
+    driver.finish_into(&mut events);
+    event_count += events.len();
+    msgs.clear();
+    echo_slot.drain(&mut msgs);
+    for m in &msgs {
+        app_count += 1;
+        println!("application: {} bytes", m.message.len());
+    }
+
     println!("pipeline drained — {event_count} events, {app_count} application messages");
     Ok(())
 }

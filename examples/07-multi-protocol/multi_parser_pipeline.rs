@@ -1,5 +1,9 @@
-//! Demonstrates [`flowscope::FlowMultiSessionDriver`] —
-//! running multiple session parsers over a single pcap pass.
+//! Demonstrates running multiple session parsers over a single
+//! pcap pass on the plan-121 typed [`Driver`].
+//!
+//! With the typed driver, "multi-parser" is the natural shape:
+//! register each parser with its own builder call; each returns
+//! its own typed slot handle. No closed-`M` sum type required.
 //!
 //! ```bash
 //! cargo run --features pcap,extractors,reassembler,session \
@@ -9,9 +13,11 @@
 //! Falls back to `tests/fixtures/length_prefixed/sample.pcap`
 //! if no path is provided.
 
-use flowscope::extract::FiveTuple;
+use flowscope::driver_unified::SlotMessage;
+use flowscope::driver_unified::typed::{Driver, Event};
+use flowscope::extract::{FiveTuple, FiveTupleKey};
 use flowscope::pcap::PcapFlowSource;
-use flowscope::{FlowMultiSessionDriver, FlowSide, SessionEvent, SessionParser, Timestamp};
+use flowscope::{FlowSide, SessionParser, Timestamp};
 
 /// Synthetic "parser A" — first byte → message.
 #[derive(Default, Clone)]
@@ -49,66 +55,62 @@ impl SessionParser for ParserB {
     }
 }
 
-/// Composite event type — one variant per registered parser.
-#[derive(Debug)]
-enum L7 {
-    A(u8),
-    B(usize),
-}
-
 fn main() -> flowscope::Result<()> {
     let path = std::env::args()
         .nth(1)
         .unwrap_or_else(|| "tests/fixtures/length_prefixed/sample.pcap".to_string());
 
-    let mut driver = FlowMultiSessionDriver::<_, L7>::new(FiveTuple::bidirectional())
-        .with_parser_on_ports(ParserA, [80, 8080], L7::A)
-        .with_parser_broadcast(ParserB, L7::B);
+    let mut builder = Driver::builder(FiveTuple::bidirectional());
+    // Parser A: port-routed (HTTP ports).
+    let mut a_slot = builder.session_on_ports(ParserA, [80, 8080]);
+    // Parser B: broadcast over every flow.
+    let mut b_slot = builder.session_broadcast(ParserB);
+    let mut driver = builder.build();
+
+    let mut events: Vec<Event<FiveTupleKey>> = Vec::new();
+    let mut a_msgs: Vec<SlotMessage<u8, FiveTupleKey>> = Vec::new();
+    let mut b_msgs: Vec<SlotMessage<usize, FiveTupleKey>> = Vec::new();
 
     let mut a_count = 0usize;
     let mut b_count = 0usize;
 
     for view in PcapFlowSource::open(&path)?.views() {
         let view = view?;
-        for ev in driver.track(&view) {
-            match ev {
-                SessionEvent::Application {
-                    message: L7::A(b),
-                    side,
-                    ..
-                } => {
-                    a_count += 1;
-                    let side_str = match side {
-                        FlowSide::Initiator => "i",
-                        FlowSide::Responder => "r",
-                    };
-                    println!("A:{side_str} 0x{b:02x}");
-                }
-                SessionEvent::Application {
-                    message: L7::B(n), ..
-                } => {
-                    b_count += 1;
-                    println!("B: {n} bytes");
-                }
-                _ => {}
-            }
+        events.clear();
+        driver.track_into(&view, &mut events);
+        a_msgs.clear();
+        a_slot.drain(&mut a_msgs);
+        b_msgs.clear();
+        b_slot.drain(&mut b_msgs);
+
+        for m in &a_msgs {
+            a_count += 1;
+            let side_str = match m.side {
+                FlowSide::Initiator => "i",
+                FlowSide::Responder => "r",
+            };
+            println!("A:{side_str} 0x{:02x}", m.message);
+        }
+        for m in &b_msgs {
+            b_count += 1;
+            println!("B: {} bytes", m.message);
         }
     }
 
     // End-of-input flush.
-    for ev in driver.finish() {
-        if let SessionEvent::Application { message, .. } = ev {
-            match message {
-                L7::A(b) => {
-                    a_count += 1;
-                    println!("A (flush): 0x{b:02x}");
-                }
-                L7::B(n) => {
-                    b_count += 1;
-                    println!("B (flush): {n} bytes");
-                }
-            }
-        }
+    events.clear();
+    driver.finish_into(&mut events);
+    a_msgs.clear();
+    a_slot.drain(&mut a_msgs);
+    b_msgs.clear();
+    b_slot.drain(&mut b_msgs);
+    for m in &a_msgs {
+        a_count += 1;
+        println!("A (flush): 0x{:02x}", m.message);
+    }
+    for m in &b_msgs {
+        b_count += 1;
+        println!("B (flush): {} bytes", m.message);
     }
 
     println!("---");

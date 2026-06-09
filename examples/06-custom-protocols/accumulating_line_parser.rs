@@ -22,9 +22,11 @@
 //!     --example accumulating_line_parser
 //! ```
 
-use flowscope::extract::FiveTuple;
+use flowscope::AccumulatingSessionParser;
+use flowscope::driver_unified::SlotMessage;
+use flowscope::driver_unified::typed::{Driver, Event};
+use flowscope::extract::{FiveTuple, FiveTupleKey};
 use flowscope::pcap::PcapFlowSource;
-use flowscope::{AccumulatingSessionParser, FlowSessionDriver, SessionEvent};
 
 fn parse_one(buf: &[u8]) -> Option<(String, usize)> {
     let nl = buf.iter().position(|&b| b == b'\n')?;
@@ -39,22 +41,26 @@ fn main() -> flowscope::Result<()> {
 
     // ONE constructor call replaces a ~25-LoC SessionParser impl.
     let parser = AccumulatingSessionParser::new("line", parse_one);
-    let mut driver = FlowSessionDriver::new(FiveTuple::bidirectional(), parser);
+    let mut builder = Driver::builder(FiveTuple::bidirectional());
+    let mut line_slot = builder.session_broadcast(parser);
+    let mut driver = builder.build();
+
+    let mut events: Vec<Event<FiveTupleKey>> = Vec::new();
+    let mut msgs: Vec<SlotMessage<String, FiveTupleKey>> = Vec::new();
 
     let mut lines = 0usize;
     let mut bytes = 0usize;
     for owned in PcapFlowSource::open(&path)?.views() {
         let owned = owned?;
-        for ev in driver.track(&owned) {
-            if let SessionEvent::Application {
-                key, message: line, ..
-            } = ev
-            {
-                lines += 1;
-                bytes += line.len();
-                if lines <= 10 {
-                    println!("  {:<32}  {line}", format!("{}", key.a.ip()));
-                }
+        events.clear();
+        driver.track_into(&owned, &mut events);
+        msgs.clear();
+        line_slot.drain(&mut msgs);
+        for m in &msgs {
+            lines += 1;
+            bytes += m.message.len();
+            if lines <= 10 {
+                println!("  {:<32}  {}", format!("{}", m.key.a.ip()), m.message);
             }
         }
     }

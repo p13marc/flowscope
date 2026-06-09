@@ -18,9 +18,11 @@
 //! Demonstrates the custom-protocol pattern: minimal state
 //! machine, splitting-invariant accumulator, no panic on garbage.
 
-use flowscope::extract::FiveTuple;
+use flowscope::driver_unified::SlotMessage;
+use flowscope::driver_unified::typed::{Driver, Event};
+use flowscope::extract::{FiveTuple, FiveTupleKey};
 use flowscope::pcap::PcapFlowSource;
-use flowscope::{FlowSessionDriver, SessionEvent, SessionParser, Timestamp};
+use flowscope::{FlowSide, SessionParser, Timestamp};
 
 #[derive(Debug, Clone)]
 enum RespValue {
@@ -166,18 +168,25 @@ fn main() -> flowscope::Result<()> {
         return Ok(());
     };
 
-    let mut driver = FlowSessionDriver::new(FiveTuple::bidirectional(), RespParser::default());
+    let mut builder = Driver::builder(FiveTuple::bidirectional());
+    let mut slot = builder.session_on_ports(RespParser::default(), [6379]);
+    let mut driver = builder.build();
+
+    let mut events: Vec<Event<FiveTupleKey>> = Vec::new();
+    let mut msgs: Vec<SlotMessage<RespValue, FiveTupleKey>> = Vec::new();
 
     for owned in PcapFlowSource::open(&path)?.views() {
         let owned = owned?;
-        for ev in driver.track(&owned) {
-            if let SessionEvent::Application { side, message, .. } = ev {
-                let arrow = match side {
-                    flowscope::FlowSide::Initiator => "→",
-                    flowscope::FlowSide::Responder => "←",
-                };
-                println!("{arrow} {message}");
-            }
+        events.clear();
+        driver.track_into(&owned, &mut events);
+        msgs.clear();
+        slot.drain(&mut msgs);
+        for m in &msgs {
+            let arrow = match m.side {
+                FlowSide::Initiator => "→",
+                FlowSide::Responder => "←",
+            };
+            println!("{arrow} {}", m.message);
         }
     }
     Ok(())

@@ -13,18 +13,20 @@
 
 use std::collections::HashMap;
 
-use flowscope::extract::FiveTuple;
+use flowscope::driver_unified::SlotMessage;
+use flowscope::driver_unified::typed::{Driver, Event};
+use flowscope::extract::{FiveTuple, FiveTupleKey};
 use flowscope::pcap::PcapFlowSource;
-use flowscope::tls::{HandshakeOutcome, TlsHandshakeParser};
-use flowscope::{FlowSessionDriver, SessionEvent};
+use flowscope::tls::{HandshakeOutcome, TlsHandshake, TlsHandshakeParser};
 
 fn main() -> flowscope::Result<()> {
     let path = std::env::args()
         .nth(1)
         .unwrap_or_else(|| "tests/data/mixed_short.pcap".to_string());
 
-    let mut driver =
-        FlowSessionDriver::new(FiveTuple::bidirectional(), TlsHandshakeParser::default());
+    let mut builder = Driver::builder(FiveTuple::bidirectional());
+    let mut tls_slot = builder.session_on_ports(TlsHandshakeParser::default(), [443, 8443]);
+    let mut driver = builder.build();
 
     let mut handshakes = Vec::new();
     let mut sni_counts: HashMap<String, u32> = HashMap::new();
@@ -32,32 +34,40 @@ fn main() -> flowscope::Result<()> {
     let mut ja4_counts: HashMap<String, u32> = HashMap::new();
     let mut outcomes: HashMap<&'static str, u32> = HashMap::new();
 
+    let mut events: Vec<Event<FiveTupleKey>> = Vec::new();
+    let mut msgs: Vec<SlotMessage<TlsHandshake, FiveTupleKey>> = Vec::new();
+
     for owned in PcapFlowSource::open(&path)?.views() {
         let owned = owned?;
-        for ev in driver.track(&owned) {
-            if let SessionEvent::Application { message, .. } = ev {
-                account(
-                    &mut handshakes,
-                    &mut sni_counts,
-                    &mut ja3_counts,
-                    &mut ja4_counts,
-                    &mut outcomes,
-                    message,
-                );
-            }
-        }
-    }
-    for ev in driver.finish() {
-        if let SessionEvent::Application { message, .. } = ev {
+        events.clear();
+        driver.track_into(&owned, &mut events);
+        msgs.clear();
+        tls_slot.drain(&mut msgs);
+        for m in msgs.drain(..) {
             account(
                 &mut handshakes,
                 &mut sni_counts,
                 &mut ja3_counts,
                 &mut ja4_counts,
                 &mut outcomes,
-                message,
+                m.message,
             );
         }
+    }
+
+    events.clear();
+    driver.finish_into(&mut events);
+    msgs.clear();
+    tls_slot.drain(&mut msgs);
+    for m in msgs.drain(..) {
+        account(
+            &mut handshakes,
+            &mut sni_counts,
+            &mut ja3_counts,
+            &mut ja4_counts,
+            &mut outcomes,
+            m.message,
+        );
     }
 
     println!("=== TLS handshake inventory ===");
@@ -85,12 +95,12 @@ fn main() -> flowscope::Result<()> {
 }
 
 fn account(
-    handshakes: &mut Vec<flowscope::tls::TlsHandshake>,
+    handshakes: &mut Vec<TlsHandshake>,
     snis: &mut HashMap<String, u32>,
     ja3s: &mut HashMap<String, u32>,
     ja4s: &mut HashMap<String, u32>,
     outcomes: &mut HashMap<&'static str, u32>,
-    h: flowscope::tls::TlsHandshake,
+    h: TlsHandshake,
 ) {
     if let Some(sni) = h.sni.as_ref() {
         *snis.entry(sni.clone()).or_default() += 1;
