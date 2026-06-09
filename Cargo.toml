@@ -89,7 +89,7 @@ http = ["reassembler", "session", "dep:httparse", "dep:bytes"]
 tls = ["reassembler", "session", "dep:tls-parser", "dep:bytes"]
 ja3 = ["tls", "dep:md-5", "dep:hex"]
 ja4 = ["tls", "dep:sha2", "dep:hex"]
-dns = ["extractors", "tracker", "session", "dep:simple-dns"]
+dns = ["extractors", "tracker", "session", "dep:simple-dns", "dep:bytes"]
 icmp = ["extractors", "tracker", "session", "dep:bytes"]
 
 # Umbrella: enable every shipped L7 protocol parser at once. Strict
