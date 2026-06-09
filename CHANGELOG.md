@@ -1,5 +1,144 @@
 # Changelog
 
+## 0.11.0
+
+The **zero-allocation cycle**. Triggered by the netring 0.19
+dependency audit; lands the architectural changes netring's
+zero-allocation `monitor.protocol::<P>(handler)` pattern needs,
+collapses the closed-`M` sum-type `Driver<E, M>` shape into a
+typed-slot-drain shape, and deletes the 0.9-era legacy driver
+types.
+
+### BREAKING
+
+- **`SessionParser` + `DatagramParser` trait shape changed.**
+  `feed_initiator` / `feed_responder` / `fin_initiator` /
+  `fin_responder` / `on_tick` (SessionParser) and `parse` /
+  `on_tick` (DatagramParser) now take `&mut Vec<Self::Message>`
+  instead of returning `Vec<Self::Message>`. Same idiom as
+  `httparse::Request::parse`. Migration:
+  ```diff
+  -fn feed_initiator(&mut self, b: &[u8], ts: Timestamp)
+  -    -> Vec<Self::Message> { vec![msg] }
+  +fn feed_initiator(&mut self, b: &[u8], ts: Timestamp,
+  +    out: &mut Vec<Self::Message>) { out.push(msg); }
+  ```
+
+- **`Driver<E, M>` replaced by typed `Driver<E>` + `SlotHandle<M, K>`.**
+  The driver emits flow-lifecycle `Event<K>` only (no `M`
+  parameter, no `Message` variant); per-parser typed messages
+  flow through `SlotHandle<P::Message, E::Key>` returned by the
+  builder at registration time. Migration:
+  ```diff
+  -let mut driver = Driver::<_, MyMsg>::builder(ext)
+  -    .session_on_ports(HttpParser::default(), [80], MyMsg::Http)
+  -    .build();
+  -for event in driver.track(view) {
+  -    match event {
+  -        Event::Message { message: MyMsg::Http(http), .. } => ...,
+  -        Event::FlowStarted { .. } => ...,
+  -    }
+  -}
+  +let mut builder = Driver::builder(ext);
+  +let mut http_slot = builder.session_on_ports(HttpParser::default(), [80]);
+  +let mut driver = builder.build();
+  +
+  +let mut events: Vec<Event<FiveTupleKey>> = Vec::new();
+  +let mut http_msgs: Vec<SlotMessage<HttpMessage, FiveTupleKey>> = Vec::new();
+  +driver.track_into(view, &mut events);
+  +http_slot.drain(&mut http_msgs);
+  +for ev in &events { /* lifecycle */ }
+  +for m in &http_msgs { /* typed HttpMessage */ }
+  ```
+
+- **Module renames.** `flowscope::driver_unified::*` →
+  `flowscope::driver::*`. The 0.9-era `flowscope::driver` (was
+  `FlowDriver`) moves to `flowscope::flow_driver`; the top-level
+  `flowscope::FlowDriver` re-export is unchanged.
+
+- **Deleted types.** `FlowMultiSessionDriver`,
+  `FlowSessionDriverBuilder`, `FlowDatagramDriverBuilder`,
+  legacy top-level `Pipeline` + `PipelineBuilder` +
+  `EventKind` + `NoSessionParser` + `NoDatagramParser`,
+  `flowscope::driver_unified::Driver<E, M>` and its
+  supporting types (`DriverSlot`, lift-closure-based
+  `ConcreteSlot`, `HeuristicSessionSlot`, `Event<K, M>`,
+  unified `Pipeline<E, M>`).
+
+- **`Event::FlowPacket::frame` field removed.** Previously
+  every packet under `emit_packet_details(true)` carried an
+  `Option<Vec<u8>>` populated by `view.frame.to_vec()` — a
+  64–1500-byte memcpy per packet at ~1.5 GB/sec at 1 Mpps.
+  Consumers that need the frame bytes hold onto the source
+  `PacketView` they handed to `track_into`. The
+  `emit_packet_details(true)` knob still populates `tcp:
+  Option<TcpInfo>`.
+
+- **HTTP / DNS / TLS payload types converted to `bytes::Bytes`.**
+  - `HttpRequest::method` / `path`: `String` → `Bytes`
+  - `HttpRequest::headers`: `Vec<(String, Vec<u8>)>` → `Vec<(Bytes, Bytes)>`
+  - `HttpResponse::reason`: `String` → `Bytes`
+  - `HttpResponse::headers`: same as request
+  - `DnsRdata::TXT(Vec<Vec<u8>>)` → `TXT(SmallVec<[Bytes; 4]>)`
+  - `DnsRdata::Other.data: Vec<u8>` → `Bytes`
+  - `TlsClientHello::compression: Vec<u8>` → `Bytes`
+
+  New convenience accessors: `HttpRequest::method_str()`,
+  `path_str()`; `HttpResponse::reason_str()` returning
+  `Option<&str>`. Existing accessors (`req.host()`,
+  `req.content_type()`, etc.) keep their `Option<&str>`
+  signature.
+
+### Added
+
+- **`flowscope::driver::Driver<E>`** + `DriverBuilder<E>` —
+  the typed driver shape.
+- **`flowscope::driver::SlotHandle<M, K>`** + `SlotMessage<M, K>`
+  — typed drain handles. `.drain(&mut Vec<SlotMessage<M, K>>) ->
+  usize`, `.pending()`, `.parser_kind()`, `.clear()`.
+- **`flowscope::driver::Event<K>`** — flow-lifecycle event type.
+  Variants: `FlowStarted`, `FlowEstablished`, `FlowPacket`,
+  `FlowEnded`, `FlowTick`, `ParserClosed`, `FlowAnomaly`,
+  `TrackerAnomaly`.
+- **`Driver::track_into(view, &mut Vec<Event<K>>)`** +
+  `sweep_into` + `finish_into` — zero-allocation surface that
+  reuses the caller's buffer.
+- **`FlowSessionDriver::track_into` /
+  `FlowDatagramDriver::track_into`** — zero-allocation variants
+  on the kept sync primitives.
+- **`flowscope::parser_kinds::TLS_HANDSHAKE`** — stable constant
+  for the TLS-handshake aggregator parser kind.
+
+### Performance
+
+Measured per `cargo bench --bench zero_alloc` (counting
+allocator wrapping the global allocator). 0.10.1 → 0.11.0:
+
+| Measurement | 0.10.1 | 0.11.0 | delta |
+|---|---|---|---|
+| `Driver::track_into`, 0 slots, non-L7 traffic | 1.000 allocs/pkt | **0.000** | -100% |
+| `Driver::track_into`, **5 HTTP slots**, non-L7 traffic | (new) | **0.000** | gate ✅ |
+| HTTP `feed_initiator` steady-state | 13 allocs/call | **5** | -62% |
+| HTTP/1.1 GET parse, fresh parser, 10 headers | 28 allocs, 21 995 B | **7 allocs, 5 906 B** | -75% / -73% |
+| `emit_packet_details(true)` per-packet frame copy | 1 500 B | **field removed** | -100% |
+
+The bench harness lives at `benches/zero_alloc.rs` +
+`benches/support/counting_allocator.rs`.
+
+### Notes
+
+- The `bytes` crate is now a dependency of the `dns` feature
+  (was previously only pulled in by `http`, `tls`, `icmp`).
+- The typed `Driver<E>` is **single-threaded by design** — the
+  slot buffers are `Rc<RefCell>`, not `Arc<Mutex>`. For
+  cross-task delivery, drain inside the event loop and post
+  through a channel.
+- `FlowDriver`, `FlowSessionDriver`, `FlowDatagramDriver` stay
+  public as raw sync primitives. Most users want the typed
+  `Driver<E>`; the legacy types remain for advanced consumers
+  who already have an event loop and want raw flow tracking
+  without the typed-slot dispatch layer.
+
 ## 0.10.1
 
 CI / build hygiene patch. Three of the `cargo clippy --no-default-

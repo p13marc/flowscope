@@ -21,9 +21,52 @@ the core.
 
 ## Implementation Status
 
-**0.10.0 cycle** (in progress at 2026-06). Plan-of-record in
+**0.11.0 cycle** (zero-allocation cycle, shipped 2026-06).
+Plans 118 / 119 / 120 / 121. Triggered by the netring 0.19
+dependency audit; collapses the closed-`M` sum-type `Driver<E,
+M>` shape into a typed-slot-drain shape and deletes every 0.9-
+era legacy driver type.
+
+Headlines:
+
+- **Plan 121 architectural keystone** — `flowscope::driver`
+  becomes the typed-slot shape: `Driver<E>` emits flow-lifecycle
+  `Event<K>` only; per-parser typed messages flow through
+  `SlotHandle<P::Message, E::Key>` returned by the builder at
+  registration time. No closed-`M` sum type, no lift closures,
+  zero per-message Box. `flowscope::driver_unified` was renamed
+  to `flowscope::driver` at the crate root; the old
+  `flowscope::driver` (`FlowDriver`) moved to
+  `flowscope::flow_driver`. Public driver-shaped types: 6
+  (down from 14 in 0.9).
+- **Plan 119** — `Driver::track_into(view, &mut Vec<Event>)` +
+  parser API break: `SessionParser` and `DatagramParser` take
+  `&mut Vec<Self::Message>` (same idiom as `httparse::Request::parse`).
+  Eliminates the per-packet `Vec::new()` at every dispatch
+  layer. Bench gate row `track_into` with **5 HTTP slots**:
+  **0.000 allocs/packet** in steady state.
+- **Plan 120** — HTTP / DNS / TLS payload-type Bytes audit.
+  HTTP/1.1 GET parse: **28 → 7 allocs** (-75%) by sharing one
+  Arc-backed Bytes for the whole header region and slicing
+  zero-copy.
+- **Plan 118 §4 small wins** — `Event::FlowPacket::frame`
+  field deleted (was `view.frame.to_vec()` clone per packet =
+  1.5 GB/sec at 1 Mpps). `parser_kinds::TLS_HANDSHAKE`
+  constant added.
+
+Public surface after the cycle: `Driver<E>`, `DriverBuilder<E>`,
+`Event<K>`, `SlotHandle<M, K>`, `SlotMessage<M, K>` for the
+typed driver; `FlowDriver`, `FlowSessionDriver`,
+`FlowDatagramDriver` kept as raw sync primitives.
+
+The typed `Driver<E>` is **single-threaded by design** — the
+slot bufs are `Rc<RefCell>`, not `Arc<Mutex>`. For cross-task
+delivery, drain inside the event loop and post through a
+channel.
+
+**0.10.0 cycle** (shipped 2026-06). Plan-of-record in
 `plans/INDEX.md`. Triggered by the 0.9 examples-writing
-postmortem (plan 100). Shipped so far:
+postmortem (plan 100). Shipped:
 
 - **Plan 110 sub-B** — quick-win helper sweep. New methods on
   `Timestamp` (`to_unix_f64` / `from_unix_f64` / `relative_to`
