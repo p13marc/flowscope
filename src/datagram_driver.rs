@@ -320,15 +320,29 @@ where
         &mut self,
         view: impl Into<PacketView<'v>>,
     ) -> Vec<SessionEvent<E::Key, P::Message>> {
-        let view: PacketView<'v> = view.into();
-        // Capture the UDP payload BEFORE FlowDriver consumes the
-        // view; otherwise we'd need to re-parse the (potentially
-        // dedup-rewritten / monotonised) frame.
-        let udp_payload: Option<Vec<u8>> = extract_udp_payload(view).map(|s| s.to_vec());
-        let mut flow_events = self.driver.track_pending(view);
-        let out = self.translate_events(&flow_events, udp_payload.as_deref());
-        self.driver.finalize(flow_events.as_mut_slice());
+        let mut out = Vec::new();
+        self.track_into(view, &mut out);
         out
+    }
+
+    /// Append-only variant of [`Self::track`]. Reuses the caller's
+    /// capacity — zero allocation at this surface in steady state.
+    /// Plan 121 zero-alloc threading.
+    pub fn track_into<'v>(
+        &mut self,
+        view: impl Into<PacketView<'v>>,
+        out: &mut Vec<SessionEvent<E::Key, P::Message>>,
+    ) {
+        let view: PacketView<'v> = view.into();
+        let mut flow_events = self.driver.track_pending(view);
+        // `PacketView` is `Copy` and `frame: &[u8]` is immutable
+        // after `track_pending`; dedup / monotonic_timestamps only
+        // modify timestamps, not frame bytes. Re-extract the UDP
+        // payload here as a zero-copy &[u8] instead of allocating
+        // a per-packet `to_vec()` clone before the call.
+        let udp_payload: Option<&[u8]> = extract_udp_payload(view);
+        self.translate_events_into(&flow_events, udp_payload, out);
+        self.driver.finalize(flow_events.as_mut_slice());
     }
 
     /// Run the idle-timeout sweep. Also drives each still-live
@@ -441,7 +455,17 @@ where
         flow_events: &[FlowEvent<E::Key>],
         udp_payload: Option<&[u8]>,
     ) -> Vec<SessionEvent<E::Key, P::Message>> {
-        let mut out: Vec<SessionEvent<E::Key, P::Message>> = Vec::new();
+        let mut out = Vec::new();
+        self.translate_events_into(flow_events, udp_payload, &mut out);
+        out
+    }
+
+    fn translate_events_into(
+        &mut self,
+        flow_events: &[FlowEvent<E::Key>],
+        udp_payload: Option<&[u8]>,
+        out: &mut Vec<SessionEvent<E::Key, P::Message>>,
+    ) {
         for ev in flow_events {
             match ev {
                 FlowEvent::Started { key, ts, .. } => {
@@ -478,9 +502,9 @@ where
                     // Plan 80 — parser-driven graceful close; poison wins.
                     if parser.is_poisoned() {
                         let reason = parser.poison_reason().map(truncate_reason);
-                        self.synthesise_parser_poison(key, *side, reason, *ts, &mut out);
+                        self.synthesise_parser_poison(key, *side, reason, *ts, out);
                     } else if parser.is_done() {
-                        self.synthesise_parser_done(key, *ts, &mut out);
+                        self.synthesise_parser_done(key, *ts, out);
                     }
                 }
                 FlowEvent::Ended {
@@ -523,7 +547,6 @@ where
                 }
             }
         }
-        out
     }
 
     fn synthesise_parser_poison(

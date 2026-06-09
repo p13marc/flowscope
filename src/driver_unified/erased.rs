@@ -52,6 +52,12 @@ where
     /// `Some(set)` = the parser fires only when src or dst port
     /// is in the set.
     pub(super) ports: Option<smallvec::SmallVec<[u16; 4]>>,
+    /// Persistent SessionEvent scratch buffer reused across
+    /// `track_into` calls — `FlowSessionDriver::track_into`
+    /// appends into this and we drain it into the caller's
+    /// `out` via the lift closure. Reusing the capacity is the
+    /// difference between 1 alloc / slot / packet and 0.
+    pub(super) session_scratch: Vec<crate::session::SessionEvent<E::Key, P::Message>>,
     pub(super) _marker: PhantomData<M>,
 }
 
@@ -78,6 +84,7 @@ where
             lift,
             parser_kind,
             ports,
+            session_scratch: Vec::new(),
             _marker: PhantomData,
         }
     }
@@ -99,7 +106,9 @@ where
             return;
         }
         let parser_kind = self.parser_kind;
-        for ev in self.driver.track(view) {
+        self.session_scratch.clear();
+        self.driver.track_into(view, &mut self.session_scratch);
+        for ev in self.session_scratch.drain(..) {
             if let Some(lifted) = lift_event(ev, &self.lift, ts, parser_kind) {
                 out.push(lifted);
             }
@@ -137,6 +146,7 @@ where
     pub(super) lift: F,
     pub(super) parser_kind: &'static str,
     pub(super) ports: Option<smallvec::SmallVec<[u16; 4]>>,
+    pub(super) session_scratch: Vec<crate::session::SessionEvent<E::Key, D::Message>>,
     pub(super) _marker: PhantomData<M>,
 }
 
@@ -163,6 +173,7 @@ where
             lift,
             parser_kind,
             ports,
+            session_scratch: Vec::new(),
             _marker: PhantomData,
         }
     }
@@ -184,7 +195,9 @@ where
             return;
         }
         let parser_kind = self.parser_kind;
-        for ev in self.driver.track(view) {
+        self.session_scratch.clear();
+        self.driver.track_into(view, &mut self.session_scratch);
+        for ev in self.session_scratch.drain(..) {
             if let Some(lifted) = lift_event(ev, &self.lift, ts, parser_kind) {
                 out.push(lifted);
             }

@@ -79,6 +79,7 @@ where
     pub(super) lift: F,
     pub(super) parser_kind: &'static str,
     pub(super) states: HashMap<E::Key, FlowDetection>,
+    pub(super) session_scratch: Vec<crate::session::SessionEvent<E::Key, P::Message>>,
     pub(super) _marker: PhantomData<M>,
 }
 
@@ -106,6 +107,7 @@ where
             lift,
             parser_kind,
             states: HashMap::new(),
+            session_scratch: Vec::new(),
             _marker: PhantomData,
         }
     }
@@ -167,7 +169,9 @@ where
             return;
         }
         let parser_kind = self.parser_kind;
-        for ev in self.driver.track(view) {
+        self.session_scratch.clear();
+        self.driver.track_into(view, &mut self.session_scratch);
+        for ev in self.session_scratch.drain(..) {
             if let Some(lifted) = super::erased::lift_event_pub(ev, &self.lift, ts, parser_kind) {
                 out.push(lifted);
             }
@@ -210,6 +214,7 @@ where
     pub(super) lift: F,
     pub(super) parser_kind: &'static str,
     pub(super) states: HashMap<E::Key, FlowDetection>,
+    pub(super) session_scratch: Vec<crate::session::SessionEvent<E::Key, D::Message>>,
     pub(super) _marker: PhantomData<M>,
 }
 
@@ -237,6 +242,7 @@ where
             lift,
             parser_kind,
             states: HashMap::new(),
+            session_scratch: Vec::new(),
             _marker: PhantomData,
         }
     }
@@ -280,7 +286,9 @@ where
             return;
         }
         let parser_kind = self.parser_kind;
-        for ev in self.driver.track(view) {
+        self.session_scratch.clear();
+        self.driver.track_into(view, &mut self.session_scratch);
+        for ev in self.session_scratch.drain(..) {
             if let Some(lifted) = super::erased::lift_event_pub(ev, &self.lift, ts, parser_kind) {
                 out.push(lifted);
             }

@@ -356,10 +356,22 @@ where
         &mut self,
         view: impl Into<PacketView<'v>>,
     ) -> Vec<SessionEvent<E::Key, P::Message>> {
-        let mut flow_events = self.driver.track_pending(view);
-        let out = self.translate_events(&flow_events);
-        self.driver.finalize(flow_events.as_mut_slice());
+        let mut out = Vec::new();
+        self.track_into(view, &mut out);
         out
+    }
+
+    /// Append-only variant of [`Self::track`]. Reuses the caller's
+    /// capacity — zero allocation at this surface in steady state.
+    /// Plan 119 / 121 deep zero-alloc threading.
+    pub fn track_into<'v>(
+        &mut self,
+        view: impl Into<PacketView<'v>>,
+        out: &mut Vec<SessionEvent<E::Key, P::Message>>,
+    ) {
+        let mut flow_events = self.driver.track_pending(view);
+        self.translate_events_into(&flow_events, out);
+        self.driver.finalize(flow_events.as_mut_slice());
     }
 
     /// Run the idle-timeout sweep. Returns any resulting `Closed`
@@ -497,7 +509,16 @@ where
         &mut self,
         flow_events: &[FlowEvent<E::Key>],
     ) -> Vec<SessionEvent<E::Key, P::Message>> {
-        let mut out: Vec<SessionEvent<E::Key, P::Message>> = Vec::new();
+        let mut out = Vec::new();
+        self.translate_events_into(flow_events, &mut out);
+        out
+    }
+
+    fn translate_events_into(
+        &mut self,
+        flow_events: &[FlowEvent<E::Key>],
+        out: &mut Vec<SessionEvent<E::Key, P::Message>>,
+    ) {
         for ev in flow_events {
             match ev {
                 FlowEvent::Started { key, ts, .. } => {
@@ -510,7 +531,7 @@ where
                     });
                 }
                 FlowEvent::Packet { key, ts, .. } => {
-                    self.drain_into_parser(key, *ts, &mut out);
+                    self.drain_into_parser(key, *ts, out);
                 }
                 FlowEvent::Ended {
                     key,
@@ -523,7 +544,7 @@ where
                     // before the reassembler is dropped in finalize),
                     // then call the parser's fin/rst hook.
                     let ts = stats.last_seen;
-                    self.drain_into_parser(key, ts, &mut out);
+                    self.drain_into_parser(key, ts, out);
                     if let Some(mut parser) = self.parsers.remove(key) {
                         let kind = parser.parser_kind();
                         match reason {
@@ -595,7 +616,6 @@ where
                 }
             }
         }
-        out
     }
 
     fn drain_into_parser(

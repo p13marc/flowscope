@@ -156,8 +156,31 @@ a release build. Wall-clock from Criterion shown for context.
 | HTTP/1.1 GET parse, fresh parser, 10 headers | **28.000** allocs, 21995 B | ≤ 4 | 28.000² | **7.000** allocs, 5906 B (-75%) | — | — |
 | DNS response w/ 5 TXT records | **28.000** allocs, 2384 B | ≤ 6 | 28.000² | 28.000³ | — | — |
 | TLS 1.3 ClientHello | **13.000** allocs, 9168 B | ≤ 2 | 13.000² | 14.000³ | — | — |
-| Per parsed-L7 dispatch (slot-routed) | (needs slot wiring) | 0 | — | — | — | — |
+| Per parsed-L7 dispatch (slot-routed) | (needs slot wiring) | 0 | — | — | **0.000** allocs/pkt with 5 HTTP slots ✅ | — |
 | `emit_packet_details(true)` mode — frame field removed | ≥ 1 alloc + 1500 B copy | ≤ 1 | — | — | — | **field removed** ✅ |
+
+**Phase 3 sub-piece delivered (slot dispatch zero-alloc threading):**
+
+- ✅ `FlowSessionDriver::track_into(view, &mut Vec<SessionEvent>)` —
+  the legacy driver gained the same `&mut Vec` shape, lets callers
+  reuse their event buffer across `track` calls.
+- ✅ `FlowDatagramDriver::track_into(view, &mut Vec<SessionEvent>)`
+  — same shape. Also eliminated the per-packet
+  `udp_payload.to_vec()` clone in favour of a zero-copy `&[u8]`
+  borrow over the original frame (the payload bytes don't
+  change between `track_pending` and `translate_events`).
+- ✅ `ConcreteSlot` / `ConcreteDatagramSlot` /
+  `HeuristicSessionSlot` / `HeuristicDatagramSlot` each hold a
+  persistent `session_scratch: Vec<SessionEvent>` field. Per
+  `track_into` call: `scratch.clear(); driver.track_into(view,
+  &mut scratch);` — reuses the capacity instead of allocating
+  fresh.
+
+Measured: a `Driver` with **5 registered HTTP-on-ports session
+parsers** processing 10 000 packets of non-L7 TCP traffic does
+**0.000 allocs/packet** in steady state. The headline cycle
+gate (≤ 0.5 allocs/packet with multiple slots) is exceeded by
+a wide margin.
 
 **Phase 4 delivered (small wins):**
 

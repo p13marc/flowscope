@@ -48,6 +48,60 @@ fn synth_tcp_stream() -> Vec<Vec<u8>> {
         .collect()
 }
 
+#[cfg(all(
+    feature = "session",
+    feature = "reassembler",
+    feature = "extractors",
+    feature = "http"
+))]
+fn bench_track_into_with_slots_steady_state(c: &mut Criterion) {
+    use flowscope::driver_unified::{Driver, Event};
+    use flowscope::http::{HttpMessage, HttpParser};
+
+    let mut driver = Driver::<_, HttpMessage>::builder(FiveTuple::bidirectional())
+        .session_on_ports(HttpParser::default(), [80], |m| m)
+        .session_on_ports(HttpParser::default(), [8080], |m| m)
+        .session_on_ports(HttpParser::default(), [443], |m| m)
+        .session_on_ports(HttpParser::default(), [8443], |m| m)
+        .session_on_ports(HttpParser::default(), [3000], |m| m)
+        .build();
+
+    let frames = synth_tcp_stream();
+    let mut scratch: Vec<Event<_, HttpMessage>> = Vec::with_capacity(8);
+
+    for frame in frames.iter().take(128) {
+        let v = PacketView::new(frame, Timestamp::default());
+        scratch.clear();
+        driver.track_into(v, &mut scratch);
+        black_box(&scratch);
+    }
+
+    c.bench_function("track_into_5_slots_steady_state", |b| {
+        b.iter(|| {
+            for frame in &frames {
+                let v = PacketView::new(frame, Timestamp::default());
+                scratch.clear();
+                driver.track_into(v, &mut scratch);
+                black_box(&scratch);
+            }
+        })
+    });
+
+    CountingAllocator::reset();
+    for frame in &frames {
+        let v = PacketView::new(frame, Timestamp::default());
+        scratch.clear();
+        driver.track_into(v, &mut scratch);
+        black_box(&scratch);
+    }
+    println!(
+        "track_into_5_slots:       {:.3} allocs/pkt, {} bytes/pkt over {} pkts",
+        CountingAllocator::allocs_per(N_PACKETS),
+        CountingAllocator::bytes() / N_PACKETS,
+        N_PACKETS,
+    );
+}
+
 #[cfg(all(feature = "session", feature = "reassembler", feature = "extractors"))]
 fn bench_track_into_steady_state(c: &mut Criterion) {
     use flowscope::driver_unified::{Driver, Event};
@@ -269,7 +323,24 @@ fn bench_tls_client_hello(c: &mut Criterion) {
     );
 }
 
-#[cfg(all(feature = "session", feature = "reassembler", feature = "extractors"))]
+#[cfg(all(
+    feature = "session",
+    feature = "reassembler",
+    feature = "extractors",
+    feature = "http"
+))]
+criterion_group!(
+    driver_benches,
+    bench_track_into_steady_state,
+    bench_track_into_with_slots_steady_state
+);
+
+#[cfg(all(
+    feature = "session",
+    feature = "reassembler",
+    feature = "extractors",
+    not(feature = "http")
+))]
 criterion_group!(driver_benches, bench_track_into_steady_state);
 
 #[cfg(all(feature = "session", feature = "http"))]
