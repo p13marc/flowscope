@@ -12,9 +12,11 @@
 
 #![cfg(all(feature = "pcap", feature = "session", feature = "extractors"))]
 
-use flowscope::extract::FiveTuple;
+use flowscope::driver_unified::SlotMessage;
+use flowscope::driver_unified::typed::{Driver, Event};
+use flowscope::extract::{FiveTuple, FiveTupleKey};
 use flowscope::pcap::PcapFlowSource;
-use flowscope::{FlowSessionDriver, FlowSide, SessionEvent, SessionParser, Timestamp};
+use flowscope::{FlowSide, SessionParser, Timestamp};
 
 const MARKER_2: &[u8] = b"PFX2,";
 const MARKER_4: &[u8] = b"PFX4,";
@@ -76,15 +78,23 @@ fn peek_header(buf: &[u8]) -> Option<(usize, usize)> {
 }
 
 fn collect_messages(path: &str) -> Vec<Record> {
-    let mut driver =
-        FlowSessionDriver::new(FiveTuple::bidirectional(), LengthPrefixedParser::default());
+    let mut builder = Driver::builder(FiveTuple::bidirectional());
+    // The fixture uses an arbitrary port; broadcast captures every flow.
+    let mut slot = builder.session_broadcast(LengthPrefixedParser::default());
+    let mut driver = builder.build();
+
     let mut messages = Vec::new();
+    let mut events: Vec<Event<FiveTupleKey>> = Vec::new();
+    let mut msgs: Vec<SlotMessage<Record, FiveTupleKey>> = Vec::new();
+
     for view in PcapFlowSource::open(path).expect("open fixture").views() {
         let view = view.expect("read packet");
-        for ev in driver.track(&view) {
-            if let SessionEvent::Application { message, .. } = ev {
-                messages.push(message);
-            }
+        events.clear();
+        driver.track_into(&view, &mut events);
+        msgs.clear();
+        slot.drain(&mut msgs);
+        for m in msgs.drain(..) {
+            messages.push(m.message);
         }
     }
     messages

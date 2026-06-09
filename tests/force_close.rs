@@ -120,78 +120,9 @@ mod driver_level {
     }
 }
 
-#[cfg(all(feature = "session", feature = "reassembler", feature = "test-helpers"))]
-mod session_driver_level {
-    use super::*;
-    use flowscope::extract::parse::test_frames::ipv4_tcp;
-    use flowscope::test_helpers::EchoSessionParser;
-    use flowscope::{FlowSessionDriver, SessionEvent};
-
-    fn build_3whs() -> Vec<Vec<u8>> {
-        let mac = [0u8; 6];
-        vec![
-            ipv4_tcp(
-                mac,
-                mac,
-                [10, 0, 0, 1],
-                [10, 0, 0, 2],
-                1234,
-                80,
-                1000,
-                0,
-                0x02,
-                &[],
-            ),
-            ipv4_tcp(
-                mac,
-                mac,
-                [10, 0, 0, 2],
-                [10, 0, 0, 1],
-                80,
-                1234,
-                5000,
-                1001,
-                0x12,
-                &[],
-            ),
-            ipv4_tcp(
-                mac,
-                mac,
-                [10, 0, 0, 1],
-                [10, 0, 0, 2],
-                1234,
-                80,
-                1001,
-                5001,
-                0x10,
-                &[],
-            ),
-        ]
-    }
-
-    #[test]
-    fn session_driver_force_close_emits_closed_with_force_closed_reason() {
-        let mut d = FlowSessionDriver::new(FiveTuple::bidirectional(), EchoSessionParser);
-        let mut events: Vec<SessionEvent<_, _>> = Vec::new();
-        for f in build_3whs() {
-            events.extend(d.track(view(&f, 0)));
-        }
-        // Grab the key from the Started event.
-        let key = events
-            .iter()
-            .find_map(|e| match e {
-                SessionEvent::Started { key, .. } => Some(*key),
-                _ => None,
-            })
-            .expect("Started event");
-        let close_events = d.force_close(&key, Timestamp::default());
-        let reason = close_events
-            .iter()
-            .find_map(|e| match e {
-                SessionEvent::Closed { reason, .. } => Some(*reason),
-                _ => None,
-            })
-            .expect("Closed event");
-        assert_eq!(reason, EndReason::ForceClosed);
-    }
-}
+// NOTE: The legacy `FlowSessionDriver::force_close` test that lived
+// here was removed during plan 121's migration to the typed
+// `Driver<E>` shape. The typed driver does not yet expose a
+// `force_close` method; it will return as a feature of the new
+// shape in a future cycle. The tracker-level and `FlowDriver`-level
+// force_close behaviour above remains covered.

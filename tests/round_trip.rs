@@ -2,8 +2,8 @@
 //!
 //! Synthesises wire bytes via `test_frames`, writes them to an
 //! in-memory pcap, reads them back via `PcapFlowSource`, drives a
-//! passthrough `FlowSessionDriver`, and asserts the bytes round-trip
-//! verbatim. Catches integration regressions across the
+//! passthrough plan-121 typed `Driver<E>`, and asserts the bytes
+//! round-trip verbatim. Catches integration regressions across the
 //! synthesize → pcap → tracker → reassembler → session-driver seam.
 //!
 //! Originally specified by plan 52 (now retired; see
@@ -20,10 +20,12 @@
 use std::io::Cursor;
 use std::time::Duration;
 
-use flowscope::extract::FiveTuple;
+use flowscope::driver_unified::SlotMessage;
+use flowscope::driver_unified::typed::{Driver, Event};
 use flowscope::extract::parse::test_frames::ipv4_tcp;
+use flowscope::extract::{FiveTuple, FiveTupleKey};
 use flowscope::pcap::PcapFlowSource;
-use flowscope::{FlowSessionDriver, FlowSide, SessionEvent, SessionParser, Timestamp};
+use flowscope::{FlowSide, SessionParser, Timestamp};
 
 use pcap_file::DataLink;
 use pcap_file::pcap::{PcapHeader, PcapPacket, PcapWriter};
@@ -76,25 +78,32 @@ fn write_pcap(frames: &[(Duration, Vec<u8>)]) -> Vec<u8> {
 /// return the per-side byte concatenations.
 fn round_trip_via_pcap(frames: Vec<(Duration, Vec<u8>)>) -> (Vec<u8>, Vec<u8>) {
     let pcap_bytes = write_pcap(&frames);
-    let mut driver = FlowSessionDriver::new(FiveTuple::bidirectional(), PassthroughParser);
+
+    let mut builder = Driver::builder(FiveTuple::bidirectional());
+    let mut slot = builder.session_broadcast(PassthroughParser);
+    let mut driver = builder.build();
+
     let mut init = Vec::new();
     let mut resp = Vec::new();
     let cursor = Cursor::new(pcap_bytes);
+
+    let mut events: Vec<Event<FiveTupleKey>> = Vec::new();
+    let mut msgs: Vec<SlotMessage<(FlowSide, Vec<u8>), FiveTupleKey>> = Vec::new();
+
     for view in PcapFlowSource::from_reader(cursor)
         .expect("open pcap")
         .views()
     {
         let view = view.expect("packet");
-        for ev in driver.track(&view) {
-            if let SessionEvent::Application {
-                message: (side, bytes),
-                ..
-            } = ev
-            {
-                match side {
-                    FlowSide::Initiator => init.extend_from_slice(&bytes),
-                    FlowSide::Responder => resp.extend_from_slice(&bytes),
-                }
+        events.clear();
+        driver.track_into(&view, &mut events);
+        msgs.clear();
+        slot.drain(&mut msgs);
+        for m in msgs.drain(..) {
+            let (side, bytes) = m.message;
+            match side {
+                FlowSide::Initiator => init.extend_from_slice(&bytes),
+                FlowSide::Responder => resp.extend_from_slice(&bytes),
             }
         }
     }
