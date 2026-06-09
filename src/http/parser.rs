@@ -32,12 +32,12 @@ pub(crate) enum DirState {
 #[derive(Debug, Clone)]
 pub(crate) struct BodyStart {
     pub is_request: bool,
-    pub method: String,
-    pub path: String,
+    pub method: Bytes,
+    pub path: Bytes,
     pub status: u16,
-    pub reason: String,
+    pub reason: Bytes,
     pub version: HttpVersion,
-    pub headers: Vec<(String, Vec<u8>)>,
+    pub headers: Vec<(Bytes, Bytes)>,
 }
 
 impl BodyStart {
@@ -93,11 +93,16 @@ pub(crate) fn step(
 
             DirState::Headers => {
                 let mut headers_storage = vec![httparse::EMPTY_HEADER; config.max_headers];
+                let buf_start = buffer.as_ptr();
                 if is_request {
                     let mut req = httparse::Request::new(&mut headers_storage);
                     match req.parse(buffer) {
                         Ok(httparse::Status::Complete(hlen)) => {
-                            let snapshot = snapshot_request(&req)?;
+                            // Single Arc for the header region. method /
+                            // path / header names / values are all
+                            // zero-copy Bytes::slice over this.
+                            let header_bytes = Bytes::copy_from_slice(&buffer[..hlen]);
+                            let snapshot = snapshot_request(&req, buf_start, &header_bytes)?;
                             let body_len = body_len_from_headers(&snapshot.headers);
                             advance_to_body(buffer, hlen);
                             transition_to_body(state, snapshot, body_len, true);
@@ -115,7 +120,8 @@ pub(crate) fn step(
                     let mut resp = httparse::Response::new(&mut headers_storage);
                     match resp.parse(buffer) {
                         Ok(httparse::Status::Complete(hlen)) => {
-                            let snapshot = snapshot_response(&resp)?;
+                            let header_bytes = Bytes::copy_from_slice(&buffer[..hlen]);
+                            let snapshot = snapshot_response(&resp, buf_start, &header_bytes)?;
                             let body_len = body_len_from_headers(&snapshot.headers);
                             advance_to_body(buffer, hlen);
                             transition_to_body(state, snapshot, body_len, false);
@@ -187,15 +193,17 @@ fn emit(started: BodyStart, body: Bytes) -> ParseOutput {
     }
 }
 
-fn snapshot_request(req: &httparse::Request<'_, '_>) -> crate::Result<BodyStart> {
-    let method = req
+fn snapshot_request(
+    req: &httparse::Request<'_, '_>,
+    buf_start: *const u8,
+    header_bytes: &Bytes,
+) -> crate::Result<BodyStart> {
+    let method_str = req
         .method
-        .ok_or_else(|| Error::parse(Module::Http, "missing method"))?
-        .to_string();
-    let path = req
+        .ok_or_else(|| Error::parse(Module::Http, "missing method"))?;
+    let path_str = req
         .path
-        .ok_or_else(|| Error::parse(Module::Http, "missing path"))?
-        .to_string();
+        .ok_or_else(|| Error::parse(Module::Http, "missing path"))?;
     let version = req
         .version
         .ok_or_else(|| Error::parse(Module::Http, "missing version"))?;
@@ -209,28 +217,26 @@ fn snapshot_request(req: &httparse::Request<'_, '_>) -> crate::Result<BodyStart>
             ));
         }
     };
-    let headers: Vec<(String, Vec<u8>)> = req
-        .headers
-        .iter()
-        .filter(|h| !h.name.is_empty())
-        .map(|h| (h.name.to_string(), h.value.to_vec()))
-        .collect();
     Ok(BodyStart {
         is_request: true,
-        method,
-        path,
+        method: slice_in(header_bytes, buf_start, method_str.as_bytes()),
+        path: slice_in(header_bytes, buf_start, path_str.as_bytes()),
         status: 0,
-        reason: String::new(),
+        reason: Bytes::new(),
         version,
-        headers,
+        headers: collect_headers(req.headers, buf_start, header_bytes),
     })
 }
 
-fn snapshot_response(resp: &httparse::Response<'_, '_>) -> crate::Result<BodyStart> {
+fn snapshot_response(
+    resp: &httparse::Response<'_, '_>,
+    buf_start: *const u8,
+    header_bytes: &Bytes,
+) -> crate::Result<BodyStart> {
     let status = resp
         .code
         .ok_or_else(|| Error::parse(Module::Http, "missing status code"))?;
-    let reason = resp.reason.unwrap_or("").to_string();
+    let reason = resp.reason.unwrap_or("");
     let version = resp
         .version
         .ok_or_else(|| Error::parse(Module::Http, "missing version"))?;
@@ -244,29 +250,60 @@ fn snapshot_response(resp: &httparse::Response<'_, '_>) -> crate::Result<BodySta
             ));
         }
     };
-    let headers: Vec<(String, Vec<u8>)> = resp
-        .headers
-        .iter()
-        .filter(|h| !h.name.is_empty())
-        .map(|h| (h.name.to_string(), h.value.to_vec()))
-        .collect();
+    let reason_bytes = if reason.is_empty() {
+        Bytes::new()
+    } else {
+        slice_in(header_bytes, buf_start, reason.as_bytes())
+    };
     Ok(BodyStart {
         is_request: false,
-        method: String::new(),
-        path: String::new(),
+        method: Bytes::new(),
+        path: Bytes::new(),
         status,
-        reason,
+        reason: reason_bytes,
         version,
-        headers,
+        headers: collect_headers(resp.headers, buf_start, header_bytes),
     })
+}
+
+fn collect_headers(
+    hs: &[httparse::Header<'_>],
+    buf_start: *const u8,
+    header_bytes: &Bytes,
+) -> Vec<(Bytes, Bytes)> {
+    // Count non-empty headers up front so the Vec allocates once
+    // (otherwise `.collect()` regrows a handful of times for typical
+    // 10-header requests).
+    let n = hs.iter().take_while(|h| !h.name.is_empty()).count();
+    let mut out = Vec::with_capacity(n);
+    for h in hs.iter().take(n) {
+        out.push((
+            slice_in(header_bytes, buf_start, h.name.as_bytes()),
+            slice_in(header_bytes, buf_start, h.value),
+        ));
+    }
+    out
+}
+
+/// Compute a zero-copy `Bytes::slice` of `header_bytes` covering the
+/// range pointed at by `slice`. `slice` MUST be a sub-slice of the
+/// `Vec<u8>` that `buf_start` pointed at when `header_bytes` was
+/// taken (`Bytes::copy_from_slice(&buf[..hlen])`).
+#[inline]
+fn slice_in(header_bytes: &Bytes, buf_start: *const u8, slice: &[u8]) -> Bytes {
+    // SAFETY: caller guarantees `slice` lies within `[buf_start,
+    // buf_start + hlen)`. Pointer subtraction over a single
+    // allocation is well-defined.
+    let off = unsafe { slice.as_ptr().offset_from(buf_start) as usize };
+    header_bytes.slice(off..off + slice.len())
 }
 
 /// Parse `Content-Length` from headers. Returns:
 /// - `Some(n)` for a numeric Content-Length.
 /// - `None` if no Content-Length found (caller decides EOF semantics).
-fn body_len_from_headers(headers: &[(String, Vec<u8>)]) -> Option<usize> {
+fn body_len_from_headers(headers: &[(Bytes, Bytes)]) -> Option<usize> {
     for (name, value) in headers {
-        if name.eq_ignore_ascii_case("content-length") {
+        if name.as_ref().eq_ignore_ascii_case(b"content-length") {
             let s = std::str::from_utf8(value).ok()?;
             return s.trim().parse::<usize>().ok();
         }
@@ -299,8 +336,8 @@ fn transition_to_body(
             // body extends to FIN.
             if snapshot.is_request
                 && matches!(
-                    snapshot.method.as_str(),
-                    "GET" | "HEAD" | "DELETE" | "OPTIONS"
+                    snapshot.method.as_ref(),
+                    b"GET" | b"HEAD" | b"DELETE" | b"OPTIONS"
                 )
             {
                 *state = DirState::Body {
@@ -315,6 +352,8 @@ fn transition_to_body(
 }
 
 fn advance_to_body(buffer: &mut Vec<u8>, n: usize) {
-    let rem = buffer.split_off(n);
-    *buffer = rem;
+    // `drain(..n)` preserves the Vec's capacity (vs. `split_off(n)`
+    // + reassign, which throws away the pre-allocated 8 KiB buffer
+    // and forces a fresh allocation on the next `extend_from_slice`).
+    buffer.drain(..n);
 }

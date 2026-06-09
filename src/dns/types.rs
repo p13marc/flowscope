@@ -1,4 +1,6 @@
 use crate::Timestamp;
+use bytes::Bytes;
+use smallvec::SmallVec;
 use std::net::{Ipv4Addr, Ipv6Addr};
 use std::time::Duration;
 
@@ -67,14 +69,43 @@ pub enum DnsRdata {
         priority: u16,
         exchange: String,
     },
-    TXT(Vec<Vec<u8>>),
+    /// One `Bytes` per TXT string segment. `SmallVec` inline
+    /// capacity 4 covers the modal case (1-4 strings per TXT
+    /// record); 5+ strings spill to the heap.
+    ///
+    /// Plan 120: was `Vec<Vec<u8>>` in 0.10.
+    TXT(#[cfg_attr(feature = "serde", serde(with = "serde_smallvec_bytes"))] SmallVec<[Bytes; 4]>),
     /// Unparsed: raw bytes, with the original record type code.
     /// Useful for record types we don't decode (SOA, SRV, OPT,
     /// SVCB, HTTPS, DNSKEY, RRSIG, …).
     Other {
         rtype: u16,
-        data: Vec<u8>,
+        /// Plan 120: was `Vec<u8>` in 0.10.
+        data: Bytes,
     },
+}
+
+#[cfg(feature = "serde")]
+mod serde_smallvec_bytes {
+    use bytes::Bytes;
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    use smallvec::SmallVec;
+
+    pub fn serialize<S>(v: &SmallVec<[Bytes; 4]>, ser: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let view: Vec<&[u8]> = v.iter().map(|b| b.as_ref()).collect();
+        view.serialize(ser)
+    }
+
+    pub fn deserialize<'de, D>(de: D) -> Result<SmallVec<[Bytes; 4]>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let v: Vec<Vec<u8>> = Vec::deserialize(de)?;
+        Ok(v.into_iter().map(Bytes::from).collect())
+    }
 }
 
 /// DNS response code (RFC 1035 §4.1.1, RFC 6895 for extended codes).

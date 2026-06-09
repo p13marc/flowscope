@@ -126,7 +126,7 @@ fn build_client_hello(
         .map(Bytes::copy_from_slice)
         .unwrap_or_default();
     let cipher_suites: Vec<u16> = ch.ciphers.iter().map(|c| c.0).collect();
-    let compression: Vec<u8> = ch.comp.iter().map(|c| c.0).collect();
+    let compression = Bytes::copy_from_slice(&ch.comp.iter().map(|c| c.0).collect::<Vec<u8>>());
 
     let mut sni: Option<String> = None;
     let mut alpn: Vec<String> = Vec::new();

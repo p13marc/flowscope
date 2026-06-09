@@ -72,7 +72,11 @@ fn main() -> flowscope::Result<()> {
             println!(
                 "{outcome:<8} {status:<6} {:<24} {:<32} {ua:<8} {elapsed_ms:>5.1} {bytes:>9}",
                 format!("{} → {}", key.a.ip(), key.b.ip()),
-                format!("{host} {} {}", ex.request.method, ex.request.path),
+                format!(
+                    "{host} {} {}",
+                    ex.request.method_str().unwrap_or("?"),
+                    ex.request.path_str().unwrap_or("?")
+                ),
             );
         }
     }

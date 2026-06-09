@@ -44,13 +44,16 @@ impl Default for HttpParser {
 }
 
 impl HttpParser {
-    /// Construct with explicit config.
+    /// Construct with explicit config. Per-direction buffers are
+    /// allocated lazily — a parser that only sees one direction
+    /// (a half-open flow, or a request-only / response-only
+    /// fixture) pays for only one 8 KiB Vec instead of two.
     pub fn with_config(config: HttpConfig) -> Self {
         Self {
             config,
-            init_buf: Vec::with_capacity(8192),
+            init_buf: Vec::new(),
             init_state: DirState::Headers,
-            resp_buf: Vec::with_capacity(8192),
+            resp_buf: Vec::new(),
             resp_state: DirState::Headers,
         }
     }

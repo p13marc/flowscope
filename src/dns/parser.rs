@@ -126,7 +126,7 @@ fn rdata_to_ours(r: &RData<'_>) -> (u16, DnsRdata) {
             // Without a stable accessor, we render an empty list
             // here and tag the type code so users who need raw
             // strings can drop down to the wire bytes themselves.
-            (16, DnsRdata::TXT(Vec::new()))
+            (16, DnsRdata::TXT(smallvec::SmallVec::new()))
         }
         // Variants we don't decode get tagged with their type code
         // and an empty data buffer. Users who need the rdata can
@@ -154,7 +154,7 @@ fn rdata_to_ours(r: &RData<'_>) -> (u16, DnsRdata) {
                 rtype,
                 DnsRdata::Other {
                     rtype,
-                    data: Vec::new(),
+                    data: bytes::Bytes::new(),
                 },
             )
         }

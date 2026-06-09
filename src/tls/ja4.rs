@@ -186,7 +186,7 @@ mod tests {
                 0x1302, // TLS_AES_256_GCM_SHA384
                 0xc02f, // ECDHE-RSA-AES128-GCM-SHA256
             ],
-            compression: vec![0],
+            compression: bytes::Bytes::from_static(&[0]),
             sni: Some("example.com".to_string()),
             alpn: vec!["h2".to_string()],
             supported_versions: vec![TlsVersion::Tls1_2, TlsVersion::Tls1_3],

@@ -151,13 +151,24 @@ a release build. Wall-clock from Criterion shown for context.
 
 | Measurement | 0.10.1 baseline | Target | After Phase 1 | After Phase 2 | After Phase 3 | After Phase 4 |
 |-------------|----|--------|----|----|----|----|
-| `Driver::track_into` steady-state, 0 slots | **1.000** allocs/pkt, 864 B/pkt | ≤ 0.5 | **0.000** allocs/pkt ✅ | — | — | — |
-| Parser `feed_initiator` steady-state (HTTP) | **13.000** allocs/call, 4868 B/call | ≤ 0.1 | **12.000** allocs/call¹ | — | — | — |
-| HTTP/1.1 GET parse, fresh parser, 10 headers | **28.000** allocs, 21995 B | ≤ 4 | 28.000² | — | — | — |
-| DNS response w/ 5 TXT records | **28.000** allocs, 2384 B | ≤ 6 | 28.000² | — | — | — |
-| TLS 1.3 ClientHello | **13.000** allocs, 9168 B | ≤ 2 | 13.000² | — | — | — |
+| `Driver::track_into` steady-state, 0 slots | **1.000** allocs/pkt, 864 B/pkt | ≤ 0.5 | **0.000** allocs/pkt ✅ | 0.000 ✅ | — | — |
+| Parser `feed_initiator` steady-state (HTTP) | **13.000** allocs/call, 4868 B/call | ≤ 0.1 | **12.000** allocs/call¹ | **5.000** allocs/call (-62%) | — | — |
+| HTTP/1.1 GET parse, fresh parser, 10 headers | **28.000** allocs, 21995 B | ≤ 4 | 28.000² | **7.000** allocs, 5906 B (-75%) | — | — |
+| DNS response w/ 5 TXT records | **28.000** allocs, 2384 B | ≤ 6 | 28.000² | 28.000³ | — | — |
+| TLS 1.3 ClientHello | **13.000** allocs, 9168 B | ≤ 2 | 13.000² | 14.000³ | — | — |
 | Per parsed-L7 dispatch (slot-routed) | (needs slot wiring) | 0 | — | — | — | — |
 | `emit_packet_details(true)` mode | (needs frame-copy bench) | ≤ 1 | — | — | — | — |
+
+³ DNS and TLS bench numbers don't move from Phase 2's type changes
+alone — the bulk of their allocator pressure lives inside the
+parser crates (`simple-dns` and `tls-parser`), which allocate
+during the wire-format decode regardless of the public-type
+storage. Eliminating those would require either a custom DNS /
+TLS decoder or pre-parse `Bytes` slicing — out of plan 120's
+documented scope (the plan explicitly carves out DNS
+owner-names due to compressed-label complexity). HTTP, where we
+control the decoder via httparse + our own snapshot pass, hits
+hardest.
 
 ¹ The per-call `Vec` return is gone (down 1 alloc); the remaining 12 are the parser's internal allocations for the parsed-message payload (`method`/`path`/`headers` as `String`/`Vec<u8>`). Plan 120 (Bytes audit) addresses these.
 

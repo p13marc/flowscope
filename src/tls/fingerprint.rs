@@ -105,7 +105,7 @@ mod tests {
             random: [0u8; 32],
             session_id: Bytes::new(),
             cipher_suites: vec![0x1301, 0x1302, 0x0A0A], // 0x0A0A is GREASE, must be stripped
-            compression: vec![0],
+            compression: Bytes::from_static(&[0]),
             sni: None,
             alpn: vec![],
             supported_versions: vec![],

@@ -18,8 +18,8 @@ pub struct TlsClientHello {
     pub session_id: Bytes,
     /// Offered cipher suites in order.
     pub cipher_suites: Vec<u16>,
-    /// Compression methods offered.
-    pub compression: Vec<u8>,
+    /// Compression methods offered. Plan 120: was `Vec<u8>` in 0.10.
+    pub compression: Bytes,
     /// Server name (SNI) extension value, if present.
     pub sni: Option<String>,
     /// Negotiated ALPN protocols offered by the client.

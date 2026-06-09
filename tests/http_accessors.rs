@@ -12,12 +12,17 @@ mod http_request {
 
     fn fixture_with(headers: Vec<(&str, &[u8])>) -> HttpRequest {
         HttpRequest {
-            method: "GET".to_string(),
-            path: "/".to_string(),
+            method: Bytes::from_static(b"GET"),
+            path: Bytes::from_static(b"/"),
             version: HttpVersion::Http1_1,
             headers: headers
                 .into_iter()
-                .map(|(k, v)| (k.to_string(), v.to_vec()))
+                .map(|(k, v)| {
+                    (
+                        Bytes::copy_from_slice(k.as_bytes()),
+                        Bytes::copy_from_slice(v),
+                    )
+                })
                 .collect(),
             body: Bytes::new(),
         }
@@ -117,11 +122,16 @@ mod http_response {
     fn fixture_with(headers: Vec<(&str, &[u8])>) -> HttpResponse {
         HttpResponse {
             status: 200,
-            reason: "OK".to_string(),
+            reason: Bytes::from_static(b"OK"),
             version: HttpVersion::Http1_1,
             headers: headers
                 .into_iter()
-                .map(|(k, v)| (k.to_string(), v.to_vec()))
+                .map(|(k, v)| {
+                    (
+                        Bytes::copy_from_slice(k.as_bytes()),
+                        Bytes::copy_from_slice(v),
+                    )
+                })
                 .collect(),
             body: Bytes::new(),
         }
@@ -222,7 +232,7 @@ mod tls_client_hello {
             random: [0; 32],
             session_id: bytes::Bytes::new(),
             cipher_suites: vec![],
-            compression: vec![0],
+            compression: bytes::Bytes::from_static(&[0]),
             sni: sni.map(str::to_string),
             alpn: vec![],
             supported_versions: vec![],

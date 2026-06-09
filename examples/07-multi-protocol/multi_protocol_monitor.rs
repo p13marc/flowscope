@@ -54,8 +54,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     ts,
                     format!(
                         "HTTP {} {} (host={})",
-                        req.method,
-                        req.path,
+                        req.method_str().unwrap_or("?"),
+                        req.path_str().unwrap_or("?"),
                         req.host().unwrap_or("?")
                     ),
                 ));

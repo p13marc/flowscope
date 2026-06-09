@@ -49,17 +49,17 @@ fn http_pcap_emits_request_and_response() {
     assert_eq!(reqs.len(), 1, "expected exactly 1 HTTP request");
     assert_eq!(resps.len(), 1, "expected exactly 1 HTTP response");
 
-    assert_eq!(reqs[0].method, "GET");
-    assert_eq!(reqs[0].path, "/index.html");
+    assert_eq!(reqs[0].method_str(), Some("GET"));
+    assert_eq!(reqs[0].path_str(), Some("/index.html"));
     assert!(
         reqs[0]
             .headers
             .iter()
-            .any(|(n, _)| n.eq_ignore_ascii_case("host")),
+            .any(|(n, _)| n.as_ref().eq_ignore_ascii_case(b"host")),
         "Host header expected"
     );
 
     assert_eq!(resps[0].status, 200);
-    assert_eq!(resps[0].reason, "OK");
+    assert_eq!(resps[0].reason_str(), Some("OK"));
     assert_eq!(&*resps[0].body, b"Hello, world!");
 }

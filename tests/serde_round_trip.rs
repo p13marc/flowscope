@@ -249,13 +249,17 @@ fn flow_event_all_variants_round_trip() {
 #[cfg(feature = "http")]
 #[test]
 fn http_message_round_trips() {
+    use bytes::Bytes;
     use flowscope::http::{HttpMessage, HttpRequest, HttpResponse, HttpVersion};
     let req = HttpRequest {
-        method: "GET".to_string(),
-        path: "/".to_string(),
+        method: Bytes::from_static(b"GET"),
+        path: Bytes::from_static(b"/"),
         version: HttpVersion::Http1_1,
-        headers: vec![("Host".to_string(), b"example.com".to_vec())],
-        body: bytes::Bytes::new(),
+        headers: vec![(
+            Bytes::from_static(b"Host"),
+            Bytes::from_static(b"example.com"),
+        )],
+        body: Bytes::new(),
     };
     let msg = HttpMessage::Request(req);
     let json = serde_json::to_value(&msg).unwrap();
@@ -264,10 +268,10 @@ fn http_message_round_trips() {
 
     let resp = HttpResponse {
         status: 200,
-        reason: "OK".to_string(),
+        reason: Bytes::from_static(b"OK"),
         version: HttpVersion::Http1_1,
         headers: vec![],
-        body: bytes::Bytes::new(),
+        body: Bytes::new(),
     };
     round_trip(HttpMessage::Response(resp));
 }

@@ -45,8 +45,8 @@ fn pipelined_requests_match_in_order() {
     let mut out = Vec::new();
     p.feed_responder(&resps, Timestamp::new(1, 0), &mut out);
     assert_eq!(out.len(), 2);
-    assert_eq!(out[0].request.headers[0].1, b"a.example");
-    assert_eq!(out[1].request.headers[0].1, b"b.example");
+    assert_eq!(out[0].request.headers[0].1.as_ref(), b"a.example");
+    assert_eq!(out[1].request.headers[0].1.as_ref(), b"b.example");
     assert!(out[0].is_success());
     assert!(out[1].is_client_error_outcome());
 }

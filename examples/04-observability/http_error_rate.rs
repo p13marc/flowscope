@@ -102,13 +102,8 @@ fn handle(
     };
     match message {
         HttpMessage::Request(req) => {
-            if let Some((_, v)) = req
-                .headers
-                .iter()
-                .find(|(n, _)| n.eq_ignore_ascii_case("host"))
-            {
-                let host = String::from_utf8_lossy(v).to_string();
-                host_per_flow.insert(key, host);
+            if let Some(host) = req.host() {
+                host_per_flow.insert(key, host.to_string());
             }
         }
         HttpMessage::Response(resp) => {

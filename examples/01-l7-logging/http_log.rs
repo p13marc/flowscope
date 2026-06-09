@@ -31,17 +31,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     ..
                 } => {
                     reqs += 1;
-                    let host = req
-                        .headers
-                        .iter()
-                        .find(|(n, _)| n.eq_ignore_ascii_case("host"))
-                        .map(|(_, v)| String::from_utf8_lossy(v).to_string())
-                        .unwrap_or_default();
+                    let host = req.host().unwrap_or("");
                     println!(
                         "→ {} {}{}  ({} bytes)",
-                        req.method,
+                        req.method_str().unwrap_or("?"),
                         host,
-                        req.path,
+                        req.path_str().unwrap_or("?"),
                         req.body.len()
                     );
                 }
@@ -50,16 +45,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     ..
                 } => {
                     resps += 1;
-                    let ct = resp
-                        .headers
-                        .iter()
-                        .find(|(n, _)| n.eq_ignore_ascii_case("content-type"))
-                        .map(|(_, v)| String::from_utf8_lossy(v).to_string())
-                        .unwrap_or_else(|| "(none)".into());
+                    let ct = resp.content_type().unwrap_or("(none)");
                     println!(
                         "← {} {}  ({} bytes, content-type: {})",
                         resp.status,
-                        resp.reason,
+                        resp.reason_str().unwrap_or("?"),
                         resp.body.len(),
                         ct
                     );

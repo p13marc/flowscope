@@ -1,15 +1,22 @@
 use bytes::Bytes;
 
 /// Parsed HTTP/1.x request — start line + headers + body.
+///
+/// All `Bytes` fields slice into one shared backing store per
+/// parsed message — zero-copy after parsing. Plan 120: was
+/// `String` / `Vec<u8>` in 0.10.
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct HttpRequest {
-    pub method: String,
-    pub path: String,
+    /// Method bytes (typically uppercase ASCII like `GET`, `POST`).
+    pub method: Bytes,
+    /// Request-target (path + query string).
+    pub path: Bytes,
     pub version: HttpVersion,
-    /// Header (name, value) pairs in order. Names are ASCII;
-    /// values are bytes (RFC 7230 §3.2.4 allows any byte).
-    pub headers: Vec<(String, Vec<u8>)>,
+    /// Header (name, value) pairs in order. Names are ASCII per
+    /// RFC 7230 §3.2 (case-insensitive). Values are arbitrary
+    /// bytes per §3.2.4.
+    pub headers: Vec<(Bytes, Bytes)>,
     /// Body bytes. Empty if no body or transfer-encoding only signals
     /// EOF semantics with nothing transferred yet.
     pub body: Bytes,
@@ -20,9 +27,10 @@ pub struct HttpRequest {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct HttpResponse {
     pub status: u16,
-    pub reason: String,
+    /// Reason phrase from the status line.
+    pub reason: Bytes,
     pub version: HttpVersion,
-    pub headers: Vec<(String, Vec<u8>)>,
+    pub headers: Vec<(Bytes, Bytes)>,
     pub body: Bytes,
 }
 
@@ -45,6 +53,17 @@ pub enum HttpVersion {
 // everything else.
 
 impl HttpRequest {
+    /// Method as a UTF-8 `&str` (e.g. `"GET"`). `None` if the
+    /// method bytes are not valid UTF-8 (extremely rare).
+    pub fn method_str(&self) -> Option<&str> {
+        std::str::from_utf8(&self.method).ok()
+    }
+
+    /// Path as a UTF-8 `&str`.
+    pub fn path_str(&self) -> Option<&str> {
+        std::str::from_utf8(&self.path).ok()
+    }
+
     /// `Host:` header value as UTF-8. `None` if absent or
     /// non-UTF-8.
     pub fn host(&self) -> Option<&str> {
@@ -108,6 +127,11 @@ impl HttpRequest {
 }
 
 impl HttpResponse {
+    /// Reason phrase as a UTF-8 `&str` (e.g. `"OK"`).
+    pub fn reason_str(&self) -> Option<&str> {
+        std::str::from_utf8(&self.reason).ok()
+    }
+
     /// `Content-Type:` header value as UTF-8.
     pub fn content_type(&self) -> Option<&str> {
         self.header_str("content-type")
@@ -185,13 +209,13 @@ impl HttpResponse {
 /// short-lived caller-supplied string slice — they're not
 /// constrained to the same scope.
 fn header_lookup<'h, 'n>(
-    headers: &'h [(String, Vec<u8>)],
+    headers: &'h [(Bytes, Bytes)],
     name: &'n str,
 ) -> impl Iterator<Item = &'h [u8]> + use<'h, 'n> {
     headers
         .iter()
-        .filter(move |(k, _)| k.eq_ignore_ascii_case(name))
-        .map(|(_, v)| v.as_slice())
+        .filter(move |(k, _)| k.as_ref().eq_ignore_ascii_case(name.as_bytes()))
+        .map(|(_, v)| v.as_ref())
 }
 
 /// Configuration knobs for the HTTP parser.

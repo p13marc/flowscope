@@ -110,12 +110,12 @@ fn handle_http(iocs: &mut Iocs, ev: SessionEvent<flowscope::extract::FiveTupleKe
     };
     if let HttpMessage::Request(req) = message {
         for (name, val) in &req.headers {
-            if name.eq_ignore_ascii_case("host") {
+            if name.as_ref().eq_ignore_ascii_case(b"host") {
                 let h = String::from_utf8_lossy(val).to_string();
                 let entry = iocs.hostnames.entry(h).or_insert((0, "http"));
                 entry.0 += 1;
             }
-            if name.eq_ignore_ascii_case("user-agent") {
+            if name.as_ref().eq_ignore_ascii_case(b"user-agent") {
                 let ua = String::from_utf8_lossy(val).to_string();
                 *iocs.user_agents.entry(ua).or_default() += 1;
             }

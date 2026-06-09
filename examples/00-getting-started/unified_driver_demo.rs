@@ -31,10 +31,14 @@ impl L7 {
     fn label(&self) -> String {
         match self {
             L7::Http(HttpMessage::Request(r)) => {
-                format!("HTTP {} {}", r.method, r.path)
+                format!(
+                    "HTTP {} {}",
+                    r.method_str().unwrap_or("?"),
+                    r.path_str().unwrap_or("?"),
+                )
             }
             L7::Http(HttpMessage::Response(r)) => {
-                format!("HTTP {} {}", r.status, r.reason)
+                format!("HTTP {} {}", r.status, r.reason_str().unwrap_or("?"),)
             }
             L7::Dns(DnsMessage::Query(q)) => format!(
                 "DNS query   tx={:#06x} q={}",
