@@ -58,10 +58,16 @@ mod erased;
 mod event;
 mod heuristic;
 mod pipeline;
+mod slot;
+pub mod typed;
+mod typed_slot;
+mod typed_slot_heuristic;
 
 pub use event::Event;
 pub use heuristic::{DEFAULT_PROBE_PACKETS, PROBE_BUFFER_CAP};
 pub use pipeline::{Pipeline, PipelineBuilder, PipelineIter};
+
+pub use slot::{SlotHandle, SlotMessage};
 
 use std::hash::Hash;
 use std::marker::PhantomData;
