@@ -30,9 +30,11 @@ fn query_response_yields_completed() {
     let mut p = DnsExchangeParser::new();
     let q = build_msg(0x1234, "example.com", 0x0100, 0);
     let r = build_msg(0x1234, "example.com", 0x8100, 0);
-    let qs = p.parse(&q, FlowSide::Initiator, Timestamp::new(0, 0));
+    let mut qs = Vec::new();
+    p.parse(&q, FlowSide::Initiator, Timestamp::new(0, 0), &mut qs);
     assert!(qs.is_empty(), "query alone shouldn't emit exchange");
-    let rs = p.parse(&r, FlowSide::Responder, Timestamp::new(1, 0));
+    let mut rs = Vec::new();
+    p.parse(&r, FlowSide::Responder, Timestamp::new(1, 0), &mut rs);
     assert_eq!(rs.len(), 1);
     assert_eq!(rs[0].outcome, DnsOutcome::Completed);
     assert_eq!(rs[0].transaction_id, 0x1234);
@@ -44,10 +46,12 @@ fn nxdomain_response_yields_failed() {
     let mut p = DnsExchangeParser::new();
     let q = build_msg(0xabcd, "missing.example", 0x0100, 0);
     let r = build_msg(0xabcd, "missing.example", 0x8100, 3); // rcode NXDOMAIN
-    let _ = p.parse(&q, FlowSide::Initiator, Timestamp::new(0, 0));
-    let rs = p.parse(&r, FlowSide::Responder, Timestamp::new(1, 0));
-    assert_eq!(rs.len(), 1);
-    assert!(matches!(rs[0].outcome, DnsOutcome::Failed { .. }));
+    let mut sink = Vec::new();
+    p.parse(&q, FlowSide::Initiator, Timestamp::new(0, 0), &mut sink);
+    sink.clear();
+    p.parse(&r, FlowSide::Responder, Timestamp::new(1, 0), &mut sink);
+    assert_eq!(sink.len(), 1);
+    assert!(matches!(sink[0].outcome, DnsOutcome::Failed { .. }));
 }
 
 #[test]
@@ -57,9 +61,11 @@ fn unanswered_query_yields_no_response_on_tick() {
         max_pending: 1024,
     });
     let q = build_msg(0x9999, "slow.example", 0x0100, 0);
-    let _ = p.parse(&q, FlowSide::Initiator, Timestamp::new(0, 0));
+    let mut sink = Vec::new();
+    p.parse(&q, FlowSide::Initiator, Timestamp::new(0, 0), &mut sink);
     // Past timeout, sweep should fire NoResponse.
-    let ticks = p.on_tick(Timestamp::new(10, 0));
+    let mut ticks = Vec::new();
+    p.on_tick(Timestamp::new(10, 0), &mut ticks);
     assert_eq!(ticks.len(), 1);
     assert_eq!(ticks[0].outcome, DnsOutcome::NoResponse);
 }

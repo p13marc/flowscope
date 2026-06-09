@@ -14,19 +14,15 @@ struct CountParser;
 impl SessionParser for CountParser {
     type Message = (FlowSide, usize);
 
-    fn feed_initiator(&mut self, b: &[u8], _ts: Timestamp) -> Vec<Self::Message> {
-        if b.is_empty() {
-            Vec::new()
-        } else {
-            vec![(FlowSide::Initiator, b.len())]
+    fn feed_initiator(&mut self, b: &[u8], _ts: Timestamp, out: &mut Vec<Self::Message>) {
+        if !b.is_empty() {
+            out.push((FlowSide::Initiator, b.len()));
         }
     }
 
-    fn feed_responder(&mut self, b: &[u8], _ts: Timestamp) -> Vec<Self::Message> {
-        if b.is_empty() {
-            Vec::new()
-        } else {
-            vec![(FlowSide::Responder, b.len())]
+    fn feed_responder(&mut self, b: &[u8], _ts: Timestamp, out: &mut Vec<Self::Message>) {
+        if !b.is_empty() {
+            out.push((FlowSide::Responder, b.len()));
         }
     }
 
@@ -40,8 +36,10 @@ struct UdpEcho;
 
 impl DatagramParser for UdpEcho {
     type Message = usize;
-    fn parse(&mut self, b: &[u8], _: FlowSide, _: Timestamp) -> Vec<usize> {
-        if b.is_empty() { vec![] } else { vec![b.len()] }
+    fn parse(&mut self, b: &[u8], _: FlowSide, _: Timestamp, out: &mut Vec<usize>) {
+        if !b.is_empty() {
+            out.push(b.len());
+        }
     }
     fn parser_kind(&self) -> &'static str {
         "udp"

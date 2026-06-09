@@ -184,39 +184,34 @@ impl SessionParser for TlsHandshakeParser {
         "tls-handshake"
     }
 
-    fn feed_initiator(&mut self, bytes: &[u8], ts: Timestamp) -> Vec<Self::Message> {
-        let inner_out = self.inner.feed_initiator(bytes, ts);
-        let mut out = Vec::new();
-        self.process(inner_out, &mut out);
-        out
+    fn feed_initiator(&mut self, bytes: &[u8], ts: Timestamp, out: &mut Vec<Self::Message>) {
+        let mut inner_out = Vec::new();
+        self.inner.feed_initiator(bytes, ts, &mut inner_out);
+        self.process(inner_out, out);
     }
 
-    fn feed_responder(&mut self, bytes: &[u8], ts: Timestamp) -> Vec<Self::Message> {
-        let inner_out = self.inner.feed_responder(bytes, ts);
-        let mut out = Vec::new();
-        self.process(inner_out, &mut out);
-        out
+    fn feed_responder(&mut self, bytes: &[u8], ts: Timestamp, out: &mut Vec<Self::Message>) {
+        let mut inner_out = Vec::new();
+        self.inner.feed_responder(bytes, ts, &mut inner_out);
+        self.process(inner_out, out);
     }
 
-    fn fin_initiator(&mut self) -> Vec<Self::Message> {
-        let inner_out = self.inner.fin_initiator();
-        let mut out = Vec::new();
-        self.process(inner_out, &mut out);
-        // Flow ended without server hello → Truncated outcome.
+    fn fin_initiator(&mut self, out: &mut Vec<Self::Message>) {
+        let mut inner_out = Vec::new();
+        self.inner.fin_initiator(&mut inner_out);
+        self.process(inner_out, out);
         if matches!(self.state, State::AwaitingServerHello) {
             self.accumulator.outcome = HandshakeOutcome::Truncated;
             let done = std::mem::take(&mut self.accumulator);
             out.push(done);
             self.state = State::AwaitingClientHello;
         }
-        out
     }
 
-    fn fin_responder(&mut self) -> Vec<Self::Message> {
-        let inner_out = self.inner.fin_responder();
-        let mut out = Vec::new();
-        self.process(inner_out, &mut out);
-        out
+    fn fin_responder(&mut self, out: &mut Vec<Self::Message>) {
+        let mut inner_out = Vec::new();
+        self.inner.fin_responder(&mut inner_out);
+        self.process(inner_out, out);
     }
 }
 

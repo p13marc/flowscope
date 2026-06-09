@@ -14,8 +14,8 @@
 //! struct EchoParser;
 //! impl flowscope::SessionParser for EchoParser {
 //!     type Message = ();
-//!     fn feed_initiator(&mut self, _b: &[u8], _ts: flowscope::Timestamp) -> Vec<()> { vec![] }
-//!     fn feed_responder(&mut self, _b: &[u8], _ts: flowscope::Timestamp) -> Vec<()> { vec![] }
+//!     fn feed_initiator(&mut self, _b: &[u8], _ts: flowscope::Timestamp, _out: &mut Vec<()>) {}
+//!     fn feed_responder(&mut self, _b: &[u8], _ts: flowscope::Timestamp, _out: &mut Vec<()>) {}
 //! }
 //!
 //! let _driver = FlowSessionDriver::<_, EchoParser, ()>::builder(FiveTuple::bidirectional())
@@ -283,12 +283,8 @@ mod tests {
 
     impl SessionParser for NoopParser {
         type Message = ();
-        fn feed_initiator(&mut self, _b: &[u8], _ts: Timestamp) -> Vec<()> {
-            Vec::new()
-        }
-        fn feed_responder(&mut self, _b: &[u8], _ts: Timestamp) -> Vec<()> {
-            Vec::new()
-        }
+        fn feed_initiator(&mut self, _b: &[u8], _ts: Timestamp, _out: &mut Vec<()>) {}
+        fn feed_responder(&mut self, _b: &[u8], _ts: Timestamp, _out: &mut Vec<()>) {}
     }
 
     #[derive(Default, Clone)]
@@ -296,8 +292,13 @@ mod tests {
 
     impl DatagramParser for NoopDatagram {
         type Message = ();
-        fn parse(&mut self, _b: &[u8], _side: crate::event::FlowSide, _ts: Timestamp) -> Vec<()> {
-            Vec::new()
+        fn parse(
+            &mut self,
+            _b: &[u8],
+            _side: crate::event::FlowSide,
+            _ts: Timestamp,
+            _out: &mut Vec<()>,
+        ) {
         }
     }
 

@@ -125,36 +125,32 @@ impl TlsParser {
 impl SessionParser for TlsParser {
     type Message = TlsMessage;
 
-    fn feed_initiator(&mut self, bytes: &[u8], _ts: Timestamp) -> Vec<TlsMessage> {
+    fn feed_initiator(&mut self, bytes: &[u8], _ts: Timestamp, out: &mut Vec<TlsMessage>) {
         if bytes.is_empty() || matches!(self.init_state, DirState::Encrypted | DirState::Desynced) {
-            return Vec::new();
+            return;
         }
         self.init_buf.extend_from_slice(bytes);
-        let mut out = Vec::new();
         Self::drain(
             &mut self.init_state,
             &mut self.init_buf,
             true,
             &self.config,
-            &mut out,
+            out,
         );
-        out
     }
 
-    fn feed_responder(&mut self, bytes: &[u8], _ts: Timestamp) -> Vec<TlsMessage> {
+    fn feed_responder(&mut self, bytes: &[u8], _ts: Timestamp, out: &mut Vec<TlsMessage>) {
         if bytes.is_empty() || matches!(self.resp_state, DirState::Encrypted | DirState::Desynced) {
-            return Vec::new();
+            return;
         }
         self.resp_buf.extend_from_slice(bytes);
-        let mut out = Vec::new();
         Self::drain(
             &mut self.resp_state,
             &mut self.resp_buf,
             false,
             &self.config,
-            &mut out,
+            out,
         );
-        out
     }
 
     fn rst_initiator(&mut self) {
@@ -208,11 +204,22 @@ mod tests {
         record
     }
 
+    fn feed_init(p: &mut TlsParser, bytes: &[u8]) -> Vec<TlsMessage> {
+        let mut out = Vec::new();
+        p.feed_initiator(bytes, Timestamp::default(), &mut out);
+        out
+    }
+    fn feed_resp(p: &mut TlsParser, bytes: &[u8]) -> Vec<TlsMessage> {
+        let mut out = Vec::new();
+        p.feed_responder(bytes, Timestamp::default(), &mut out);
+        out
+    }
+
     #[test]
     fn parses_client_hello() {
         let mut p = TlsParser::default();
         let bytes = build_client_hello_record();
-        let messages = p.feed_initiator(&bytes, Timestamp::default());
+        let messages = feed_init(&mut p, &bytes);
         assert!(
             messages
                 .iter()
@@ -225,10 +232,9 @@ mod tests {
     fn split_segments_concatenate() {
         let mut p = TlsParser::default();
         let bytes = build_client_hello_record();
-        // Feed one byte at a time.
         let mut all_msgs = Vec::new();
         for chunk in bytes.chunks(1) {
-            all_msgs.extend(p.feed_initiator(chunk, Timestamp::default()));
+            all_msgs.extend(feed_init(&mut p, chunk));
         }
         assert!(
             all_msgs
@@ -241,8 +247,7 @@ mod tests {
     #[test]
     fn rst_clears_state() {
         let mut p = TlsParser::default();
-        // Feed a partial record; nothing should emit.
-        p.feed_initiator(&[0x16, 0x03, 0x01, 0x00], Timestamp::default()); // partial record header
+        feed_init(&mut p, &[0x16, 0x03, 0x01, 0x00]);
         p.rst_initiator();
         assert!(p.init_buf.is_empty());
         assert_eq!(p.init_state, DirState::Reading);
@@ -251,7 +256,7 @@ mod tests {
     #[test]
     fn empty_feed_returns_empty() {
         let mut p = TlsParser::default();
-        assert!(p.feed_initiator(&[], Timestamp::default()).is_empty());
-        assert!(p.feed_responder(&[], Timestamp::default()).is_empty());
+        assert!(feed_init(&mut p, &[]).is_empty());
+        assert!(feed_resp(&mut p, &[]).is_empty());
     }
 }

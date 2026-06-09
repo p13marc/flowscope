@@ -78,13 +78,13 @@ impl DnsUdpParser {
 impl DatagramParser for DnsUdpParser {
     type Message = DnsMessage;
 
-    fn parse(&mut self, payload: &[u8], _side: FlowSide, ts: Timestamp) -> Vec<DnsMessage> {
+    fn parse(&mut self, payload: &[u8], _side: FlowSide, ts: Timestamp, out: &mut Vec<DnsMessage>) {
         match parse_message_at(payload, ts) {
             Ok(DnsParseResult::Query(q)) => {
                 if let Some(c) = &mut self.correlator {
                     c.record_query((), q.clone());
                 }
-                vec![DnsMessage::Query(q)]
+                out.push(DnsMessage::Query(q));
             }
             Ok(DnsParseResult::Response(mut r)) => {
                 if let Some(c) = &mut self.correlator
@@ -92,20 +92,17 @@ impl DatagramParser for DnsUdpParser {
                 {
                     r.elapsed = Some(elapsed);
                 }
-                vec![DnsMessage::Response(r)]
+                out.push(DnsMessage::Response(r));
             }
-            Err(_) => Vec::new(),
+            Err(_) => {}
         }
     }
 
-    fn on_tick(&mut self, now: Timestamp) -> Vec<DnsMessage> {
-        match &mut self.correlator {
-            Some(c) => c
-                .sweep(now)
-                .into_iter()
-                .map(DnsMessage::Unanswered)
-                .collect(),
-            None => Vec::new(),
+    fn on_tick(&mut self, now: Timestamp, out: &mut Vec<DnsMessage>) {
+        if let Some(c) = &mut self.correlator {
+            for unans in c.sweep(now) {
+                out.push(DnsMessage::Unanswered(unans));
+            }
         }
     }
 
@@ -144,7 +141,8 @@ mod tests {
     fn parses_query() {
         let mut p = DnsUdpParser::new();
         let bytes = build_msg(0xabcd, "example.com", 0x0100);
-        let msgs = p.parse(&bytes, FlowSide::Initiator, Timestamp::default());
+        let mut msgs = Vec::new();
+        p.parse(&bytes, FlowSide::Initiator, Timestamp::default(), &mut msgs);
         assert_eq!(msgs.len(), 1);
         match &msgs[0] {
             DnsMessage::Query(q) => assert_eq!(q.transaction_id, 0xabcd),
@@ -155,7 +153,13 @@ mod tests {
     #[test]
     fn malformed_returns_empty() {
         let mut p = DnsUdpParser::new();
-        let msgs = p.parse(b"\x00", FlowSide::Initiator, Timestamp::default());
+        let mut msgs = Vec::new();
+        p.parse(
+            b"\x00",
+            FlowSide::Initiator,
+            Timestamp::default(),
+            &mut msgs,
+        );
         assert!(msgs.is_empty());
     }
 
@@ -163,9 +167,16 @@ mod tests {
     fn correlation_sets_elapsed_on_response() {
         let mut p = DnsUdpParser::with_correlation();
         let q = build_msg(0x1234, "example.com", 0x0100);
-        p.parse(&q, FlowSide::Initiator, Timestamp::new(10, 0));
+        let mut scratch = Vec::new();
+        p.parse(&q, FlowSide::Initiator, Timestamp::new(10, 0), &mut scratch);
         let r = build_msg(0x1234, "example.com", 0x8100);
-        let msgs = p.parse(&r, FlowSide::Responder, Timestamp::new(10, 500_000_000));
+        let mut msgs = Vec::new();
+        p.parse(
+            &r,
+            FlowSide::Responder,
+            Timestamp::new(10, 500_000_000),
+            &mut msgs,
+        );
         assert_eq!(msgs.len(), 1);
         match &msgs[0] {
             DnsMessage::Response(resp) => {
@@ -179,11 +190,15 @@ mod tests {
     fn on_tick_emits_unanswered_after_timeout() {
         let mut p = DnsUdpParser::with_correlation();
         let q = build_msg(0x9, "slow.example", 0x0100);
-        p.parse(&q, FlowSide::Initiator, Timestamp::new(0, 0));
+        let mut scratch = Vec::new();
+        p.parse(&q, FlowSide::Initiator, Timestamp::new(0, 0), &mut scratch);
         // Before query_timeout (default 30 s) — nothing.
-        assert!(p.on_tick(Timestamp::new(5, 0)).is_empty());
+        let mut early = Vec::new();
+        p.on_tick(Timestamp::new(5, 0), &mut early);
+        assert!(early.is_empty());
         // Past the timeout — the unanswered query surfaces.
-        let ticked = p.on_tick(Timestamp::new(60, 0));
+        let mut ticked = Vec::new();
+        p.on_tick(Timestamp::new(60, 0), &mut ticked);
         assert_eq!(ticked.len(), 1);
         assert!(matches!(&ticked[0], DnsMessage::Unanswered(uq) if uq.transaction_id == 9));
     }
@@ -192,24 +207,31 @@ mod tests {
     fn matched_query_not_reported_unanswered() {
         let mut p = DnsUdpParser::with_correlation();
         let q = build_msg(0x9, "x.example", 0x0100);
-        p.parse(&q, FlowSide::Initiator, Timestamp::new(0, 0));
+        let mut scratch = Vec::new();
+        p.parse(&q, FlowSide::Initiator, Timestamp::new(0, 0), &mut scratch);
         let r = build_msg(0x9, "x.example", 0x8100);
-        p.parse(&r, FlowSide::Responder, Timestamp::new(1, 0));
+        p.parse(&r, FlowSide::Responder, Timestamp::new(1, 0), &mut scratch);
         // The query was answered → never reported unanswered.
-        assert!(p.on_tick(Timestamp::new(60, 0)).is_empty());
+        let mut ticked = Vec::new();
+        p.on_tick(Timestamp::new(60, 0), &mut ticked);
+        assert!(ticked.is_empty());
     }
 
     #[test]
     fn without_correlation_no_rtt_no_unanswered() {
         let mut p = DnsUdpParser::new();
         let q = build_msg(0x1, "x.example", 0x0100);
-        p.parse(&q, FlowSide::Initiator, Timestamp::new(0, 0));
+        let mut scratch = Vec::new();
+        p.parse(&q, FlowSide::Initiator, Timestamp::new(0, 0), &mut scratch);
         let r = build_msg(0x1, "x.example", 0x8100);
-        let msgs = p.parse(&r, FlowSide::Responder, Timestamp::new(1, 0));
+        let mut msgs = Vec::new();
+        p.parse(&r, FlowSide::Responder, Timestamp::new(1, 0), &mut msgs);
         match &msgs[0] {
             DnsMessage::Response(resp) => assert!(resp.elapsed.is_none()),
             _ => panic!("expected Response"),
         }
-        assert!(p.on_tick(Timestamp::new(99, 0)).is_empty());
+        let mut ticked = Vec::new();
+        p.on_tick(Timestamp::new(99, 0), &mut ticked);
+        assert!(ticked.is_empty());
     }
 }

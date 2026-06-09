@@ -120,19 +120,17 @@ where
     F: Fn(P::Message) -> M + Send + 'static,
     M: Send + 'static,
 {
-    fn track(&mut self, view: PacketView<'_>, ts: Timestamp) -> Vec<Event<E::Key, M>> {
-        // Extract key + orientation + L4 payload.
+    fn track_into(&mut self, view: PacketView<'_>, ts: Timestamp, out: &mut Vec<Event<E::Key, M>>) {
         let Some(extracted) = self.extractor.extract(view) else {
-            return Vec::new();
+            return;
         };
         let Extracted {
             key, orientation, ..
         } = extracted;
         let Some(payload) = tcp_payload(view.frame) else {
-            return Vec::new();
+            return;
         };
 
-        // Look up state for this flow.
         let state = self.states.entry(key.clone()).or_default();
         let should_dispatch = match state {
             FlowDetection::Pinned => true,
@@ -166,34 +164,34 @@ where
         };
 
         if !should_dispatch {
-            return Vec::new();
+            return;
         }
         let parser_kind = self.parser_kind;
-        self.driver
-            .track(view)
-            .into_iter()
-            .filter_map(|e| super::erased::lift_event_pub(e, &self.lift, ts, parser_kind))
-            .collect()
+        for ev in self.driver.track(view) {
+            if let Some(lifted) = super::erased::lift_event_pub(ev, &self.lift, ts, parser_kind) {
+                out.push(lifted);
+            }
+        }
     }
 
-    fn sweep(&mut self, now: Timestamp) -> Vec<Event<E::Key, M>> {
+    fn sweep_into(&mut self, now: Timestamp, out: &mut Vec<Event<E::Key, M>>) {
         let parser_kind = self.parser_kind;
-        self.driver
-            .sweep(now)
-            .into_iter()
-            .filter_map(|e| super::erased::lift_event_pub(e, &self.lift, now, parser_kind))
-            .collect()
+        for ev in self.driver.sweep(now) {
+            if let Some(lifted) = super::erased::lift_event_pub(ev, &self.lift, now, parser_kind) {
+                out.push(lifted);
+            }
+        }
     }
 
-    fn finish(&mut self) -> Vec<Event<E::Key, M>> {
+    fn finish_into(&mut self, out: &mut Vec<Event<E::Key, M>>) {
         let parser_kind = self.parser_kind;
-        self.driver
-            .finish()
-            .into_iter()
-            .filter_map(|e| {
-                super::erased::lift_event_pub(e, &self.lift, Timestamp::MAX, parser_kind)
-            })
-            .collect()
+        for ev in self.driver.finish() {
+            if let Some(lifted) =
+                super::erased::lift_event_pub(ev, &self.lift, Timestamp::MAX, parser_kind)
+            {
+                out.push(lifted);
+            }
+        }
     }
 }
 
@@ -253,12 +251,12 @@ where
     F: Fn(D::Message) -> M + Send + 'static,
     M: Send + 'static,
 {
-    fn track(&mut self, view: PacketView<'_>, ts: Timestamp) -> Vec<Event<E::Key, M>> {
+    fn track_into(&mut self, view: PacketView<'_>, ts: Timestamp, out: &mut Vec<Event<E::Key, M>>) {
         let Some(Extracted { key, .. }) = self.extractor.extract(view) else {
-            return Vec::new();
+            return;
         };
         let Some(payload) = udp_payload(view.frame) else {
-            return Vec::new();
+            return;
         };
         let state = self.states.entry(key.clone()).or_default();
         let should_dispatch = match state {
@@ -279,34 +277,34 @@ where
         };
 
         if !should_dispatch {
-            return Vec::new();
+            return;
         }
         let parser_kind = self.parser_kind;
-        self.driver
-            .track(view)
-            .into_iter()
-            .filter_map(|e| super::erased::lift_event_pub(e, &self.lift, ts, parser_kind))
-            .collect()
+        for ev in self.driver.track(view) {
+            if let Some(lifted) = super::erased::lift_event_pub(ev, &self.lift, ts, parser_kind) {
+                out.push(lifted);
+            }
+        }
     }
 
-    fn sweep(&mut self, now: Timestamp) -> Vec<Event<E::Key, M>> {
+    fn sweep_into(&mut self, now: Timestamp, out: &mut Vec<Event<E::Key, M>>) {
         let parser_kind = self.parser_kind;
-        self.driver
-            .sweep(now)
-            .into_iter()
-            .filter_map(|e| super::erased::lift_event_pub(e, &self.lift, now, parser_kind))
-            .collect()
+        for ev in self.driver.sweep(now) {
+            if let Some(lifted) = super::erased::lift_event_pub(ev, &self.lift, now, parser_kind) {
+                out.push(lifted);
+            }
+        }
     }
 
-    fn finish(&mut self) -> Vec<Event<E::Key, M>> {
+    fn finish_into(&mut self, out: &mut Vec<Event<E::Key, M>>) {
         let parser_kind = self.parser_kind;
-        self.driver
-            .finish()
-            .into_iter()
-            .filter_map(|e| {
-                super::erased::lift_event_pub(e, &self.lift, Timestamp::MAX, parser_kind)
-            })
-            .collect()
+        for ev in self.driver.finish() {
+            if let Some(lifted) =
+                super::erased::lift_event_pub(ev, &self.lift, Timestamp::MAX, parser_kind)
+            {
+                out.push(lifted);
+            }
+        }
     }
 }
 

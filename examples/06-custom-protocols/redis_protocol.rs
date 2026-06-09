@@ -63,14 +63,14 @@ struct RespParser {
 impl SessionParser for RespParser {
     type Message = RespValue;
 
-    fn feed_initiator(&mut self, bytes: &[u8], _ts: Timestamp) -> Vec<RespValue> {
+    fn feed_initiator(&mut self, bytes: &[u8], _ts: Timestamp, out: &mut Vec<RespValue>) {
         self.init_buf.extend_from_slice(bytes);
-        drain(&mut self.init_buf)
+        drain(&mut self.init_buf, out);
     }
 
-    fn feed_responder(&mut self, bytes: &[u8], _ts: Timestamp) -> Vec<RespValue> {
+    fn feed_responder(&mut self, bytes: &[u8], _ts: Timestamp, out: &mut Vec<RespValue>) {
         self.resp_buf.extend_from_slice(bytes);
-        drain(&mut self.resp_buf)
+        drain(&mut self.resp_buf, out);
     }
 
     fn parser_kind(&self) -> &'static str {
@@ -78,13 +78,11 @@ impl SessionParser for RespParser {
     }
 }
 
-fn drain(buf: &mut Vec<u8>) -> Vec<RespValue> {
-    let mut out = Vec::new();
+fn drain(buf: &mut Vec<u8>, out: &mut Vec<RespValue>) {
     while let Some((v, consumed)) = parse_one(buf) {
         out.push(v);
         buf.drain(..consumed);
     }
-    out
 }
 
 /// Try to parse a single RESP value from `buf[0..]`. Returns
@@ -189,11 +187,14 @@ fn demo_synthetic() {
     let mut parser = RespParser::default();
     // SET foo bar
     let cmd = b"*3\r\n$3\r\nSET\r\n$3\r\nfoo\r\n$3\r\nbar\r\n";
-    for msg in parser.feed_initiator(cmd, Timestamp::default()) {
+    let mut msgs = Vec::new();
+    parser.feed_initiator(cmd, Timestamp::default(), &mut msgs);
+    for msg in msgs.drain(..) {
         println!("→ {msg}");
     }
     // +OK\r\n
-    for msg in parser.feed_responder(b"+OK\r\n", Timestamp::default()) {
+    parser.feed_responder(b"+OK\r\n", Timestamp::default(), &mut msgs);
+    for msg in msgs.drain(..) {
         println!("← {msg}");
     }
 }

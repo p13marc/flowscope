@@ -16,9 +16,11 @@ fn resp(status: u16) -> Vec<u8> {
 #[test]
 fn request_response_yields_one_completed_exchange() {
     let mut p = HttpExchangeParser::new();
-    let req_out = p.feed_initiator(&req("a.example"), Timestamp::new(0, 0));
+    let mut req_out = Vec::new();
+    p.feed_initiator(&req("a.example"), Timestamp::new(0, 0), &mut req_out);
     assert!(req_out.is_empty(), "request alone shouldn't emit");
-    let resp_out = p.feed_responder(&resp(200), Timestamp::new(1, 0));
+    let mut resp_out = Vec::new();
+    p.feed_responder(&resp(200), Timestamp::new(1, 0), &mut resp_out);
     assert_eq!(resp_out.len(), 1);
     let ex = &resp_out[0];
     assert_eq!(ex.outcome, HttpOutcome::Completed);
@@ -34,11 +36,14 @@ fn pipelined_requests_match_in_order() {
     let mut both = Vec::new();
     both.extend_from_slice(&req("a.example"));
     both.extend_from_slice(&req("b.example"));
-    let _ = p.feed_initiator(&both, Timestamp::new(0, 0));
+    let mut sink = Vec::new();
+    p.feed_initiator(&both, Timestamp::new(0, 0), &mut sink);
+    sink.clear();
     let mut resps = Vec::new();
     resps.extend_from_slice(&resp(200));
     resps.extend_from_slice(&resp(404));
-    let out = p.feed_responder(&resps, Timestamp::new(1, 0));
+    let mut out = Vec::new();
+    p.feed_responder(&resps, Timestamp::new(1, 0), &mut out);
     assert_eq!(out.len(), 2);
     assert_eq!(out[0].request.headers[0].1, b"a.example");
     assert_eq!(out[1].request.headers[0].1, b"b.example");
@@ -59,8 +64,10 @@ impl IsClientError for flowscope::http::HttpExchange {
 #[test]
 fn fin_drains_pending_requests_as_no_response() {
     let mut p = HttpExchangeParser::new();
-    let _ = p.feed_initiator(&req("a.example"), Timestamp::new(0, 0));
-    let out = p.fin_responder();
+    let mut sink = Vec::new();
+    p.feed_initiator(&req("a.example"), Timestamp::new(0, 0), &mut sink);
+    let mut out = Vec::new();
+    p.fin_responder(&mut out);
     assert_eq!(out.len(), 1);
     assert_eq!(out[0].outcome, HttpOutcome::NoResponse);
     assert!(out[0].response.is_none());

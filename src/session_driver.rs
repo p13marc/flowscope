@@ -18,11 +18,11 @@
 //! struct EchoParser;
 //! impl SessionParser for EchoParser {
 //!     type Message = Vec<u8>;
-//!     fn feed_initiator(&mut self, bytes: &[u8], _ts: Timestamp) -> Vec<Vec<u8>> {
-//!         vec![bytes.to_vec()]
+//!     fn feed_initiator(&mut self, bytes: &[u8], _ts: Timestamp, out: &mut Vec<Vec<u8>>) {
+//!         out.push(bytes.to_vec());
 //!     }
-//!     fn feed_responder(&mut self, bytes: &[u8], _ts: Timestamp) -> Vec<Vec<u8>> {
-//!         vec![bytes.to_vec()]
+//!     fn feed_responder(&mut self, bytes: &[u8], _ts: Timestamp, out: &mut Vec<Vec<u8>>) {
+//!         out.push(bytes.to_vec());
 //!     }
 //! }
 //!
@@ -382,9 +382,12 @@ where
             Done,
         }
         let mut closes: Vec<(E::Key, TickClose<String>)> = Vec::new();
+        let mut tick_scratch: Vec<P::Message> = Vec::new();
         for (key, parser) in self.parsers.iter_mut() {
             let kind = parser.parser_kind();
-            for m in parser.on_tick(now) {
+            tick_scratch.clear();
+            parser.on_tick(now, &mut tick_scratch);
+            for m in tick_scratch.drain(..) {
                 crate::obs::trace_session_message(FlowSide::Initiator, &m);
                 out.push(SessionEvent::Application {
                     key: key.clone(),
@@ -528,7 +531,9 @@ where
                             | EndReason::IdleTimeout
                             | EndReason::ParserDone
                             | EndReason::ForceClosed => {
-                                for m in parser.fin_initiator() {
+                                let mut fin_scratch: Vec<P::Message> = Vec::new();
+                                parser.fin_initiator(&mut fin_scratch);
+                                for m in fin_scratch.drain(..) {
                                     out.push(SessionEvent::Application {
                                         key: key.clone(),
                                         side: FlowSide::Initiator,
@@ -537,7 +542,8 @@ where
                                         parser_kind: kind,
                                     });
                                 }
-                                for m in parser.fin_responder() {
+                                parser.fin_responder(&mut fin_scratch);
+                                for m in fin_scratch.drain(..) {
                                     out.push(SessionEvent::Application {
                                         key: key.clone(),
                                         side: FlowSide::Responder,
@@ -612,11 +618,12 @@ where
                 None => return,
             };
             let kind = parser.parser_kind();
-            let messages = match side {
-                FlowSide::Initiator => parser.feed_initiator(&drained, ts),
-                FlowSide::Responder => parser.feed_responder(&drained, ts),
-            };
-            for m in messages {
+            let mut messages: Vec<P::Message> = Vec::new();
+            match side {
+                FlowSide::Initiator => parser.feed_initiator(&drained, ts, &mut messages),
+                FlowSide::Responder => parser.feed_responder(&drained, ts, &mut messages),
+            }
+            for m in messages.drain(..) {
                 crate::obs::trace_session_message(side, &m);
                 out.push(SessionEvent::Application {
                     key: key.clone(),
@@ -740,12 +747,8 @@ mod tests {
         }
         impl SessionParser for ConfigParser {
             type Message = ();
-            fn feed_initiator(&mut self, _b: &[u8], _ts: Timestamp) -> Vec<()> {
-                Vec::new()
-            }
-            fn feed_responder(&mut self, _b: &[u8], _ts: Timestamp) -> Vec<()> {
-                Vec::new()
-            }
+            fn feed_initiator(&mut self, _b: &[u8], _ts: Timestamp, _out: &mut Vec<()>) {}
+            fn feed_responder(&mut self, _b: &[u8], _ts: Timestamp, _out: &mut Vec<()>) {}
         }
         let _d = FlowSessionDriver::new(FiveTuple::bidirectional(), ConfigParser { _limit: 4096 });
     }
@@ -776,12 +779,8 @@ mod tests {
         }
         impl SessionParser for ExpensiveParser {
             type Message = ();
-            fn feed_initiator(&mut self, _b: &[u8], _ts: Timestamp) -> Vec<()> {
-                Vec::new()
-            }
-            fn feed_responder(&mut self, _b: &[u8], _ts: Timestamp) -> Vec<()> {
-                Vec::new()
-            }
+            fn feed_initiator(&mut self, _b: &[u8], _ts: Timestamp, _out: &mut Vec<()>) {}
+            fn feed_responder(&mut self, _b: &[u8], _ts: Timestamp, _out: &mut Vec<()>) {}
         }
         // Wouldn't compile with FlowSessionDriver::new (needs Clone).
         let mut d =
@@ -814,23 +813,21 @@ mod tests {
     impl SessionParser for LineParser {
         type Message = (FlowSide, Vec<u8>);
 
-        fn feed_initiator(&mut self, bytes: &[u8], _ts: Timestamp) -> Vec<Self::Message> {
-            drain(&mut self.init, bytes, FlowSide::Initiator)
+        fn feed_initiator(&mut self, bytes: &[u8], _ts: Timestamp, out: &mut Vec<Self::Message>) {
+            drain(&mut self.init, bytes, FlowSide::Initiator, out);
         }
-        fn feed_responder(&mut self, bytes: &[u8], _ts: Timestamp) -> Vec<Self::Message> {
-            drain(&mut self.resp, bytes, FlowSide::Responder)
+        fn feed_responder(&mut self, bytes: &[u8], _ts: Timestamp, out: &mut Vec<Self::Message>) {
+            drain(&mut self.resp, bytes, FlowSide::Responder, out);
         }
     }
 
-    fn drain(buf: &mut Vec<u8>, bytes: &[u8], side: FlowSide) -> Vec<(FlowSide, Vec<u8>)> {
+    fn drain(buf: &mut Vec<u8>, bytes: &[u8], side: FlowSide, out: &mut Vec<(FlowSide, Vec<u8>)>) {
         buf.extend_from_slice(bytes);
-        let mut out = Vec::new();
         while let Some(nl) = buf.iter().position(|&b| b == b'\n') {
             let line = buf[..nl].to_vec();
             out.push((side, line));
             buf.drain(..=nl);
         }
-        out
     }
 
     fn build_3whs() -> [Vec<u8>; 3] {
@@ -869,14 +866,10 @@ mod tests {
         struct TickParser;
         impl SessionParser for TickParser {
             type Message = u8;
-            fn feed_initiator(&mut self, _b: &[u8], _ts: Timestamp) -> Vec<u8> {
-                Vec::new()
-            }
-            fn feed_responder(&mut self, _b: &[u8], _ts: Timestamp) -> Vec<u8> {
-                Vec::new()
-            }
-            fn on_tick(&mut self, _now: Timestamp) -> Vec<u8> {
-                vec![42]
+            fn feed_initiator(&mut self, _b: &[u8], _ts: Timestamp, _out: &mut Vec<u8>) {}
+            fn feed_responder(&mut self, _b: &[u8], _ts: Timestamp, _out: &mut Vec<u8>) {}
+            fn on_tick(&mut self, _now: Timestamp, out: &mut Vec<u8>) {
+                out.push(42);
             }
         }
         let mut d = FlowSessionDriver::new(FiveTuple::bidirectional(), TickParser);
@@ -1114,15 +1107,15 @@ mod tests {
 
     impl SessionParser for PoisonAfterBytes {
         type Message = Vec<u8>;
-        fn feed_initiator(&mut self, bytes: &[u8], _ts: Timestamp) -> Vec<Vec<u8>> {
+        fn feed_initiator(&mut self, bytes: &[u8], _ts: Timestamp, out: &mut Vec<Vec<u8>>) {
             self.init_bytes += bytes.len();
             if self.init_bytes > 5 {
                 self.poisoned = true;
             }
-            vec![bytes.to_vec()]
+            out.push(bytes.to_vec());
         }
-        fn feed_responder(&mut self, bytes: &[u8], _ts: Timestamp) -> Vec<Vec<u8>> {
-            vec![bytes.to_vec()]
+        fn feed_responder(&mut self, bytes: &[u8], _ts: Timestamp, out: &mut Vec<Vec<u8>>) {
+            out.push(bytes.to_vec());
         }
         fn is_poisoned(&self) -> bool {
             self.poisoned
@@ -1279,13 +1272,11 @@ mod tests {
     }
     impl SessionParser for DoneAfterOne {
         type Message = ();
-        fn feed_initiator(&mut self, _bytes: &[u8], _ts: Timestamp) -> Vec<()> {
+        fn feed_initiator(&mut self, _bytes: &[u8], _ts: Timestamp, out: &mut Vec<()>) {
             self.done = true;
-            vec![()]
+            out.push(());
         }
-        fn feed_responder(&mut self, _bytes: &[u8], _ts: Timestamp) -> Vec<()> {
-            Vec::new()
-        }
+        fn feed_responder(&mut self, _bytes: &[u8], _ts: Timestamp, _out: &mut Vec<()>) {}
         fn is_done(&self) -> bool {
             self.done
         }
@@ -1364,12 +1355,10 @@ mod tests {
     struct BothPoisonedAndDone;
     impl SessionParser for BothPoisonedAndDone {
         type Message = ();
-        fn feed_initiator(&mut self, _bytes: &[u8], _ts: Timestamp) -> Vec<()> {
-            vec![()]
+        fn feed_initiator(&mut self, _bytes: &[u8], _ts: Timestamp, out: &mut Vec<()>) {
+            out.push(());
         }
-        fn feed_responder(&mut self, _bytes: &[u8], _ts: Timestamp) -> Vec<()> {
-            Vec::new()
-        }
+        fn feed_responder(&mut self, _bytes: &[u8], _ts: Timestamp, _out: &mut Vec<()>) {}
         fn is_poisoned(&self) -> bool {
             true
         }
@@ -1517,11 +1506,11 @@ mod tests {
         struct KindedParser;
         impl SessionParser for KindedParser {
             type Message = u8;
-            fn feed_initiator(&mut self, _b: &[u8], _ts: Timestamp) -> Vec<u8> {
-                vec![1]
+            fn feed_initiator(&mut self, _b: &[u8], _ts: Timestamp, out: &mut Vec<u8>) {
+                out.push(1);
             }
-            fn feed_responder(&mut self, _b: &[u8], _ts: Timestamp) -> Vec<u8> {
-                vec![2]
+            fn feed_responder(&mut self, _b: &[u8], _ts: Timestamp, out: &mut Vec<u8>) {
+                out.push(2);
             }
             fn parser_kind(&self) -> &'static str {
                 "kinded"
@@ -1561,12 +1550,8 @@ mod tests {
         struct Noop;
         impl SessionParser for Noop {
             type Message = u8;
-            fn feed_initiator(&mut self, _b: &[u8], _ts: Timestamp) -> Vec<u8> {
-                Vec::new()
-            }
-            fn feed_responder(&mut self, _b: &[u8], _ts: Timestamp) -> Vec<u8> {
-                Vec::new()
-            }
+            fn feed_initiator(&mut self, _b: &[u8], _ts: Timestamp, _out: &mut Vec<u8>) {}
+            fn feed_responder(&mut self, _b: &[u8], _ts: Timestamp, _out: &mut Vec<u8>) {}
         }
         assert_eq!(Noop.parser_kind(), "");
     }

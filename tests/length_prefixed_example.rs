@@ -36,17 +36,16 @@ struct LengthPrefixedParser {
 
 impl SessionParser for LengthPrefixedParser {
     type Message = Record;
-    fn feed_initiator(&mut self, bytes: &[u8], _ts: Timestamp) -> Vec<Record> {
-        drain(&mut self.init_buf, bytes, FlowSide::Initiator)
+    fn feed_initiator(&mut self, bytes: &[u8], _ts: Timestamp, out: &mut Vec<Record>) {
+        drain(&mut self.init_buf, bytes, FlowSide::Initiator, out);
     }
-    fn feed_responder(&mut self, bytes: &[u8], _ts: Timestamp) -> Vec<Record> {
-        drain(&mut self.resp_buf, bytes, FlowSide::Responder)
+    fn feed_responder(&mut self, bytes: &[u8], _ts: Timestamp, out: &mut Vec<Record>) {
+        drain(&mut self.resp_buf, bytes, FlowSide::Responder, out);
     }
 }
 
-fn drain(buf: &mut Vec<u8>, incoming: &[u8], side: FlowSide) -> Vec<Record> {
+fn drain(buf: &mut Vec<u8>, incoming: &[u8], side: FlowSide, out: &mut Vec<Record>) {
     buf.extend_from_slice(incoming);
-    let mut out = Vec::new();
     while let Some((hdr, body_len)) = peek_header(buf) {
         let total = hdr + body_len;
         if buf.len() < total {
@@ -56,7 +55,6 @@ fn drain(buf: &mut Vec<u8>, incoming: &[u8], side: FlowSide) -> Vec<Record> {
         buf.drain(..total);
         out.push(Record { side, body });
     }
-    out
 }
 
 fn peek_header(buf: &[u8]) -> Option<(usize, usize)> {
@@ -135,7 +133,7 @@ fn handles_split_headers_and_bodies() {
     let mut parser = LengthPrefixedParser::default();
     let mut out = Vec::new();
     for byte in &payload {
-        out.extend(parser.feed_initiator(std::slice::from_ref(byte), Timestamp::default()));
+        parser.feed_initiator(std::slice::from_ref(byte), Timestamp::default(), &mut out);
     }
     assert_eq!(out.len(), 5);
     for (i, m) in out.iter().enumerate() {
@@ -149,20 +147,16 @@ fn parser_stalls_on_unknown_marker() {
     // The example's recovery policy is "stall the parser" rather
     // than "drop a byte and resync" — verify that contract.
     let mut parser = LengthPrefixedParser::default();
-    assert!(
-        parser
-            .feed_initiator(b"GARBAGE-NOT-PFX", Timestamp::default())
-            .is_empty()
-    );
+    let mut out = Vec::new();
+    parser.feed_initiator(b"GARBAGE-NOT-PFX", Timestamp::default(), &mut out);
+    assert!(out.is_empty());
     // A subsequent valid frame is invisible until the parser resyncs
     // (which this minimal example does not do).
     let mut tail = Vec::new();
     tail.extend_from_slice(MARKER_2);
     tail.extend_from_slice(&3u16.to_be_bytes());
     tail.extend_from_slice(b"abc");
-    assert!(
-        parser
-            .feed_initiator(&tail, Timestamp::default())
-            .is_empty()
-    );
+    out.clear();
+    parser.feed_initiator(&tail, Timestamp::default(), &mut out);
+    assert!(out.is_empty());
 }

@@ -36,11 +36,11 @@ struct PassthroughParser;
 
 impl SessionParser for PassthroughParser {
     type Message = (FlowSide, Vec<u8>);
-    fn feed_initiator(&mut self, bytes: &[u8], _ts: Timestamp) -> Vec<Self::Message> {
-        vec![(FlowSide::Initiator, bytes.to_vec())]
+    fn feed_initiator(&mut self, bytes: &[u8], _ts: Timestamp, out: &mut Vec<Self::Message>) {
+        out.push((FlowSide::Initiator, bytes.to_vec()));
     }
-    fn feed_responder(&mut self, bytes: &[u8], _ts: Timestamp) -> Vec<Self::Message> {
-        vec![(FlowSide::Responder, bytes.to_vec())]
+    fn feed_responder(&mut self, bytes: &[u8], _ts: Timestamp, out: &mut Vec<Self::Message>) {
+        out.push((FlowSide::Responder, bytes.to_vec()));
     }
 }
 

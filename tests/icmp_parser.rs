@@ -299,7 +299,13 @@ fn datagram_parser_returns_one_message_per_call() {
     use flowscope::{DatagramParser, FlowSide, Timestamp};
     let mut p = IcmpParser::new();
     let payload = v4_header(8, 0, [0, 1, 0, 1]);
-    let msgs = p.parse(&payload, FlowSide::Initiator, Timestamp::default());
+    let mut msgs = Vec::new();
+    p.parse(
+        &payload,
+        FlowSide::Initiator,
+        Timestamp::default(),
+        &mut msgs,
+    );
     assert_eq!(msgs.len(), 1);
     assert!(matches!(
         msgs[0].ty,
@@ -320,7 +326,13 @@ fn datagram_parser_v6_only_skips_v4() {
     let mut p = IcmpParser::new().v6_only();
     // An ICMPv4 echo request payload — should not parse as v6.
     let payload = v4_header(8, 0, [0, 1, 0, 1]);
-    let msgs = p.parse(&payload, FlowSide::Initiator, Timestamp::default());
+    let mut msgs = Vec::new();
+    p.parse(
+        &payload,
+        FlowSide::Initiator,
+        Timestamp::default(),
+        &mut msgs,
+    );
     // Probably empty (v4 payload doesn't decode as legitimate v6).
     assert!(msgs.is_empty() || matches!(msgs[0].family, IcmpFamily::V6));
 }

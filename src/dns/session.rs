@@ -42,32 +42,24 @@ impl DnsTcpParser {
     /// Drain as many length-prefixed messages as possible from `buf`.
     /// `buf` is mutated in place: consumed bytes are drained from the
     /// front; partial messages stay buffered for the next call.
-    fn drain(buf: &mut Vec<u8>) -> Vec<DnsMessage> {
-        let mut out = Vec::new();
+    fn drain(buf: &mut Vec<u8>, out: &mut Vec<DnsMessage>) {
         loop {
-            // Need at least 2 bytes for the length prefix.
             if buf.len() < 2 {
-                return out;
+                return;
             }
             let len = u16::from_be_bytes([buf[0], buf[1]]) as usize;
-            // Need full message body.
             if buf.len() < 2 + len {
-                return out;
+                return;
             }
-            // Peel off the length-prefixed frame.
             let frame_total = 2 + len;
             let body = &buf[2..frame_total];
             match parse_message(body) {
                 Ok(DnsParseResult::Query(q)) => out.push(DnsMessage::Query(q)),
                 Ok(DnsParseResult::Response(r)) => out.push(DnsMessage::Response(r)),
                 Err(_) => {
-                    // Malformed message — drop and continue. The
-                    // length prefix still tells us how many bytes to
-                    // skip, so we don't lose framing.
+                    // Malformed — drop, keep framing via the length prefix.
                 }
             }
-            // Drain consumed bytes; remaining (if any) becomes the
-            // start of the next iteration.
             buf.drain(..frame_total);
         }
     }
@@ -76,20 +68,20 @@ impl DnsTcpParser {
 impl SessionParser for DnsTcpParser {
     type Message = DnsMessage;
 
-    fn feed_initiator(&mut self, bytes: &[u8], _ts: Timestamp) -> Vec<DnsMessage> {
+    fn feed_initiator(&mut self, bytes: &[u8], _ts: Timestamp, out: &mut Vec<DnsMessage>) {
         if bytes.is_empty() {
-            return Vec::new();
+            return;
         }
         self.init_buf.extend_from_slice(bytes);
-        Self::drain(&mut self.init_buf)
+        Self::drain(&mut self.init_buf, out);
     }
 
-    fn feed_responder(&mut self, bytes: &[u8], _ts: Timestamp) -> Vec<DnsMessage> {
+    fn feed_responder(&mut self, bytes: &[u8], _ts: Timestamp, out: &mut Vec<DnsMessage>) {
         if bytes.is_empty() {
-            return Vec::new();
+            return;
         }
         self.resp_buf.extend_from_slice(bytes);
-        Self::drain(&mut self.resp_buf)
+        Self::drain(&mut self.resp_buf, out);
     }
 
     fn rst_initiator(&mut self) {
@@ -132,11 +124,22 @@ mod tests {
         frame
     }
 
+    fn feed_init(p: &mut DnsTcpParser, bytes: &[u8]) -> Vec<DnsMessage> {
+        let mut out = Vec::new();
+        p.feed_initiator(bytes, Timestamp::default(), &mut out);
+        out
+    }
+    fn feed_resp(p: &mut DnsTcpParser, bytes: &[u8]) -> Vec<DnsMessage> {
+        let mut out = Vec::new();
+        p.feed_responder(bytes, Timestamp::default(), &mut out);
+        out
+    }
+
     #[test]
     fn parses_one_query() {
         let mut p = DnsTcpParser::default();
         let bytes = build_a_query_tcp(0x1234, "example.com");
-        let msgs = p.feed_initiator(&bytes, Timestamp::default());
+        let msgs = feed_init(&mut p, &bytes);
         assert_eq!(msgs.len(), 1);
         match &msgs[0] {
             DnsMessage::Query(q) => assert_eq!(q.transaction_id, 0x1234),
@@ -151,7 +154,7 @@ mod tests {
         bytes.extend_from_slice(&build_a_query_tcp(1, "a.example"));
         bytes.extend_from_slice(&build_a_query_tcp(2, "b.example"));
         bytes.extend_from_slice(&build_a_query_tcp(3, "c.example"));
-        let msgs = p.feed_initiator(&bytes, Timestamp::default());
+        let msgs = feed_init(&mut p, &bytes);
         assert_eq!(msgs.len(), 3);
     }
 
@@ -159,10 +162,9 @@ mod tests {
     fn split_segments_concatenate() {
         let mut p = DnsTcpParser::default();
         let bytes = build_a_query_tcp(42, "split.example");
-        // Feed one byte at a time.
         let mut all = Vec::new();
         for chunk in bytes.chunks(1) {
-            all.extend(p.feed_initiator(chunk, Timestamp::default()));
+            all.extend(feed_init(&mut p, chunk));
         }
         assert_eq!(all.len(), 1);
         match &all[0] {
@@ -175,28 +177,19 @@ mod tests {
     fn split_at_length_prefix() {
         let mut p = DnsTcpParser::default();
         let bytes = build_a_query_tcp(7, "prefix.split");
-        // Feed first byte alone (incomplete length prefix).
-        assert!(
-            p.feed_initiator(&bytes[..1], Timestamp::default())
-                .is_empty()
-        );
-        // Feed everything else — should emit one Query.
-        let msgs = p.feed_initiator(&bytes[1..], Timestamp::default());
+        assert!(feed_init(&mut p, &bytes[..1]).is_empty());
+        let msgs = feed_init(&mut p, &bytes[1..]);
         assert_eq!(msgs.len(), 1);
     }
 
     #[test]
     fn malformed_body_consumes_frame_and_keeps_framing() {
         let mut p = DnsTcpParser::default();
-        // Length prefix says 12 bytes (the minimum DNS header), but
-        // body is malformed garbage.
         let mut bytes = Vec::new();
         bytes.extend_from_slice(&12u16.to_be_bytes());
         bytes.extend_from_slice(&[0xff; 12]);
-        // Then a valid query.
         bytes.extend_from_slice(&build_a_query_tcp(99, "valid.after"));
-        let msgs = p.feed_initiator(&bytes, Timestamp::default());
-        // Malformed first frame is dropped; valid second emits.
+        let msgs = feed_init(&mut p, &bytes);
         assert_eq!(msgs.len(), 1);
         match &msgs[0] {
             DnsMessage::Query(q) => assert_eq!(q.transaction_id, 99),
@@ -208,11 +201,7 @@ mod tests {
     fn rst_clears_buffer() {
         let mut p = DnsTcpParser::default();
         let bytes = build_a_query_tcp(1, "partial.example");
-        // Feed half — nothing emits.
-        assert!(
-            p.feed_initiator(&bytes[..bytes.len() / 2], Timestamp::default())
-                .is_empty()
-        );
+        assert!(feed_init(&mut p, &bytes[..bytes.len() / 2]).is_empty());
         p.rst_initiator();
         assert!(p.init_buf.is_empty());
     }
@@ -220,19 +209,17 @@ mod tests {
     #[test]
     fn empty_feed_returns_empty() {
         let mut p = DnsTcpParser::default();
-        assert!(p.feed_initiator(&[], Timestamp::default()).is_empty());
-        assert!(p.feed_responder(&[], Timestamp::default()).is_empty());
+        assert!(feed_init(&mut p, &[]).is_empty());
+        assert!(feed_resp(&mut p, &[]).is_empty());
     }
 
     #[test]
     fn auto_factory_via_default_clone() {
-        // DnsTcpParser is Default + Clone + SessionParser, so the
-        // blanket impl makes it its own factory.
         use crate::SessionParserFactory;
         let mut f = DnsTcpParser::default();
         let mut p: DnsTcpParser = SessionParserFactory::<()>::new_parser(&mut f, &());
         let bytes = build_a_query_tcp(7, "auto.factory");
-        let msgs = p.feed_initiator(&bytes, Timestamp::default());
+        let msgs = feed_init(&mut p, &bytes);
         assert_eq!(msgs.len(), 1);
     }
 }

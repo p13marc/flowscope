@@ -138,17 +138,32 @@ where
     /// parser-sourced events ([`Event::Message`] /
     /// [`Event::ParserClosed`]) from any matching registered
     /// slot.
+    ///
+    /// One-shot convenience wrapper around [`Self::track_into`]
+    /// that allocates a fresh `Vec` per call. For zero-allocation
+    /// loops, hold a persistent `Vec<Event<_, _>>` scratch and
+    /// call `track_into(view, &mut scratch)`.
     pub fn track<'v>(&mut self, view: impl Into<PacketView<'v>>) -> Vec<Event<E::Key, M>> {
+        let mut out = Vec::new();
+        self.track_into(view, &mut out);
+        out
+    }
+
+    /// Process one packet, appending events into `out`. Reuses
+    /// `out`'s capacity across calls — zero allocation at the
+    /// `Driver` surface in steady state. Plan 119.
+    pub fn track_into<'v>(
+        &mut self,
+        view: impl Into<PacketView<'v>>,
+        out: &mut Vec<Event<E::Key, M>>,
+    ) {
         let view: PacketView<'v> = view.into();
         let ts = view.timestamp;
-        let mut out: Vec<Event<E::Key, M>> = Vec::new();
 
         // Optionally pre-extract TcpInfo + frame bytes for
-        // emit_packet_details enrichment. We re-extract here
-        // because the central FlowTracker doesn't surface tcp
-        // info on FlowEvent::Packet; this is the cheapest way
-        // to honour plan 108's spec without changing the
-        // tracker's event shape.
+        // emit_packet_details enrichment. The frame field is
+        // slated for removal in plan 118 Phase 4; the clone here
+        // stays as a measured-cost behaviour for now.
         let (tcp_for_packet, frame_for_packet): (Option<TcpInfo>, Option<Vec<u8>>) =
             if self.emit_packet_details {
                 let tcp = self.extractor.extract(view).and_then(|e| e.tcp);
@@ -173,46 +188,57 @@ where
             } else {
                 (None, None)
             };
-            out.extend(map_flow_event_with_details::<E::Key, M>(
-                flow_ev, this_tcp, this_frame,
-            ));
+            if let Some(ev) =
+                map_flow_event_with_details::<E::Key, M>(flow_ev, this_tcp, this_frame)
+            {
+                out.push(ev);
+            }
         }
 
         // Slots emit Message + ParserClosed only (filtered).
         for slot in &mut self.slots {
-            out.extend(slot.track(view, ts));
+            slot.track_into(view, ts, out);
         }
-        out
     }
 
     /// Periodic sweep: drives idle-timeout `FlowEnded` events
     /// from the central tracker plus per-slot `on_tick` output.
     pub fn sweep(&mut self, now: Timestamp) -> Vec<Event<E::Key, M>> {
-        let mut out: Vec<Event<E::Key, M>> = Vec::new();
+        let mut out = Vec::new();
+        self.sweep_into(now, &mut out);
+        out
+    }
+
+    /// Append-only sweep. Plan 119.
+    pub fn sweep_into(&mut self, now: Timestamp, out: &mut Vec<Event<E::Key, M>>) {
         for flow_ev in self.central.sweep(now) {
-            out.extend(map_flow_event_with_details::<E::Key, M>(
-                flow_ev, None, None,
-            ));
+            if let Some(ev) = map_flow_event_with_details::<E::Key, M>(flow_ev, None, None) {
+                out.push(ev);
+            }
         }
         for slot in &mut self.slots {
-            out.extend(slot.sweep(now));
+            slot.sweep_into(now, out);
         }
-        out
     }
 
     /// End-of-input flush: force-closes all live flows and
     /// drains every parser's pending state.
     pub fn finish(&mut self) -> Vec<Event<E::Key, M>> {
-        let mut out: Vec<Event<E::Key, M>> = Vec::new();
+        let mut out = Vec::new();
+        self.finish_into(&mut out);
+        out
+    }
+
+    /// Append-only finish. Plan 119.
+    pub fn finish_into(&mut self, out: &mut Vec<Event<E::Key, M>>) {
         for flow_ev in self.central.finish() {
-            out.extend(map_flow_event_with_details::<E::Key, M>(
-                flow_ev, None, None,
-            ));
+            if let Some(ev) = map_flow_event_with_details::<E::Key, M>(flow_ev, None, None) {
+                out.push(ev);
+            }
         }
         for slot in &mut self.slots {
-            out.extend(slot.finish());
+            slot.finish_into(out);
         }
-        out
     }
 
     /// Borrow the underlying tracker for introspection.

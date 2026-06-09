@@ -19,11 +19,15 @@ struct ParserA;
 
 impl SessionParser for ParserA {
     type Message = u8;
-    fn feed_initiator(&mut self, b: &[u8], _ts: Timestamp) -> Vec<u8> {
-        b.first().copied().into_iter().collect()
+    fn feed_initiator(&mut self, b: &[u8], _ts: Timestamp, out: &mut Vec<u8>) {
+        if let Some(&first) = b.first() {
+            out.push(first);
+        }
     }
-    fn feed_responder(&mut self, b: &[u8], _ts: Timestamp) -> Vec<u8> {
-        b.first().copied().into_iter().collect()
+    fn feed_responder(&mut self, b: &[u8], _ts: Timestamp, out: &mut Vec<u8>) {
+        if let Some(&first) = b.first() {
+            out.push(first);
+        }
     }
 }
 
@@ -33,18 +37,14 @@ struct ParserB;
 
 impl SessionParser for ParserB {
     type Message = usize;
-    fn feed_initiator(&mut self, b: &[u8], _ts: Timestamp) -> Vec<usize> {
-        if b.is_empty() {
-            Vec::new()
-        } else {
-            vec![b.len()]
+    fn feed_initiator(&mut self, b: &[u8], _ts: Timestamp, out: &mut Vec<usize>) {
+        if !b.is_empty() {
+            out.push(b.len());
         }
     }
-    fn feed_responder(&mut self, b: &[u8], _ts: Timestamp) -> Vec<usize> {
-        if b.is_empty() {
-            Vec::new()
-        } else {
-            vec![b.len()]
+    fn feed_responder(&mut self, b: &[u8], _ts: Timestamp, out: &mut Vec<usize>) {
+        if !b.is_empty() {
+            out.push(b.len());
         }
     }
 }

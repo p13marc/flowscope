@@ -38,29 +38,33 @@ impl IcmpParser {
 impl DatagramParser for IcmpParser {
     type Message = IcmpMessage;
 
-    fn parse(&mut self, payload: &[u8], _side: FlowSide, _ts: Timestamp) -> Vec<IcmpMessage> {
+    fn parse(
+        &mut self,
+        payload: &[u8],
+        _side: FlowSide,
+        _ts: Timestamp,
+        out: &mut Vec<IcmpMessage>,
+    ) {
         let want_v4 = matches!(self.only, None | Some(IcmpFamily::V4));
         let want_v6 = matches!(self.only, None | Some(IcmpFamily::V6));
 
         if want_v4 && let Ok(m) = parser::parse_v4(payload) {
-            // Reject any v4 decode whose type maps to "Other"
-            // with the same raw_type byte as a likely v6 type
-            // — type bytes >= 128 are reserved on v4 and
-            // overwhelmingly indicate the payload is actually
-            // ICMPv6. Fall through to the v6 path in that case.
+            // Type bytes >= 128 are reserved on v4 and almost always
+            // indicate the payload is actually ICMPv6 — fall through.
             if let IcmpType::V4(crate::icmp::types::Icmpv4Type::Other { raw_type, .. }) = &m.ty
                 && *raw_type >= 128
                 && want_v6
                 && let Ok(m6) = parser::parse_v6(payload)
             {
-                return vec![m6];
+                out.push(m6);
+                return;
             }
-            return vec![m];
+            out.push(m);
+            return;
         }
         if want_v6 && let Ok(m) = parser::parse_v6(payload) {
-            return vec![m];
+            out.push(m);
         }
-        Vec::new()
     }
 
     fn parser_kind(&self) -> &'static str {

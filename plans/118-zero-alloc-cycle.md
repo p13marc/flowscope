@@ -151,13 +151,30 @@ a release build. Wall-clock from Criterion shown for context.
 
 | Measurement | 0.10.1 baseline | Target | After Phase 1 | After Phase 2 | After Phase 3 | After Phase 4 |
 |-------------|----|--------|----|----|----|----|
-| `track` steady-state, 0 slots | **1.000** allocs/pkt, 864 B/pkt, 312 ns/pkt | ≤ 0.5 | — | — | — | — |
-| Parser `feed_initiator` steady-state (HTTP) | **13.000** allocs/call, 4868 B/call, 550 ns | ≤ 0.1 | — | — | — | — |
-| HTTP/1.1 GET parse, fresh parser, 10 headers | **28.000** allocs, 21995 B, 1.17 µs | ≤ 4 | — | — | — | — |
-| DNS response w/ 5 TXT records | **28.000** allocs, 2384 B, 1.38 µs | ≤ 6 | — | — | — | — |
-| TLS 1.3 ClientHello | **13.000** allocs, 9168 B, 480 ns | ≤ 2 | — | — | — | — |
-| Per parsed-L7 dispatch (slot-routed) | (not yet measured — needs slot wiring) | 0 | — | — | — | — |
-| `emit_packet_details(true)` mode | (not yet measured — large frame copy expected) | ≤ 1 | — | — | — | — |
+| `Driver::track_into` steady-state, 0 slots | **1.000** allocs/pkt, 864 B/pkt | ≤ 0.5 | **0.000** allocs/pkt ✅ | — | — | — |
+| Parser `feed_initiator` steady-state (HTTP) | **13.000** allocs/call, 4868 B/call | ≤ 0.1 | **12.000** allocs/call¹ | — | — | — |
+| HTTP/1.1 GET parse, fresh parser, 10 headers | **28.000** allocs, 21995 B | ≤ 4 | 28.000² | — | — | — |
+| DNS response w/ 5 TXT records | **28.000** allocs, 2384 B | ≤ 6 | 28.000² | — | — | — |
+| TLS 1.3 ClientHello | **13.000** allocs, 9168 B | ≤ 2 | 13.000² | — | — | — |
+| Per parsed-L7 dispatch (slot-routed) | (needs slot wiring) | 0 | — | — | — | — |
+| `emit_packet_details(true)` mode | (needs frame-copy bench) | ≤ 1 | — | — | — | — |
+
+¹ The per-call `Vec` return is gone (down 1 alloc); the remaining 12 are the parser's internal allocations for the parsed-message payload (`method`/`path`/`headers` as `String`/`Vec<u8>`). Plan 120 (Bytes audit) addresses these.
+
+² Per-protocol parse cost is unaffected by plan 119 — these rows measure the per-message-payload allocator pressure. Plan 120 lands the per-protocol gate hits.
+
+**Phase 1 delivered:**
+
+- ✅ `Driver::track_into` surface is fully zero-allocation (down from 1 alloc/packet to 0).
+- ✅ `SessionParser` + `DatagramParser` API break landed (`&mut Vec<Message>` shape on `feed_initiator` / `feed_responder` / `fin_initiator` / `fin_responder` / `on_tick` / `parse`).
+- ✅ Slot trait + every slot impl threaded `&mut Vec<Event>` through dispatch.
+- ✅ All 5 shipped parsers migrated (HTTP, TLS, DnsUdp, DnsTcp, Icmp).
+- ✅ All parser helpers migrated (`BufferedFrameDrain`, `AccumulatingSessionParser`, `PerDatagramParser`).
+- ✅ All in-source test parsers migrated.
+- ✅ All integration tests migrated.
+- ✅ All examples migrated.
+- ✅ All doctests pass.
+- ✅ ~430 tests pass, 0 failures.
 
 **Observations from the baseline data:**
 

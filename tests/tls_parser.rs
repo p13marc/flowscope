@@ -110,11 +110,15 @@ fn alert_record(level: u8, desc: u8) -> Vec<u8> {
 // ── tests ──────────────────────────────────────────────────────
 
 fn feed_init(parser: &mut TlsParser, captured: &mut Captured, bytes: &[u8]) {
-    captured.ingest(parser.feed_initiator(bytes, Timestamp::default()));
+    let mut out = Vec::new();
+    parser.feed_initiator(bytes, Timestamp::default(), &mut out);
+    captured.ingest(out);
 }
 
 fn feed_resp(parser: &mut TlsParser, captured: &mut Captured, bytes: &[u8]) {
-    captured.ingest(parser.feed_responder(bytes, Timestamp::default()));
+    let mut out = Vec::new();
+    parser.feed_responder(bytes, Timestamp::default(), &mut out);
+    captured.ingest(out);
 }
 
 #[test]
@@ -219,7 +223,13 @@ fn ja4_fires_when_enabled() {
         ..Default::default()
     });
     let captured = std::cell::RefCell::new(Vec::new());
-    for msg in parser.feed_initiator(&client_hello_with_sni("example.com"), Timestamp::default()) {
+    let mut out = Vec::new();
+    parser.feed_initiator(
+        &client_hello_with_sni("example.com"),
+        Timestamp::default(),
+        &mut out,
+    );
+    for msg in out {
         if let TlsMessage::Ja4 { fingerprint } = msg {
             captured.borrow_mut().push(fingerprint);
         }

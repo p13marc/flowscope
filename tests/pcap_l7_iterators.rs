@@ -29,11 +29,11 @@ const EMPTY_PCAP: [u8; 24] = [
 struct ByteCounter;
 impl SessionParser for ByteCounter {
     type Message = usize;
-    fn feed_initiator(&mut self, b: &[u8], _ts: Timestamp) -> Vec<usize> {
-        vec![b.len()]
+    fn feed_initiator(&mut self, b: &[u8], _ts: Timestamp, out: &mut Vec<usize>) {
+        out.push(b.len());
     }
-    fn feed_responder(&mut self, b: &[u8], _ts: Timestamp) -> Vec<usize> {
-        vec![b.len()]
+    fn feed_responder(&mut self, b: &[u8], _ts: Timestamp, out: &mut Vec<usize>) {
+        out.push(b.len());
     }
 }
 
@@ -42,8 +42,8 @@ impl SessionParser for ByteCounter {
 struct DgramSizer;
 impl DatagramParser for DgramSizer {
     type Message = usize;
-    fn parse(&mut self, payload: &[u8], _side: FlowSide, _ts: Timestamp) -> Vec<usize> {
-        vec![payload.len()]
+    fn parse(&mut self, payload: &[u8], _side: FlowSide, _ts: Timestamp, out: &mut Vec<usize>) {
+        out.push(payload.len());
     }
 }
 

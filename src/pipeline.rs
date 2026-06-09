@@ -50,11 +50,19 @@ pub struct NoSessionParser;
 
 impl SessionParser for NoSessionParser {
     type Message = ();
-    fn feed_initiator(&mut self, _bytes: &[u8], _ts: crate::Timestamp) -> Vec<Self::Message> {
-        Vec::new()
+    fn feed_initiator(
+        &mut self,
+        _bytes: &[u8],
+        _ts: crate::Timestamp,
+        _out: &mut Vec<Self::Message>,
+    ) {
     }
-    fn feed_responder(&mut self, _bytes: &[u8], _ts: crate::Timestamp) -> Vec<Self::Message> {
-        Vec::new()
+    fn feed_responder(
+        &mut self,
+        _bytes: &[u8],
+        _ts: crate::Timestamp,
+        _out: &mut Vec<Self::Message>,
+    ) {
     }
 }
 
@@ -69,8 +77,8 @@ impl DatagramParser for NoDatagramParser {
         _payload: &[u8],
         _side: crate::event::FlowSide,
         _ts: crate::Timestamp,
-    ) -> Vec<Self::Message> {
-        Vec::new()
+        _out: &mut Vec<Self::Message>,
+    ) {
     }
 }
 

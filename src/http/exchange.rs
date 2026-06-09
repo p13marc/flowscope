@@ -105,21 +105,21 @@ impl HttpExchangeParser {
 impl SessionParser for HttpExchangeParser {
     type Message = HttpExchange;
 
-    fn feed_initiator(&mut self, bytes: &[u8], ts: Timestamp) -> Vec<Self::Message> {
-        let mut out = Vec::new();
-        for msg in self.inner.feed_initiator(bytes, ts) {
+    fn feed_initiator(&mut self, bytes: &[u8], ts: Timestamp, _out: &mut Vec<Self::Message>) {
+        let mut inner = Vec::new();
+        self.inner.feed_initiator(bytes, ts, &mut inner);
+        for msg in inner {
             if let HttpMessage::Request(req) = msg {
                 self.pending.push_back((req, ts));
             }
         }
         // Initiator never emits exchanges; only responses do.
-        let _ = &mut out;
-        out
     }
 
-    fn feed_responder(&mut self, bytes: &[u8], ts: Timestamp) -> Vec<Self::Message> {
-        let mut out = Vec::new();
-        for msg in self.inner.feed_responder(bytes, ts) {
+    fn feed_responder(&mut self, bytes: &[u8], ts: Timestamp, out: &mut Vec<Self::Message>) {
+        let mut inner = Vec::new();
+        self.inner.feed_responder(bytes, ts, &mut inner);
+        for msg in inner {
             if let HttpMessage::Response(resp) = msg
                 && let Some((req, req_ts)) = self.pending.pop_front()
             {
@@ -134,18 +134,16 @@ impl SessionParser for HttpExchangeParser {
                 });
             }
         }
-        out
     }
 
-    fn fin_initiator(&mut self) -> Vec<Self::Message> {
-        self.inner.fin_initiator();
-        Vec::new()
+    fn fin_initiator(&mut self, _out: &mut Vec<Self::Message>) {
+        let mut _drop = Vec::new();
+        self.inner.fin_initiator(&mut _drop);
     }
 
-    fn fin_responder(&mut self) -> Vec<Self::Message> {
-        self.inner.fin_responder();
-        // Drain pending requests as NoResponse.
-        let mut out = Vec::new();
+    fn fin_responder(&mut self, out: &mut Vec<Self::Message>) {
+        let mut _drop = Vec::new();
+        self.inner.fin_responder(&mut _drop);
         for (req, ts) in self.pending.drain(..) {
             out.push(HttpExchange {
                 request: req,
@@ -156,7 +154,6 @@ impl SessionParser for HttpExchangeParser {
                 outcome: HttpOutcome::NoResponse,
             });
         }
-        out
     }
 
     fn rst_initiator(&mut self) {

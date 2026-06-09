@@ -73,25 +73,29 @@ fn zero_byte_advance_poisons() {
 #[test]
 fn accumulating_parser_emits_per_side() {
     let mut parser = AccumulatingSessionParser::new("line", parse_one_line);
-    let msgs = parser.feed_initiator(b"GET /\nPOST /\n", Timestamp::default());
+    let mut msgs = Vec::new();
+    parser.feed_initiator(b"GET /\nPOST /\n", Timestamp::default(), &mut msgs);
     assert_eq!(msgs, vec!["GET /".to_string(), "POST /".to_string()]);
-    let msgs = parser.feed_responder(b"200 OK\n", Timestamp::default());
+    msgs.clear();
+    parser.feed_responder(b"200 OK\n", Timestamp::default(), &mut msgs);
     assert_eq!(msgs, vec!["200 OK".to_string()]);
 }
 
 #[test]
 fn accumulating_parser_buffers_partial_messages() {
     let mut parser = AccumulatingSessionParser::new("line", parse_one_line);
-    let msgs = parser.feed_initiator(b"GET /", Timestamp::default());
+    let mut msgs = Vec::new();
+    parser.feed_initiator(b"GET /", Timestamp::default(), &mut msgs);
     assert!(msgs.is_empty());
-    let msgs = parser.feed_initiator(b" HTTP/1.1\n", Timestamp::default());
+    parser.feed_initiator(b" HTTP/1.1\n", Timestamp::default(), &mut msgs);
     assert_eq!(msgs, vec!["GET / HTTP/1.1".to_string()]);
 }
 
 #[test]
 fn accumulating_parser_poisons_on_overflow() {
     let mut parser = AccumulatingSessionParser::with_max_buffer("line", parse_one_line, 4);
-    let _ = parser.feed_initiator(b"hello world\n", Timestamp::default());
+    let mut sink = Vec::new();
+    parser.feed_initiator(b"hello world\n", Timestamp::default(), &mut sink);
     assert!(parser.is_poisoned());
     assert!(parser.poison_reason().is_some());
 }
@@ -105,10 +109,12 @@ fn accumulating_parser_kind_label_is_threaded_through() {
 #[test]
 fn accumulating_parser_clones_with_fresh_state() {
     let mut a = AccumulatingSessionParser::with_max_buffer("line", parse_one_line, 32);
-    a.feed_initiator(b"hello\n", Timestamp::default());
+    let mut sink = Vec::new();
+    a.feed_initiator(b"hello\n", Timestamp::default(), &mut sink);
     let mut b = a.clone();
     // Clone has its own buffer — feeding to b doesn't see "hello".
-    let msgs = b.feed_initiator(b"world\n", Timestamp::default());
+    let mut msgs = Vec::new();
+    b.feed_initiator(b"world\n", Timestamp::default(), &mut msgs);
     assert_eq!(msgs, vec!["world".to_string()]);
     assert!(!b.is_poisoned());
 }
@@ -123,9 +129,16 @@ fn per_datagram_parser_emits_one_per_packet() {
             if b.is_empty() { None } else { Some(b.len()) }
         },
     );
-    let msgs = parser.parse(b"hello", FlowSide::Initiator, Timestamp::default());
+    let mut msgs = Vec::new();
+    parser.parse(
+        b"hello",
+        FlowSide::Initiator,
+        Timestamp::default(),
+        &mut msgs,
+    );
     assert_eq!(msgs, vec![5]);
-    let msgs = parser.parse(b"", FlowSide::Initiator, Timestamp::default());
+    msgs.clear();
+    parser.parse(b"", FlowSide::Initiator, Timestamp::default(), &mut msgs);
     assert!(msgs.is_empty());
 }
 

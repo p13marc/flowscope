@@ -109,11 +109,11 @@ impl<R: Read> PcapFlowSource<R> {
     /// struct Echo;
     /// impl SessionParser for Echo {
     ///     type Message = Vec<u8>;
-    ///     fn feed_initiator(&mut self, b: &[u8], _ts: Timestamp) -> Vec<Vec<u8>> {
-    ///         vec![b.to_vec()]
+    ///     fn feed_initiator(&mut self, b: &[u8], _ts: Timestamp, out: &mut Vec<Vec<u8>>) {
+    ///         out.push(b.to_vec());
     ///     }
-    ///     fn feed_responder(&mut self, b: &[u8], _ts: Timestamp) -> Vec<Vec<u8>> {
-    ///         vec![b.to_vec()]
+    ///     fn feed_responder(&mut self, b: &[u8], _ts: Timestamp, out: &mut Vec<Vec<u8>>) {
+    ///         out.push(b.to_vec());
     ///     }
     /// }
     ///

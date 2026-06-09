@@ -618,8 +618,11 @@ impl<E: FlowExtractor, S: Send + 'static> FlowTracker<E, S> {
         //    flow about to be closed by this sweep still gets its
         //    final tick (and the tick's messages land ahead of its
         //    Closed).
+        let mut scratch: Vec<P::Message> = Vec::new();
         for (key, parser) in parsers.iter_mut() {
-            for msg in parser.on_tick(now) {
+            scratch.clear();
+            parser.on_tick(now, &mut scratch);
+            for msg in scratch.drain(..) {
                 on_message(key, FlowSide::Initiator, msg, now);
             }
         }
@@ -632,10 +635,14 @@ impl<E: FlowExtractor, S: Send + 'static> FlowTracker<E, S> {
                 && let Some(mut parser) = parsers.remove(key)
             {
                 let ended_ts = stats.last_seen;
-                for msg in parser.fin_initiator() {
+                scratch.clear();
+                parser.fin_initiator(&mut scratch);
+                for msg in scratch.drain(..) {
                     on_message(key, FlowSide::Initiator, msg, ended_ts);
                 }
-                for msg in parser.fin_responder() {
+                scratch.clear();
+                parser.fin_responder(&mut scratch);
+                for msg in scratch.drain(..) {
                     on_message(key, FlowSide::Responder, msg, ended_ts);
                 }
             }
@@ -659,8 +666,11 @@ impl<E: FlowExtractor, S: Send + 'static> FlowTracker<E, S> {
         F: FnMut(&E::Key, FlowSide, P::Message, Timestamp),
         H: std::hash::BuildHasher,
     {
+        let mut scratch: Vec<P::Message> = Vec::new();
         for (key, parser) in parsers.iter_mut() {
-            for msg in parser.on_tick(now) {
+            scratch.clear();
+            parser.on_tick(now, &mut scratch);
+            for msg in scratch.drain(..) {
                 on_message(key, FlowSide::Initiator, msg, now);
             }
         }
@@ -1432,17 +1442,13 @@ mod tests {
         struct TickParser;
         impl SessionParser for TickParser {
             type Message = &'static str;
-            fn feed_initiator(&mut self, _b: &[u8], _ts: Timestamp) -> Vec<&'static str> {
-                Vec::new()
+            fn feed_initiator(&mut self, _b: &[u8], _ts: Timestamp, _out: &mut Vec<&'static str>) {}
+            fn feed_responder(&mut self, _b: &[u8], _ts: Timestamp, _out: &mut Vec<&'static str>) {}
+            fn on_tick(&mut self, _now: Timestamp, out: &mut Vec<&'static str>) {
+                out.push("tick");
             }
-            fn feed_responder(&mut self, _b: &[u8], _ts: Timestamp) -> Vec<&'static str> {
-                Vec::new()
-            }
-            fn on_tick(&mut self, _now: Timestamp) -> Vec<&'static str> {
-                vec!["tick"]
-            }
-            fn fin_initiator(&mut self) -> Vec<&'static str> {
-                vec!["fin-i"]
+            fn fin_initiator(&mut self, out: &mut Vec<&'static str>) {
+                out.push("fin-i");
             }
         }
 
@@ -1485,11 +1491,16 @@ mod tests {
         struct TickParser;
         impl DatagramParser for TickParser {
             type Message = u8;
-            fn parse(&mut self, _payload: &[u8], _side: FlowSide, _ts: Timestamp) -> Vec<u8> {
-                Vec::new()
+            fn parse(
+                &mut self,
+                _payload: &[u8],
+                _side: FlowSide,
+                _ts: Timestamp,
+                _out: &mut Vec<u8>,
+            ) {
             }
-            fn on_tick(&mut self, _now: Timestamp) -> Vec<u8> {
-                vec![7]
+            fn on_tick(&mut self, _now: Timestamp, out: &mut Vec<u8>) {
+                out.push(7);
             }
         }
 

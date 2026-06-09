@@ -19,12 +19,8 @@ pub struct NoopSessionParser;
 
 impl SessionParser for NoopSessionParser {
     type Message = ();
-    fn feed_initiator(&mut self, _bytes: &[u8], _ts: Timestamp) -> Vec<()> {
-        Vec::new()
-    }
-    fn feed_responder(&mut self, _bytes: &[u8], _ts: Timestamp) -> Vec<()> {
-        Vec::new()
-    }
+    fn feed_initiator(&mut self, _bytes: &[u8], _ts: Timestamp, _out: &mut Vec<()>) {}
+    fn feed_responder(&mut self, _bytes: &[u8], _ts: Timestamp, _out: &mut Vec<()>) {}
 }
 
 /// A `DatagramParser` that produces no messages. Mirror of
@@ -34,9 +30,7 @@ pub struct NoopDatagramParser;
 
 impl DatagramParser for NoopDatagramParser {
     type Message = ();
-    fn parse(&mut self, _payload: &[u8], _side: FlowSide, _ts: Timestamp) -> Vec<()> {
-        Vec::new()
-    }
+    fn parse(&mut self, _payload: &[u8], _side: FlowSide, _ts: Timestamp, _out: &mut Vec<()>) {}
 }
 
 /// A `SessionParser` that echoes each fed chunk as a side-tagged
@@ -47,11 +41,11 @@ pub struct EchoSessionParser;
 
 impl SessionParser for EchoSessionParser {
     type Message = (FlowSide, Vec<u8>);
-    fn feed_initiator(&mut self, bytes: &[u8], _ts: Timestamp) -> Vec<Self::Message> {
-        vec![(FlowSide::Initiator, bytes.to_vec())]
+    fn feed_initiator(&mut self, bytes: &[u8], _ts: Timestamp, out: &mut Vec<Self::Message>) {
+        out.push((FlowSide::Initiator, bytes.to_vec()));
     }
-    fn feed_responder(&mut self, bytes: &[u8], _ts: Timestamp) -> Vec<Self::Message> {
-        vec![(FlowSide::Responder, bytes.to_vec())]
+    fn feed_responder(&mut self, bytes: &[u8], _ts: Timestamp, out: &mut Vec<Self::Message>) {
+        out.push((FlowSide::Responder, bytes.to_vec()));
     }
 }
 
@@ -67,13 +61,11 @@ pub struct OneShotSessionParser {
 
 impl SessionParser for OneShotSessionParser {
     type Message = ();
-    fn feed_initiator(&mut self, _bytes: &[u8], _ts: Timestamp) -> Vec<()> {
+    fn feed_initiator(&mut self, _bytes: &[u8], _ts: Timestamp, out: &mut Vec<()>) {
         self.done = true;
-        vec![()]
+        out.push(());
     }
-    fn feed_responder(&mut self, _bytes: &[u8], _ts: Timestamp) -> Vec<()> {
-        Vec::new()
-    }
+    fn feed_responder(&mut self, _bytes: &[u8], _ts: Timestamp, _out: &mut Vec<()>) {}
     fn is_done(&self) -> bool {
         self.done
     }
@@ -90,9 +82,9 @@ pub struct OneShotDatagramParser {
 
 impl DatagramParser for OneShotDatagramParser {
     type Message = ();
-    fn parse(&mut self, _payload: &[u8], _side: FlowSide, _ts: Timestamp) -> Vec<()> {
+    fn parse(&mut self, _payload: &[u8], _side: FlowSide, _ts: Timestamp, out: &mut Vec<()>) {
         self.done = true;
-        vec![()]
+        out.push(());
     }
     fn is_done(&self) -> bool {
         self.done
@@ -109,23 +101,26 @@ mod tests {
     #[test]
     fn noop_session_compiles() {
         let mut p = NoopSessionParser;
-        assert!(p.feed_initiator(b"hi", Timestamp::default()).is_empty());
-        assert!(p.feed_responder(b"hi", Timestamp::default()).is_empty());
+        let mut out = Vec::new();
+        p.feed_initiator(b"hi", Timestamp::default(), &mut out);
+        assert!(out.is_empty());
+        p.feed_responder(b"hi", Timestamp::default(), &mut out);
+        assert!(out.is_empty());
     }
 
     #[test]
     fn noop_datagram_compiles() {
         let mut p = NoopDatagramParser;
-        assert!(
-            p.parse(b"hi", FlowSide::Initiator, Timestamp::default())
-                .is_empty()
-        );
+        let mut out = Vec::new();
+        p.parse(b"hi", FlowSide::Initiator, Timestamp::default(), &mut out);
+        assert!(out.is_empty());
     }
 
     #[test]
     fn echo_session_emits_chunks() {
         let mut p = EchoSessionParser;
-        let m = p.feed_initiator(b"hello", Timestamp::default());
+        let mut m = Vec::new();
+        p.feed_initiator(b"hello", Timestamp::default(), &mut m);
         assert_eq!(m.len(), 1);
         assert_eq!(m[0].0, FlowSide::Initiator);
         assert_eq!(m[0].1, b"hello");

@@ -23,10 +23,17 @@ use super::Event;
 /// One erased slot in the [`super::Driver`]'s session-parser
 /// stack. Hides the per-parser concrete type behind a `dyn`
 /// boundary so the driver can hold a heterogeneous `Vec`.
+///
+/// Plan 119: `_into` variants take a caller-supplied
+/// `&mut Vec<Event<K, M>>` and append, so the slot dispatch
+/// allocates zero `Vec`s per packet on the Driver surface. The
+/// per-slot inner driver (`FlowSessionDriver` /
+/// `FlowDatagramDriver`) still allocates internally; plan 121
+/// inlines those drivers and removes the residual allocation.
 pub(super) trait DriverSlot<K, M>: Send {
-    fn track(&mut self, view: PacketView<'_>, ts: Timestamp) -> Vec<Event<K, M>>;
-    fn sweep(&mut self, now: Timestamp) -> Vec<Event<K, M>>;
-    fn finish(&mut self) -> Vec<Event<K, M>>;
+    fn track_into(&mut self, view: PacketView<'_>, ts: Timestamp, out: &mut Vec<Event<K, M>>);
+    fn sweep_into(&mut self, now: Timestamp, out: &mut Vec<Event<K, M>>);
+    fn finish_into(&mut self, out: &mut Vec<Event<K, M>>);
 }
 
 /// Concrete slot wrapping one `FlowSessionDriver<E, P, ()>` +
@@ -85,36 +92,36 @@ where
     F: Fn(P::Message) -> M + Send + 'static,
     M: Send + 'static,
 {
-    fn track(&mut self, view: PacketView<'_>, ts: Timestamp) -> Vec<Event<E::Key, M>> {
+    fn track_into(&mut self, view: PacketView<'_>, ts: Timestamp, out: &mut Vec<Event<E::Key, M>>) {
         if let Some(ports) = &self.ports
             && !view_matches_ports(view, ports)
         {
-            return Vec::new();
+            return;
         }
         let parser_kind = self.parser_kind;
-        self.driver
-            .track(view)
-            .into_iter()
-            .filter_map(|e| lift_event(e, &self.lift, ts, parser_kind))
-            .collect()
+        for ev in self.driver.track(view) {
+            if let Some(lifted) = lift_event(ev, &self.lift, ts, parser_kind) {
+                out.push(lifted);
+            }
+        }
     }
 
-    fn sweep(&mut self, now: Timestamp) -> Vec<Event<E::Key, M>> {
+    fn sweep_into(&mut self, now: Timestamp, out: &mut Vec<Event<E::Key, M>>) {
         let parser_kind = self.parser_kind;
-        self.driver
-            .sweep(now)
-            .into_iter()
-            .filter_map(|e| lift_event(e, &self.lift, now, parser_kind))
-            .collect()
+        for ev in self.driver.sweep(now) {
+            if let Some(lifted) = lift_event(ev, &self.lift, now, parser_kind) {
+                out.push(lifted);
+            }
+        }
     }
 
-    fn finish(&mut self) -> Vec<Event<E::Key, M>> {
+    fn finish_into(&mut self, out: &mut Vec<Event<E::Key, M>>) {
         let parser_kind = self.parser_kind;
-        self.driver
-            .finish()
-            .into_iter()
-            .filter_map(|e| lift_event(e, &self.lift, Timestamp::MAX, parser_kind))
-            .collect()
+        for ev in self.driver.finish() {
+            if let Some(lifted) = lift_event(ev, &self.lift, Timestamp::MAX, parser_kind) {
+                out.push(lifted);
+            }
+        }
     }
 }
 
@@ -170,36 +177,36 @@ where
     F: Fn(D::Message) -> M + Send + 'static,
     M: Send + 'static,
 {
-    fn track(&mut self, view: PacketView<'_>, ts: Timestamp) -> Vec<Event<E::Key, M>> {
+    fn track_into(&mut self, view: PacketView<'_>, ts: Timestamp, out: &mut Vec<Event<E::Key, M>>) {
         if let Some(ports) = &self.ports
             && !view_matches_ports(view, ports)
         {
-            return Vec::new();
+            return;
         }
         let parser_kind = self.parser_kind;
-        self.driver
-            .track(view)
-            .into_iter()
-            .filter_map(|e| lift_event(e, &self.lift, ts, parser_kind))
-            .collect()
+        for ev in self.driver.track(view) {
+            if let Some(lifted) = lift_event(ev, &self.lift, ts, parser_kind) {
+                out.push(lifted);
+            }
+        }
     }
 
-    fn sweep(&mut self, now: Timestamp) -> Vec<Event<E::Key, M>> {
+    fn sweep_into(&mut self, now: Timestamp, out: &mut Vec<Event<E::Key, M>>) {
         let parser_kind = self.parser_kind;
-        self.driver
-            .sweep(now)
-            .into_iter()
-            .filter_map(|e| lift_event(e, &self.lift, now, parser_kind))
-            .collect()
+        for ev in self.driver.sweep(now) {
+            if let Some(lifted) = lift_event(ev, &self.lift, now, parser_kind) {
+                out.push(lifted);
+            }
+        }
     }
 
-    fn finish(&mut self) -> Vec<Event<E::Key, M>> {
+    fn finish_into(&mut self, out: &mut Vec<Event<E::Key, M>>) {
         let parser_kind = self.parser_kind;
-        self.driver
-            .finish()
-            .into_iter()
-            .filter_map(|e| lift_event(e, &self.lift, Timestamp::MAX, parser_kind))
-            .collect()
+        for ev in self.driver.finish() {
+            if let Some(lifted) = lift_event(ev, &self.lift, Timestamp::MAX, parser_kind) {
+                out.push(lifted);
+            }
+        }
     }
 }
 

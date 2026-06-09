@@ -77,9 +77,10 @@ impl DnsExchangeParser {
 impl DatagramParser for DnsExchangeParser {
     type Message = DnsExchange;
 
-    fn parse(&mut self, payload: &[u8], side: FlowSide, ts: Timestamp) -> Vec<DnsExchange> {
-        let mut out = Vec::new();
-        for msg in self.inner.parse(payload, side, ts) {
+    fn parse(&mut self, payload: &[u8], side: FlowSide, ts: Timestamp, out: &mut Vec<DnsExchange>) {
+        let mut inner_out = Vec::new();
+        self.inner.parse(payload, side, ts, &mut inner_out);
+        for msg in inner_out {
             match msg {
                 DnsMessage::Query(_) => {
                     // Queries don't fire exchanges on their own —
@@ -133,12 +134,12 @@ impl DatagramParser for DnsExchangeParser {
                 }
             }
         }
-        out
     }
 
-    fn on_tick(&mut self, now: Timestamp) -> Vec<DnsExchange> {
-        let mut out = Vec::new();
-        for msg in self.inner.on_tick(now) {
+    fn on_tick(&mut self, now: Timestamp, out: &mut Vec<DnsExchange>) {
+        let mut inner_out = Vec::new();
+        self.inner.on_tick(now, &mut inner_out);
+        for msg in inner_out {
             if let DnsMessage::Unanswered(q) = msg {
                 let question = q.questions.first().cloned().unwrap_or(DnsQuestion {
                     name: String::new(),
@@ -156,7 +157,6 @@ impl DatagramParser for DnsExchangeParser {
                 });
             }
         }
-        out
     }
 
     fn parser_kind(&self) -> &'static str {

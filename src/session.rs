@@ -47,23 +47,21 @@
 //! impl SessionParser for LineParser {
 //!     type Message = (FlowSide, String);
 //!
-//!     fn feed_initiator(&mut self, bytes: &[u8], _ts: Timestamp) -> Vec<Self::Message> {
-//!         feed(&mut self.init_buf, bytes, FlowSide::Initiator)
+//!     fn feed_initiator(&mut self, bytes: &[u8], _ts: Timestamp, out: &mut Vec<Self::Message>) {
+//!         feed(&mut self.init_buf, bytes, FlowSide::Initiator, out);
 //!     }
-//!     fn feed_responder(&mut self, bytes: &[u8], _ts: Timestamp) -> Vec<Self::Message> {
-//!         feed(&mut self.resp_buf, bytes, FlowSide::Responder)
+//!     fn feed_responder(&mut self, bytes: &[u8], _ts: Timestamp, out: &mut Vec<Self::Message>) {
+//!         feed(&mut self.resp_buf, bytes, FlowSide::Responder, out);
 //!     }
 //! }
 //!
-//! fn feed(buf: &mut Vec<u8>, bytes: &[u8], side: FlowSide) -> Vec<(FlowSide, String)> {
+//! fn feed(buf: &mut Vec<u8>, bytes: &[u8], side: FlowSide, out: &mut Vec<(FlowSide, String)>) {
 //!     buf.extend_from_slice(bytes);
-//!     let mut out = Vec::new();
 //!     while let Some(nl) = buf.iter().position(|&b| b == b'\n') {
 //!         let line = String::from_utf8_lossy(&buf[..nl]).into_owned();
 //!         out.push((side, line));
 //!         buf.drain(..=nl);
 //!     }
-//!     out
 //! }
 //! ```
 
@@ -126,15 +124,15 @@ impl std::error::Error for FrameDrainError {}
 ///
 /// impl SessionParser for MyParser {
 ///     type Message = Msg;
-///     fn feed_initiator(&mut self, b: &[u8], _: Timestamp) -> Vec<Msg> {
-///         self.init.extend(b);
+///     fn feed_initiator(&mut self, b: &[u8], _: Timestamp, out: &mut Vec<Msg>) {
+///         let _ = self.init.extend(b);
 ///         self.init.drain_with(parse_one);
-///         self.init.take_messages()
+///         out.append(&mut self.init.take_messages());
 ///     }
-///     fn feed_responder(&mut self, b: &[u8], _: Timestamp) -> Vec<Msg> {
-///         self.resp.extend(b);
+///     fn feed_responder(&mut self, b: &[u8], _: Timestamp, out: &mut Vec<Msg>) {
+///         let _ = self.resp.extend(b);
 ///         self.resp.drain_with(parse_one);
-///         self.resp.take_messages()
+///         out.append(&mut self.resp.take_messages());
 ///     }
 /// }
 /// ```
@@ -363,22 +361,24 @@ where
 {
     type Message = M;
 
-    fn feed_initiator(&mut self, bytes: &[u8], _ts: Timestamp) -> Vec<M> {
+    fn feed_initiator(&mut self, bytes: &[u8], _ts: Timestamp, out: &mut Vec<M>) {
         if self.init.extend(bytes).is_err() {
-            return self.init.take_messages();
+            out.append(&mut self.init.take_messages());
+            return;
         }
         let parse_one = self.parse_one.clone();
         self.init.drain_with(parse_one);
-        self.init.take_messages()
+        out.append(&mut self.init.take_messages());
     }
 
-    fn feed_responder(&mut self, bytes: &[u8], _ts: Timestamp) -> Vec<M> {
+    fn feed_responder(&mut self, bytes: &[u8], _ts: Timestamp, out: &mut Vec<M>) {
         if self.resp.extend(bytes).is_err() {
-            return self.resp.take_messages();
+            out.append(&mut self.resp.take_messages());
+            return;
         }
         let parse_one = self.parse_one.clone();
         self.resp.drain_with(parse_one);
-        self.resp.take_messages()
+        out.append(&mut self.resp.take_messages());
     }
 
     fn parser_kind(&self) -> &'static str {
@@ -461,8 +461,10 @@ where
 {
     type Message = M;
 
-    fn parse(&mut self, payload: &[u8], _side: FlowSide, _ts: Timestamp) -> Vec<M> {
-        (self.parse_one)(payload).into_iter().collect()
+    fn parse(&mut self, payload: &[u8], _side: FlowSide, _ts: Timestamp, out: &mut Vec<M>) {
+        if let Some(msg) = (self.parse_one)(payload) {
+            out.push(msg);
+        }
     }
 
     fn parser_kind(&self) -> &'static str {
@@ -502,21 +504,22 @@ pub trait SessionParser: Send + 'static {
 
     /// Feed the next chunk of bytes from the **initiator** side.
     /// `ts` is the observed time of the packet carrying these bytes.
-    /// Returns any complete messages parsed during this call.
-    fn feed_initiator(&mut self, bytes: &[u8], ts: Timestamp) -> Vec<Self::Message>;
+    /// Push any complete messages parsed during this call into
+    /// `out`.
+    ///
+    /// **0.11 break (plan 119):** signature changed from
+    /// `-> Vec<Self::Message>` to taking `out: &mut Vec<…>`.
+    /// Same idiom as `httparse::Request::parse` etc.
+    fn feed_initiator(&mut self, bytes: &[u8], ts: Timestamp, out: &mut Vec<Self::Message>);
 
     /// Feed the next chunk of bytes from the **responder** side.
-    fn feed_responder(&mut self, bytes: &[u8], ts: Timestamp) -> Vec<Self::Message>;
+    fn feed_responder(&mut self, bytes: &[u8], ts: Timestamp, out: &mut Vec<Self::Message>);
 
-    /// Initiator side has FIN'd. Default: return nothing.
-    fn fin_initiator(&mut self) -> Vec<Self::Message> {
-        Vec::new()
-    }
+    /// Initiator side has FIN'd. Default: no-op.
+    fn fin_initiator(&mut self, _out: &mut Vec<Self::Message>) {}
 
     /// Responder side has FIN'd.
-    fn fin_responder(&mut self) -> Vec<Self::Message> {
-        Vec::new()
-    }
+    fn fin_responder(&mut self, _out: &mut Vec<Self::Message>) {}
 
     /// Initiator side observed a RST. Default: no-op.
     fn rst_initiator(&mut self) {}
@@ -529,9 +532,7 @@ pub trait SessionParser: Send + 'static {
     /// Lets stateful parsers emit time-driven messages (timeouts,
     /// unanswered requests). Emitted messages are attributed to
     /// [`FlowSide::Initiator`]. Default: no-op.
-    fn on_tick(&mut self, _now: Timestamp) -> Vec<Self::Message> {
-        Vec::new()
-    }
+    fn on_tick(&mut self, _now: Timestamp, _out: &mut Vec<Self::Message>) {}
 
     /// True after the parser has hit an unrecoverable error and
     /// can no longer make progress. The driver checks this after
@@ -638,14 +639,21 @@ pub trait DatagramParser: Send + 'static {
 
     /// Parse one L4 payload. `side` is the direction relative to
     /// the flow's initiator; `ts` is the observed time of the
-    /// datagram. Returns any complete messages decoded.
-    fn parse(&mut self, payload: &[u8], side: FlowSide, ts: Timestamp) -> Vec<Self::Message>;
+    /// datagram. Push any complete messages decoded into `out`.
+    ///
+    /// **0.11 break (plan 119):** signature changed from
+    /// `-> Vec<Self::Message>` to taking `out: &mut Vec<…>`.
+    fn parse(
+        &mut self,
+        payload: &[u8],
+        side: FlowSide,
+        ts: Timestamp,
+        out: &mut Vec<Self::Message>,
+    );
 
     /// Periodic time hook — see [`SessionParser::on_tick`]. The
     /// driver calls this on every `sweep` / `finish`. Default: no-op.
-    fn on_tick(&mut self, _now: Timestamp) -> Vec<Self::Message> {
-        Vec::new()
-    }
+    fn on_tick(&mut self, _now: Timestamp, _out: &mut Vec<Self::Message>) {}
 
     /// True after the parser has hit an unrecoverable error. See
     /// [`SessionParser::is_poisoned`] for the contract.
@@ -783,13 +791,13 @@ mod tests {
 
     impl SessionParser for CountParser {
         type Message = (FlowSide, usize);
-        fn feed_initiator(&mut self, b: &[u8], _ts: Timestamp) -> Vec<Self::Message> {
+        fn feed_initiator(&mut self, b: &[u8], _ts: Timestamp, out: &mut Vec<Self::Message>) {
             self.init_bytes += b.len();
-            vec![(FlowSide::Initiator, self.init_bytes)]
+            out.push((FlowSide::Initiator, self.init_bytes));
         }
-        fn feed_responder(&mut self, b: &[u8], _ts: Timestamp) -> Vec<Self::Message> {
+        fn feed_responder(&mut self, b: &[u8], _ts: Timestamp, out: &mut Vec<Self::Message>) {
             self.resp_bytes += b.len();
-            vec![(FlowSide::Responder, self.resp_bytes)]
+            out.push((FlowSide::Responder, self.resp_bytes));
         }
     }
 
@@ -798,7 +806,8 @@ mod tests {
         // CountParser is Default + Clone + SessionParser → automatic factory.
         let mut f: CountParser = CountParser::default();
         let mut p: CountParser = SessionParserFactory::<u32>::new_parser(&mut f, &7);
-        let m = p.feed_initiator(b"abc", Timestamp::default());
+        let mut m = Vec::new();
+        p.feed_initiator(b"abc", Timestamp::default(), &mut m);
         assert_eq!(m, vec![(FlowSide::Initiator, 3)]);
     }
 
@@ -806,8 +815,14 @@ mod tests {
     struct EchoDgram;
     impl DatagramParser for EchoDgram {
         type Message = (FlowSide, Vec<u8>);
-        fn parse(&mut self, payload: &[u8], side: FlowSide, _ts: Timestamp) -> Vec<Self::Message> {
-            vec![(side, payload.to_vec())]
+        fn parse(
+            &mut self,
+            payload: &[u8],
+            side: FlowSide,
+            _ts: Timestamp,
+            out: &mut Vec<Self::Message>,
+        ) {
+            out.push((side, payload.to_vec()));
         }
     }
 
@@ -815,7 +830,8 @@ mod tests {
     fn auto_impl_datagram_parser_factory() {
         let mut f = EchoDgram;
         let mut p: EchoDgram = DatagramParserFactory::<()>::new_parser(&mut f, &());
-        let m = p.parse(b"hello", FlowSide::Responder, Timestamp::default());
+        let mut m = Vec::new();
+        p.parse(b"hello", FlowSide::Responder, Timestamp::default(), &mut m);
         assert_eq!(m, vec![(FlowSide::Responder, b"hello".to_vec())]);
     }
 }

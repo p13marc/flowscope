@@ -60,8 +60,8 @@ impl HttpParser {
         buf: &mut Vec<u8>,
         is_request: bool,
         cfg: &HttpConfig,
-    ) -> Vec<HttpMessage> {
-        let mut out = Vec::new();
+        out: &mut Vec<HttpMessage>,
+    ) {
         loop {
             match parser::step(state, buf, is_request, cfg) {
                 Ok(Some(ParseOutput::Request(r))) => out.push(HttpMessage::Request(r)),
@@ -73,24 +73,29 @@ impl HttpParser {
                 }
             }
         }
-        out
     }
 }
 
 impl SessionParser for HttpParser {
     type Message = HttpMessage;
 
-    fn feed_initiator(&mut self, bytes: &[u8], _ts: Timestamp) -> Vec<HttpMessage> {
+    fn feed_initiator(&mut self, bytes: &[u8], _ts: Timestamp, out: &mut Vec<HttpMessage>) {
         if bytes.is_empty() {
-            return Vec::new();
+            return;
         }
         self.init_buf.extend_from_slice(bytes);
-        Self::drain(&mut self.init_state, &mut self.init_buf, true, &self.config)
+        Self::drain(
+            &mut self.init_state,
+            &mut self.init_buf,
+            true,
+            &self.config,
+            out,
+        );
     }
 
-    fn feed_responder(&mut self, bytes: &[u8], _ts: Timestamp) -> Vec<HttpMessage> {
+    fn feed_responder(&mut self, bytes: &[u8], _ts: Timestamp, out: &mut Vec<HttpMessage>) {
         if bytes.is_empty() {
-            return Vec::new();
+            return;
         }
         self.resp_buf.extend_from_slice(bytes);
         Self::drain(
@@ -98,22 +103,23 @@ impl SessionParser for HttpParser {
             &mut self.resp_buf,
             false,
             &self.config,
-        )
+            out,
+        );
     }
 
-    fn fin_initiator(&mut self) -> Vec<HttpMessage> {
+    fn fin_initiator(&mut self, out: &mut Vec<HttpMessage>) {
         match parser::eof(&mut self.init_state, &mut self.init_buf) {
-            Some(ParseOutput::Request(r)) => vec![HttpMessage::Request(r)],
-            Some(ParseOutput::Response(r)) => vec![HttpMessage::Response(r)],
-            None => Vec::new(),
+            Some(ParseOutput::Request(r)) => out.push(HttpMessage::Request(r)),
+            Some(ParseOutput::Response(r)) => out.push(HttpMessage::Response(r)),
+            None => {}
         }
     }
 
-    fn fin_responder(&mut self) -> Vec<HttpMessage> {
+    fn fin_responder(&mut self, out: &mut Vec<HttpMessage>) {
         match parser::eof(&mut self.resp_state, &mut self.resp_buf) {
-            Some(ParseOutput::Request(r)) => vec![HttpMessage::Request(r)],
-            Some(ParseOutput::Response(r)) => vec![HttpMessage::Response(r)],
-            None => Vec::new(),
+            Some(ParseOutput::Request(r)) => out.push(HttpMessage::Request(r)),
+            Some(ParseOutput::Response(r)) => out.push(HttpMessage::Response(r)),
+            None => {}
         }
     }
 
@@ -136,11 +142,27 @@ impl SessionParser for HttpParser {
 mod tests {
     use super::*;
 
+    fn feed_init(p: &mut HttpParser, bytes: &[u8]) -> Vec<HttpMessage> {
+        let mut out = Vec::new();
+        p.feed_initiator(bytes, Timestamp::default(), &mut out);
+        out
+    }
+    fn feed_resp(p: &mut HttpParser, bytes: &[u8]) -> Vec<HttpMessage> {
+        let mut out = Vec::new();
+        p.feed_responder(bytes, Timestamp::default(), &mut out);
+        out
+    }
+    fn fin_resp(p: &mut HttpParser) -> Vec<HttpMessage> {
+        let mut out = Vec::new();
+        p.fin_responder(&mut out);
+        out
+    }
+
     #[test]
     fn parses_full_request_then_response() {
         let mut p = HttpParser::default();
         let req = b"GET /index.html HTTP/1.1\r\nHost: example.com\r\n\r\n";
-        let m = p.feed_initiator(req, Timestamp::default());
+        let m = feed_init(&mut p, req);
         assert_eq!(m.len(), 1);
         match &m[0] {
             HttpMessage::Request(r) => {
@@ -151,7 +173,7 @@ mod tests {
         }
 
         let resp = b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhello";
-        let m = p.feed_responder(resp, Timestamp::default());
+        let m = feed_resp(&mut p, resp);
         assert_eq!(m.len(), 1);
         match &m[0] {
             HttpMessage::Response(r) => {
@@ -165,30 +187,27 @@ mod tests {
     #[test]
     fn split_segments_concatenate() {
         let mut p = HttpParser::default();
-        let m = p.feed_initiator(b"GET /a HTTP/1.1\r\nHo", Timestamp::default());
+        let m = feed_init(&mut p, b"GET /a HTTP/1.1\r\nHo");
         assert!(m.is_empty());
-        let m = p.feed_initiator(b"st: x\r\n\r\n", Timestamp::default());
+        let m = feed_init(&mut p, b"st: x\r\n\r\n");
         assert_eq!(m.len(), 1);
     }
 
     #[test]
     fn pipelined_requests() {
         let mut p = HttpParser::default();
-        let pipelined = b"GET /a HTTP/1.1\r\n\r\nGET /b HTTP/1.1\r\n\r\n";
-        let m = p.feed_initiator(pipelined, Timestamp::default());
+        let m = feed_init(&mut p, b"GET /a HTTP/1.1\r\n\r\nGET /b HTTP/1.1\r\n\r\n");
         assert_eq!(m.len(), 2);
     }
 
     #[test]
     fn fin_flushes_until_eof_body() {
         let mut p = HttpParser::default();
-        // Connection: close response with no Content-Length → UntilEof.
-        let h = b"HTTP/1.1 200 OK\r\nConnection: close\r\n\r\nhel";
-        let m = p.feed_responder(h, Timestamp::default());
-        assert!(m.is_empty()); // body still pending
-        let m = p.feed_responder(b"lo", Timestamp::default());
+        let m = feed_resp(&mut p, b"HTTP/1.1 200 OK\r\nConnection: close\r\n\r\nhel");
         assert!(m.is_empty());
-        let m = p.fin_responder();
+        let m = feed_resp(&mut p, b"lo");
+        assert!(m.is_empty());
+        let m = fin_resp(&mut p);
         assert_eq!(m.len(), 1);
         match &m[0] {
             HttpMessage::Response(r) => assert_eq!(r.body.as_ref(), b"hello"),

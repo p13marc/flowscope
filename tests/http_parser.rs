@@ -22,11 +22,15 @@ impl Captured {
 }
 
 fn feed_init(parser: &mut HttpParser, captured: &mut Captured, bytes: &[u8]) {
-    captured.ingest(parser.feed_initiator(bytes, Timestamp::default()));
+    let mut out = Vec::new();
+    parser.feed_initiator(bytes, Timestamp::default(), &mut out);
+    captured.ingest(out);
 }
 
 fn feed_resp(parser: &mut HttpParser, captured: &mut Captured, bytes: &[u8]) {
-    captured.ingest(parser.feed_responder(bytes, Timestamp::default()));
+    let mut out = Vec::new();
+    parser.feed_responder(bytes, Timestamp::default(), &mut out);
+    captured.ingest(out);
 }
 
 #[test]
@@ -122,7 +126,9 @@ fn connection_close_body_extends_to_fin() {
     assert!(captured.resps.is_empty(), "still waiting for FIN");
     feed_resp(&mut parser, &mut captured, b" world");
     // FIN flush.
-    captured.ingest(parser.fin_responder());
+    let mut out = Vec::new();
+    parser.fin_responder(&mut out);
+    captured.ingest(out);
     assert_eq!(captured.resps.len(), 1);
     assert_eq!(&*captured.resps[0].body, b"hello world");
 }
@@ -137,5 +143,6 @@ fn malformed_doesnt_panic() {
         b"\xff\xff\xffNOT HTTP\xff\xff\r\n\r\n",
     );
     // Should not panic; the parser enters Desynced state.
-    let _ = parser.fin_initiator();
+    let mut out = Vec::new();
+    parser.fin_initiator(&mut out);
 }

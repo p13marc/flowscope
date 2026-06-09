@@ -25,17 +25,16 @@ struct LengthPrefixedParser {
 
 impl SessionParser for LengthPrefixedParser {
     type Message = Vec<u8>;
-    fn feed_initiator(&mut self, bytes: &[u8], _ts: Timestamp) -> Vec<Vec<u8>> {
-        drain(&mut self.init_buf, bytes)
+    fn feed_initiator(&mut self, bytes: &[u8], _ts: Timestamp, out: &mut Vec<Vec<u8>>) {
+        drain(&mut self.init_buf, bytes, out);
     }
-    fn feed_responder(&mut self, bytes: &[u8], _ts: Timestamp) -> Vec<Vec<u8>> {
-        drain(&mut self.resp_buf, bytes)
+    fn feed_responder(&mut self, bytes: &[u8], _ts: Timestamp, out: &mut Vec<Vec<u8>>) {
+        drain(&mut self.resp_buf, bytes, out);
     }
 }
 
-fn drain(buf: &mut Vec<u8>, incoming: &[u8]) -> Vec<Vec<u8>> {
+fn drain(buf: &mut Vec<u8>, incoming: &[u8], out: &mut Vec<Vec<u8>>) {
     buf.extend_from_slice(incoming);
-    let mut out = Vec::new();
     while let Some((hdr, body_len)) = peek_header(buf) {
         let total = hdr + body_len;
         if buf.len() < total {
@@ -45,7 +44,6 @@ fn drain(buf: &mut Vec<u8>, incoming: &[u8]) -> Vec<Vec<u8>> {
         buf.drain(..total);
         out.push(body);
     }
-    out
 }
 
 fn peek_header(buf: &[u8]) -> Option<(usize, usize)> {

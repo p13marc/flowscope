@@ -17,8 +17,8 @@
 //! struct EchoUdp;
 //! impl DatagramParser for EchoUdp {
 //!     type Message = Vec<u8>;
-//!     fn parse(&mut self, payload: &[u8], _side: FlowSide, _ts: Timestamp) -> Vec<Vec<u8>> {
-//!         vec![payload.to_vec()]
+//!     fn parse(&mut self, payload: &[u8], _side: FlowSide, _ts: Timestamp, out: &mut Vec<Vec<u8>>) {
+//!         out.push(payload.to_vec());
 //!     }
 //! }
 //!
@@ -349,9 +349,12 @@ where
             Done,
         }
         let mut closes: Vec<(E::Key, TickClose<String>)> = Vec::new();
+        let mut tick_scratch: Vec<P::Message> = Vec::new();
         for (key, parser) in self.parsers.iter_mut() {
             let kind = parser.parser_kind();
-            for m in parser.on_tick(now) {
+            tick_scratch.clear();
+            parser.on_tick(now, &mut tick_scratch);
+            for m in tick_scratch.drain(..) {
                 crate::obs::trace_session_message(FlowSide::Initiator, &m);
                 out.push(SessionEvent::Application {
                     key: key.clone(),
@@ -459,8 +462,9 @@ where
                         continue;
                     };
                     let kind = parser.parser_kind();
-                    let messages = parser.parse(payload, *side, *ts);
-                    for m in messages {
+                    let mut messages: Vec<P::Message> = Vec::new();
+                    parser.parse(payload, *side, *ts, &mut messages);
+                    for m in messages.drain(..) {
                         crate::obs::trace_session_message(*side, &m);
                         out.push(SessionEvent::Application {
                             key: key.clone(),
@@ -607,8 +611,14 @@ mod tests {
     struct EchoUdp;
     impl DatagramParser for EchoUdp {
         type Message = (FlowSide, Vec<u8>);
-        fn parse(&mut self, payload: &[u8], side: FlowSide, _ts: Timestamp) -> Vec<Self::Message> {
-            vec![(side, payload.to_vec())]
+        fn parse(
+            &mut self,
+            payload: &[u8],
+            side: FlowSide,
+            _ts: Timestamp,
+            out: &mut Vec<Self::Message>,
+        ) {
+            out.push((side, payload.to_vec()));
         }
     }
 
@@ -654,11 +664,9 @@ mod tests {
         struct TickParser;
         impl DatagramParser for TickParser {
             type Message = u8;
-            fn parse(&mut self, _p: &[u8], _s: FlowSide, _ts: Timestamp) -> Vec<u8> {
-                Vec::new()
-            }
-            fn on_tick(&mut self, _now: Timestamp) -> Vec<u8> {
-                vec![7]
+            fn parse(&mut self, _p: &[u8], _s: FlowSide, _ts: Timestamp, _out: &mut Vec<u8>) {}
+            fn on_tick(&mut self, _now: Timestamp, out: &mut Vec<u8>) {
+                out.push(7);
             }
         }
         let mut d = FlowDatagramDriver::new(FiveTuple::bidirectional(), TickParser);
@@ -748,12 +756,11 @@ mod tests {
     }
     impl DatagramParser for PoisonAfterBytes {
         type Message = ();
-        fn parse(&mut self, payload: &[u8], _side: FlowSide, _ts: Timestamp) -> Vec<()> {
+        fn parse(&mut self, payload: &[u8], _side: FlowSide, _ts: Timestamp, _out: &mut Vec<()>) {
             self.seen += payload.len();
             if self.seen > 5 {
                 self.poisoned = true;
             }
-            Vec::new()
         }
         fn is_poisoned(&self) -> bool {
             self.poisoned

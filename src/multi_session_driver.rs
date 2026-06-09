@@ -312,13 +312,13 @@ mod tests {
 
     impl SessionParser for CountingParser {
         type Message = u32;
-        fn feed_initiator(&mut self, _b: &[u8], _ts: Timestamp) -> Vec<u32> {
+        fn feed_initiator(&mut self, _b: &[u8], _ts: Timestamp, out: &mut Vec<u32>) {
             self.0 += 1;
-            vec![self.0]
+            out.push(self.0);
         }
-        fn feed_responder(&mut self, _b: &[u8], _ts: Timestamp) -> Vec<u32> {
+        fn feed_responder(&mut self, _b: &[u8], _ts: Timestamp, out: &mut Vec<u32>) {
             self.0 += 1;
-            vec![self.0]
+            out.push(self.0);
         }
     }
 

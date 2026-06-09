@@ -13,18 +13,14 @@ struct EchoParser;
 
 impl SessionParser for EchoParser {
     type Message = Vec<u8>;
-    fn feed_initiator(&mut self, bytes: &[u8], _ts: Timestamp) -> Vec<Vec<u8>> {
-        if bytes.is_empty() {
-            Vec::new()
-        } else {
-            vec![bytes.to_vec()]
+    fn feed_initiator(&mut self, bytes: &[u8], _ts: Timestamp, out: &mut Vec<Vec<u8>>) {
+        if !bytes.is_empty() {
+            out.push(bytes.to_vec());
         }
     }
-    fn feed_responder(&mut self, bytes: &[u8], _ts: Timestamp) -> Vec<Vec<u8>> {
-        if bytes.is_empty() {
-            Vec::new()
-        } else {
-            vec![bytes.to_vec()]
+    fn feed_responder(&mut self, bytes: &[u8], _ts: Timestamp, out: &mut Vec<Vec<u8>>) {
+        if !bytes.is_empty() {
+            out.push(bytes.to_vec());
         }
     }
 }

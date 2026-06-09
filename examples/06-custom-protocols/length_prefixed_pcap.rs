@@ -52,11 +52,11 @@ pub struct LengthPrefixedParser {
 impl SessionParser for LengthPrefixedParser {
     type Message = Record;
 
-    fn feed_initiator(&mut self, bytes: &[u8], _ts: Timestamp) -> Vec<Record> {
-        Self::drain(&mut self.init_buf, bytes, FlowSide::Initiator)
+    fn feed_initiator(&mut self, bytes: &[u8], _ts: Timestamp, out: &mut Vec<Record>) {
+        Self::drain(&mut self.init_buf, bytes, FlowSide::Initiator, out);
     }
-    fn feed_responder(&mut self, bytes: &[u8], _ts: Timestamp) -> Vec<Record> {
-        Self::drain(&mut self.resp_buf, bytes, FlowSide::Responder)
+    fn feed_responder(&mut self, bytes: &[u8], _ts: Timestamp, out: &mut Vec<Record>) {
+        Self::drain(&mut self.resp_buf, bytes, FlowSide::Responder, out);
     }
 
     fn parser_kind(&self) -> &'static str {
@@ -65,9 +65,8 @@ impl SessionParser for LengthPrefixedParser {
 }
 
 impl LengthPrefixedParser {
-    fn drain(buf: &mut Vec<u8>, incoming: &[u8], side: FlowSide) -> Vec<Record> {
+    fn drain(buf: &mut Vec<u8>, incoming: &[u8], side: FlowSide, out: &mut Vec<Record>) {
         buf.extend_from_slice(incoming);
-        let mut out = Vec::new();
         while let Some((hdr, body_len)) = peek_header(buf) {
             let total = hdr + body_len;
             if buf.len() < total {
@@ -77,7 +76,6 @@ impl LengthPrefixedParser {
             buf.drain(..total);
             out.push(Record { side, body });
         }
-        out
     }
 }
 
