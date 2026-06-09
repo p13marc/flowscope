@@ -191,6 +191,21 @@ where
             route_session_event_pub(ev, parser_kind, &mut buf, lifecycle_out);
         }
     }
+
+    fn force_close_into(
+        &mut self,
+        key: &E::Key,
+        now: Timestamp,
+        lifecycle_out: &mut Vec<Event<E::Key>>,
+    ) {
+        // Drop any per-flow heuristic detection state.
+        self.states.remove(key);
+        let parser_kind = self.parser_kind;
+        let mut buf = self.msg_buf.borrow_mut();
+        for ev in self.driver.force_close(key, now) {
+            route_session_event_pub(ev, parser_kind, &mut buf, lifecycle_out);
+        }
+    }
 }
 
 /// Heuristic-routed datagram slot.
@@ -309,6 +324,20 @@ where
         let parser_kind = self.parser_kind;
         let mut buf = self.msg_buf.borrow_mut();
         for ev in self.driver.finish() {
+            route_session_event_pub(ev, parser_kind, &mut buf, lifecycle_out);
+        }
+    }
+
+    fn force_close_into(
+        &mut self,
+        key: &E::Key,
+        now: Timestamp,
+        lifecycle_out: &mut Vec<Event<E::Key>>,
+    ) {
+        self.states.remove(key);
+        let parser_kind = self.parser_kind;
+        let mut buf = self.msg_buf.borrow_mut();
+        for ev in self.driver.force_close(key, now) {
             route_session_event_pub(ev, parser_kind, &mut buf, lifecycle_out);
         }
     }

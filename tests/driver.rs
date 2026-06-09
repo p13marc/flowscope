@@ -255,3 +255,65 @@ fn parser_kind_is_propagated_to_handle() {
 
     assert_eq!(slot.parser_kind(), "count");
 }
+
+#[test]
+fn force_close_emits_flow_ended_with_force_closed_reason() {
+    use flowscope::EndReason;
+    use flowscope::FlowExtractor;
+
+    let mut builder = Driver::builder(FiveTuple::bidirectional());
+    let mut slot = builder.session_broadcast(CountParser);
+    let mut driver = builder.build();
+
+    let frame = tcp_packet(33000, 80, b"a");
+    let view = PacketView::new(&frame, Timestamp::new(0, 0));
+    let mut events = Vec::new();
+    driver.track_into(view, &mut events);
+
+    // Grab the flow's canonical key from the same extractor the
+    // driver uses.
+    let key = FiveTuple::bidirectional().extract(view).unwrap().key;
+
+    let mut msgs = Vec::new();
+    slot.drain(&mut msgs);
+
+    events.clear();
+    msgs.clear();
+    driver.force_close_into(&key, Timestamp::new(5, 0), &mut events);
+
+    let ended = events.iter().any(|e| {
+        matches!(e, Event::FlowEnded { reason, .. } if *reason == EndReason::ForceClosed)
+    });
+    assert!(
+        ended,
+        "force_close should emit FlowEnded with ForceClosed reason; got {events:?}",
+    );
+
+    let parser_closed = events
+        .iter()
+        .any(|e| matches!(e, Event::ParserClosed { .. }));
+    assert!(
+        parser_closed,
+        "force_close should emit ParserClosed for the slot's parser",
+    );
+}
+
+#[test]
+fn force_close_on_unknown_flow_is_noop() {
+    use flowscope::FlowExtractor;
+
+    let mut builder = Driver::builder(FiveTuple::bidirectional());
+    let _slot = builder.session_broadcast(CountParser);
+    let mut driver = builder.build();
+
+    let frame = tcp_packet(50000, 80, b"x");
+    let view = PacketView::new(&frame, Timestamp::new(0, 0));
+    let key = FiveTuple::bidirectional().extract(view).unwrap().key;
+
+    let mut events = Vec::new();
+    driver.force_close_into(&key, Timestamp::new(1, 0), &mut events);
+    assert!(
+        events.is_empty(),
+        "force_close on unknown flow should be a no-op; got {events:?}",
+    );
+}

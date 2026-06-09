@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.11.1
+
+Fills the one deferred-item gap from the 0.11.0 plan-121 audit
+that's blocking netring 0.19's connection-termination path.
+
+### Added
+
+- **`Driver<E>::force_close(key, now) -> Vec<Event<E::Key>>`**
+  and **`Driver<E>::force_close_into(key, now, &mut out)`** —
+  port of `FlowSessionDriver::force_close` to the typed driver.
+  Per registered slot: drains reassembler-buffered bytes
+  through the parser, calls `fin_initiator` / `fin_responder`,
+  emits typed messages into the slot handle, and emits a
+  `ParserClosed` lifecycle event. The central tracker emits
+  a final `FlowEnded { reason: ForceClosed }`. No-op if `key`
+  is not currently tracked.
+
+  Internal: `ErasedSlot` trait gains a `force_close_into`
+  method; all four slot impls (concrete session/datagram +
+  heuristic session/datagram) implement it. Heuristic slots
+  also drop their per-flow detection state.
+
+Two integration tests in `tests/driver.rs` cover the
+happy-path emission shape and the no-op-on-unknown-flow case.
+
 ## 0.11.0
 
 The **zero-allocation cycle**. Triggered by the netring 0.19

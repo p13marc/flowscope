@@ -280,6 +280,47 @@ where
         }
     }
 
+    /// Force-end the flow with this key. Mirror of
+    /// [`crate::FlowTracker::force_close`] /
+    /// [`crate::FlowDriver::force_close`] at the typed-driver
+    /// layer.
+    ///
+    /// Drains any reassembler-buffered bytes through each
+    /// registered slot's parser (one last `feed_*` + `fin_*`
+    /// per side); typed messages flushed by the parser land in
+    /// their slot handle, [`Event::ParserClosed`] events land
+    /// in `out`, and a final [`Event::FlowEnded`] with reason
+    /// [`crate::EndReason::ForceClosed`] is emitted by the
+    /// central tracker.
+    ///
+    /// No-op if `key` is not currently tracked.
+    pub fn force_close(&mut self, key: &E::Key, now: Timestamp) -> Vec<Event<E::Key>> {
+        let mut out = Vec::new();
+        self.force_close_into(key, now, &mut out);
+        out
+    }
+
+    /// Append-only variant of [`Self::force_close`]. Reuses
+    /// `out`'s capacity.
+    pub fn force_close_into(
+        &mut self,
+        key: &E::Key,
+        now: Timestamp,
+        out: &mut Vec<Event<E::Key>>,
+    ) {
+        // Slots first — they may drain reassembled bytes and
+        // emit `ParserClosed` ahead of the central tracker's
+        // `FlowEnded`.
+        for slot in &mut self.slots {
+            slot.force_close_into(key, now, out);
+        }
+        for flow_ev in self.central.force_close(key, now) {
+            if let Some(ev) = map_flow_event(flow_ev, None) {
+                out.push(ev);
+            }
+        }
+    }
+
     /// Borrow the underlying tracker for introspection.
     pub fn tracker(&self) -> &FlowTracker<E, ()> {
         self.central.tracker()

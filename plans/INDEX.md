@@ -167,10 +167,6 @@ CHANGELOG header.
   `simple-dns` / `tls-parser`. Custom decoders or pre-parse
   `Bytes` slicing would land more allocations. Defer until a
   consumer profiles and asks.
-- **`Driver<E>` `force_close` API** — plan 121's typed `Driver<E>`
-  doesn't carry over `force_close` from `FlowSessionDriver`.
-  The legacy primitive is still available for users who need it;
-  bake into the typed Driver if a consumer asks.
 - **Per-slot `Arc<Mutex<…>>` slot bufs (Send slot handles)** —
   the typed `SlotHandle<M, K>` is `Rc<RefCell>`-backed and
   intentionally `!Send`. Cross-task delivery is netring's job
