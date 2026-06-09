@@ -13,8 +13,8 @@
 //! Falls back to `tests/fixtures/length_prefixed/sample.pcap`
 //! if no path is provided.
 
-use flowscope::driver_unified::SlotMessage;
-use flowscope::driver_unified::typed::{Driver, Event};
+use flowscope::driver::SlotMessage;
+use flowscope::driver::{Driver, Event};
 use flowscope::extract::{FiveTuple, FiveTupleKey};
 use flowscope::pcap::PcapFlowSource;
 use flowscope::{FlowSide, SessionParser, Timestamp};

@@ -20,8 +20,8 @@
 use std::io::Cursor;
 use std::time::Duration;
 
-use flowscope::driver_unified::SlotMessage;
-use flowscope::driver_unified::typed::{Driver, Event};
+use flowscope::driver::SlotMessage;
+use flowscope::driver::{Driver, Event};
 use flowscope::extract::parse::test_frames::ipv4_tcp;
 use flowscope::extract::{FiveTuple, FiveTupleKey};
 use flowscope::pcap::PcapFlowSource;

@@ -19,8 +19,8 @@ use std::collections::{BTreeSet, HashMap};
 use std::net::IpAddr;
 
 use flowscope::dns::{DnsMessage, DnsUdpParser};
-use flowscope::driver_unified::SlotMessage;
-use flowscope::driver_unified::typed::{Driver, Event};
+use flowscope::driver::SlotMessage;
+use flowscope::driver::{Driver, Event};
 use flowscope::extract::{FiveTuple, FiveTupleKey};
 use flowscope::http::{HttpMessage, HttpParser};
 use flowscope::pcap::PcapFlowSource;

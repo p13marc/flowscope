@@ -1,4 +1,4 @@
-//! Demo of the plan-121 typed `flowscope::driver_unified::typed::Driver<E>`.
+//! Demo of the plan-121 typed `flowscope::driver::Driver<E>`.
 //! Shows port-routed HTTP + DNS dispatch + a signature-based
 //! heuristic catch-all under one `Driver` and typed slot drain
 //! handles.
@@ -14,8 +14,8 @@
 
 use flowscope::detect::signatures::http_request;
 use flowscope::dns::{DnsMessage, DnsUdpParser};
-use flowscope::driver_unified::SlotMessage;
-use flowscope::driver_unified::typed::{Driver, Event};
+use flowscope::driver::SlotMessage;
+use flowscope::driver::{Driver, Event};
 use flowscope::extract::{FiveTuple, FiveTupleKey};
 use flowscope::http::{HttpMessage, HttpParser};
 use flowscope::pcap::PcapFlowSource;

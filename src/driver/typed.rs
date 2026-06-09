@@ -16,8 +16,8 @@
 //!   delivery, users build a channel on top of the drain.
 //!
 //! ```ignore
-//! use flowscope::driver_unified::typed::{Driver, Event};
-//! use flowscope::driver_unified::SlotMessage;
+//! use flowscope::driver::{Driver, Event};
+//! use flowscope::driver::SlotMessage;
 //! use flowscope::extract::FiveTuple;
 //! use flowscope::http::{HttpMessage, HttpParser};
 //! use flowscope::extract::FiveTupleKey;
@@ -40,9 +40,9 @@ use crate::PacketView;
 use crate::Timestamp;
 use crate::dedup::Dedup;
 use crate::detect::signatures::SignatureFn;
-use crate::driver::FlowDriver;
 use crate::event::{AnomalyKind, EndReason, FlowEvent, FlowSide, FlowStats};
 use crate::extractor::{FlowExtractor, L4Proto, TcpInfo};
+use crate::flow_driver::FlowDriver;
 use crate::history::HistoryString;
 use crate::reassembler::NoopReassemblerFactory;
 use crate::session::{DatagramParser, SessionParser};

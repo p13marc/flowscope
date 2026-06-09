@@ -15,8 +15,8 @@
 //! cargo run --features http,pcap --example http_exchanges
 //! ```
 
-use flowscope::driver_unified::SlotMessage;
-use flowscope::driver_unified::typed::{Driver, Event};
+use flowscope::driver::SlotMessage;
+use flowscope::driver::{Driver, Event};
 use flowscope::extract::{FiveTuple, FiveTupleKey};
 use flowscope::http::{HttpExchange, HttpExchangeParser, HttpOutcome};
 use flowscope::pcap::PcapFlowSource;

@@ -424,7 +424,7 @@ name = "dns_exchange"
 required-features = ["dns"]
 
 [[test]]
-name = "typed_driver"
+name = "driver"
 required-features = ["test-helpers", "extractors", "session", "reassembler"]
 
 [[bench]]

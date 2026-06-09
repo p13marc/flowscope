@@ -17,8 +17,8 @@ use std::net::IpAddr;
 use std::time::Duration;
 
 use flowscope::correlate::{BurstDetector, KeyIndexed};
-use flowscope::driver_unified::SlotMessage;
-use flowscope::driver_unified::typed::{Driver, Event};
+use flowscope::driver::SlotMessage;
+use flowscope::driver::{Driver, Event};
 use flowscope::extract::{FiveTuple, FiveTupleKey};
 use flowscope::http::{HttpMessage, HttpParser};
 use flowscope::pcap::PcapFlowSource;

@@ -13,8 +13,8 @@
 
 use std::collections::HashMap;
 
-use flowscope::driver_unified::SlotMessage;
-use flowscope::driver_unified::typed::{Driver, Event};
+use flowscope::driver::SlotMessage;
+use flowscope::driver::{Driver, Event};
 use flowscope::extract::{FiveTuple, FiveTupleKey};
 use flowscope::pcap::PcapFlowSource;
 use flowscope::tls::{HandshakeOutcome, TlsHandshake, TlsHandshakeParser};

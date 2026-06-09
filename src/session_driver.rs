@@ -46,9 +46,9 @@ use std::hash::Hash;
 use ahash::RandomState;
 
 use crate::Timestamp;
-use crate::driver::FlowDriver;
 use crate::event::{AnomalyKind, EndReason, FlowEvent, FlowSide};
 use crate::extractor::FlowExtractor;
+use crate::flow_driver::FlowDriver;
 use crate::reassembler::BufferedReassemblerFactory;
 use crate::session::{SessionEvent, SessionParser};
 use crate::tracker::{FlowTracker, FlowTrackerConfig};

@@ -8,7 +8,7 @@
 //!
 //! Plan 121: one typed [`Driver`] hosts every parser slot. Each
 //! `session_on_ports` / `datagram_on_ports` / `datagram_broadcast`
-//! call returns a typed [`SlotHandle`](flowscope::driver_unified::SlotHandle).
+//! call returns a typed [`SlotHandle`](flowscope::driver::SlotHandle).
 //! The single pcap pass drives all four parsers and we drain
 //! each slot per packet, collecting `(ts, label)` rows for a
 //! final chronological print.
@@ -19,8 +19,8 @@
 use std::env;
 
 use flowscope::dns::{DnsMessage, DnsUdpParser};
-use flowscope::driver_unified::SlotMessage;
-use flowscope::driver_unified::typed::{Driver, Event};
+use flowscope::driver::SlotMessage;
+use flowscope::driver::{Driver, Event};
 use flowscope::extract::{FiveTuple, FiveTupleKey};
 use flowscope::http::{HttpMessage, HttpParser};
 use flowscope::icmp::{IcmpMessage, IcmpParser};

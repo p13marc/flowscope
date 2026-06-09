@@ -135,7 +135,7 @@ pub trait ReassemblerFactory<K>: Send + 'static {
 }
 
 /// Discards every segment without buffering. Used by the unified
-/// [`crate::driver_unified::Driver`] as the central
+/// [`crate::driver::Driver`] as the central
 /// [`FlowDriver`](crate::FlowDriver)'s reassembler factory when
 /// the driver itself doesn't need byte-stream reassembly — that
 /// work happens inside each registered slot's own

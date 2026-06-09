@@ -55,7 +55,7 @@ fn synth_tcp_stream() -> Vec<Vec<u8>> {
     feature = "http"
 ))]
 fn bench_track_into_with_slots_steady_state(c: &mut Criterion) {
-    use flowscope::driver_unified::typed::{Driver, Event};
+    use flowscope::driver::{Driver, Event};
     use flowscope::extract::FiveTupleKey;
     use flowscope::http::HttpParser;
 
@@ -105,7 +105,7 @@ fn bench_track_into_with_slots_steady_state(c: &mut Criterion) {
 
 #[cfg(all(feature = "session", feature = "reassembler", feature = "extractors"))]
 fn bench_track_into_steady_state(c: &mut Criterion) {
-    use flowscope::driver_unified::typed::{Driver, Event};
+    use flowscope::driver::{Driver, Event};
     use flowscope::extract::FiveTupleKey;
 
     let mut driver = Driver::builder(FiveTuple::bidirectional()).build();

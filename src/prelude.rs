@@ -35,12 +35,10 @@ pub use crate::FlowSessionDriver;
 #[cfg(all(feature = "extractors", feature = "reassembler", feature = "session"))]
 pub use crate::FlowDatagramDriver;
 
-/// The typed [`crate::driver_unified::typed::Driver`] +
-/// [`crate::driver_unified::SlotHandle`] shape (plan 121).
+/// The typed [`crate::driver::Driver`] +
+/// [`crate::driver::SlotHandle`] shape (plan 121).
 #[cfg(all(feature = "extractors", feature = "reassembler", feature = "session"))]
-pub use crate::driver_unified::SlotMessage;
-#[cfg(all(feature = "extractors", feature = "reassembler", feature = "session"))]
-pub use crate::driver_unified::typed::{Driver, DriverBuilder, Event};
+pub use crate::driver::{Driver, DriverBuilder, Event, SlotHandle, SlotMessage};
 
 #[cfg(feature = "extractors")]
 pub use crate::layers::{Layer, LayerKind, LayerParser, LayerStack, Layers};

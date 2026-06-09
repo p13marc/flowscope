@@ -148,9 +148,11 @@ so the generation logic stays close to the fixtures.
   so the examples stay portable and consumable in scripts.
 - Anything emitting structured data writes to stdout —
   redirect with `> output.{csv,ndjson,log}`.
-- The 0.10 cycle ships a new `flowscope::driver_unified::Driver`
-  surface — the [`00-getting-started/unified_driver_demo.rs`](./00-getting-started/unified_driver_demo.rs)
-  example showcases it. The 0.9 driver types (`FlowSessionDriver`,
-  `FlowDatagramDriver`, `FlowMultiSessionDriver`, `Pipeline`)
-  remain shipped through 0.10 for migration; consumer-visible
-  retirement is queued for the next major release.
+- The 0.11 cycle ships the typed `flowscope::driver::Driver<E>`
+  + `SlotHandle<M, K>` surface — the
+  [`00-getting-started/unified_driver_demo.rs`](./00-getting-started/unified_driver_demo.rs)
+  example showcases it. The 0.9-era closed-`M`
+  `Driver<E, M>` + lift-closure pattern and the legacy
+  `FlowSessionDriver` / `FlowDatagramDriver` /
+  `FlowMultiSessionDriver` / `Pipeline` types are deleted in
+  0.11.

@@ -109,7 +109,7 @@ pub mod correlate;
 pub mod obs;
 
 #[cfg(feature = "reassembler")]
-pub mod driver;
+pub mod flow_driver;
 #[cfg(feature = "reassembler")]
 pub mod reassembler;
 
@@ -129,7 +129,7 @@ pub mod session_driver;
 pub mod datagram_driver;
 
 #[cfg(all(feature = "extractors", feature = "reassembler", feature = "session"))]
-pub mod driver_unified;
+pub mod driver;
 
 #[cfg(feature = "emit")]
 pub mod emit;
@@ -202,7 +202,7 @@ pub use history::HistoryString;
 pub use tracker::{FlowEntry, FlowEvents, FlowTracker, FlowTrackerConfig, FlowTrackerStats};
 
 #[cfg(feature = "reassembler")]
-pub use driver::FlowDriver;
+pub use flow_driver::FlowDriver;
 #[cfg(feature = "reassembler")]
 pub use reassembler::{
     BufferedReassembler, BufferedReassemblerFactory, NoopReassembler, NoopReassemblerFactory,

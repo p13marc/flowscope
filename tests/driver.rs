@@ -1,4 +1,4 @@
-//! Plan 121 — `flowscope::driver_unified::typed::Driver<E>`
+//! Plan 121 — `flowscope::driver::Driver<E>`
 //! integration tests.
 //!
 //! The typed driver emits flow-lifecycle [`Event<K>`] only;
@@ -13,8 +13,8 @@
     feature = "reassembler",
 ))]
 
-use flowscope::driver_unified::SlotMessage;
-use flowscope::driver_unified::typed::{Driver, Event};
+use flowscope::driver::SlotMessage;
+use flowscope::driver::{Driver, Event};
 use flowscope::extract::FiveTuple;
 use flowscope::extract::parse::test_frames::{ipv4_tcp, ipv4_udp};
 use flowscope::{DatagramParser, FlowSide, PacketView, SessionParser, Timestamp};

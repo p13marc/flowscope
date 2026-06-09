@@ -1,11 +1,8 @@
-//! `flowscope::driver_unified` — the typed `Driver<E>` +
-//! `SlotHandle<M, K>` shape (plan 121).
-//!
-//! Build via [`typed::Driver::builder`]:
+//! `flowscope::driver` — the typed `Driver<E>` + `SlotHandle<M, K>`
+//! shape (plan 121).
 //!
 //! ```ignore
-//! use flowscope::driver_unified::SlotMessage;
-//! use flowscope::driver_unified::typed::{Driver, Event};
+//! use flowscope::driver::{Driver, Event, SlotMessage};
 //! use flowscope::extract::{FiveTuple, FiveTupleKey};
 //! use flowscope::http::{HttpMessage, HttpParser};
 //!
@@ -22,7 +19,7 @@
 //!
 //! ## Architecture
 //!
-//! - `Driver<E>` owns a central [`crate::FlowTracker`] for flow
+//! - [`Driver<E>`] owns a central [`crate::FlowTracker`] for flow
 //!   lifecycle + per-parser slots that own their inner
 //!   session/datagram drivers.
 //! - Each `.session_*` / `.datagram_*` builder call returns a
@@ -40,9 +37,10 @@
 //! event loop and post through a channel.
 
 mod slot;
-pub mod typed;
+mod typed;
 mod typed_slot;
 mod typed_slot_heuristic;
 
 pub use slot::{SlotHandle, SlotMessage};
+pub use typed::{Driver, DriverBuilder, Event};
 pub use typed_slot_heuristic::{DEFAULT_PROBE_PACKETS, PROBE_BUFFER_CAP};

@@ -18,8 +18,8 @@
 //! Demonstrates the custom-protocol pattern: minimal state
 //! machine, splitting-invariant accumulator, no panic on garbage.
 
-use flowscope::driver_unified::SlotMessage;
-use flowscope::driver_unified::typed::{Driver, Event};
+use flowscope::driver::SlotMessage;
+use flowscope::driver::{Driver, Event};
 use flowscope::extract::{FiveTuple, FiveTupleKey};
 use flowscope::pcap::PcapFlowSource;
 use flowscope::{FlowSide, SessionParser, Timestamp};

@@ -5,8 +5,8 @@
 //! Reads a pcap, registers an echo `SessionParser` that returns
 //! every payload chunk verbatim, and prints each event to stdout.
 
-use flowscope::driver_unified::SlotMessage;
-use flowscope::driver_unified::typed::{Driver, Event};
+use flowscope::driver::SlotMessage;
+use flowscope::driver::{Driver, Event};
 use flowscope::extract::{FiveTuple, FiveTupleKey};
 use flowscope::pcap::PcapFlowSource;
 use flowscope::{SessionParser, Timestamp};
