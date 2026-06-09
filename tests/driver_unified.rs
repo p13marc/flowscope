@@ -753,18 +753,18 @@ fn emit_packet_details_populates_tcp_and_frame() {
     let packet_events: Vec<_> = events
         .iter()
         .filter_map(|e| match e {
-            Event::FlowPacket { tcp, frame, .. } => Some((tcp.is_some(), frame.is_some())),
+            Event::FlowPacket { tcp, .. } => Some(tcp.is_some()),
             _ => None,
         })
         .collect();
     assert!(
-        packet_events.iter().any(|(t, f)| *t && *f),
-        "emit_packet_details=true should populate tcp + frame: {packet_events:?}",
+        packet_events.iter().any(|t| *t),
+        "emit_packet_details=true should populate tcp: {packet_events:?}",
     );
 }
 
 #[test]
-fn emit_packet_details_off_leaves_tcp_and_frame_none() {
+fn emit_packet_details_off_leaves_tcp_none() {
     let mut driver = Driver::<_, Msg>::builder(FiveTuple::bidirectional()).build();
     let frame = ipv4_tcp(
         [1; 6],
@@ -782,13 +782,13 @@ fn emit_packet_details_off_leaves_tcp_and_frame_none() {
     let packet_events: Vec<_> = events
         .iter()
         .filter_map(|e| match e {
-            Event::FlowPacket { tcp, frame, .. } => Some((tcp.is_some(), frame.is_some())),
+            Event::FlowPacket { tcp, .. } => Some(tcp.is_some()),
             _ => None,
         })
         .collect();
     assert!(
-        packet_events.iter().all(|(t, f)| !*t && !*f),
-        "default emit_packet_details=false should leave tcp/frame None: {packet_events:?}",
+        packet_events.iter().all(|t| !*t),
+        "default emit_packet_details=false should leave tcp None: {packet_events:?}",
     );
 }
 

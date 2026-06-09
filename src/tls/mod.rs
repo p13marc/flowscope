@@ -72,7 +72,7 @@
 
 #[cfg(feature = "ja3")]
 mod fingerprint;
-mod handshake;
+pub mod handshake;
 #[cfg(feature = "ja4")]
 pub mod ja4;
 mod parser;

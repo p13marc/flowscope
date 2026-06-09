@@ -157,7 +157,19 @@ a release build. Wall-clock from Criterion shown for context.
 | DNS response w/ 5 TXT records | **28.000** allocs, 2384 B | ≤ 6 | 28.000² | 28.000³ | — | — |
 | TLS 1.3 ClientHello | **13.000** allocs, 9168 B | ≤ 2 | 13.000² | 14.000³ | — | — |
 | Per parsed-L7 dispatch (slot-routed) | (needs slot wiring) | 0 | — | — | — | — |
-| `emit_packet_details(true)` mode | (needs frame-copy bench) | ≤ 1 | — | — | — | — |
+| `emit_packet_details(true)` mode — frame field removed | ≥ 1 alloc + 1500 B copy | ≤ 1 | — | — | — | **field removed** ✅ |
+
+**Phase 4 delivered (small wins):**
+
+- ✅ `parser_kinds::TLS_HANDSHAKE` constant — consumers can now
+  use the stable constant instead of the magic string
+  `"tls-handshake"`.
+- ✅ `Event::FlowPacket::frame` field removed. Previously, every
+  packet under `emit_packet_details(true)` carried an
+  `Option<Vec<u8>>` populated by `view.frame.to_vec()` — a full
+  64–1500 byte memcpy per packet at ~1.5 GB/sec at 1 Mpps.
+  Consumers that need the frame bytes hold onto the source
+  `PacketView` they handed to `track_into`.
 
 ³ DNS and TLS bench numbers don't move from Phase 2's type changes
 alone — the bulk of their allocator pressure lives inside the

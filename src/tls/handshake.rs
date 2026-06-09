@@ -14,6 +14,12 @@ use super::TlsParser;
 use super::session::TlsMessage;
 use super::types::{TlsConfig, TlsVersion};
 
+/// Stable identifier for the handshake aggregator. Plan 118 §4 —
+/// makes the slug available via
+/// [`crate::parser_kinds::TLS_HANDSHAKE`] so consumers don't
+/// have to write the magic string.
+pub const PARSER_KIND: &str = "tls-handshake";
+
 /// Outcome of an observed handshake.
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -181,7 +187,7 @@ impl SessionParser for TlsHandshakeParser {
     type Message = TlsHandshake;
 
     fn parser_kind(&self) -> &'static str {
-        "tls-handshake"
+        PARSER_KIND
     }
 
     fn feed_initiator(&mut self, bytes: &[u8], ts: Timestamp, out: &mut Vec<Self::Message>) {

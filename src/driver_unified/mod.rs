@@ -160,37 +160,29 @@ where
         let view: PacketView<'v> = view.into();
         let ts = view.timestamp;
 
-        // Optionally pre-extract TcpInfo + frame bytes for
-        // emit_packet_details enrichment. The frame field is
-        // slated for removal in plan 118 Phase 4; the clone here
-        // stays as a measured-cost behaviour for now.
-        let (tcp_for_packet, frame_for_packet): (Option<TcpInfo>, Option<Vec<u8>>) =
-            if self.emit_packet_details {
-                let tcp = self.extractor.extract(view).and_then(|e| e.tcp);
-                (tcp, Some(view.frame.to_vec()))
-            } else {
-                (None, None)
-            };
+        // Optional per-packet TCP enrichment. Plan 118 §4 dropped
+        // the frame-bytes clone (was ~1.5 GB/sec at 1 Mpps);
+        // `tcp` is the only field `emit_packet_details(true)`
+        // populates now.
+        let tcp_for_packet: Option<TcpInfo> = if self.emit_packet_details {
+            self.extractor.extract(view).and_then(|e| e.tcp)
+        } else {
+            None
+        };
 
-        // Central FlowDriver emits flow-lifecycle events
-        // (including anomalies when emit_anomalies(true) was
-        // set on the builder). The pre-extracted enrichment is
-        // consumed by the FIRST FlowEvent::Packet we see (there's
-        // usually exactly one per track() call); subsequent
-        // events get None.
+        // Central FlowDriver emits flow-lifecycle events. The
+        // pre-extracted TCP info is consumed by the FIRST
+        // FlowEvent::Packet we see; subsequent events get None.
         let mut tcp_slot = tcp_for_packet;
-        let mut frame_slot = frame_for_packet;
         for flow_ev in self.central.track(view).into_iter() {
-            let (this_tcp, this_frame) = if matches!(flow_ev, FlowEvent::Packet { .. }) {
-                let pair = (tcp_slot, frame_slot.take());
-                tcp_slot = None; // consumed; subsequent Packets in this call get None
-                pair
+            let this_tcp = if matches!(flow_ev, FlowEvent::Packet { .. }) {
+                let t = tcp_slot;
+                tcp_slot = None;
+                t
             } else {
-                (None, None)
+                None
             };
-            if let Some(ev) =
-                map_flow_event_with_details::<E::Key, M>(flow_ev, this_tcp, this_frame)
-            {
+            if let Some(ev) = map_flow_event_with_details::<E::Key, M>(flow_ev, this_tcp) {
                 out.push(ev);
             }
         }
@@ -212,7 +204,7 @@ where
     /// Append-only sweep. Plan 119.
     pub fn sweep_into(&mut self, now: Timestamp, out: &mut Vec<Event<E::Key, M>>) {
         for flow_ev in self.central.sweep(now) {
-            if let Some(ev) = map_flow_event_with_details::<E::Key, M>(flow_ev, None, None) {
+            if let Some(ev) = map_flow_event_with_details::<E::Key, M>(flow_ev, None) {
                 out.push(ev);
             }
         }
@@ -232,7 +224,7 @@ where
     /// Append-only finish. Plan 119.
     pub fn finish_into(&mut self, out: &mut Vec<Event<E::Key, M>>) {
         for flow_ev in self.central.finish() {
-            if let Some(ev) = map_flow_event_with_details::<E::Key, M>(flow_ev, None, None) {
+            if let Some(ev) = map_flow_event_with_details::<E::Key, M>(flow_ev, None) {
                 out.push(ev);
             }
         }
@@ -550,7 +542,6 @@ where
 fn map_flow_event_with_details<K, M>(
     ev: FlowEvent<K>,
     tcp: Option<TcpInfo>,
-    frame: Option<Vec<u8>>,
 ) -> Option<Event<K, M>> {
     match ev {
         FlowEvent::Started { key, ts, l4, .. } => Some(Event::FlowStarted { key, ts, l4 }),
@@ -561,7 +552,6 @@ fn map_flow_event_with_details<K, M>(
             len,
             ts,
             tcp,
-            frame,
         }),
         FlowEvent::Ended {
             key,

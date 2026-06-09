@@ -205,6 +205,8 @@ pub mod parser_kinds {
     pub use crate::icmp::PARSER_KIND as ICMP;
     #[cfg(feature = "tls")]
     pub use crate::tls::PARSER_KIND as TLS;
+    #[cfg(feature = "tls")]
+    pub use crate::tls::handshake::PARSER_KIND as TLS_HANDSHAKE;
 }
 
 #[cfg(feature = "tracker")]

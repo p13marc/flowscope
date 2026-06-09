@@ -39,15 +39,21 @@ pub enum Event<K, M> {
 
     /// Per-packet event on an existing flow.
     ///
-    /// The `tcp` and `frame` fields are populated only when
+    /// The `tcp` field is populated only when
     /// [`super::DriverBuilder::emit_packet_details`] was called
-    /// with `true`. Both are `None` by default — flowscope avoids
-    /// the per-packet TCP-info re-extraction and frame-bytes
-    /// clone unless the consumer opts in.
+    /// with `true`. flowscope avoids the per-packet TCP-info
+    /// re-extraction unless the consumer opts in.
     ///
     /// `tcp` carries the TCP header fields ([`TcpInfo::flags`],
     /// `seq`, `ack`, etc.) for the packet that produced this
-    /// event; `frame` is an owned copy of the full L2 frame.
+    /// event.
+    ///
+    /// **0.11 break (plan 118 §4):** the `frame: Option<Vec<u8>>`
+    /// field was removed. It used to be a per-packet
+    /// `view.frame.to_vec()` clone — at 1 Mpps with 1500-byte
+    /// frames that was ~1.5 GB/sec of allocator traffic.
+    /// Consumers that need the raw frame bytes hold onto the
+    /// source [`crate::PacketView`] they handed to `track_into`.
     FlowPacket {
         key: K,
         side: FlowSide,
@@ -55,9 +61,6 @@ pub enum Event<K, M> {
         ts: Timestamp,
         /// `Some` only when `emit_packet_details(true)` was set.
         tcp: Option<TcpInfo>,
-        /// Owned copy of the L2 frame bytes. `Some` only when
-        /// `emit_packet_details(true)` was set.
-        frame: Option<Vec<u8>>,
     },
 
     /// Flow ended (FIN / RST / idle / eviction / parser close).
