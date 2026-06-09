@@ -455,3 +455,16 @@ required-features = ["session", "reassembler", "extractors", "test-helpers"]
 name = "dedup"
 harness = false
 required-features = ["tracker"]
+
+[[bench]]
+name = "zero_alloc"
+harness = false
+required-features = [
+    "session",
+    "reassembler",
+    "extractors",
+    "http",
+    "dns",
+    "tls",
+    "test-helpers",
+]

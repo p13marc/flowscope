@@ -15,6 +15,67 @@ record; `plans/` is the working backlog.
 
 ## Active
 
+### 0.11.0 cycle — zero-allocation cycle
+
+Driven by the netring 0.19 dependency audit. Consolidated to
+**one umbrella + three detailed implementation plans** after a
+second-pass review (the first-pass fanout of 6 plans collapsed
+several items that didn't earn their separate files). Plan 117
+(legacy driver deletion, was queued for next major) is
+**absorbed into plan 121** since the slot refactor overlaps —
+one wider migration window for consumers beats two.
+
+Total estimated effort: **~16 working days** for the full break
+in one coherent 0.11.0 release.
+
+| Plan | Goal | Status |
+|------|------|--------|
+| [`118-zero-alloc-cycle.md`](./118-zero-alloc-cycle.md) | Umbrella — motivation, sequencing, Phase 0 bench gate (allocation-counting harness + baseline numbers), Phase 4 small wins (`parser_kinds::TLS_HANDSHAKE` + remove `Event::FlowPacket::frame`), Phase 5 release mechanics. | 📋 not started |
+| [`119-driver-allocation-elimination.md`](./119-driver-allocation-elimination.md) | Phase 1 — `Driver::track_into`, slot trait + `FlowTracker::track_into` thread `&mut Vec<Event>`, parser methods take `&mut Vec<Self::Message>` (httparse idiom). ≤ 0.5 allocs/packet steady-state; ≤ 0.1 allocs/parser-call. | 📋 queued |
+| [`120-bytes-audit-l7-types.md`](./120-bytes-audit-l7-types.md) | Phase 2 — `Vec<u8>` / `String` → `bytes::Bytes` across HTTP / DNS / TLS / ICMP parsed-message types. HTTP request parse ≤ 4 allocs (down from ~24). Serde wire format preserved via `#[serde(with = "serde_bytes")]`. | 📋 queued |
+| [`121-typed-slot-drains-and-legacy-deletion.md`](./121-typed-slot-drains-and-legacy-deletion.md) | Phase 3 — typed `SlotHandle<M, K>` drain handles replace closed-`M` Driver. **Absorbs plan 117**: delete `FlowDriver` / `FlowSessionDriver` / `FlowDatagramDriver` / `FlowMultiSessionDriver` / legacy `Pipeline`; rename `driver_unified` → `driver` at crate root. 0 allocs per parsed L7 message. | 📋 queued |
+
+Cycle theme: "ship the zero-allocation contract netring 0.19
+needs, collapse the type surface to ~5 driver-shaped types."
+
+**Consolidation decisions** (from second-pass review of the
+first-draft 6-plan fanout):
+
+- **Dropped `OutBuf<'_, M>` newtype** — used plain `&mut Vec<M>`
+  on parser trait methods. Same perf, fewer concepts, matches
+  `httparse` / `nom` / `quiche` ecosystem idioms.
+- **Dropped `HttpMethod` enum** — `Bytes` for everything. The
+  enum's only win was avoiding 1 alloc/message for known
+  methods; `Bytes::from_static(b"GET")` covers that case
+  without the variant complexity.
+- **Dropped `seq: u64` cross-slot ordering field** — per-
+  `track_into` drain provides packet-level ordering for free;
+  multi-packet ordering uses the existing `Timestamp`.
+- **Dropped `ConcurrentSlotHandle<M>` (Arc<Mutex>) variant** —
+  single-threaded slots only; netring's channels handle cross-
+  task posting.
+- **Dropped compile-time typestate builder** — `SlotId<M>`
+  tokens + a builder returning `SlotHandle<P::Message, K>` per
+  registration call. Simpler error messages; cfg-feature-gated
+  parser registration composes naturally.
+- **Dropped static-dispatch slot list** — vtable cost at 5
+  slots × 1 Mpps = 0.025% of a core. Not worth the typestate-
+  tuple complexity.
+- **Absorbed plan 117** — slot refactor in plan 121 inlines
+  what `FlowSessionDriver::track_into` did, making the legacy
+  types dead code. Deleting them in the same release saves a
+  second migration window.
+
+Reference documents (in repo root during the cycle, retire
+with the cycle):
+
+- [`../flowscope-deps-for-netring-0.19-2026-06-09.md`](../flowscope-deps-for-netring-0.19-2026-06-09.md)
+  — original netring-side dependency audit (~9–12 day estimate).
+- [`../flowscope-deps-for-netring-0.19-reanalysis-2026-06-09.md`](../flowscope-deps-for-netring-0.19-reanalysis-2026-06-09.md)
+  — flowscope-side counter-analysis with the 4 missing-from-
+  original allocations and the alternative architectures. The
+  plans above are this document operationalised + consolidated.
+
 ### 0.9.0 cycle
 
 The 0.9 cycle is complete. Every implementation plan shipped
@@ -46,7 +107,7 @@ sweep) is queued for the next major release.
 | 113 (retired) | `flowscope::detect::signatures` + `Routing::Heuristic` on the unified `Driver` (2 sub-PRs). | ✅ shipped (commits `a13a0a6` / `9685b59` + `ec9fa1b` PipelineBuilder proxies) |
 | [`115-strategic-review.md`](./115-strategic-review.md) | Strategic review motivating plan 116. | doc — retires with cycle release |
 | [`116-driver-event-unification.md`](./116-driver-event-unification.md) | `Driver<E, M>` + `Event<K, M>` — collapse the 6-driver / 4-event surface into one of each. | ✅ **PR 1-4 fully shipped including all 6 builder knobs** (commits `0b20c05` / `c74a974` / `9685b59` / `97e0852` / `743d191` / `ec9fa1b` / `5fd7a87` / `2b96103` / `720e919` / `d2ce55b`); PR 5 carved into plan 117 |
-| **[`117-legacy-driver-deletion.md`](./117-legacy-driver-deletion.md)** | **Post-0.10: delete legacy driver / event types; rename `driver_unified::Driver` → `flowscope::Driver` at crate root; migrate every test + example.** | 📋 queued for next major |
+| ~~117~~ legacy driver deletion | **Absorbed into plan 121 (0.11 cycle).** The slot refactor in 121 inlines `FlowSessionDriver`'s logic directly, making the legacy types dead code. Deleting them in the same release window saves a second migration burden on consumers. | 🔀 absorbed into plan 121 |
 
 Cycle theme: "address the next layer of DX after the 0.9
 big surface choices."
@@ -183,9 +244,13 @@ consolidation:
 Active: 21 (stale-deferred), 100 (postmortem doc), 112
 (dynamic-lazy analysis doc), 115 (strategic review doc), 116
 (driver+event unification — substantially complete; deletion
-sweep carved into plan 117), 117 (legacy driver/event deletion
-— queued for next major release). The next free number for a
-new plan is 118+.
+sweep absorbed into plan 121), 118 (0.11 cycle umbrella + bench
+gate + small wins + release), 119 (driver allocation
+elimination), 120 (Bytes audit), 121 (typed slot drains +
+legacy deletion — absorbs plan 117). Subsumed:
+- 117 → absorbed into 121 (legacy deletion + slot refactor
+  overlap; one wider migration window beats two)
+The next free number for a new plan is 122+.
 
 ---
 
