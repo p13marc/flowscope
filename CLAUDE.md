@@ -21,6 +21,73 @@ the core.
 
 ## Implementation Status
 
+**0.12.0 cycle** (cross-thread + structured-output cycle,
+shipped 2026-06). Plans 122 / 123 / 124 / 126 / 127 +
+Phase 7 small wins. Triggered by the netring 0.21 dependency
+wishlist (per-CPU sharded capture; multi-thread tokio runtime
+ask; SIEM EVE-format ingest).
+
+Headlines:
+
+- **Plan 122 pre-1.0 break** — `SlotHandle<M, K>` transitions
+  from `!Send + !Sync` to `Send + Sync`. Backing storage moved
+  from `Rc<RefCell<Vec<SlotMessage>>>` to
+  `Arc<crossbeam_queue::SegQueue<SlotMessage>>` (lock-free
+  MPMC). New always-on dep `crossbeam-queue = "0.3"`. Generic
+  bounds tightened from `M: 'static, K: 'static` to
+  `M: Send + 'static, K: Send + 'static` — every shipped
+  parser already meets this. Bench gate
+  `track_into_5_slots_steady_state` confirmed at **0.000
+  allocs/pkt** post-change. The `Driver<E>` itself stays
+  `!Send` (central `FlowTracker` holds `Rc<RefCell>`
+  internals) — only the handle side is cross-thread.
+- **Plan 123** — `flowscope::emit::EveJsonWriter` behind
+  `emit-eve` feature. Suricata 7.x EVE schema:
+  `event_type: "flow"` for `Ended`, `"anomaly"` for
+  `FlowAnomaly` / `TrackerAnomaly`, `"stats"` for `Tick`
+  (off by default). Every record carries a `flow_hash` field
+  (FNV-1a over `(proto, sorted endpoints)`, direction-
+  invariant). Schema-compatible with Filebeat's Suricata
+  module, Splunk Suricata TA, Tenzir's `read_suricata`, ECS-
+  converting pipelines. See `docs/eve-format.md`.
+- **Plan 124** — `Driver::<E>::deferred()` returns
+  `DeferredDriverBuilder<E>`, a mirror of `DriverBuilder<E>`
+  minus `build()` plus `build_with(ext)`. For consumer-built
+  monitor chains (netring's `MonitorBuilder`) that need to
+  register protocol parsers *before* the extractor instance
+  is known. Compile-time guarantee preserved by type-system
+  separation — no panicking `build()`.
+- **Plan 126** — `flowscope::AnomalyFields` trait. Structured
+  field accessors (`src_ip` / `src_port` / `dest_ip` /
+  `dest_port` / `proto_str` / `app_proto_str` /
+  `anomaly_type` / `anomaly_event`) used by `EveJsonWriter`
+  and consumable by any future field-aware emitter. Shipped
+  impls on `FiveTupleKey`, `L4Proto`, `AnomalyKind`. All 8
+  methods default to `None` — partial impls work for custom
+  keys.
+- **Plan 127** — `Timestamp::write_iso8601<W: fmt::Write>`
+  (alloc-free) + `to_iso8601() -> String`. Pure Howard
+  Hinnant `civil_from_days` — no chrono dep required.
+  Optional `chrono` feature adds `From<DateTime<Utc>>` for
+  `Timestamp` and `TryFrom<Timestamp>` for `DateTime<Utc>`
+  with `ChronoOutOfRange` error.
+- **Phase 7 small wins** —
+  `TimeBucketedCounter::new_unbounded(window, bucket)`,
+  `TimeBucketedSet::new_unbounded(window, bucket)`,
+  `KeyIndexed::new_unbounded(ttl)`. 3 trivial delegates,
+  retire netring's duplicated `correlate` module.
+
+Test count after the 0.12 cycle: 721 passing, zero clippy
+warnings under `--all-features --all-targets -D warnings`,
+zero rustdoc warnings. EVE example
+(`examples/05-export/eve_writer.rs`) verified end-to-end
+against `tests/data/mixed_short.pcap`.
+
+CI feature matrix grew by two entries: `chrono` and
+`emit-eve`. Cross-`SlotHandle` Send+Sync compile assertions
+in `tests/driver_send.rs` (via `static_assertions`).
+Migration recipes: `docs/migration-0.11-to-0.12.md`.
+
 **0.11.0 cycle** (zero-allocation cycle, shipped 2026-06).
 Plans 118 / 119 / 120 / 121. Triggered by the netring 0.19
 dependency audit; collapses the closed-`M` sum-type `Driver<E,
@@ -59,10 +126,13 @@ Public surface after the cycle: `Driver<E>`, `DriverBuilder<E>`,
 typed driver; `FlowDriver`, `FlowSessionDriver`,
 `FlowDatagramDriver` kept as raw sync primitives.
 
-The typed `Driver<E>` is **single-threaded by design** — the
-slot bufs are `Rc<RefCell>`, not `Arc<Mutex>`. For cross-task
-delivery, drain inside the event loop and post through a
-channel.
+The typed `Driver<E>` itself remains `!Send` (central
+`FlowTracker` holds `Rc<RefCell>` internals); only the
+`SlotHandle<M, K>` side is cross-thread (`Send + Sync` since
+0.12). Move a handle to a tokio task on a worker core while
+the driver runs on the capture thread, or share via `Arc` with
+multiple drainers (competitive-consumer semantics — each clone
+pops from the same `SegQueue`).
 
 **0.10.0 cycle** (shipped 2026-06). Plan-of-record in
 `plans/INDEX.md`. Triggered by the 0.9 examples-writing
@@ -185,10 +255,10 @@ src/
 ├── lib.rs                       # re-exports + feature wiring
 ├── error.rs                     # flowscope::Error / ErrorKind / Module / ErrorCode (plan 96, 0.9.0)
 ├── prelude.rs                   # flowscope::prelude::* (plan 94, 0.9.0)
-├── pipeline.rs                  # Pipeline + PipelineBuilder + Event + EventKind (plan 94 Tier 1, 0.9.0)
-├── timestamp.rs                 # Timestamp (also re-exported by netring)
+├── anomaly_fields.rs            # AnomalyFields trait (plan 126, 0.12.0)
+├── timestamp.rs                 # Timestamp + write_iso8601 + to_iso8601 + chrono interop (plan 127, 0.12.0)
 ├── view.rs                      # PacketView<'a> = (frame: &[u8], ts) + .layers() (plan 94, 0.9.0)
-├── extractor.rs                 # FlowExtractor trait + Extracted/Orientation
+├── extractor.rs                 # FlowExtractor trait + Extracted/Orientation + AnomalyFields for L4Proto (0.12.0)
 ├── layers/                      # Per-packet layered view (plan 94 Tier 3, 0.9.0)
 │   ├── mod.rs                   # Layers + Layer + accessors + tunnel walk + dynamic walk
 │   ├── kind.rs                  # LayerKind enum + .layer_number()
@@ -212,23 +282,21 @@ src/
 │   ├── mod.rs                   # public re-exports
 │   ├── histogram.rs             # Histogram + HistogramError
 │   └── percentile.rs            # Percentile (wraps `tdigest` crate)
-├── emit/                        # flowscope::emit (plan 101, 0.10; `emit` / `emit-ndjson` features)
+├── emit/                        # flowscope::emit (plan 101, 0.10; `emit` / `emit-ndjson` / `emit-eve` features)
 │   ├── mod.rs                   # public re-exports
 │   ├── csv.rs                   # FlowEventCsvWriter + CsvOptions
+│   ├── eve.rs                   # EveJsonWriter + EveOptions + flow_hash       (plan 123, 0.12.0)
 │   ├── ndjson.rs                # FlowEventNdjsonWriter + NdjsonOptions (gated on `emit-ndjson`)
 │   └── zeek.rs                  # ZeekConnLogWriter + ZeekOptions
 ├── well_known/                  # flowscope::well_known (plan 102 sub-D, 0.10)
 │   └── mod.rs                   # protocol_label / entries / curated table
-├── driver_builder.rs            # Driver::builder(ext) entry (plan 94 Tier 2, 0.9.0)
 ├── layers/fast.rs               # LayerParser + LayerStack zero-alloc (plan 94 Tier 3 fast path, 0.9.0)
-├── multi_session_driver.rs      # FlowMultiSessionDriver<E, M> (plan 92, 0.9.0; legacy from 0.10)
-├── driver_unified/              # flowscope::driver_unified — unified Driver<E, M> + Event<K, M>
-│                                # (plan 116, 0.10; PR 5 deletes legacy in 0.11)
-│   ├── mod.rs                   # Driver + DriverBuilder + map_flow_event
-│   ├── event.rs                 # Event<K, M> + accessors
-│   ├── erased.rs                # DriverSlot + ConcreteSlot + ConcreteDatagramSlot
-│   ├── heuristic.rs             # HeuristicSessionSlot + HeuristicDatagramSlot (FlowDetection FSM)
-│   └── pipeline.rs              # Pipeline + PipelineBuilder + PipelineIter (Driver wrapper)
+├── driver/                      # flowscope::driver — typed Driver<E> + SlotHandle<M, K> (plan 121, 0.11.0)
+│   ├── mod.rs                   # public re-exports (Driver / DriverBuilder / DeferredDriverBuilder / Event / SlotHandle / SlotMessage)
+│   ├── slot.rs                  # SlotHandle<M, K> + SlotMessage<M, K> — Arc<crossbeam_queue::SegQueue> backing (Send + Sync, plan 122, 0.12.0)
+│   ├── typed.rs                 # Driver<E> + DriverBuilder<E> + DeferredDriverBuilder<E> + Event<K> + map_flow_event (plan 124, 0.12.0)
+│   ├── typed_slot.rs            # TypedConcreteSlot + TypedConcreteDatagramSlot (with_queue ctors for deferred path)
+│   └── typed_slot_heuristic.rs  # TypedHeuristicSessionSlot + TypedHeuristicDatagramSlot (FlowDetection FSM)
 ├── segment_reassembler.rs       # SegmentBufferReassembler OOO hole-fill (plan 74, 0.9.0)
 ├── extract/                     # built-in extractors (extractors feature)
 │   ├── parse.rs                 # internal etherparse wrappers
@@ -315,8 +383,19 @@ The legacy `HttpFactory` / `TlsFactory` callback-handler shape
 - `tests/round_trip.rs` — synthesize→pcap→PcapFlowSource→
   FlowSessionDriver→assert byte-equality regression test. Three
   hand-written variants plus a proptest (0.3.0).
-- `tests/pipeline.rs` — `Pipeline` builder + `run_pcap` /
-  `run_iter` / `reset` integration (plan 94 Tier 1, 0.9.0).
+- `tests/driver.rs` — typed `Driver<E>` + `SlotHandle` /
+  port routing / heuristic / broadcast / force_close
+  (plan 121, 0.11.0).
+- `tests/driver_send.rs` — `static_assertions::assert_impl_all!`
+  on `SlotHandle: Send + Sync` + cross-thread drain +
+  competitive-consumer clone semantics (plan 122, 0.12.0).
+- `tests/driver_deferred.rs` — `Driver::deferred()` +
+  `DeferredDriverBuilder::build_with(ext)` equivalence with
+  the eager path + every builder knob propagates (plan 124,
+  0.12.0).
+- `tests/anomaly_fields.rs` — `AnomalyFields` impls on
+  `FiveTupleKey` / `L4Proto` / `AnomalyKind` (plan 126,
+  0.12.0).
 - `tests/layers.rs` + `tests/layers_extended.rs` — Tier 3
   per-packet view (direct slices, dynamic walk, tunnel walking,
   ARP/MPLS/ICMP).
@@ -332,13 +411,15 @@ The legacy `HttpFactory` / `TlsFactory` callback-handler shape
 - `tests/emit_csv.rs`, `tests/emit_ndjson.rs`,
   `tests/emit_zeek.rs` — three writers in `flowscope::emit`
   (plan 101, 0.10).
+- `tests/emit_eve.rs` — Suricata EVE JSON writer:
+  flow / anomaly / stats event_types + flow_hash
+  determinism + direction-invariance + severity mapping
+  + every-line-is-valid-JSON (plan 123, 0.12.0).
 - `tests/parser_helpers.rs` — `BufferedFrameDrain` /
   `AccumulatingSessionParser` / `PerDatagramParser` (plan
   106, 0.10).
 - `tests/http_exchange.rs`, `tests/dns_exchange.rs` —
   exchange aggregators (plan 107, 0.10).
-- `tests/driver_unified.rs`, `tests/pipeline_unified.rs` —
-  unified `Driver<E, M>` + `Pipeline<E, M>` (plan 116, 0.10).
 - `benches/{extractor,tracker,reassembler,session_driver,dedup}.rs`
   — criterion benchmark harness (0.3.0). Run with
   `cargo bench --all-features`; baselines in

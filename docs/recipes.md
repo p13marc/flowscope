@@ -7,42 +7,45 @@ to your needs. For the conceptual model, see
 
 ## Picking the right API
 
-flowscope exposes three tiers + the underlying traits. Walk
+flowscope exposes two tiers + the underlying traits. Walk
 top-to-bottom; the first "yes" picks your API.
 
-0. **Just want a hello-world running against a pcap?**
-   → `flowscope::Pipeline::builder(ext).session(parser).build()
-   .run_pcap(path)`. One import (`use flowscope::prelude::*;`),
-   one builder chain, one iterator. See `examples/hello_pipeline.rs`.
+0. **Want typed L7 messages with zero per-packet allocation?**
+   → `flowscope::driver::Driver<E>`. Register one or more
+   parsers via `builder.session_on_ports(p, [ports])` etc.;
+   each call returns a `SlotHandle<P::Message, E::Key>`. Per
+   packet: `driver.track_into(view, &mut events)` +
+   `slot.drain(&mut msgs)`. Handles are `Send + Sync` (0.12).
 
 1. **Only care about flow lifecycle, not L7?**
-   → Use `FlowTracker` directly, consume `FlowEvent`.
+   → Use `FlowTracker` directly, consume `FlowEvent`. Cheapest
+   path; no reassembler, no parsers.
 
 2. **Parsing a protocol flowscope doesn't ship?** (HTTP/2, AMQP,
    custom framed binary, …)
    → Implement `SessionParser` for TCP or `DatagramParser` for
-   UDP. Pair with `FlowSessionDriver` / `FlowDatagramDriver` for
-   sync use, or netring's `session_stream` / `datagram_stream`
-   for async.
+   UDP. Pair with `Driver::builder(ext).session_broadcast(p)`
+   for the typed-slot path, `FlowSessionDriver::new(ext, p)`
+   for the raw `SessionEvent` stream, or netring's
+   `session_stream` / `datagram_stream` for async.
 
-3. **Want typed L7 messages from a sync loop or pcap?**
-   → `FlowSessionDriver` (HTTP/TLS/DNS-TCP) or
-   `FlowDatagramDriver` (DNS-UDP/ICMP) — both available via the
-   high-level `flowscope::Pipeline` entry point, or directly via
-   their builders. For offline pcap, `Pipeline::run_pcap` and
-   the `PcapFlowSource::sessions()` / `.datagrams()` one-shot
-   adapters wrap them.
+3. **Need per-flow user state (`S` parameter)?**
+   → `FlowSessionDriver<E, P, S>` directly. The typed `Driver`
+   wraps drivers with `S = ()`; if you need a custom `S`,
+   build the inner driver yourself.
 
-4. **Want a callback-shaped HTTP/TLS interface?**
-   → Use the `SessionParser` shape with a consumer loop on
-   `SessionEvent::Application` — the 0.9 release deleted the
-   legacy `HttpFactory` / `TlsFactory` callback-handler shape
-   in favour of the typed-stream API. The migration is a one-
-   line change; see CHANGELOG 0.9.0 → Breaking.
+4. **Need to register parsers before knowing the extractor
+   instance?** (consumer-built monitor chains)
+   → `Driver::<E>::deferred()` returns a
+   `DeferredDriverBuilder` that finalises via `build_with(ext)`.
+   No `build()` method; the compile-time guarantee is preserved
+   by type-system separation. (0.12)
 
 5. **Want typed L7 messages from a tokio task?**
-   → netring's `AsyncCapture::flow_stream(...).session_stream(...)`
-   / `.datagram_stream(...)`.
+   → Move the `SlotHandle` to the task (it's `Send + Sync`
+   since 0.12) and drain on a worker thread, OR use netring's
+   `AsyncCapture::flow_stream(...).session_stream(...)` /
+   `.datagram_stream(...)` from the start.
 
 6. **Need both directions of one TCP flow as one ordered byte
    stream?** (request + response transcript)
@@ -140,34 +143,53 @@ side, ts)` instead of `feed_initiator` / `feed_responder`.
 
 Running HTTP + TLS + DNS + ICMP against one pcap.
 
-### Preferred — `FlowMultiSessionDriver` composite driver (0.9.0)
+### Preferred — `Driver<E>` with multiple typed slots (0.11+)
 
 ```rust,ignore
+use flowscope::driver::{Driver, Event};
 use flowscope::extract::FiveTuple;
-use flowscope::FlowMultiSessionDriver;
 use flowscope::http::{HttpMessage, HttpParser};
 use flowscope::tls::{TlsMessage, TlsParser};
+use flowscope::dns::DnsUdpParser;
+use flowscope::PacketView;
 
-#[derive(Debug)]
-enum L7 {
-    Http(HttpMessage),
-    Tls(TlsMessage),
-}
+let mut builder = Driver::builder(FiveTuple::bidirectional());
+let mut http_slot = builder.session_on_ports(HttpParser::default(), [80, 8080]);
+let mut tls_slot  = builder.session_on_ports(TlsParser::default(),  [443, 8443]);
+let mut dns_slot  = builder.datagram_on_ports(DnsUdpParser::default(), [53]);
+let mut driver = builder.build();
 
-let mut driver = FlowMultiSessionDriver::<_, L7>::new(FiveTuple::bidirectional())
-    .with_parser_on_ports(HttpParser::default(), [80, 8080], L7::Http)
-    .with_parser_on_ports(TlsParser::default(),  [443, 8443], L7::Tls);
+let mut events  = Vec::new();
+let mut http_m  = Vec::new();
+let mut tls_m   = Vec::new();
+let mut dns_m   = Vec::new();
 
-for view in source.views() {
-    for ev in driver.track(&view?) {
-        // SessionEvent<K, L7>
-    }
+for owned in source.views() {
+    let owned = owned?;
+    events.clear();
+    http_m.clear();
+    tls_m.clear();
+    dns_m.clear();
+    driver.track_into(PacketView::from(&owned), &mut events);
+    http_slot.drain(&mut http_m);
+    tls_slot.drain(&mut tls_m);
+    dns_slot.drain(&mut dns_m);
+    // process the typed per-parser drains independently
 }
 ```
 
-Each registered parser sees only the packets whose ports match
-its routing rule. `with_parser_broadcast` registers a parser
-that fires on every packet (use for ICMP).
+Each slot is independently typed (`SlotHandle<HttpMessage, _>`
+vs `SlotHandle<TlsMessage, _>`) — no sum-type enum, no lift
+closures. Slots only see packets matching their port routing;
+`session_broadcast(p)` / `datagram_broadcast(p)` registers
+parsers that fire on every flow (use for ICMP or
+heuristic-routed parsers).
+
+`session_heuristic(p, signature_fn)` / `datagram_heuristic` —
+introduced via `flowscope::detect::signatures` — runs the
+signature against each new flow's initial bytes; pins to the
+parser when it matches, gives up after the configured probe
+budget. Useful for non-standard ports.
 
 ### Legacy — one driver per parser, N pcap passes
 
@@ -383,7 +405,7 @@ tracker as `FlowEntry::user`, surfaced via `iter_active()`.
 
 ## Structured event output
 
-Three drop-in writers in `flowscope::emit` (0.10) cover the
+Four drop-in writers in `flowscope::emit` (0.10 + 0.12) cover the
 formats every flow-analysis pipeline ends up emitting. Each
 takes a `std::io::Write` sink and a
 `FlowEvent<FiveTupleKey>`; the constructor writes the header
@@ -392,10 +414,13 @@ flushes and recovers the sink.
 
 ```toml
 # CSV + Zeek conn.log writers — no extra deps.
-flowscope = { version = "0.10", features = ["emit"] }
+flowscope = { version = "0.12", features = ["emit"] }
 
 # NDJSON writer — adds serde_json.
-flowscope = { version = "0.10", features = ["emit-ndjson"] }
+flowscope = { version = "0.12", features = ["emit-ndjson"] }
+
+# Suricata 7.x EVE JSON — adds serde_json (0.12).
+flowscope = { version = "0.12", features = ["emit-eve"] }
 ```
 
 ```rust,ignore
@@ -438,6 +463,106 @@ Wire format details (locked from 0.8):
 
 Once consumers ship dashboards depending on field names,
 renames require a CHANGELOG-documented breaking change.
+
+### EVE JSON (Suricata schema) — 0.12
+
+For SIEM-shaped output that drops into Filebeat's Suricata
+module, Splunk Suricata TA, Tenzir's `read_suricata`, or any
+ECS-converting pipeline, use `EveJsonWriter` (`emit-eve`
+feature). Three EVE `event_type` shapes are produced:
+
+- `"flow"` for `FlowEvent::Ended` (per-flow rollup with
+  pkts_toserver / pkts_toclient / bytes / start / end / age /
+  reason).
+- `"anomaly"` for `FlowAnomaly` / `TrackerAnomaly` (Suricata-
+  shaped `anomaly.{type, event, code}` + `severity` numeric).
+- `"stats"` for `FlowEvent::Tick` (off by default — opt in
+  with `EveOptions::include_stats`).
+
+```rust,ignore
+use flowscope::emit::{EveJsonWriter, EveOptions};
+
+let mut opts = EveOptions::default();
+opts.in_iface = "eth0".to_string();
+let mut eve = EveJsonWriter::with_options(file, opts);
+
+for ev in driver.track(view) {
+    eve.write_event(&ev)?;
+}
+eve.finish()?;
+```
+
+Every record carries a `flow_hash` field — a 16-char hex FNV-1a
+over `(proto, sorted endpoints)`, deterministic and direction-
+invariant. Use it as a stable correlation key across pipelines.
+
+Custom flow-key types opt in by implementing
+[`AnomalyFields`](#custom-anomalyfields-impl). See
+[`docs/eve-format.md`](eve-format.md) for the field-by-field
+schema mapping and severity vocabulary.
+
+### Custom `AnomalyFields` impl
+
+```rust,ignore
+use std::net::IpAddr;
+use flowscope::AnomalyFields;
+
+struct MyKey { src: IpAddr, dst: IpAddr, sport: u16, dport: u16 }
+
+impl AnomalyFields for MyKey {
+    fn src_ip(&self)    -> Option<IpAddr> { Some(self.src) }
+    fn src_port(&self)  -> Option<u16>    { Some(self.sport) }
+    fn dest_ip(&self)   -> Option<IpAddr> { Some(self.dst) }
+    fn dest_port(&self) -> Option<u16>    { Some(self.dport) }
+    fn proto_str(&self) -> Option<&'static str> { Some("TCP") }
+}
+```
+
+Once your key implements `AnomalyFields`, `EveJsonWriter` (and
+any future field-aware emitter) renders the typed accessors
+into the EVE schema. All 8 trait methods default to `None`, so
+you only fill in what your key carries.
+
+### Cross-thread slot drain (0.12)
+
+`SlotHandle<M, K>` is `Send + Sync` since 0.12 (backed by
+`Arc<crossbeam_queue::SegQueue<…>>`). Drain on a worker thread
+while the driver runs on the capture thread:
+
+```rust,ignore
+use std::thread;
+use flowscope::driver::Driver;
+use flowscope::http::HttpParser;
+
+let mut builder = Driver::builder(FiveTuple::bidirectional());
+let mut http_slot = builder.session_on_ports(HttpParser::default(), [80]);
+let mut driver = builder.build();
+
+// Hand a clone of the handle to a worker thread.
+let drainer = http_slot.clone();
+thread::spawn(move || {
+    let mut h = drainer;
+    let mut buf = Vec::new();
+    loop {
+        h.drain(&mut buf);
+        for m in buf.drain(..) {
+            // forward to your channel / sink
+        }
+    }
+});
+
+// Capture loop on the main thread.
+let mut events = Vec::new();
+for owned in source.views() {
+    driver.track_into(PacketView::from(&owned?), &mut events);
+}
+```
+
+`Clone` hands out a **competitive consumer** (each handle pops
+from the same queue; sum of drains across clones = total
+pushed). For broadcast — every consumer sees every message —
+drain into a `tokio::sync::broadcast` or `crossbeam::channel`
+yourself.
 
 ## Per-packet introspection — `flowscope::layers`
 
@@ -747,37 +872,44 @@ control, use `BufferedFrameDrain` directly inside your own
 `PerDatagramParser<F, M>` is the UDP parity:
 `Fn(&[u8]) -> Option<M>` → one message per datagram.
 
-## Migrating to the unified `Driver<E, M>` (0.10+)
+## The typed `Driver<E>` (0.11+)
 
-0.10 ships a preview of the centerpiece API redesign at
-`flowscope::driver_unified` — one `Driver<E, M>` that
-replaces the 0.9-era 5-driver / 4-event surface
-(`FlowDriver`, `FlowSessionDriver`, `FlowDatagramDriver`,
-`FlowMultiSessionDriver`, `Pipeline`) with one driver and
-one event type.
-
-The old types remain shipped in 0.10 for migration; the
-deletion sweep is queued for the next major release.
+0.11 replaced the closed-`M` `Driver<E, M>` with a typed-slot-
+drain shape: `Driver<E>` emits flow-lifecycle `Event<K>` only;
+per-parser typed messages flow through `SlotHandle<M, K>`
+returned at registration time. No lift closures, no sum-type
+`M`, zero per-message Box.
 
 ```rust,ignore
-use flowscope::driver_unified::{Driver, Event};
+use flowscope::driver::{Driver, Event};
 use flowscope::detect::signatures::http_request;
 use flowscope::dns::DnsUdpParser;
 use flowscope::extract::FiveTuple;
 use flowscope::http::HttpParser;
 
-let mut driver = Driver::<_, MyL7>::builder(FiveTuple::bidirectional())
-    .session_on_ports(HttpParser::default(), [80, 8080], MyL7::Http)
-    .datagram_on_ports(DnsUdpParser::default(), [53], MyL7::Dns)
-    // Heuristic — catches HTTP on unusual ports.
-    .session_heuristic(HttpParser::default(), http_request, MyL7::Http)
-    .build();
+let mut builder = Driver::builder(FiveTuple::bidirectional());
+let mut http_slot = builder.session_on_ports(HttpParser::default(), [80, 8080]);
+let mut dns_slot  = builder.datagram_on_ports(DnsUdpParser::default(), [53]);
+// Heuristic — catches HTTP on unusual ports.
+let mut http_alt  = builder.session_heuristic(HttpParser::default(), http_request);
+let mut driver    = builder.build();
+
+let mut events  = Vec::new();
+let mut http_m  = Vec::new();
+let mut dns_m   = Vec::new();
+let mut alt_m   = Vec::new();
 
 for owned in source.views() {
-    for event in driver.track(&owned?) {
-        match event {
+    let owned = owned?;
+    events.clear();
+    http_m.clear(); dns_m.clear(); alt_m.clear();
+    driver.track_into(PacketView::from(&owned), &mut events);
+    http_slot.drain(&mut http_m);
+    dns_slot.drain(&mut dns_m);
+    http_alt.drain(&mut alt_m);
+    for ev in &events {
+        match ev {
             Event::FlowStarted { key, .. } => /* lifecycle */ {}
-            Event::Message { message, parser_kind, .. } => /* L7 */ {}
             Event::ParserClosed { parser_kind, .. } => /* per-parser close */ {}
             Event::FlowEnded { key, reason, stats, .. } => /* lifecycle */ {}
             _ => {}
@@ -786,26 +918,12 @@ for owned in source.views() {
 }
 ```
 
-Migration table (legacy → unified):
+For the full set of migration recipes from prior versions, see:
 
-| 0.9 type | 0.10 unified equivalent |
-|----------|-------------------------|
-| `FlowSessionDriver::new(ext, parser)` | `Driver::builder(ext).session_broadcast(parser, identity).build()` |
-| `FlowDatagramDriver::new(ext, parser)` | `Driver::builder(ext).datagram_broadcast(parser, identity).build()` |
-| `FlowMultiSessionDriver` | `Driver` with multiple `.session_on_ports(…)` / `.session_broadcast(…)` |
-| `Pipeline::builder(ext).session(p)` | `flowscope::driver_unified::Pipeline::builder(ext).session_broadcast(p, identity)` |
-| `SessionEvent::Started` | `Event::FlowStarted` (from the central tracker) |
-| `SessionEvent::Closed` | `Event::FlowEnded` (lifecycle) + `Event::ParserClosed` (per-parser) |
-| `SessionEvent::Application` | `Event::Message { parser_kind, .. }` |
-| `SessionEvent::FlowTick` | `Event::FlowTick` |
-| `FlowEvent::Established` | `Event::FlowEstablished` |
-| `FlowEvent::Packet` | `Event::FlowPacket` |
-| `FlowEvent::StateChange` | (dropped in the new shape; `FlowEstablished` is the only transition surfaced) |
-
-Heuristic routing (plan 113 sub-B) is folded in as
-`.session_heuristic(parser, signature, lift)` /
-`.datagram_heuristic(…)`; see `examples/unified_driver_demo.rs`
-for an end-to-end example.
+- [`docs/migration-0.10-to-0.11.md`](migration-0.10-to-0.11.md)
+  — parser API break + `Driver<E>` introduction.
+- [`docs/migration-0.11-to-0.12.md`](migration-0.11-to-0.12.md)
+  — `SlotHandle: Send + Sync` and the new opt-in features.
 
 ## Re-exporting flowscope types
 

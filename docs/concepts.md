@@ -12,22 +12,27 @@ opinionated decision tree on which layer to reach for, see
 [`recipes.md`](recipes.md). For a working hello-world, see
 [`getting-started.md`](getting-started.md).
 
-## The three-tier API surface (0.9.0)
+## The two-tier API surface (0.11+)
 
-The library exposes three tiers of API, ranked by how much it
+The library exposes two tiers of API, ranked by how much it
 gives you out of the box:
 
 ```
-┌─ Tier 1 — flowscope::Pipeline ──────────────────────────────┐
-│  One import, one builder chain, one iterator.               │
+┌─ Tier 1 — flowscope::driver::Driver<E> ─────────────────────┐
+│  One builder, one typed `SlotHandle<M, K>` per parser,      │
+│  zero-allocation `track_into` + `drain` per packet.         │
 │  90 % of users; offline + simple online pipelines.          │
-│  `Pipeline::builder(ext).session(p).build().run_pcap(path)` │
+│  Slot handles are `Send + Sync` (0.12) for cross-thread     │
+│  drain.                                                     │
+│  `Driver::builder(ext).session_on_ports(p, [80]).build()`   │
 └─────────────────────────────────────────────────────────────┘
-┌─ Tier 2 — driver builders ──────────────────────────────────┐
-│  Typed builders for the three sync drivers.                 │
-│  Per-flow state, per-flow parser factories, custom drainers.│
-│  Power users who outgrow Pipeline.                          │
-│  `FlowSessionDriver::builder(ext).parser(p).build()`        │
+┌─ Tier 2 — raw `FlowSessionDriver` / `FlowDatagramDriver` ───┐
+│  One parser per driver. Direct access to the                │
+│  `SessionEvent` stream (`Started` / `Application` /         │
+│  `Closed` / anomalies).                                     │
+│  Per-flow user state via the `S` parameter on               │
+│  `FlowSessionDriver<E, P, S>`.                              │
+│  `FlowSessionDriver::new(ext, parser)`                      │
 └─────────────────────────────────────────────────────────────┘
 ┌─ Tier 3 — flowscope::layers ────────────────────────────────┐
 │  Per-packet zero-copy L2/L3/L4 view + dynamic walk.         │
@@ -41,6 +46,26 @@ tier sits atop the same `FlowExtractor` / `FlowTracker` /
 `Reassembler` / `SessionParser` / `DatagramParser` traits — the
 layered design below — and exposes a higher-level surface for
 common cases.
+
+### `Driver::deferred()` (0.12)
+
+For consumer-built monitor chains (e.g. netring's
+`MonitorBuilder`) that need to register protocol parsers
+*before* committing to an extractor instance, use
+`Driver::<E>::deferred()` — it returns a
+`DeferredDriverBuilder<E>` that's API-identical to
+`DriverBuilder<E>` minus `build()`. Finalise with
+`build_with(ext)`:
+
+```rust,ignore
+let mut builder = Driver::<FiveTuple>::deferred();
+let mut http = builder.session_on_ports(HttpParser::default(), [80]);
+// …later, after CLI / config resolution:
+let driver = builder.build_with(FiveTuple::bidirectional());
+```
+
+The compile-time guarantee that an extractor is set is
+preserved by type-system separation (no panicking `build()`).
 
 ## The pipeline
 

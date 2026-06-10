@@ -315,6 +315,11 @@ name = "layer_fast_path"
 path = "examples/08-performance/layer_fast_path.rs"
 required-features = ["pcap", "extractors"]
 
+[[example]]
+name = "threaded_slot_drain"
+path = "examples/08-performance/threaded_slot_drain.rs"
+required-features = ["pcap", "http"]
+
 # ── 09 reassembly / low-level ────────────────────────
 [[example]]
 name = "pcap_flow_summary"

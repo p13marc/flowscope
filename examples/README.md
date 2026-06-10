@@ -25,9 +25,9 @@ the categories sort logically in `ls`.
 
 | Example | Features | What it shows |
 |---|---|---|
-| **`hello_pipeline`** | `pcap,extractors,reassembler,session` | Shortest `flowscope::Pipeline` program — one builder chain, one iterator. The recommended starting point. |
+| **`hello_pipeline`** | `pcap,extractors,reassembler,session` | Shortest `flowscope::driver::Driver<E>` program — one builder chain, one slot drain. The recommended starting point. |
 | **`inspect_packet`** | `pcap,extractors` | Dump a layered view of every packet: L2 / L3 / L4 / tunnel headers via the dynamic walk on `flowscope::layers`. |
-| **`unified_driver_demo`** | `pcap,http,dns` | Plan-116 unified `Driver<E, M>` showcase — port-routed HTTP + DNS plus a signature-based heuristic catch-all under one driver and one `Event<K, M>` stream. |
+| **`unified_driver_demo`** | `pcap,http,dns` | Plan-121 typed `Driver<E>` showcase — port-routed HTTP + DNS slots plus a signature-based heuristic catch-all. Drain each parser slot independently. |
 
 ## 01 — L7 message logging
 
@@ -82,6 +82,7 @@ the categories sort logically in `ls`.
 | **`flow_csv_export`** | `pcap,emit` | `flows.csv` via `FlowEventCsvWriter` (RFC-4180 quoted; plan 101). |
 | **`flow_json_export`** | `pcap,emit-ndjson` | NDJSON via `FlowEventNdjsonWriter` — drop-in for Elasticsearch / Loki / ClickHouse. |
 | **`zeek_style_conn_log`** | `pcap,emit` | Tab-separated Zeek `conn.log` via `ZeekConnLogWriter` (with `#fields` / `#types` / `#close` headers + UID generation). |
+| **`eve_writer`** | `pcap,emit-eve` | Suricata EVE JSON via `EveJsonWriter` (0.12) — drop-in for Filebeat / Splunk Suricata TA / Tenzir / ECS pipelines. Every record carries a deterministic 16-char `flow_hash`. |
 
 ## 06 — custom protocols
 
@@ -92,6 +93,15 @@ the categories sort logically in `ls`.
 | **`length_prefixed_pcap`** | `pcap,session` | Custom binary protocol (`PFX2,`/`PFX4,` length-prefixed) using `FlowSessionDriver` directly. |
 | **`accumulating_line_parser`** | `pcap,extractors,session` | Same shape via `AccumulatingSessionParser` (plan 106) — one constructor call replaces the 25-LoC manual `SessionParser` impl. |
 | **`redis_protocol`** | `pcap,extractors,reassembler` | RESP protocol parser as `SessionParser`. Demonstrates the splitting-invariance contract and a real recursive parser. |
+
+## 08 — performance
+
+[`examples/08-performance/`](./08-performance/)
+
+| Example | Features | What it shows |
+|---|---|---|
+| **`layer_fast_path`** | `pcap,extractors` | Zero-allocation `LayerParser` + `LayerStack` for the per-packet view (plan 94 Tier 3 fast path). |
+| **`threaded_slot_drain`** | `pcap,http` | Cross-thread slot drain — `SlotHandle: Send + Sync` (0.12). Worker thread drains an HTTP slot while the capture loop runs on main. |
 
 ## 07 — multi-protocol pipelines
 

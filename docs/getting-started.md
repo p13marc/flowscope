@@ -8,7 +8,7 @@ or with pcap files for offline replay.
 This guide walks through four minimal pipelines so you can see
 the shape before you commit to a layer:
 
-0. **The shortest path** — `Pipeline`, one import, one builder.
+0. **The shortest path** — `Driver<E>` with a typed slot handle.
 1. Lifecycle only — flow events without bytes.
 2. Typed L7 messages — HTTP requests from a pcap.
 3. Async live capture — same, but via netring.
@@ -19,7 +19,7 @@ After each, the right doc to read next is called out.
 
 ```toml
 [dependencies]
-flowscope = "0.9"
+flowscope = "0.12"
 ```
 
 MSRV is Rust 1.88 (June 2025).
@@ -29,7 +29,7 @@ The default features cover the core stack (`extractors`,
 and observability piecemeal:
 
 ```toml
-flowscope = { version = "0.9", features = ["l7", "pcap", "metrics", "tracing"] }
+flowscope = { version = "0.12", features = ["l7", "pcap", "metrics", "tracing", "emit-eve"] }
 ```
 
 | Feature | What it adds |
@@ -39,52 +39,69 @@ flowscope = { version = "0.9", features = ["l7", "pcap", "metrics", "tracing"] }
 | `pcap` | Offline pcap source |
 | `metrics`, `tracing` | Observability (zero-cost when off) |
 | `serde` | `Serialize` + `Deserialize` on every public event / message type |
-| `ja3` | TLS ClientHello fingerprinting |
+| `ja3`, `ja4` | TLS ClientHello fingerprinting (sub-feature of `tls`) |
+| `emit`, `emit-ndjson`, `emit-eve` | Structured event sinks — CSV / Zeek / NDJSON / Suricata EVE JSON |
+| `chrono` | `Timestamp` ↔ `chrono::DateTime<Utc>` interop |
 | `test-helpers` | Reusable parser stubs for downstream test crates |
 
-## 0. The shortest path: `Pipeline`
+## 0. The shortest path: `Driver<E>` with a slot handle
 
-The 90 % case: one import, one builder chain, one iterator. The
-high-level entry point introduced in 0.9.0.
+The 90 % case: one builder, one slot handle per protocol,
+`track_into` for the flow-lifecycle stream, `drain` for the
+typed parser output.
 
 ```rust,ignore
-use flowscope::prelude::*;
-use flowscope::http::HttpParser;
+use flowscope::driver::{Driver, Event, SlotMessage};
+use flowscope::extract::{FiveTuple, FiveTupleKey};
+use flowscope::http::{HttpMessage, HttpParser};
+use flowscope::pcap::PcapFlowSource;
+use flowscope::PacketView;
 
-fn main() -> flowscope::Result<()> {
-    let mut pipeline = Pipeline::builder(FiveTuple::bidirectional())
-        .session(HttpParser::default())
-        .build();
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let mut builder = Driver::builder(FiveTuple::bidirectional());
+    let mut http = builder.session_on_ports(HttpParser::default(), [80, 8080]);
+    let mut driver = builder.build();
 
-    for event in pipeline.run_pcap("trace.pcap")? {
-        match event? {
-            Event::Tcp(SessionEvent::Application { message, .. }) => {
-                println!("HTTP: {message:?}");
-            }
-            Event::Flow(FlowEvent::Started { key, .. }) => {
+    let mut events: Vec<Event<FiveTupleKey>> = Vec::new();
+    let mut msgs:   Vec<SlotMessage<HttpMessage, FiveTupleKey>> = Vec::new();
+
+    for owned in PcapFlowSource::open("trace.pcap")?.views() {
+        let owned = owned?;
+        events.clear();
+        msgs.clear();
+        driver.track_into(PacketView::from(&owned), &mut events);
+        http.drain(&mut msgs);
+
+        for m in &msgs {
+            println!("{:?} {:?}", m.side, m.message);
+        }
+        for ev in &events {
+            if let Event::FlowStarted { key, .. } = ev {
                 println!("+ flow {key:?}");
             }
-            _ => {}
         }
     }
     Ok(())
 }
 ```
 
-Build with `cargo run --features http,pcap`. The `prelude`
-re-exports `Pipeline`, `Event`, `SessionEvent`, `FlowEvent`,
-`FiveTuple`, `Timestamp`, `Result`, and the per-feature parser
-types you need.
+Build with `cargo run --features http,pcap`.
 
-`Pipeline` opinionates the defaults: anomalies emitted, monotonic
-timestamps for offline replay. Configure via
-`.config(FlowTrackerConfig { … })` and the chainable setters.
-When you need per-flow user state, custom drainers, or multiple
-parsers per L4, drop down to `FlowSessionDriver` /
-`FlowDatagramDriver` — see `recipes.md`.
+`builder.session_on_ports(parser, ports)` returns a typed
+`SlotHandle<P::Message, E::Key>`. Each registration returns a
+fresh handle — register HTTP on 80/8080, TLS on 443, DNS on 53;
+drain each independently per packet. The handle is `Send + Sync`
+(0.12); move it to a tokio task or share via `Arc` if you want
+cross-thread drain.
 
-**Read next:** [`concepts.md`](concepts.md) — the three-tier
-shape (`Pipeline` → driver builders → `layers`).
+For per-flow user state on the central tracker, drop to
+`FlowDriver`. For raw sync session/datagram primitives, see
+`FlowSessionDriver` / `FlowDatagramDriver`. For deferred
+extractor selection (consumer-built monitor chains), use
+`Driver::deferred()` → `.build_with(ext)` (0.12).
+
+**Read next:** [`concepts.md`](concepts.md) — the four-layer
+trait shape.
 
 ## 1. Lifecycle only
 
@@ -94,23 +111,30 @@ packet. No L7. No bytes. Five tuples + state machine.
 ```rust,ignore
 use flowscope::extract::FiveTuple;
 use flowscope::pcap::PcapFlowSource;
-use flowscope::FlowEvent;
+use flowscope::{FlowEvent, FlowTracker, PacketView};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let source = PcapFlowSource::open("trace.pcap")?
-        .views(FiveTuple::bidirectional());
+    let mut tracker = FlowTracker::<FiveTuple>::new(FiveTuple::bidirectional());
 
-    for evt in source {
-        match evt? {
-            FlowEvent::Started { l4, key, .. } => {
-                println!("+ {:?} {:?}", l4, key);
+    for owned in PcapFlowSource::open("trace.pcap")?.views() {
+        let owned = owned?;
+        for evt in tracker.track(PacketView::from(&owned)) {
+            match evt {
+                FlowEvent::Started { l4, key, .. } => {
+                    println!("+ {:?} {:?}", l4, key);
+                }
+                FlowEvent::Ended { reason, stats, l4, .. } => {
+                    println!("- {:?} {:?} packets={}",
+                        l4, reason,
+                        stats.packets_initiator + stats.packets_responder);
+                }
+                _ => {}
             }
-            FlowEvent::Ended { reason, stats, l4, .. } => {
-                println!("- {:?} {:?} packets={}",
-                    l4, reason,
-                    stats.packets_initiator + stats.packets_responder);
-            }
-            _ => {}
+        }
+    }
+    for evt in tracker.finish() {
+        if let FlowEvent::Ended { reason, l4, .. } = evt {
+            println!("- final {:?} {:?}", l4, reason);
         }
     }
     Ok(())
@@ -122,36 +146,46 @@ Build with `cargo run --features pcap`.
 **Read next:** [`concepts.md`](concepts.md) — Layer 1 (extractor)
 and Layer 2 (tracker).
 
-## 2. Typed HTTP messages from a pcap
+## 2. Typed HTTP messages from a pcap (raw `FlowSessionDriver`)
 
-Add the `http` feature and ship parsed `HttpRequest` /
-`HttpResponse` events.
+If you want a single-parser pipeline without the `Driver<E>`
+slot dance — or you need the raw `SessionEvent` stream
+(`Started` / `Application` / `Closed` / anomalies) — use the
+sync `FlowSessionDriver` directly:
 
 ```rust,ignore
 use flowscope::extract::FiveTuple;
 use flowscope::http::{HttpMessage, HttpParser};
 use flowscope::pcap::PcapFlowSource;
-use flowscope::SessionEvent;
+use flowscope::{FlowSessionDriver, PacketView, SessionEvent};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let source = PcapFlowSource::open("trace.pcap")?
-        .sessions(FiveTuple::bidirectional(), HttpParser::default());
+    let mut driver = FlowSessionDriver::new(
+        FiveTuple::bidirectional(),
+        HttpParser::default(),
+    );
 
-    for evt in source {
-        match evt? {
-            SessionEvent::Application {
-                message: HttpMessage::Request(req), ..
-            } => {
-                println!("{} {} (host={})",
-                    req.method, req.path,
-                    req.host().unwrap_or("?"));
+    let mut events = Vec::new();
+    for owned in PcapFlowSource::open("trace.pcap")?.views() {
+        let owned = owned?;
+        events.clear();
+        driver.track_into(PacketView::from(&owned), &mut events);
+        for ev in &events {
+            match ev {
+                SessionEvent::Application {
+                    message: HttpMessage::Request(req), ..
+                } => {
+                    println!("{:?} {:?} (host={})",
+                        req.method, req.path,
+                        req.host().unwrap_or("?"));
+                }
+                SessionEvent::Application {
+                    message: HttpMessage::Response(resp), ..
+                } => {
+                    println!("  → {} {:?}", resp.status, resp.reason);
+                }
+                _ => {}
             }
-            SessionEvent::Application {
-                message: HttpMessage::Response(resp), ..
-            } => {
-                println!("  → {} {}", resp.status, resp.reason);
-            }
-            _ => {}
         }
     }
     Ok(())
