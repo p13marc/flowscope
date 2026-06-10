@@ -89,15 +89,42 @@ where
             inner: Arc::clone(&msg_buf),
             parser_kind,
         };
-        let slot = Self {
+        let slot = Self::with_queue(
+            extractor,
+            parser,
+            config,
+            ports,
+            monotonic_timestamps,
+            msg_buf,
+        );
+        (slot, handle)
+    }
+
+    /// Construct the slot around a pre-allocated queue. Used by
+    /// the deferred-builder path: the handle is returned at
+    /// registration time (sharing the queue via `Arc::clone`),
+    /// the slot is materialised here at `build_with` time.
+    pub(super) fn with_queue(
+        extractor: E,
+        parser: P,
+        config: FlowTrackerConfig,
+        ports: Option<smallvec::SmallVec<[u16; 4]>>,
+        monotonic_timestamps: bool,
+        msg_buf: Arc<SegQueue<SlotMessage<P::Message, E::Key>>>,
+    ) -> Self
+    where
+        E::Key: Send + 'static,
+        P::Message: Send + 'static,
+    {
+        let parser_kind = parser.parser_kind();
+        Self {
             driver: FlowSessionDriver::with_config(extractor, parser, config)
                 .with_monotonic_timestamps(monotonic_timestamps),
             parser_kind,
             ports,
             msg_buf,
             session_scratch: Vec::new(),
-        };
-        (slot, handle)
+        }
     }
 }
 
@@ -192,7 +219,31 @@ where
             inner: Arc::clone(&msg_buf),
             parser_kind,
         };
-        let slot = Self {
+        let slot = Self::with_queue(
+            extractor,
+            parser,
+            config,
+            ports,
+            monotonic_timestamps,
+            msg_buf,
+        );
+        (slot, handle)
+    }
+
+    pub(super) fn with_queue(
+        extractor: E,
+        parser: D,
+        config: FlowTrackerConfig,
+        ports: Option<smallvec::SmallVec<[u16; 4]>>,
+        monotonic_timestamps: bool,
+        msg_buf: Arc<SegQueue<SlotMessage<D::Message, E::Key>>>,
+    ) -> Self
+    where
+        E::Key: Send + 'static,
+        D::Message: Send + 'static,
+    {
+        let parser_kind = parser.parser_kind();
+        Self {
             driver: FlowDatagramDriver::with_config(extractor, parser, config)
                 .with_monotonic_timestamps(monotonic_timestamps),
             parser_kind,
@@ -200,8 +251,7 @@ where
             msg_buf,
             session_scratch: Vec::new(),
             _marker: PhantomData,
-        };
-        (slot, handle)
+        }
     }
 }
 

@@ -33,6 +33,23 @@ for SIEM ingest, and `chrono` interop for legacy systems.
 
 ### Added
 
+- **`Driver::deferred()` constructor** (plan 124) — builds a
+  `DeferredDriverBuilder<E>` that defers extractor *instance*
+  selection until `.build_with(ext)`. Useful when slot
+  registration ordering precedes extractor selection
+  (consumer-built monitor chains like netring's
+  `MonitorBuilder` that want every protocol registered before
+  the user picks the capture source).
+
+  Type-system distinction: `DeferredDriverBuilder` has no
+  `build()` method, so the compile-time guarantee that an
+  extractor is set is preserved by the type system, not by a
+  runtime panic.
+
+  `Driver::deferred().session_on_ports(p, ports).build_with(ext)`
+  is behaviourally equivalent to
+  `Driver::builder(ext).session_on_ports(p, ports).build()`.
+
 - **`flowscope::AnomalyFields` trait** (plan 126) — structured
   field access for emit writers. Default-`None` methods:
   `src_ip` / `src_port` / `dest_ip` / `dest_port` / `proto_str` /

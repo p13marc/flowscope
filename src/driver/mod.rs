@@ -32,9 +32,13 @@
 //! - Zero-allocation in steady state across the full dispatch
 //!   path including registered slots.
 //!
-//! Single-threaded by design — the slot bufs are `Rc<RefCell>`,
-//! not `Arc<Mutex>`. For cross-task delivery, drain inside the
-//! event loop and post through a channel.
+//! Plan 122: `SlotHandle<M, K>` is `Send + Sync` (backed by
+//! `Arc<crossbeam_queue::SegQueue>`). Move the handle to a
+//! worker thread, share via `Arc` with multiple drainers, drain
+//! from a tokio task on another core. The driver itself
+//! (`Driver<E>`) remains `!Send` (central `FlowTracker` holds
+//! `Rc<RefCell>` internals) — only the handle side is
+//! cross-thread.
 
 mod slot;
 mod typed;
@@ -42,5 +46,5 @@ mod typed_slot;
 mod typed_slot_heuristic;
 
 pub use slot::{SlotHandle, SlotMessage};
-pub use typed::{Driver, DriverBuilder, Event};
+pub use typed::{DeferredDriverBuilder, Driver, DriverBuilder, Event};
 pub use typed_slot_heuristic::{DEFAULT_PROBE_PACKETS, PROBE_BUFFER_CAP};

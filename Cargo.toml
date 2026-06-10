@@ -453,6 +453,10 @@ required-features = ["extractors", "tracker"]
 name = "driver_send"
 required-features = ["test-helpers", "extractors", "session", "reassembler"]
 
+[[test]]
+name = "driver_deferred"
+required-features = ["test-helpers", "extractors", "session", "reassembler"]
+
 [[bench]]
 name = "extractor"
 harness = false

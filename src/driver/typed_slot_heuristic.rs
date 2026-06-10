@@ -98,7 +98,33 @@ where
             inner: Arc::clone(&msg_buf),
             parser_kind,
         };
-        let slot = Self {
+        let slot = Self::with_queue(
+            extractor,
+            parser,
+            config,
+            signature,
+            max_probe_packets,
+            monotonic_timestamps,
+            msg_buf,
+        );
+        (slot, handle)
+    }
+
+    pub(super) fn with_queue(
+        extractor: E,
+        parser: P,
+        config: FlowTrackerConfig,
+        signature: SignatureFn,
+        max_probe_packets: u8,
+        monotonic_timestamps: bool,
+        msg_buf: Arc<SegQueue<SlotMessage<P::Message, E::Key>>>,
+    ) -> Self
+    where
+        E::Key: Send + 'static,
+        P::Message: Send + 'static,
+    {
+        let parser_kind = parser.parser_kind();
+        Self {
             driver: FlowSessionDriver::with_config(extractor.clone(), parser, config)
                 .with_monotonic_timestamps(monotonic_timestamps),
             extractor,
@@ -109,8 +135,7 @@ where
             msg_buf,
             session_scratch: Vec::new(),
             _marker: PhantomData,
-        };
-        (slot, handle)
+        }
     }
 }
 
@@ -248,7 +273,33 @@ where
             inner: Arc::clone(&msg_buf),
             parser_kind,
         };
-        let slot = Self {
+        let slot = Self::with_queue(
+            extractor,
+            parser,
+            config,
+            signature,
+            max_probe_packets,
+            monotonic_timestamps,
+            msg_buf,
+        );
+        (slot, handle)
+    }
+
+    pub(super) fn with_queue(
+        extractor: E,
+        parser: D,
+        config: FlowTrackerConfig,
+        signature: SignatureFn,
+        max_probe_packets: u8,
+        monotonic_timestamps: bool,
+        msg_buf: Arc<SegQueue<SlotMessage<D::Message, E::Key>>>,
+    ) -> Self
+    where
+        E::Key: Send + 'static,
+        D::Message: Send + 'static,
+    {
+        let parser_kind = parser.parser_kind();
+        Self {
             driver: FlowDatagramDriver::with_config(extractor.clone(), parser, config)
                 .with_monotonic_timestamps(monotonic_timestamps),
             extractor,
@@ -259,8 +310,7 @@ where
             msg_buf,
             session_scratch: Vec::new(),
             _marker: PhantomData,
-        };
-        (slot, handle)
+        }
     }
 }
 
