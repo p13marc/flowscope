@@ -439,6 +439,10 @@ required-features = ["dns"]
 name = "driver"
 required-features = ["test-helpers", "extractors", "session", "reassembler"]
 
+[[test]]
+name = "anomaly_fields"
+required-features = ["extractors", "tracker"]
+
 [[bench]]
 name = "extractor"
 harness = false

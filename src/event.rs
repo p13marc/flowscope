@@ -368,6 +368,34 @@ impl AnomalyKind {
     }
 }
 
+impl crate::AnomalyFields for AnomalyKind {
+    /// EVE `anomaly.type` classification. Per Suricata's
+    /// schema:
+    /// - Reassembly / TCP-state anomalies → `"stream"`
+    /// - Parser-driven anomalies → `"applayer"`
+    /// - Tracker-capacity pressure → `"stream"` (closest fit;
+    ///   Suricata's schema has no "system" type)
+    ///
+    /// Adding a new [`AnomalyKind`] variant requires updating
+    /// this match. Same convention as
+    /// `src/obs.rs::anomaly_label`.
+    fn anomaly_type(&self) -> Option<&'static str> {
+        Some(match self {
+            AnomalyKind::BufferOverflow { .. }
+            | AnomalyKind::OutOfOrderSegment { .. }
+            | AnomalyKind::RetransmittedSegment { .. }
+            | AnomalyKind::ReassemblerHighWatermark { .. } => "stream",
+            AnomalyKind::SessionParseError { .. } => "applayer",
+            AnomalyKind::FlowTableEvictionPressure { .. } => "stream",
+        })
+    }
+
+    /// Stable slug — reuses [`Self::short_kind`].
+    fn anomaly_event(&self) -> Option<&'static str> {
+        Some(self.short_kind())
+    }
+}
+
 impl std::fmt::Display for AnomalyKind {
     /// Lowercase short label matching the
     /// `flowscope_anomalies_total{kind=…}` metric vocabulary

@@ -109,6 +109,22 @@ impl std::fmt::Display for L4Proto {
     }
 }
 
+impl crate::AnomalyFields for L4Proto {
+    /// Uppercase EVE-compatible label (`"TCP"` / `"UDP"` /
+    /// `"ICMP"` / `"ICMPv6"` / `"SCTP"`). Returns `None` for
+    /// [`L4Proto::Other`] (unknown numeric protocol).
+    fn proto_str(&self) -> Option<&'static str> {
+        Some(match self {
+            L4Proto::Tcp => "TCP",
+            L4Proto::Udp => "UDP",
+            L4Proto::Icmp => "ICMP",
+            L4Proto::IcmpV6 => "ICMPv6",
+            L4Proto::Sctp => "SCTP",
+            L4Proto::Other(_) => return None,
+        })
+    }
+}
+
 /// Pre-parsed TCP information for a packet.
 ///
 /// Filled by built-in extractors. Decoupled from frame layout so

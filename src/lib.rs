@@ -91,6 +91,7 @@ pub mod extract;
 #[cfg(feature = "extractors")]
 pub mod layers;
 
+pub mod anomaly_fields;
 #[cfg(feature = "tracker")]
 pub mod event;
 #[cfg(feature = "tracker")]
@@ -190,6 +191,7 @@ pub mod parser_kinds {
 #[cfg(feature = "tracker")]
 pub use dedup::Dedup;
 
+pub use anomaly_fields::AnomalyFields;
 pub use extractor::{Extracted, FlowExtractor, L4Proto, Orientation, TcpFlags, TcpInfo};
 
 #[cfg(feature = "tracker")]

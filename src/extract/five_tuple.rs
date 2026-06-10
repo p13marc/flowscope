@@ -93,6 +93,28 @@ impl FiveTupleKey {
     }
 }
 
+impl crate::AnomalyFields for FiveTupleKey {
+    fn src_ip(&self) -> Option<std::net::IpAddr> {
+        Some(self.a.ip())
+    }
+    fn src_port(&self) -> Option<u16> {
+        Some(self.a.port())
+    }
+    fn dest_ip(&self) -> Option<std::net::IpAddr> {
+        Some(self.b.ip())
+    }
+    fn dest_port(&self) -> Option<u16> {
+        Some(self.b.port())
+    }
+    fn proto_str(&self) -> Option<&'static str> {
+        self.proto.proto_str()
+    }
+    /// Best-effort app-protocol from the well-known port table.
+    fn app_proto_str(&self) -> Option<&'static str> {
+        crate::well_known::protocol_label(self.proto, self.a.port(), self.b.port())
+    }
+}
+
 impl FlowExtractor for FiveTuple {
     type Key = FiveTupleKey;
 
