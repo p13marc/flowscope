@@ -41,6 +41,29 @@ public-trait-shape debt before community adoption.
   `DeferredDriverBuilder<E>`. Every shipped parser already
   satisfies `Send`, so this is invisible in practice.
 
+- **`Error::Module::Pipeline` removed** (plan 131). Pipeline was
+  deleted in 0.11; the enum still listed it. Dead-code removal.
+  Five new variants added: `Driver` / `Emit` / `Detect` /
+  `Aggregate` / `Correlate` for subsystems that don't error
+  today but will as soon as one does.
+
+- **`ja3` + `ja4` Cargo features collapsed into `tls-fingerprints`**
+  (plan 131). Two-flag split was a usability footgun: ja3 + ja4
+  together is almost universal in 2026 NDR/SIEM consumers.
+  Migration: rename `ja3, ja4` → `tls-fingerprints` in
+  Cargo.toml `[features]` / `[[example]]` blocks. The
+  `Ja3Parts` / `ja3()` / `Ja4Parts` / `ja4_fingerprint()` /
+  `ja4_parts()` public exports stay at the same paths.
+
+- **`tracing-messages` Cargo feature removed** (plan 131).
+  Per-message `tracing::trace!` emission is now always-on under
+  the `tracing` feature. The `SessionParser::Message: Debug`
+  bound was already always-on, so the dedicated feature was
+  redundant clutter. Migration: drop `tracing-messages` from
+  Cargo.toml; suppress per-message output at runtime via
+  `tracing-subscriber::EnvFilter`, e.g.
+  `EnvFilter::new("info,flowscope.message=warn")`.
+
 - **`SlotHandle<M, K>` is now `Send + Sync`.** Backing storage
   changed from `Rc<RefCell<Vec<SlotMessage>>>` to
   `Arc<crossbeam_queue::SegQueue<SlotMessage>>` (lock-free MPMC).

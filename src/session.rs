@@ -496,10 +496,11 @@ pub trait SessionParser: Send + 'static {
     /// L7 message produced by this parser.
     ///
     /// - `Send + 'static` so messages can cross task boundaries.
-    /// - `Debug` is required so the optional `tracing-messages`
-    ///   Cargo feature can format each emitted message; almost
-    ///   every Rust type derives it anyway, and the bound is
-    ///   trivial to add for those that don't.
+    /// - `Debug` is required for the per-message `tracing::trace!`
+    ///   event under the `tracing` feature (filter via
+    ///   `EnvFilter::new("flowscope.message=warn")` to suppress).
+    ///   Almost every Rust type derives `Debug` anyway, and the
+    ///   bound is trivial to add for those that don't.
     type Message: Send + std::fmt::Debug + 'static;
 
     /// Feed the next chunk of bytes from the **initiator** side.

@@ -122,11 +122,12 @@ metrics = ["tracker", "dep:metrics"]
 # names. Renames require a CHANGELOG-documented breaking change.
 serde = ["dep:serde", "bytes?/serde", "arrayvec?/serde", "smallvec?/serde"]
 tracing = ["tracker", "dep:tracing"]
-# Optional sub-feature: emit tracing::trace! events per
-# SessionEvent::Application, gated behind `tracing`. Adds a
-# Message: Debug bound on the parser traits. Off by default —
-# enable only when the per-message overhead is acceptable.
-tracing-messages = ["tracing"]
+# `tracing-messages` (deleted in 0.12.0 plan 131): per-message
+# `tracing::trace!` emission is now always-on under `tracing`.
+# Filter at runtime via `tracing-subscriber::EnvFilter`, e.g.
+# `EnvFilter::new("info,flowscope.message=warn")`. The
+# `SessionParser::Message: Debug` bound was already always-on,
+# so the dedicated feature was redundant clutter.
 
 # Structured event sinks (plan 101). `emit` ships the CSV + Zeek
 # `conn.log` writers (no extra deps). `emit-ndjson` adds the
@@ -149,7 +150,7 @@ aggregate = ["dep:tdigest"]
 chrono = ["dep:chrono"]
 
 # Convenience: turn everything on.
-full = ["http", "tls", "tls-fingerprints", "dns", "icmp", "pcap", "metrics", "tracing", "tracing-messages", "serde", "emit", "emit-ndjson", "emit-eve", "aggregate", "chrono"]
+full = ["http", "tls", "tls-fingerprints", "dns", "icmp", "pcap", "metrics", "tracing", "serde", "emit", "emit-ndjson", "emit-eve", "aggregate", "chrono"]
 
 [package.metadata.docs.rs]
 all-features = true

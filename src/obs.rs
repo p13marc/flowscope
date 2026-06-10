@@ -282,17 +282,17 @@ pub(crate) fn trace_flow_ended(_reason: EndReason, _stats: &FlowStats) {}
 #[inline(always)]
 pub(crate) fn trace_anomaly(_kind: &AnomalyKind) {}
 
-// ── per-message tracing (Plan 56) ─────────────────────────────────
+// ── per-message tracing (Plan 56; revised under plan 131) ──────────
+//
+// Plan 131 collapsed the former `tracing-messages` Cargo feature
+// into always-on under `tracing` + `session` (+ `reassembler` for
+// the callers). The bound on `SessionParser::Message` was already
+// `Debug`; the feature gate was redundant clutter. To filter the
+// "flowscope.message" target out at runtime, wire your
+// `tracing-subscriber` `EnvFilter` (e.g.
+// `EnvFilter::new("info,flowscope.message=warn")`).
 
-// Gated on `reassembler` as well as `session`: the only callers are
-// the session / datagram drivers, both of which require
-// `reassembler`. Without that gate `--features dns` (session but no
-// reassembler) compiles the stub with no caller — a dead-code warning.
-#[cfg(all(
-    feature = "tracing-messages",
-    feature = "reassembler",
-    feature = "session"
-))]
+#[cfg(all(feature = "tracing", feature = "reassembler", feature = "session"))]
 pub(crate) fn trace_session_message<M: std::fmt::Debug>(side: crate::event::FlowSide, msg: &M) {
     tracing::trace!(
         target: "flowscope.message",
@@ -302,10 +302,8 @@ pub(crate) fn trace_session_message<M: std::fmt::Debug>(side: crate::event::Flow
     );
 }
 
-#[cfg(all(
-    not(feature = "tracing-messages"),
-    feature = "reassembler",
-    feature = "session"
-))]
+// Stub for `tracing` off / `session` off — keep the function name
+// stable so the call sites don't need cfg gates.
+#[cfg(all(feature = "reassembler", feature = "session", not(feature = "tracing")))]
 #[inline(always)]
 pub(crate) fn trace_session_message<M>(_side: crate::event::FlowSide, _msg: &M) {}
