@@ -27,6 +27,17 @@ impl<K: Hash + Eq + Clone> TopK<K> {
         }
     }
 
+    /// Convenience constructor with `k = usize::MAX` — every
+    /// observed key is retained, no Misra-Gries eviction ever
+    /// fires. Useful for offline / bounded-input contexts where
+    /// memory pressure isn't a concern.
+    ///
+    /// Prefer [`Self::new`] with an explicit cap when memory
+    /// pressure matters. New in 0.12.0 (plan 130).
+    pub fn new_unbounded() -> Self {
+        Self::new(usize::MAX)
+    }
+
     /// Observe `key` once.
     pub fn observe(&mut self, key: K) {
         self.observe_n(key, 1);
@@ -155,5 +166,18 @@ mod tests {
         let mut t: TopK<u32> = TopK::new(2);
         t.observe_n(1, 0);
         assert!(t.is_empty());
+    }
+
+    #[test]
+    fn new_unbounded_never_evicts() {
+        let mut t: TopK<u32> = TopK::new_unbounded();
+        for i in 0..1000 {
+            t.observe(i);
+        }
+        // Every key kept with exact count 1 — no Misra-Gries
+        // eviction.
+        for i in 0..1000 {
+            assert_eq!(t.estimate(&i), 1);
+        }
     }
 }

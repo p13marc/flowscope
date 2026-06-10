@@ -206,31 +206,19 @@ impl From<chrono::DateTime<chrono::Utc>> for Timestamp {
     }
 }
 
-/// Error returned when a [`Timestamp`] can't be represented as
-/// a [`chrono::DateTime<chrono::Utc>`] — in practice never
-/// triggered for `u32`-second timestamps (chrono's range
-/// vastly exceeds ours).
 #[cfg(feature = "chrono")]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ChronoOutOfRange;
-
-#[cfg(feature = "chrono")]
-impl std::fmt::Display for ChronoOutOfRange {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("Timestamp out of representable chrono::DateTime range")
-    }
-}
-
-#[cfg(feature = "chrono")]
-impl std::error::Error for ChronoOutOfRange {}
-
-#[cfg(feature = "chrono")]
-impl TryFrom<Timestamp> for chrono::DateTime<chrono::Utc> {
-    type Error = ChronoOutOfRange;
-
-    fn try_from(ts: Timestamp) -> Result<Self, Self::Error> {
+impl From<Timestamp> for chrono::DateTime<chrono::Utc> {
+    /// Infallible conversion. [`Timestamp::sec`] is a `u32` whose
+    /// representable range (0 → ~year 2106) lies fully inside
+    /// chrono's `DateTime<Utc>` range (year ±262 143), so the
+    /// underlying `chrono::DateTime::from_timestamp` always
+    /// returns `Some`. As defence-in-depth against a future
+    /// chrono API change, we saturate to `MAX_UTC` on the
+    /// (currently unreachable) `None` branch rather than
+    /// panicking.
+    fn from(ts: Timestamp) -> Self {
         chrono::DateTime::<chrono::Utc>::from_timestamp(i64::from(ts.sec), ts.nsec)
-            .ok_or(ChronoOutOfRange)
+            .unwrap_or(chrono::DateTime::<chrono::Utc>::MAX_UTC)
     }
 }
 
@@ -431,7 +419,7 @@ mod tests {
         for sec in [0u32, 1_000_000_000, 1_717_932_896, u32::MAX] {
             for nsec in [0u32, 123_456_789, 999_999_999] {
                 let ts = Timestamp::new(sec, nsec);
-                let dt: chrono::DateTime<chrono::Utc> = ts.try_into().unwrap();
+                let dt: chrono::DateTime<chrono::Utc> = ts.into();
                 let back: Timestamp = dt.into();
                 assert_eq!(back, ts, "round-trip at sec={sec}, nsec={nsec}");
             }

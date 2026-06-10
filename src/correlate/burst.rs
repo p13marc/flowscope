@@ -55,6 +55,20 @@ where
         }
     }
 
+    /// Alias for [`Self::new`] — `BurstDetector` is already
+    /// unbounded in its per-key state (no LRU cap), so this is
+    /// just naming parity with the other `correlate::*` ctors
+    /// that have explicit `_unbounded` variants. New in 0.12.0
+    /// (plan 130).
+    pub fn new_unbounded(
+        burst_kind: E,
+        threshold: u32,
+        window: Duration,
+        trigger_kind: Option<E>,
+    ) -> Self {
+        Self::new(burst_kind, threshold, window, trigger_kind)
+    }
+
     /// Observe one event for `key`. Returns `Some(BurstHit)` when
     /// the firing condition is met.
     pub fn observe(&mut self, key: &K, event: &E, now: Timestamp) -> Option<BurstHit<K>> {
@@ -166,6 +180,21 @@ mod tests {
             d.observe(&1, &Auth::Success, Timestamp::new(100, 0))
                 .is_none()
         );
+    }
+
+    #[test]
+    fn new_unbounded_is_alias_for_new() {
+        let mut a: BurstDetector<u32, Auth> = BurstDetector::new_unbounded(
+            Auth::Fail,
+            2,
+            Duration::from_secs(60),
+            Some(Auth::Success),
+        );
+        // Same firing behaviour as new().
+        a.observe(&1, &Auth::Fail, Timestamp::new(0, 0));
+        a.observe(&1, &Auth::Fail, Timestamp::new(1, 0));
+        let hit = a.observe(&1, &Auth::Success, Timestamp::new(2, 0));
+        assert!(hit.is_some());
     }
 
     #[test]
