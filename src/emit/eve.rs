@@ -18,6 +18,7 @@
 //! shapes when a consumer asks.
 
 use std::io::{self, Write};
+use std::net::IpAddr;
 
 use serde_json::json;
 
@@ -283,6 +284,68 @@ fn insert_5tuple<K: AnomalyFields>(obj: &mut serde_json::Map<String, serde_json:
     if let Some(p) = key.app_proto_str() {
         obj.insert("app_proto".into(), json!(p));
     }
+    if let Some(h) = flow_hash(key) {
+        obj.insert("flow_hash".into(), json!(format!("{h:016x}")));
+    }
+}
+
+/// Stable 64-bit hash over the canonical 5-tuple. Returns
+/// `None` if any of (proto, src ip/port, dest ip/port) is
+/// unknown.
+///
+/// Algorithm: FNV-1a over
+/// `proto.as_bytes() || lo_ip.octets() || lo_port_be ||
+/// hi_ip.octets() || hi_port_be`, where `(lo_ip, lo_port)` is
+/// the lexicographically smaller endpoint. Deterministic
+/// across runs and across direction (A→B and B→A produce the
+/// same hash). 64-bit FNV at flowscope scales: collision
+/// probability ~5e-8 at 1 M flows.
+fn flow_hash<K: AnomalyFields>(key: &K) -> Option<u64> {
+    let proto = key.proto_str()?;
+    let src_ip = key.src_ip()?;
+    let src_port = key.src_port()?;
+    let dest_ip = key.dest_ip()?;
+    let dest_port = key.dest_port()?;
+
+    let (lo_ip, lo_port, hi_ip, hi_port) = if (src_ip, src_port) <= (dest_ip, dest_port) {
+        (src_ip, src_port, dest_ip, dest_port)
+    } else {
+        (dest_ip, dest_port, src_ip, src_port)
+    };
+
+    const FNV_OFFSET: u64 = 0xcbf29ce484222325;
+    const FNV_PRIME: u64 = 0x100000001b3;
+    let mut h = FNV_OFFSET;
+    fn feed(b: u8, h: &mut u64) {
+        *h ^= b as u64;
+        *h = h.wrapping_mul(FNV_PRIME);
+    }
+    for &b in proto.as_bytes() {
+        feed(b, &mut h);
+    }
+    fn feed_ip(ip: IpAddr, h: &mut u64) {
+        match ip {
+            IpAddr::V4(v4) => {
+                for &b in &v4.octets() {
+                    feed(b, h);
+                }
+            }
+            IpAddr::V6(v6) => {
+                for &b in &v6.octets() {
+                    feed(b, h);
+                }
+            }
+        }
+    }
+    fn feed_port(p: u16, h: &mut u64) {
+        feed((p >> 8) as u8, h);
+        feed((p & 0xff) as u8, h);
+    }
+    feed_ip(lo_ip, &mut h);
+    feed_port(lo_port, &mut h);
+    feed_ip(hi_ip, &mut h);
+    feed_port(hi_port, &mut h);
+    Some(h)
 }
 
 #[cfg(test)]
@@ -295,5 +358,23 @@ mod tests {
         assert_eq!(default_severity_numeric(Severity::Error), 2);
         assert_eq!(default_severity_numeric(Severity::Warning), 3);
         assert_eq!(default_severity_numeric(Severity::Info), 4);
+    }
+
+    #[test]
+    fn flow_hash_direction_invariant() {
+        use crate::L4Proto;
+        use crate::extract::FiveTupleKey;
+        let a = FiveTupleKey {
+            proto: L4Proto::Tcp,
+            a: "10.0.0.1:33000".parse().unwrap(),
+            b: "10.0.0.2:80".parse().unwrap(),
+        };
+        let b = FiveTupleKey {
+            proto: L4Proto::Tcp,
+            a: "10.0.0.2:80".parse().unwrap(),
+            b: "10.0.0.1:33000".parse().unwrap(),
+        };
+        assert_eq!(flow_hash(&a), flow_hash(&b));
+        assert!(flow_hash(&a).is_some());
     }
 }

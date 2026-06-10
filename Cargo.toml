@@ -277,6 +277,11 @@ name = "zeek_style_conn_log"
 path = "examples/05-export/zeek_style_conn_log.rs"
 required-features = ["pcap", "emit"]
 
+[[example]]
+name = "eve_writer"
+path = "examples/05-export/eve_writer.rs"
+required-features = ["pcap", "emit-eve"]
+
 # ── 06 custom protocols ──────────────────────────────
 [[example]]
 name = "length_prefixed_pcap"
