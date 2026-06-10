@@ -8,7 +8,7 @@
 //! handshake.
 //!
 //! ```bash
-//! cargo run --features tls,ja3,ja4,pcap --example tls_inventory
+//! cargo run --features tls,tls-fingerprints,pcap --example tls_inventory
 //! ```
 
 use std::collections::HashMap;

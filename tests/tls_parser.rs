@@ -12,7 +12,7 @@ struct Captured {
     client_hellos: Vec<TlsClientHello>,
     server_hellos: Vec<TlsServerHello>,
     alerts: Vec<TlsAlert>,
-    #[cfg(feature = "ja3")]
+    #[cfg(feature = "tls-fingerprints")]
     ja3s: Vec<(String, String)>,
 }
 
@@ -23,9 +23,9 @@ impl Captured {
                 TlsMessage::ClientHello(ch) => self.client_hellos.push(*ch),
                 TlsMessage::ServerHello(sh) => self.server_hellos.push(*sh),
                 TlsMessage::Alert(a) => self.alerts.push(a),
-                #[cfg(feature = "ja3")]
+                #[cfg(feature = "tls-fingerprints")]
                 TlsMessage::Ja3 { hash, canonical } => self.ja3s.push((hash, canonical)),
-                #[cfg(feature = "ja4")]
+                #[cfg(feature = "tls-fingerprints")]
                 TlsMessage::Ja4 { .. } => {}
             }
         }
@@ -199,7 +199,7 @@ fn malformed_doesnt_panic() {
     // Should not panic; the parser enters Desynced state.
 }
 
-#[cfg(feature = "ja3")]
+#[cfg(feature = "tls-fingerprints")]
 #[test]
 fn ja3_fires_when_enabled() {
     use flowscope::tls::TlsConfig;
@@ -214,7 +214,7 @@ fn ja3_fires_when_enabled() {
     assert!(!captured.ja3s[0].0.is_empty(), "expected non-empty hash");
 }
 
-#[cfg(feature = "ja4")]
+#[cfg(feature = "tls-fingerprints")]
 #[test]
 fn ja4_fires_when_enabled() {
     use flowscope::tls::TlsConfig;

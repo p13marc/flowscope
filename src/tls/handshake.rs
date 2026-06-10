@@ -107,8 +107,8 @@ pub struct TlsHandshakeParser {
 impl Default for TlsHandshakeParser {
     fn default() -> Self {
         Self::with_config(TlsConfig {
-            ja3: cfg!(feature = "ja3"),
-            ja4: cfg!(feature = "ja4"),
+            ja3: cfg!(feature = "tls-fingerprints"),
+            ja4: cfg!(feature = "tls-fingerprints"),
             ..Default::default()
         })
     }
@@ -170,11 +170,11 @@ impl TlsHandshakeParser {
                         self.state = State::AwaitingClientHello;
                     }
                 }
-                #[cfg(feature = "ja3")]
+                #[cfg(feature = "tls-fingerprints")]
                 TlsMessage::Ja3 { hash, .. } => {
                     self.accumulator.ja3 = Some(hash);
                 }
-                #[cfg(feature = "ja4")]
+                #[cfg(feature = "tls-fingerprints")]
                 TlsMessage::Ja4 { fingerprint } => {
                     self.accumulator.ja4 = Some(fingerprint);
                 }

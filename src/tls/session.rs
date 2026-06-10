@@ -28,7 +28,7 @@ pub enum TlsMessage {
     /// JA3 fingerprint computed from a [`Self::ClientHello`]. Only
     /// emitted when [`TlsConfig::ja3`] is true (and the `ja3` feature
     /// is on).
-    #[cfg(feature = "ja3")]
+    #[cfg(feature = "tls-fingerprints")]
     Ja3 {
         /// MD5 hex digest of the canonical string.
         hash: String,
@@ -38,7 +38,7 @@ pub enum TlsMessage {
     /// JA4 fingerprint computed from a [`Self::ClientHello`]. Only
     /// emitted when [`TlsConfig::ja4`] is true (and the `ja4`
     /// feature is on).
-    #[cfg(feature = "ja4")]
+    #[cfg(feature = "tls-fingerprints")]
     Ja4 {
         /// Underscore-joined fingerprint (e.g.
         /// `t13d1516h2_8daaf6152771_b186095e22b6`).
@@ -100,17 +100,17 @@ impl TlsParser {
     fn dispatch(parsed: ParseOutput, cfg: &TlsConfig, out: &mut Vec<TlsMessage>) {
         match parsed {
             ParseOutput::ClientHello(ch) => {
-                #[cfg(feature = "ja3")]
+                #[cfg(feature = "tls-fingerprints")]
                 if cfg.ja3 {
                     let (canonical, hash) = super::fingerprint::ja3(&ch);
                     out.push(TlsMessage::Ja3 { hash, canonical });
                 }
-                #[cfg(feature = "ja4")]
+                #[cfg(feature = "tls-fingerprints")]
                 if cfg.ja4 {
                     let fingerprint = super::ja4::ja4(&ch);
                     out.push(TlsMessage::Ja4 { fingerprint });
                 }
-                #[cfg(not(any(feature = "ja3", feature = "ja4")))]
+                #[cfg(not(feature = "tls-fingerprints"))]
                 {
                     let _ = cfg; // silence unused-warning when both off
                 }

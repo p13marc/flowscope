@@ -70,10 +70,10 @@
 //! cipher / `resumption_attempted` / [`HandshakeOutcome`] in
 //! a single struct.
 
-#[cfg(feature = "ja3")]
+#[cfg(feature = "tls-fingerprints")]
 mod fingerprint;
 pub mod handshake;
-#[cfg(feature = "ja4")]
+#[cfg(feature = "tls-fingerprints")]
 pub mod ja4;
 mod parser;
 mod session;
@@ -83,7 +83,7 @@ pub use handshake::{HandshakeOutcome, TlsHandshake, TlsHandshakeParser};
 pub use session::{TlsMessage, TlsParser};
 pub use types::*;
 
-#[cfg(feature = "ja4")]
+#[cfg(feature = "tls-fingerprints")]
 pub use ja4::{Ja4Parts, ja4 as ja4_fingerprint, ja4_parts};
 
 /// Slug returned by [`TlsParser`]'s `parser_kind()`. See

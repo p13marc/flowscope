@@ -40,11 +40,11 @@ bytes = { version = "1", optional = true }
 # `tls` feature
 tls-parser = { version = "0.12", optional = true }
 
-# `tls/ja3` sub-feature
+# `tls-fingerprints` sub-feature deps (JA3 + JA4 client TLS
+# fingerprints. Plan 131 collapsed the former `ja3` + `ja4`
+# split into a single feature flag — see CHANGELOG 0.12.0.)
 md-5 = { version = "0.10", optional = true }
 hex = { version = "0.4", optional = true }
-
-# `tls/ja4` sub-feature
 sha2 = { version = "0.10", optional = true }
 
 # `dns` feature
@@ -99,14 +99,16 @@ test-helpers = ["extractors"]
 # Protocol parsers. Each is a self-contained module gated by its feature.
 http = ["reassembler", "session", "dep:httparse", "dep:bytes"]
 tls = ["reassembler", "session", "dep:tls-parser", "dep:bytes"]
-ja3 = ["tls", "dep:md-5", "dep:hex"]
-ja4 = ["tls", "dep:sha2", "dep:hex"]
+# TLS fingerprint family (plan 131) — replaces the former
+# `ja3` + `ja4` two-flag split. Both fingerprints now ship under
+# one gate.
+tls-fingerprints = ["tls", "dep:md-5", "dep:sha2", "dep:hex"]
 dns = ["extractors", "tracker", "session", "dep:simple-dns", "dep:bytes"]
 icmp = ["extractors", "tracker", "session", "dep:bytes"]
 
 # Umbrella: enable every shipped L7 protocol parser at once. Strict
 # subset of `full` (no `pcap`, no observability).
-l7 = ["http", "tls", "dns", "icmp"]
+l7 = ["http", "tls", "tls-fingerprints", "dns", "icmp"]
 
 # pcap source adapter (offline replay).
 pcap = ["extractors", "tracker", "dep:pcap-file"]
@@ -147,7 +149,7 @@ aggregate = ["dep:tdigest"]
 chrono = ["dep:chrono"]
 
 # Convenience: turn everything on.
-full = ["http", "tls", "ja3", "ja4", "dns", "icmp", "pcap", "metrics", "tracing", "tracing-messages", "serde", "emit", "emit-ndjson", "emit-eve", "aggregate", "chrono"]
+full = ["http", "tls", "tls-fingerprints", "dns", "icmp", "pcap", "metrics", "tracing", "tracing-messages", "serde", "emit", "emit-ndjson", "emit-eve", "aggregate", "chrono"]
 
 [package.metadata.docs.rs]
 all-features = true
@@ -202,12 +204,12 @@ required-features = ["dns", "pcap"]
 [[example]]
 name = "extract_iocs"
 path = "examples/02-forensics/extract_iocs.rs"
-required-features = ["pcap", "http", "tls", "ja3", "ja4", "dns", "extractors"]
+required-features = ["pcap", "http", "tls", "tls-fingerprints", "dns", "extractors"]
 
 [[example]]
 name = "tls_inventory"
 path = "examples/02-forensics/tls_inventory.rs"
-required-features = ["tls", "ja3", "ja4", "pcap"]
+required-features = ["tls", "tls-fingerprints", "pcap"]
 
 # ── 03 security / detection ──────────────────────────
 [[example]]
