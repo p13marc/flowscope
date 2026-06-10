@@ -44,26 +44,17 @@ Phase A — API debt retirement (pre-1.0 cleanup):
 | [`131-error-module-features.md`](./131-error-module-features.md) | `Module::Pipeline` removal + 5 new variants; `ja3+ja4 → tls-fingerprints`; `tracing-messages` → runtime knob | P0 | 1 day |
 | [`132-doc-overhaul.md`](./132-doc-overhaul.md) | Typed `Driver<E>` primacy in docs/getting-started + docs/concepts + docs/recipes + src/lib.rs top-level rustdoc | P0 | 2 days |
 
-Phase B — Tier 1 features (high consumer demand):
-
-| Plan | Goal | Priority | Effort |
-|------|------|----------|--------|
-| [`140-ja4-family.md`](./140-ja4-family.md) | JA4S + JA4H + JA4T/JA4TS + JA4L/JA4LS + JA4X — full FoxIO JA4+ family | P1 | 4 days |
-| [`141-emit-ipfix.md`](./141-emit-ipfix.md) | `flowscope::emit::ipfix::IpfixWriter` — RFC 7011 + NetFlow v9 compat | P1 | 4 days |
-| [`142-http2-akamai.md`](./142-http2-akamai.md) | `flowscope::http2` passive parser + Akamai HTTP/2 fingerprint (`http2` feature) | P1 | 5 days |
-
-Phase C — Tier 2 (named detectors):
+Phase B — Named detectors:
 
 | Plan | Goal | Priority | Effort |
 |------|------|----------|--------|
 | [`143-detect-patterns.md`](./143-detect-patterns.md) | `flowscope::detect::patterns::{BeaconDetector, PortScanDetector, DgaScorer}` | P2 | 4 days |
 
-Phase D — Tier 3 (modernisation):
+Phase C — Targeted modernisation + IR:
 
 | Plan | Goal | Priority | Effort |
 |------|------|----------|--------|
 | [`144-ech-signal.md`](./144-ech-signal.md) | ECH outer-SNI signal on `TlsClientHello` + `TlsHandshake` | P3 | 1.5 days |
-| [`145-quic-initial.md`](./145-quic-initial.md) | `flowscope::quic::QuicInitialParser` + JA4-QUIC (`quic` feature) | P3 | 5 days |
 | [`146-file-hash-sinks.md`](./146-file-hash-sinks.md) | `flowscope::detect::file::{Sha256Sink, Md5Sink}` + MIME classification (`file-hash` feature) | P3 | 3 days |
 
 Phase E — Release mechanics (Phase 8 from cycle 128, deferred):
@@ -74,14 +65,21 @@ Phase E — Release mechanics (Phase 8 from cycle 128, deferred):
 | `cargo publish` dry-run + per-release consent | 0.25 days |
 | Tag + push (`0.12.0`) | 0.25 days |
 
-**Total estimated effort:** ~32.5 working days, ~6 calendar weeks single-developer.
+**Total estimated effort:** ~14.5 working days, ~3 calendar weeks single-developer.
+
+**Deferred to a future cycle** (drafted then deferred per user judgement to keep 0.12 shippable; designs captured in `git log` for resurrection when a specific consumer ask lands):
+
+- JA4+ family completion (JA4S/JA4H/JA4T/JA4L/JA4X) — spec-drift + `x509-parser` dep + per-flow tracker state.
+- IPFIX/NetFlow v9 exporter — `netgauze` dep maturity + ntop PEN-6871 IE verification. Future home: `flowscope-export` sister crate per `docs/design.md`.
+- HTTP/2 passive parser + Akamai fingerprint — `httlib-hpack` maintenance risk + per-direction dynamic-table cost + significant LoC.
+- QUIC Initial parser + JA4-QUIC — `quinn-proto` API churn + ~2 MB compiled size.
 
 **Strategic justification** (from the 0.12 strategic-review pass):
 - flowscope's niche is genuinely uncontested in published Rust crates.
-- HTTP/2 + QUIC carry the majority of modern web traffic; HTTP/1.x alone leaves a real coverage gap.
-- JA4+ is 2026 table stakes for NDR / SIEM consumers (Suricata 7.x, Zeek pkg, CrowdStrike, Cloudflare Bot Management).
-- IPFIX consumer base (nfdump, Elastiflow, Vector, Splunk, ntopng) is larger than the combined CSV/NDJSON/EVE export base.
 - 5 of the 0.12 audit's 7 rough edges are public-trait-shape debt; landing them pre-community-adoption is cheaper than post-adoption.
+- Detection patterns (BeaconDetector / PortScanDetector / DgaScorer) package the FAQ recipes consumers keep rebuilding — high ROI per LoC.
+- ECH + file hashes are surgical additions (small surface, obvious consumer): TLS modernisation + DFIR/IR pipelines.
+- The heavy feature additions (JA4+ / IPFIX / HTTP/2 / QUIC) each carry substantial dep / spec / maintenance risk. Deferred until specific consumer demand surfaces.
 
 Cycle theme: "add the Send-by-default slot handle,
 Suricata-compatible EVE emit, and the AnomalyFields /
@@ -130,6 +128,10 @@ with the cycle):
 | Plan | Goal | Status |
 |------|------|--------|
 | [`21-flow-protolens.md`](./21-flow-protolens.md) | `flowscope-protolens` — protolens bridge as a sister crate | 🛑 stale, deferred (no consumer ask) |
+| (was 140) | JA4+ family completion — JA4S/JA4H/JA4T/JA4L/JA4X | 🛑 deferred from 0.12 expanded cycle (spec drift + x509-parser dep); design in `git log` at commit `cee5577` |
+| (was 141) | IPFIX/NetFlow v9 exporter — `flowscope::emit::ipfix` | 🛑 deferred from 0.12 expanded cycle (netgauze maturity + enterprise IE verification); design in `git log` at commit `cee5577`. Future home: `flowscope-export` sister crate. |
+| (was 142) | HTTP/2 passive parser + Akamai fingerprint | 🛑 deferred from 0.12 expanded cycle (httlib-hpack maintenance + LoC); design in `git log` at commit `cee5577` |
+| (was 145) | QUIC Initial parser + JA4-QUIC | 🛑 deferred from 0.12 expanded cycle (quinn-proto churn + 2 MB compiled size); design in `git log` at commit `cee5577` |
 
 ---
 
@@ -306,14 +308,19 @@ Plan numbers retired (implementation shipped, file removed):
 - 117 → absorbed into 121 (legacy deletion + slot refactor
   overlap; one wider migration window beats two)
 
-Active: 21 (stale-deferred), 128 (original 0.12 umbrella —
-retired by 151), 130-146 (0.12 expanded-cycle implementation
-plans), 151 (0.12 expanded-cycle umbrella). Implementation
-plans 122, 123, 124, 126, 127 shipped to master; their plan
-files retired per convention. Subsumed by consolidation:
-- 125 → folded into 128 §Phase 7 / 130 §Phase 7 leftovers
-  (TopK + BurstDetector `new_unbounded` were missed in the
-  initial 128 Phase 7 ship; 130 picks them up)
+Active: 21 (stale-deferred), 130-132 (Phase A debt
+retirement), 143 (Phase B named detectors), 144 + 146
+(Phase C surgical additions), 151 (0.12 expanded-cycle
+umbrella). Implementation plans 122, 123, 124, 126, 127
+shipped to master; their plan files retired per convention.
+Subsumed by consolidation:
+- 125 → folded into 130 §Phase 7 leftovers (TopK +
+  BurstDetector `new_unbounded` were missed in the initial
+  128 Phase 7 ship; 130 picks them up)
+- 140, 141, 142, 145 → drafted then deferred from the 0.12
+  cycle (see stale-deferred table above); designs captured
+  in `git log` at commit `cee5577`. Resurrect under fresh
+  plan numbers when consumer demand lands.
 - 147-150 reserved for in-cycle adjustments / follow-ups
 The next free number for a new plan is 152+.
 

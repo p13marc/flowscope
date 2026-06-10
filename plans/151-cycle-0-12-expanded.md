@@ -9,29 +9,43 @@ deferred builder, AnomalyFields trait, Timestamp ISO 8601,
 chrono interop, and 3 `correlate::*::new_unbounded` ctors.
 Phase 8 release was gated on user consent.
 
-After a deep-analysis pass (this conversation, post-0.12
-strategic review), the user opted to expand the cycle and ship
-everything as one 0.12.0 release before going to crates.io:
+After a deep-analysis pass (post-0.12 strategic review), the
+user opted to expand the cycle and ship the focused
+debt-retirement + lightweight feature additions as one 0.12.0
+release before crates.io publish:
 
 - **API debt retirement** (plans 130 / 131 / 132) — pre-1.0
   cleanup driven by the audit.
-- **JA4+ family completion** (plan 140) — table-stakes for
-  2026 NDR / SIEM consumers.
-- **IPFIX / NetFlow v9 exporter** (plan 141) — opens the
-  NetFlow-collector consumer base.
-- **HTTP/2 + Akamai fingerprint** (plan 142) — covers the
-  majority of modern web traffic.
 - **Detection-patterns library** (plan 143) — packages
   existing primitives as named detectors.
 - **ECH signal extraction** (plan 144) — TLS modernisation.
-- **QUIC Initial parser + JA4-QUIC** (plan 145) — covers the
-  HTTP/3 traffic share.
 - **File hash sinks** (plan 146) — DFIR / IR pipeline ask.
 
+**Deferred to future cycles** (initially drafted, then
+deferred per user judgement to keep the cycle shippable):
+
+- JA4+ family completion (was plan 140) — spec drift +
+  x509-parser dep + per-flow tracker state. Resurrect when
+  a consumer specifically asks.
+- IPFIX / NetFlow v9 exporter (was plan 141) — netgauze
+  dep maturity + enterprise IE numbering verification.
+  Resurrect under `flowscope-export` sister crate per
+  `docs/design.md` when collector-base demand surfaces.
+- HTTP/2 + Akamai fingerprint (was plan 142) — `httlib-hpack`
+  maintenance risk + per-direction dynamic-table cost +
+  significant LoC. Resurrect when the rust ecosystem
+  consolidates around a passive-HTTP/2 crate.
+- QUIC Initial parser + JA4-QUIC (was plan 145) — quinn-proto
+  API churn + ~2 MB compiled-size cost. Resurrect when a
+  consumer ships an HTTP/3-heavy use case.
+
+These deferrals are tracked under the **stale-deferred** section
+of `plans/INDEX.md` so a future cycle can pick them up without
+re-doing the design.
+
 1.0 is determined by community adoption, not a target. The
-0.12 cycle ships the maximally complete passive-flow library
-flowscope can be in 2026, then we let real-world usage drive
-1.0 timing.
+0.12 cycle ships a focused debt-retirement + small-wins release
+that hardens the public surface before adoption traffic.
 
 ## Status
 
@@ -49,26 +63,17 @@ every following plan's references):
 | 131 | Error module + feature-flag pruning | 1 day | drafted |
 | 132 | Documentation overhaul | 2 days | drafted |
 
-**Phase B — Tier 1 features** (high consumer demand):
-
-| Plan | Title | Effort | Status |
-|---|---|---|---|
-| 140 | JA4+ family completion | 4 days | drafted |
-| 141 | IPFIX/NetFlow v9 exporter | 4 days | drafted |
-| 142 | HTTP/2 + Akamai fingerprint | 5 days | drafted |
-
-**Phase C — Tier 2 features** (named detectors):
+**Phase B — Named detectors**:
 
 | Plan | Title | Effort | Status |
 |---|---|---|---|
 | 143 | Detection-patterns library | 4 days | drafted |
 
-**Phase D — Tier 3 features** (modernisation):
+**Phase C — Targeted modernisation + IR**:
 
 | Plan | Title | Effort | Status |
 |---|---|---|---|
 | 144 | ECH signal extraction | 1.5 days | drafted |
-| 145 | QUIC Initial parser + JA4-QUIC | 5 days | drafted |
 | 146 | File hash sinks | 3 days | drafted |
 
 **Phase E — release mechanics**:
@@ -79,16 +84,15 @@ every following plan's references):
 | `cargo publish` dry-run | 0.25 days |
 | Tag + push (gated on per-release consent) | 0.25 days |
 
-**Total estimated effort:** ~32.5 working days, single
-developer. ~6 working weeks calendar. Parallelisable: 130 +
-131 + 132 can run concurrently; 140 + 141 + 142 are
-independent; 143 + 144 + 146 are independent; 145 (QUIC) has
-no hard prereqs but benefits from 140 (JA4+).
+**Total estimated effort:** ~14.5 working days, single
+developer. ~3 working weeks calendar. Parallelisable:
+130 + 131 + 132 can run concurrently; 143 + 144 + 146 are
+independent. Realistic single-developer pass: ~3 weeks.
 
 ## Breaking-change inventory
 
 Total pre-1.0 breaks shipped in the expanded 0.12 cycle
-(across 130 / 131 / 140 / others):
+(across plans 130 / 131):
 
 | Source | Break | Migration |
 |---|---|---|
@@ -100,27 +104,22 @@ Total pre-1.0 breaks shipped in the expanded 0.12 cycle
 | 131 | `Module::Pipeline` enum variant removed | drop the `match` arm (was dead code since 0.11) |
 | 131 | `ja3` + `ja4` features collapsed into `tls-fingerprints` | rename in Cargo.toml |
 | 131 | `tracing-messages` feature removed | use `DriverBuilder::with_trace_messages(bool)` |
-| 140 | `TcpInfo::raw_options` field added | `#[non_exhaustive]` covers it; struct-literal callers add `..` |
-| 140 | `TlsClientHello` / `TlsServerHello` / `TlsHandshake` grow fields | additive, `#[non_exhaustive]` covers it |
-| 144 | `TlsClientHello` grows ECH fields | additive |
+| 144 | `TlsClientHello` / `TlsServerHello` / `TlsHandshake` grow ECH fields | additive, `#[non_exhaustive]` covers it |
 
-Net: 10 user-visible changes; 7 are silent under
+Net: 9 user-visible changes; 6 are silent under
 `#[non_exhaustive]`; 3 require explicit consumer migration
 (trait method moves, feature renames, field → accessor). All
 mechanical; CHANGELOG entries provide one-line recipes.
 
 ## CI matrix changes
 
-The 0.12 expanded cycle grows the CI matrix by 4 entries:
+The 0.12 expanded cycle grows the CI matrix by 2 entries:
 
 - `tls-fingerprints` (replaces `ja3`, `ja4`)
-- `http2`
-- `quic`
-- `emit-ipfix`
 - `file-hash`
 
-Net: matrix grows from 11 to 15 entries. Each is a no-default
-feature build + clippy.
+Net: matrix grows from 11 to 12 entries (one rename swap +
+one new gate). Each is a no-default feature build + clippy.
 
 ## Version + release
 
@@ -130,15 +129,13 @@ everything for the 0.12").
 The 0.12.0 base is sitting on master at commit `f300750` with
 `Cargo.toml::version = "0.12.0"`. The 0.12 expanded cycle
 lands as commits on master without a version bump until Phase E;
-the user-facing label stays `0.12.0`. Semver-pedantic readers
-will note this is a larger break than 0.11 → 0.12, but the
-user opted in explicitly.
+the user-facing label stays `0.12.0`.
 
 The 1.0 timing is community-driven. Per the user:
 > "1.0 will be determined by the community adoption"
 
-No 1.0 deadline; we ship 0.12.0 maximally complete and watch
-adoption.
+No 1.0 deadline; we ship 0.12.0 focused on debt-retirement +
+small wins and watch adoption.
 
 ## Phase E — Release mechanics (gated)
 
@@ -148,13 +145,13 @@ release process:
 
 1. **Final gates** (automatic):
    - `cargo build --all-features` clean
-   - `cargo test --all-features` clean (target ≥ 850 tests
+   - `cargo test --all-features` clean (target ≥ 780 tests
      after the expansion; 721 in pre-expansion 0.12 base)
    - `cargo clippy --all-features --all-targets -- -D warnings`
      clean
    - `cargo doc --all-features --no-deps` zero warnings
    - `cargo machete` clean
-   - All 15 CI matrix entries clean
+   - All 12 CI matrix entries clean
    - `cargo bench --bench zero_alloc` — gate row
      `track_into_5_slots_steady_state` stays at 0 allocs/pkt
    - `cargo publish --dry-run --all-features` packages
@@ -165,24 +162,23 @@ release process:
    convention).
 5. **Post-release**: CHANGELOG header marks 0.12.0 as shipped;
    plans/INDEX.md retires the 0.12 cycle entries; plan files
-   for shipped plans (130-146) deleted per project convention.
+   for shipped plans (130-146, the surviving subset) deleted
+   per project convention.
 
 ## Acceptance criteria (cycle-level)
 
-- All 10 implementation plans shipped per their individual
-  acceptance criteria.
-- Test count post-cycle: ≥ 850 (up from 721).
+- All 6 implementation plans (130, 131, 132, 143, 144, 146)
+  shipped per their individual acceptance criteria.
+- Test count post-cycle: ≥ 780 (up from 721).
 - Zero clippy warnings, zero rustdoc warnings, zero
   `cargo machete` findings.
 - Bench gate maintained: `track_into_5_slots_steady_state`
   reports 0 allocs/pkt.
-- 15 CI feature-matrix entries clean.
+- 12 CI feature-matrix entries clean.
 - `cargo publish --dry-run --all-features` packages clean.
 - Documentation reflects every new feature
-  (`docs/ja4-plus.md`, `docs/http2-format.md`,
-  `docs/ipfix-schema.md`, `docs/quic-observation.md`,
-  `docs/detect-patterns.md`, `docs/file-hash.md`,
-  `docs/tls-ech.md`).
+  (`docs/detect-patterns.md`, `docs/tls-ech.md`,
+  `docs/file-hash.md`).
 - Migration recipes in `docs/migration-0.11-to-0.12.md` cover
   every break.
 - `README.md` `Status` section + `CLAUDE.md`
@@ -190,43 +186,36 @@ release process:
 
 ## Risks (cycle-level)
 
-- **R1: Scope creep regret.** 10 plans is a lot. Mitigation:
-  Phase A is mechanical (debt retirement); Phase B + D
-  features are independently shippable (no inter-plan
-  dependencies beyond Phase A). If any Tier-3 feature (144
-  ECH, 145 QUIC, 146 file-hash) hits unexpected complexity,
-  defer to 0.13 without blocking the cycle.
-- **R2: Quality near-misses (per 0.12 base audit pattern).**
+- **R1: Quality near-misses (per 0.12 base audit pattern).**
   The original 0.12 cycle audit caught initial-commit
   thinness on plan 123 (EVE: missing flow_hash, docs, example)
   and plan 124 (deferred builder: 4/10 tests). Mitigation:
   each plan in this expansion ships its acceptance criteria
   AND test list AND doc list; per-plan sign-off requires all
-  three. The plan-level acceptance gate is now sharper.
-- **R3: Spec drift.** JA4+ (FoxIO), ECH (IETF draft), QUIC
-  versions (RFC ongoing) all have ongoing revisions.
-  Mitigation: each plan pins a spec version, captures
-  reference fixtures, and treats drift as a test failure
-  rather than a silent bug.
-- **R4: Compiled size growth.** Plans 140 / 145 / 146 add
-  optional deps (x509-parser, quinn-proto, sha2, md-5).
-  All feature-gated; consumers pay only for what they
-  enable. Documented in `docs/performance.md`.
-- **R5: API debt left over.** Plans 130 / 131 / 132 retire
+  three.
+- **R2: ECH spec drift.** ECH is still IETF draft; bytes-
+  level parser breaks if the wire format changes between
+  drafts. Mitigation in plan 144: pin a draft version in
+  documentation; fixtures captured against specific browser
+  builds.
+- **R3: Tranco bigram-table reproducibility (plan 143).**
+  Tranco regenerates daily. Mitigation: pin a snapshot date in
+  documentation; ship a `tools/generate-bigrams.rs` so the
+  table is independently re-generatable.
+- **R4: API debt left over.** Plans 130 / 131 / 132 retire
   the audit-flagged debt but won't catch debt not yet
-  identified. Mitigation: post-0.12 strategic review pass
-  (no new plan; just a code review) before tagging.
+  identified. Mitigation: post-Phase-A code review pass
+  before Phase B/C plans land.
 
 ## Effort summary
 
 | Phase | Plans | Effort |
 |---|---|---|
 | A | 130, 131, 132 | 5 days |
-| B | 140, 141, 142 | 13 days |
-| C | 143 | 4 days |
-| D | 144, 145, 146 | 9.5 days |
+| B | 143 | 4 days |
+| C | 144, 146 | 4.5 days |
 | E | Release mechanics | 1 day |
-| **Total** | | **~32.5 days** |
+| **Total** | | **~14.5 days** |
 
 ## Provenance
 
@@ -239,36 +228,21 @@ This conversation (2026-06):
   - 3 Tier-1 strategic adds: JA4+ family, IPFIX, HTTP/2
   - 1 Tier-2 strategic add: detection patterns library
   - 3 Tier-3 strategic adds: ECH, QUIC, file hashing
-- User opted to ship it all as 0.12.0: "create plans for all
-  of those. You are ALLOW to break the backward compatibility.
-  Take your time. You can make research on internet. I want
-  to release everything for the 0.12. 1.0 will be determined
-  by the community adoption."
+- User opted to ship the focused subset as 0.12.0,
+  deferring the heavier feature additions: "I think we can
+  remove the plans: 140, 141, 142 and 145".
 
-Plans 128 (the original 0.12 umbrella) is retired by this
-plan. Plans 122 / 123 / 124 / 126 / 127 have shipped; their
-plan files were retired per convention. Plans 130-146 are
-this expanded cycle's scope.
+The deferred plans (140 JA4+, 141 IPFIX, 142 HTTP/2, 145 QUIC)
+remain in the "stale-deferred" section of `plans/INDEX.md`
+with their strategic motivation captured for a future cycle.
+The design knowledge isn't lost — the plans were drafted in
+full (with API signatures, test plans, risk analysis, effort
+estimates) before being deferred; resurrecting any one of
+them is a `git log` + apply exercise, not a redesign.
 
-## Open questions
-
-1. **Concurrent vs serial implementation order?** Phase B
-   plans (140 / 141 / 142) are independent; can run in
-   parallel if multiple developers. Single-developer pass
-   serialises naturally.
-2. **Bench scope for HTTP/2 + QUIC?** Plans 142 + 145 each
-   add one new bench row. Should the bench gate include them
-   in the 0-allocs/pkt requirement, or accept a small allocs/
-   parse budget for HPACK + QUIC decryption? Decision deferred
-   to plan-level review.
-3. **Tranco bigram-table licensing for plan 143.** Tranco is
-   CC-BY-4.0; our derived statistical aggregate is
-   reproducible, but include the attribution per the license.
-   Captured in plan 143 §Risks.
-4. **QUIC migration tracking (plan 145).** Out of scope for
-   the initial implementation; consumers wanting it build a
-   custom CID-keyed `FlowExtractor`. Documented in
-   `docs/quic-observation.md`.
+Plans 122 / 123 / 124 / 126 / 127 have shipped; their plan
+files were retired per convention. Plans 130 / 131 / 132 /
+143 / 144 / 146 are this expanded cycle's scope.
 
 ## Why this scope, why now
 
@@ -277,17 +251,21 @@ The 0.12 strategic review found:
 - flowscope's niche ("Rust building-block library for passive
   flow analysis") is **genuinely uncontested** in published
   crates as of Jan 2026.
-- HTTP/1.x is becoming the minority of modern web traffic;
-  HTTP/2 + QUIC carry the bulk.
-- JA4+ is 2026 table stakes for NDR / SIEM consumers
-  (Suricata 7.x, Zeek pkg, CrowdStrike, Cloudflare).
-- IPFIX consumer base (nfdump, Elastiflow, Vector, Splunk,
-  ntopng) is the **bigger** export market than the text-
-  format consumer base (CSV / NDJSON / EVE) combined.
 - 5 of the 0.12 audit's 7 "rough edges" are public-trait-
   shape debt; landing them pre-adoption is cheaper than
-  post-adoption.
+  post-adoption (Phase A).
+- Detection patterns (BeaconDetector, PortScanDetector,
+  DgaScorer) package the FAQ recipes consumers keep
+  rebuilding — high ROI per LoC (Phase B).
+- ECH + file hashes are surgical additions: small surface,
+  obvious consumer (TLS modernisation; DFIR/IR pipelines).
+  Phase C.
+- The heavy feature additions (JA4+ / IPFIX / HTTP/2 / QUIC)
+  each have substantial dep / spec / maintenance risks that
+  could derail the cycle. Deferring them to a future cycle
+  when a specific consumer ask lands keeps 0.12 shippable.
 
-Shipping all this as one 0.12.0 release maximises consumer
-value-per-migration: one upgrade pays for itself for years.
-1.0 timing follows.
+Shipping this focused 0.12.0 retires the public-surface debt
+before adoption, ships three lightweight high-value features,
+and leaves the heavy features as well-thought-through future
+cycles whose designs are already captured.
