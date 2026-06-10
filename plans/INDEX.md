@@ -15,11 +15,15 @@ record; `plans/` is the working backlog.
 
 ## Active
 
-### 0.12.0 cycle — Send slot handles + EVE + ergonomics
+### 0.12.0 expanded cycle — pre-1.0 maximally complete release
 
-All 5 implementation plans (122 / 123 / 124 / 126 / 127) plus
-Phase 7 small wins shipped to master. Awaiting Phase 8 release
-(per-release consent required before `cargo publish`).
+User opted post-strategic-review to expand the 0.12 cycle and
+ship everything in one 0.12.0 release before crates.io. 1.0
+timing is community-adoption-driven.
+
+Umbrella: [`151-cycle-0-12-expanded.md`](./151-cycle-0-12-expanded.md).
+
+**Base (shipped to master, awaiting publish consent):**
 
 | Plan | Status |
 |------|--------|
@@ -28,8 +32,56 @@ Phase 7 small wins shipped to master. Awaiting Phase 8 release
 | 122 — `SlotHandle: Send + Sync` (Arc<SegQueue>) | ✅ shipped (`44e68e8`) — pre-1.0 break |
 | 124 — `DeferredDriverBuilder<E>` | ✅ shipped (`3723b6a`) |
 | 123 — `EveJsonWriter` (Suricata EVE) | ✅ shipped (`99be89d`) |
-| 128 §Phase 7 — `correlate::*::new_unbounded` ctors | ✅ shipped |
-| 128 §Phase 8 — release mechanics | pending consent |
+| 128 §Phase 7 — `correlate::*::new_unbounded` ctors (3 of 5) | ✅ shipped (`f300750`) |
+
+**Expansion (drafted, not yet implemented):**
+
+Phase A — API debt retirement (pre-1.0 cleanup):
+
+| Plan | Goal | Priority | Effort |
+|------|------|----------|--------|
+| [`130-api-symmetry-cleanup.md`](./130-api-symmetry-cleanup.md) | KeyFields/AnomalyFields split + emit-writers generic over K + Event::FlowPacket.tcp accessor + Timestamp chrono symmetry + DriverBuilder bound parity + BurstDetector/TopK `new_unbounded` | P0 | 2 days |
+| [`131-error-module-features.md`](./131-error-module-features.md) | `Module::Pipeline` removal + 5 new variants; `ja3+ja4 → tls-fingerprints`; `tracing-messages` → runtime knob | P0 | 1 day |
+| [`132-doc-overhaul.md`](./132-doc-overhaul.md) | Typed `Driver<E>` primacy in docs/getting-started + docs/concepts + docs/recipes + src/lib.rs top-level rustdoc | P0 | 2 days |
+
+Phase B — Tier 1 features (high consumer demand):
+
+| Plan | Goal | Priority | Effort |
+|------|------|----------|--------|
+| [`140-ja4-family.md`](./140-ja4-family.md) | JA4S + JA4H + JA4T/JA4TS + JA4L/JA4LS + JA4X — full FoxIO JA4+ family | P1 | 4 days |
+| [`141-emit-ipfix.md`](./141-emit-ipfix.md) | `flowscope::emit::ipfix::IpfixWriter` — RFC 7011 + NetFlow v9 compat | P1 | 4 days |
+| [`142-http2-akamai.md`](./142-http2-akamai.md) | `flowscope::http2` passive parser + Akamai HTTP/2 fingerprint (`http2` feature) | P1 | 5 days |
+
+Phase C — Tier 2 (named detectors):
+
+| Plan | Goal | Priority | Effort |
+|------|------|----------|--------|
+| [`143-detect-patterns.md`](./143-detect-patterns.md) | `flowscope::detect::patterns::{BeaconDetector, PortScanDetector, DgaScorer}` | P2 | 4 days |
+
+Phase D — Tier 3 (modernisation):
+
+| Plan | Goal | Priority | Effort |
+|------|------|----------|--------|
+| [`144-ech-signal.md`](./144-ech-signal.md) | ECH outer-SNI signal on `TlsClientHello` + `TlsHandshake` | P3 | 1.5 days |
+| [`145-quic-initial.md`](./145-quic-initial.md) | `flowscope::quic::QuicInitialParser` + JA4-QUIC (`quic` feature) | P3 | 5 days |
+| [`146-file-hash-sinks.md`](./146-file-hash-sinks.md) | `flowscope::detect::file::{Sha256Sink, Md5Sink}` + MIME classification (`file-hash` feature) | P3 | 3 days |
+
+Phase E — Release mechanics (Phase 8 from cycle 128, deferred):
+
+| Step | Effort |
+|------|--------|
+| Final bench gate + clippy + docs sweep | 0.5 days |
+| `cargo publish` dry-run + per-release consent | 0.25 days |
+| Tag + push (`0.12.0`) | 0.25 days |
+
+**Total estimated effort:** ~32.5 working days, ~6 calendar weeks single-developer.
+
+**Strategic justification** (from the 0.12 strategic-review pass):
+- flowscope's niche is genuinely uncontested in published Rust crates.
+- HTTP/2 + QUIC carry the majority of modern web traffic; HTTP/1.x alone leaves a real coverage gap.
+- JA4+ is 2026 table stakes for NDR / SIEM consumers (Suricata 7.x, Zeek pkg, CrowdStrike, Cloudflare Bot Management).
+- IPFIX consumer base (nfdump, Elastiflow, Vector, Splunk, ntopng) is larger than the combined CSV/NDJSON/EVE export base.
+- 5 of the 0.12 audit's 7 rough edges are public-trait-shape debt; landing them pre-community-adoption is cheaper than post-adoption.
 
 Cycle theme: "add the Send-by-default slot handle,
 Suricata-compatible EVE emit, and the AnomalyFields /
@@ -254,13 +306,16 @@ Plan numbers retired (implementation shipped, file removed):
 - 117 → absorbed into 121 (legacy deletion + slot refactor
   overlap; one wider migration window beats two)
 
-Active: 21 (stale-deferred), 128 (0.12 cycle umbrella, kept
-until Phase 8 release ships). Implementation plans 122, 123,
-124, 126, 127 shipped to master; their plan files retired
-per convention. Subsumed by consolidation:
-- 125 → folded into 128 §Phase 7 (3 trivial `correlate::*::new_unbounded`
-  delegates don't earn a separate file)
-The next free number for a new plan is 129+.
+Active: 21 (stale-deferred), 128 (original 0.12 umbrella —
+retired by 151), 130-146 (0.12 expanded-cycle implementation
+plans), 151 (0.12 expanded-cycle umbrella). Implementation
+plans 122, 123, 124, 126, 127 shipped to master; their plan
+files retired per convention. Subsumed by consolidation:
+- 125 → folded into 128 §Phase 7 / 130 §Phase 7 leftovers
+  (TopK + BurstDetector `new_unbounded` were missed in the
+  initial 128 Phase 7 ship; 130 picks them up)
+- 147-150 reserved for in-cycle adjustments / follow-ups
+The next free number for a new plan is 152+.
 
 ---
 
