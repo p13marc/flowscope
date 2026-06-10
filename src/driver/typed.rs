@@ -84,9 +84,16 @@ pub enum Event<K> {
 
     /// Per-packet event on an existing flow.
     ///
-    /// The `tcp` field is populated only when
-    /// [`DriverBuilder::emit_packet_details`] was called with
-    /// `true`.
+    /// # Per-packet TCP details
+    ///
+    /// The `tcp` field is **always `None` unless the driver was
+    /// built with [`DriverBuilder::emit_packet_details`]`(true)`**
+    /// — that's an opt-in, off by default to avoid per-packet
+    /// extractor re-parse cost. Reading `tcp` on a default-
+    /// configured driver and getting `None` is expected, not a
+    /// bug. Use the convenience accessor [`Event::tcp`] when you
+    /// want "tcp info if available, on any variant" without
+    /// destructuring.
     FlowPacket {
         key: K,
         side: FlowSide,
@@ -148,6 +155,25 @@ impl<K> Event<K> {
             | Event::ParserClosed { key, .. }
             | Event::FlowAnomaly { key, .. } => Some(key),
             Event::TrackerAnomaly { .. } => None,
+        }
+    }
+
+    /// Per-packet TCP details, when available.
+    ///
+    /// Returns the `tcp` field for [`Self::FlowPacket`] events;
+    /// `None` for every other variant. The field itself is only
+    /// populated when the driver was built with
+    /// [`DriverBuilder::emit_packet_details`]`(true)`; if you
+    /// haven't opted in, this accessor (like the field) always
+    /// returns `None`.
+    ///
+    /// Useful for cross-variant pipelines that want "tcp info if
+    /// the event carries any, otherwise None" without an explicit
+    /// destructuring `match` arm on `FlowPacket`.
+    pub fn tcp(&self) -> Option<&TcpInfo> {
+        match self {
+            Event::FlowPacket { tcp, .. } => tcp.as_ref(),
+            _ => None,
         }
     }
 
