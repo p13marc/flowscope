@@ -39,8 +39,8 @@ Not started.
 
 ## Out of scope
 
-- **No new API documented.** Plans 140-146 each ship their own
-  doc + rustdoc.
+- **No new API documented.** Plans 143 / 144 / 146 each ship
+  their own doc + rustdoc.
 - **No fresh design rationale.** `docs/design.md` already
   captures the runtime-free / layered design.
 
@@ -104,10 +104,12 @@ None. Pure doc.
     already use `Driver<E>` (hello_pipeline.rs, etc.).
     Cross-check; nothing to change beyond text framing.
 11. **`CLAUDE.md`**: `Implementation Status` gets a new "0.12.0
-    cycle (expanded)" header listing plans 130-146 with one-
-    line descriptions. Module map cross-checked against
-    plans 140-146 module structure (e.g. `src/http2/`,
-    `src/quic/`, `src/emit/ipfix.rs`).
+    cycle (expanded)" header listing the 6 surviving plans
+    (130 / 131 / 132 / 143 / 144 / 146) with one-line
+    descriptions. Module map cross-checked against the new
+    modules: `src/detect/patterns/` (plan 143),
+    `src/detect/file/` (plan 146), and the `src/anomaly_fields.rs`
+    trait split (plan 130).
 
 ## Tests
 
@@ -139,8 +141,8 @@ Doc-only plan; no Rust tests. Verification harness:
 - `docs/migration-0.11-to-0.12.md` covers plan 130/131
   breaks.
 - `README.md` §"Status" reflects the expanded 0.12 scope.
-- `CLAUDE.md` §"Implementation Status" lists all 10
-  expanded-cycle plans.
+- `CLAUDE.md` §"Implementation Status" lists all 6
+  expanded-cycle plans (130 / 131 / 132 / 143 / 144 / 146).
 
 ## Risks
 
@@ -148,11 +150,11 @@ Doc-only plan; no Rust tests. Verification harness:
   previously compiled may break when API references change.
   Mitigation: run after every batched change; the
   `rust,no_run` block grammar is strict.
-- **R2: Drift from plans 140-146 docs.** Each new feature
-  plan ships its own rustdoc; this plan establishes the
-  framing they should fit into. Sequencing: this plan lands
-  after 130/131 and before 140-146 so the new feature docs
-  can lean on its conventions.
+- **R2: Drift from plans 143 / 144 / 146 docs.** Each new
+  feature plan ships its own rustdoc; this plan establishes
+  the framing those feature docs should fit into. Sequencing:
+  this plan lands after 130 / 131 and before 143 / 144 / 146
+  so the new feature docs can lean on its conventions.
 - **R3: Migration-doc churn.** `migration-0.11-to-0.12.md` is
   appended, not rewritten. Easy to drift; mitigation is
   one focused review pass per appended §.

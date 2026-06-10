@@ -230,10 +230,11 @@ impl HttpExchangeParser {
 
 ### Phase 1: Sink trait + Sha256 + Md5
 
-1. `Cargo.toml`: add `file-hash` feature; `sha2 = "0.10"`
-   (already a `ja4` dep for some impls), `md-5 = "0.10"`
-   (already a `ja3` dep). With `tls-fingerprints` enabled
-   they're free.
+1. `Cargo.toml`: add `file-hash` feature; `sha2 = "0.10"` +
+   `md-5 = "0.10"`. Both are already pulled by
+   `tls-fingerprints` (plan 131 consolidation) — so with that
+   feature enabled, `file-hash` adds zero new transitive
+   deps.
 2. `src/detect/file/types.rs`: `FileHashEvent`, `FileType`.
 3. `src/detect/file/sha256.rs` + `md5.rs`: sink impls.
 4. MIME classification: store first 64 B in a `[u8; 64]`

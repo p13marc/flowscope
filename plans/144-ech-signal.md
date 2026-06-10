@@ -51,7 +51,6 @@ None. Additive — new fields on `#[non_exhaustive]` types.
 | Modify | `src/tls/types.rs` | `TlsClientHello` grows `ech_present`, `ech_config_id`, `sni_is_outer` fields; `TlsServerHello` grows `ech_retry_configs` |
 | Modify | `src/tls/parser.rs` | Detect extension 0xfe0d in ClientHello + EncryptedExtensions; populate new fields |
 | Modify | `src/tls/handshake.rs` | `TlsHandshake` event grows `ech_present`, `ech_retry_configs`, `ech_outcome` fields |
-| Modify | `src/emit/eve.rs` | EVE anomaly emits `ech` sub-object when present |
 | Modify | `tests/tls_parser.rs` | Add ECH fixture cases |
 | New | `tests/fixtures/tls/ech_chrome.pcap` | Chrome ECH ClientHello fixture |
 | New | `tests/fixtures/tls/ech_retry.pcap` | Server retry-config rejection fixture |
@@ -127,29 +126,13 @@ pub struct TlsHandshake {
 
 ### EVE writer extension
 
-```rust
-// src/emit/eve.rs
-
-// In the EVE "tls" (future) event_type — for now, the
-// `EveJsonWriter` doesn't emit a tls event_type. But the
-// existing anomaly path gains an "ech" sub-object when
-// AnomalyKind::SessionParseError flows on an ECH-rejected
-// handshake:
-//
-// {
-//   "anomaly": { "type": "applayer", "event": "parse_error" },
-//   "ech": {
-//     "present": true,
-//     "outcome": "rejected",
-//     "config_id": 12
-//   }
-// }
-//
-// Trait surface: `AnomalyKind` accessors stay; emit reads
-// ECH fields off the corresponding `TlsHandshake` event when
-// available via a side-channel `with_tls_handshake_context()`
-// API. Documented in docs/eve-format.md.
-```
+Out of scope for this plan. `EveJsonWriter` doesn't emit a
+`"tls"` event_type yet (no per-protocol EVE shapes shipped).
+ECH state surfaces on `TlsClientHello` / `TlsHandshake`
+events; consumers wanting it in EVE output drain the
+handshake aggregator and write their own line. Add a
+`"tls"` event_type to `EveJsonWriter` in a future cycle if a
+consumer asks.
 
 ## Implementation steps
 

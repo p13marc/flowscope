@@ -106,10 +106,16 @@ Total pre-1.0 breaks shipped in the expanded 0.12 cycle
 | 131 | `tracing-messages` feature removed | use `DriverBuilder::with_trace_messages(bool)` |
 | 144 | `TlsClientHello` / `TlsServerHello` / `TlsHandshake` grow ECH fields | additive, `#[non_exhaustive]` covers it |
 
-Net: 9 user-visible changes; 6 are silent under
-`#[non_exhaustive]`; 3 require explicit consumer migration
-(trait method moves, feature renames, field → accessor). All
-mechanical; CHANGELOG entries provide one-line recipes.
+Net: 9 user-visible changes; **3 are silent** (covered by
+`#[non_exhaustive]` or dead-code removal: `DriverBuilder` Send
+bound is a no-op for shipped parsers, `Module::Pipeline` was
+dead code since 0.11, TLS field additions are
+`#[non_exhaustive]`-additive). **6 require explicit consumer
+migration** (per the table above: `KeyFields` import, `K`
+bound on custom keys, `Event::tcp()` accessor, infallible
+chrono `From`, `tls-fingerprints` feature rename,
+`with_trace_messages(bool)` runtime knob). All mechanical;
+CHANGELOG entries provide one-line recipes.
 
 ## CI matrix changes
 
@@ -162,8 +168,8 @@ release process:
    convention).
 5. **Post-release**: CHANGELOG header marks 0.12.0 as shipped;
    plans/INDEX.md retires the 0.12 cycle entries; plan files
-   for shipped plans (130-146, the surviving subset) deleted
-   per project convention.
+   for the 6 surviving plans (130 / 131 / 132 / 143 / 144 /
+   146) deleted per project convention.
 
 ## Acceptance criteria (cycle-level)
 

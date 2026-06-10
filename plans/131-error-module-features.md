@@ -14,8 +14,9 @@ Cleanup pass on two related shapes the 0.12 audit flagged as
 2. **Cargo features** — 21 features is a lot. Three
    consolidations and one rename:
    - `ja3` + `ja4` → `tls-fingerprints` (rarely useful in
-     isolation; JA4+ family expansion in plan 140 makes the
-     split worse).
+     isolation; a future JA4+ family expansion would make the
+     two-flag split worse, so collapse now while the surface
+     is small).
    - `l7` umbrella stays; `full` umbrella stays; document the
      convention so they don't drift independently.
    - `tracing-messages` reconsidered: the feature exists to
@@ -37,10 +38,11 @@ None.
 ## Out of scope
 
 - **No new error variants beyond the missing `Module` arms.**
-- **No new features added by this plan.** Plans 140 (jA4+),
-  141 (IPFIX), 142 (HTTP/2), 145 (QUIC), 146 (file-hash) add
-  their own.
-- **No CI matrix shrinkage.** Plans 140/141/142/145/146 grow it.
+- **No new features added by this plan.** Plan 146 (file-hash)
+  is the only feature this cycle ships under its own gate.
+- **CI matrix net change:** this plan swaps two entries (`ja3`
+  / `ja4`) for one (`tls-fingerprints`); plan 146 adds one
+  (`file-hash`). Net +0 / +1.
 
 ## Pre-1.0 breaks
 
@@ -49,8 +51,9 @@ None.
   carried this variant in shipped 0.12.x. Any external `match`
   arm referencing it was already dead code.
 - **`ja3` and `ja4` features removed**; replaced by
-  `tls-fingerprints` (enables both JA3 and the JA4+ family
-  shipped via plan 140). Migration: rename the feature in
+  `tls-fingerprints` (enables today's JA3 + JA4 client TLS
+  fingerprints; a future JA4+ family expansion drops cleanly
+  under the same gate). Migration: rename the feature in
   `Cargo.toml`. The `Ja3Parts` / `ja3()` / `Ja4Parts` /
   `ja4_fingerprint()` / `ja4_parts()` exports stay at the
   same paths; only the feature flag rename.
@@ -158,11 +161,8 @@ icmp  = [...]
 # TLS fingerprint family (replaces ja3 + ja4)
 tls-fingerprints = ["tls", "dep:md-5", "dep:sha2", "dep:hex"]
 
-# Plus features added by plans 140/141/142/145/146:
-http2 = [...]       # plan 142
-quic  = [...]       # plan 145
-emit-ipfix = [...]  # plan 141
-file-hash = [...]   # plan 146
+# Plus feature added by plan 146 this cycle:
+file-hash = ["reassembler", "dep:sha2", "dep:md-5"]
 
 # Umbrellas
 l7 = ["http", "tls", "tls-fingerprints", "dns", "icmp"]

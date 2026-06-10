@@ -81,47 +81,14 @@ Phase E — Release mechanics (Phase 8 from cycle 128, deferred):
 - ECH + file hashes are surgical additions (small surface, obvious consumer): TLS modernisation + DFIR/IR pipelines.
 - The heavy feature additions (JA4+ / IPFIX / HTTP/2 / QUIC) each carry substantial dep / spec / maintenance risk. Deferred until specific consumer demand surfaces.
 
-Cycle theme: "add the Send-by-default slot handle,
-Suricata-compatible EVE emit, and the AnomalyFields /
-Timestamp / correlate ergonomics that retire netring's
-duplicated upstream code."
-
-**Second-pass consolidation decisions** (vs the first draft):
-
-- **Plan 122 consolidated**: wishlist + first draft proposed
-  a feature-gated `mt` flag + parallel `MtSlotHandle` +
-  `MtDriverBuilder` types. Collapsed to a single always-Send
-  `SlotHandle` via `Arc<SegQueue>`. Per-emit cost (~5–10 ns
-  extra) is negligible at netring's rates (~0.05% of a core
-  at 1 Mpps × 10% L7); the simplification (~400 fewer LoC,
-  no feature flag, no parallel builder) is significant. **Pre-1.0
-  break**: `SlotHandle: !Send` → `SlotHandle: Send + Sync`.
-- **Plan 125 absorbed**: 3 trivial `correlate::*::new_unbounded`
-  delegates (5 LoC each) don't earn a separate plan file.
-  Folded into plan 128's Phase 7 small-wins section.
-
-**My-analysis corrections** to the wishlist (full list in
-`plans/128-cycle-0-12.md` §Provenance):
-
-- **Plan 124**: wishlist proposed `Driver::deferred()` whose
-  `build()` panics if no extractor was set — sharpened to a
-  distinct `DeferredDriverBuilder<E>` type that only exposes
-  `build_with(ext)`. Compile-time guarantee preserved.
-- **Plan 126**: wishlist's `AnomalyKind` mapping referenced
-  variants that don't exist in shipped flowscope. Corrected
-  to the 6 actual variants (`BufferOverflow`,
-  `OutOfOrderSegment`, `FlowTableEvictionPressure`,
-  `SessionParseError`, `RetransmittedSegment`,
-  `ReassemblerHighWatermark`).
-- **Plan 127**: wishlist's "½ day" estimate undercounts the
-  date algorithm + cross-check tests. Realistic: ~1 day.
-
-Reference document (in repo root during the cycle, retires
-with the cycle):
-
-- [`../flowscope-0.12-wishlist.md`](../flowscope-0.12-wishlist.md)
-  — netring 0.21's distilled ask list. The plans above are
-  this document operationalised + consolidated.
+**Cycle theme:** pre-1.0 debt retirement + small wins
+(detection patterns / ECH signal / file hashes). The heavier
+feature additions surveyed during the strategic review are
+deferred (see Stale / deferred below). 0.12 base work (Send
+slot handles, EVE writer, AnomalyFields trait, Timestamp
+ISO 8601, deferred driver builder) already shipped to master
+under commits `781595f` → `3a96cfa`; durable record is in
+CHANGELOG and `git log`.
 
 ### Stale / deferred
 

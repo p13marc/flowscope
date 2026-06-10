@@ -42,8 +42,8 @@ None.
 
 ## Out of scope
 
-- **No new emit writers.** Plan 141 (IPFIX) and any future
-  Parquet/OpenTelemetry writer are orthogonal.
+- **No new emit writers.** Future IPFIX / Parquet /
+  OpenTelemetry / similar writers are orthogonal.
 - **No `KeyFields` trait method changes** beyond the split.
   `src_ip` / `dest_ip` / etc. stay as-is.
 - **No `AnomalyKind` variant changes.** Trait method moves are
