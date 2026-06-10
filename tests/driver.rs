@@ -281,9 +281,9 @@ fn force_close_emits_flow_ended_with_force_closed_reason() {
     msgs.clear();
     driver.force_close_into(&key, Timestamp::new(5, 0), &mut events);
 
-    let ended = events.iter().any(|e| {
-        matches!(e, Event::FlowEnded { reason, .. } if *reason == EndReason::ForceClosed)
-    });
+    let ended = events
+        .iter()
+        .any(|e| matches!(e, Event::FlowEnded { reason, .. } if *reason == EndReason::ForceClosed));
     assert!(
         ended,
         "force_close should emit FlowEnded with ForceClosed reason; got {events:?}",

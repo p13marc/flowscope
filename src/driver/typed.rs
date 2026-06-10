@@ -302,12 +302,7 @@ where
 
     /// Append-only variant of [`Self::force_close`]. Reuses
     /// `out`'s capacity.
-    pub fn force_close_into(
-        &mut self,
-        key: &E::Key,
-        now: Timestamp,
-        out: &mut Vec<Event<E::Key>>,
-    ) {
+    pub fn force_close_into(&mut self, key: &E::Key, now: Timestamp, out: &mut Vec<Event<E::Key>>) {
         // Slots first — they may drain reassembled bytes and
         // emit `ParserClosed` ahead of the central tracker's
         // `FlowEnded`.

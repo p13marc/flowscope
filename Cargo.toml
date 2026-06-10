@@ -63,6 +63,12 @@ serde_json = { version = "1", optional = true }
 # `aggregate` feature — t-digest streaming quantile estimator
 tdigest = { version = "0.2", optional = true }
 
+# `chrono` feature — interop between `Timestamp` and chrono's
+# `DateTime<Utc>`. We need `alloc` for the `to_rfc3339_opts`
+# cross-check tests; the runtime path (`From` / `TryFrom`) is
+# alloc-free regardless.
+chrono = { version = "0.4", default-features = false, features = ["alloc"], optional = true }
+
 [dev-dependencies]
 proptest = "1"
 pcap-file = "2"
@@ -124,8 +130,14 @@ emit-ndjson = ["emit", "serde", "dep:serde_json"]
 # `Histogram` (no deps) + `Percentile` (wraps the `tdigest` crate).
 aggregate = ["dep:tdigest"]
 
+# `chrono` interop on `Timestamp` (plan 127). Adds
+# `From<DateTime<Utc>>` + `TryFrom<Timestamp>` for
+# `chrono::DateTime<chrono::Utc>` so consumers already on
+# chrono can interop without a manual conversion.
+chrono = ["dep:chrono"]
+
 # Convenience: turn everything on.
-full = ["http", "tls", "ja3", "ja4", "dns", "icmp", "pcap", "metrics", "tracing", "tracing-messages", "serde", "emit", "emit-ndjson", "aggregate"]
+full = ["http", "tls", "ja3", "ja4", "dns", "icmp", "pcap", "metrics", "tracing", "tracing-messages", "serde", "emit", "emit-ndjson", "aggregate", "chrono"]
 
 [package.metadata.docs.rs]
 all-features = true
