@@ -1,20 +1,24 @@
-# Plan 122 — `mt` feature: `Send + Sync` `MtSlotHandle`
+# Plan 122 — `SlotHandle: Send + Sync` (consolidation)
 
 ## Summary
 
-Opt-in `mt` Cargo feature that adds `MtSlotHandle<M, K>` —
-a `Send + Sync` counterpart to today's `SlotHandle<M, K>` —
-backed by `Arc<crossbeam_queue::SegQueue<SlotMessage<M, K>>>`
-instead of `Rc<RefCell<SlotBuf<M, K>>>`. Same surface
-(`drain`, `pending`, `parser_kind`, `clear`); different
-thread-safety guarantees. Selected at builder time via a new
-`DriverBuilder::mt()` finalizer that promotes the builder to
-its multi-thread variant.
+**Consolidate** the existing `SlotHandle<M, K>` to be always
+`Send + Sync` by switching its backing storage from
+`Rc<RefCell<SlotBuf<M, K>>>` to
+`Arc<crossbeam_queue::SegQueue<SlotMessage<M, K>>>`. Single
+type, single API, no feature flag, no parallel `MtSlotHandle`
+type.
 
-Default single-thread path (Rc/RefCell, ~1–2 ns per emit) is
-unchanged. Multi-thread users pay ~5–10 ns per emit for the
-SegQueue MPMC push/pop, in exchange for `Send + Sync` on the
-handle.
+The wishlist proposed a feature-gated `MtSlotHandle` +
+`MtDriverBuilder` mirror — three new files, four new slot
+types, a duplicated builder. This plan rejects that approach
+in favour of upgrading the existing surface in place. Cost:
+one new always-on dep (`crossbeam-queue`, ~2 KB), ~5–10 ns
+extra per slot emit (negligible at realistic rates), and a
+pre-1.0 break on the `!Send` → `Send` auto-trait transition.
+Benefit: one slot type to learn, no code duplication, every
+netring / multi-thread tokio user gets `Send` handles for
+free.
 
 ## Status
 
@@ -22,70 +26,94 @@ Not started.
 
 ## Prerequisites
 
-None — self-contained in `src/driver/`.
+None.
 
 ## Out of scope
 
-- **No tokio types.** Hard rule. `flowscope` stays runtime-free;
-  the `mt` feature pulls only `crossbeam-queue`, no async deps.
+- **No tokio types.** Hard rule. `crossbeam-queue` is sync-only,
+  no async deps.
 - **The `Driver<E>` itself stays `!Send`.** The central
   tracker (`FlowTracker<E>`) holds `Rc<RefCell>` internals;
-  making the whole driver `Send` is multi-day work (deferred,
-  see plan 118 era D2 / open items). Only the **handle** side
-  is `Send` — drain on any thread, run the driver on one
-  thread.
-- **No `Mutex` fallback.** If `crossbeam-queue` isn't
-  available the feature doesn't compile. Mutex-backed
-  alternative was rejected at the 0.11 reanalysis pass —
-  ~5% of a core at 1 Mpps × 5 slots is the wrong perf
-  tradeoff.
-- **No broadcast clone semantics.** `MtSlotHandle::clone` hands
-  out a second *competitive* consumer (race for messages) —
-  matches the underlying SegQueue MPMC contract. Document this
-  explicitly.
+  the rewrite to make the whole driver `Send` is multi-day
+  work and out of scope. Only the **handle** side becomes
+  `Send` — drain on any thread, run the driver on one thread.
+- **No `Mutex`-backed alternative.** SegQueue is the right
+  primitive: lock-free MPMC, no lock contention, ~10-15 ns
+  push/pop.
+- **No broadcast clone semantics.** `SlotHandle::clone` hands
+  out a second **competitive consumer** (race for messages)
+  — matches the underlying SegQueue MPMC contract. Document
+  this explicitly. (Single-consumer scenarios stay the
+  default and don't need clones.)
+
+## Pre-1.0 break
+
+`SlotHandle<M, K>` transitions from `!Send + !Sync` to
+`Send + Sync`. Auto-trait inheritance differences may surface
+at downstream callsites that explicitly assert `!Send` (rare).
+
+The `SlotHandle<M, K>` generic bounds also tighten from
+`M: 'static, K: 'static` to `M: Send + 'static, K: Send +
+'static` — but every shipped `SessionParser::Message` /
+`DatagramParser::Message` is already `Send + 'static` (the
+trait bounds require it), so in practice this constraint is
+already met.
+
+CHANGELOG migration recipe: for the vast majority of users,
+nothing changes. For users that explicitly relied on `!Send`
+in trait bounds (unusual), they update the bound or refactor.
 
 ## Files
 
 | Action | Path | Purpose |
 |---|---|---|
-| New | `src/driver/mt_slot.rs` | `MtSlotHandle<M, K>`; `MtSlotBuf<M, K>` internal type |
-| New | `src/driver/mt_typed.rs` | `MtDriverBuilder<E>` mirror of `DriverBuilder<E>` returning `MtSlotHandle` |
-| New | `src/driver/mt_typed_slot.rs` | `MtConcreteSlot` / `MtConcreteDatagramSlot` / `MtHeuristic*Slot` impls (clones of typed_slot.* but writing into `Arc<SegQueue>`) |
-| Modify | `src/driver/typed.rs` | Add `pub fn mt(self) -> MtDriverBuilder<E>` finalizer (cfg-gated) |
-| Modify | `src/driver/mod.rs` | `#[cfg(feature = "mt")] mod mt_slot;` etc.; re-export `MtSlotHandle`, `MtDriverBuilder` |
-| Modify | `Cargo.toml` | `crossbeam-queue = { version = "0.3", optional = true }`; `mt = ["dep:crossbeam-queue"]` |
-| Modify | `src/lib.rs` | `#[cfg(feature = "mt")] pub use driver::{MtSlotHandle, MtDriverBuilder};` |
-| New | `tests/driver_mt.rs` | `Send + Sync` static-asserts; cross-thread drain integration |
-| Modify | `.github/workflows/rust.yml` | Add `mt` to the feature-matrix entries |
+| Modify | `src/driver/slot.rs` | Switch backing to `Arc<SegQueue>`; update `drain` / `pending` / `clear` / `parser_kind`; add `Send + 'static` bounds on `M`, `K`; remove `SlotBuf` (replaced by SegQueue) |
+| Modify | `src/driver/typed_slot.rs` | Slots write via `SegQueue::push` instead of `RefCell::borrow_mut().queue.push`; drop the `Rc<RefCell>` import; the slot trait stays unchanged |
+| Modify | `src/driver/typed_slot_heuristic.rs` | Same as typed_slot.rs |
+| Modify | `Cargo.toml` | `crossbeam-queue = "0.3"` (no longer optional) |
+| Modify | `tests/driver.rs` | Add `static_assertions::assert_impl_all!(SlotHandle<u32, FiveTupleKey>: Send, Sync);` |
+| New | `tests/driver_send.rs` | Cross-thread drain integration test |
+| Modify | `.github/workflows/rust.yml` | No new matrix entry needed (no feature flag) |
+| Modify | `CHANGELOG.md` | Document the `Send + Sync` transition |
 
 ## API
 
-### `MtSlotHandle<M, K>` (gated on `feature = "mt"`)
+### `SlotHandle<M, K>` (consolidated)
 
 ```rust
-// src/driver/mt_slot.rs
+// src/driver/slot.rs
 use std::sync::Arc;
 
 use crossbeam_queue::SegQueue;
 
-use crate::driver::slot::SlotMessage;
+use crate::event::FlowSide;
+use crate::Timestamp;
 
-/// `Send + Sync` slot handle. Backed by
-/// `Arc<crossbeam_queue::SegQueue<SlotMessage<M, K>>>` — a
-/// lock-free MPMC queue.
+/// One typed message emitted by a registered parser.
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub struct SlotMessage<M, K> {
+    pub key: K,
+    pub side: FlowSide,
+    pub message: M,
+    pub ts: Timestamp,
+}
+
+/// Typed drain handle returned by the builder per registered
+/// parser. The handle is **`Send + Sync`** — move across
+/// threads, share across drainers, drain inside a tokio task.
 ///
-/// Use this when the slot handle must cross task / thread
-/// boundaries (per-CPU sharding, multi-thread tokio runtime).
-/// For single-threaded consumers, [`crate::driver::SlotHandle`]
-/// is ~3x cheaper per emit.
+/// Backed by `Arc<crossbeam_queue::SegQueue<SlotMessage<M, K>>>`
+/// — a lock-free MPMC queue. Slots push, handles pop. Cost
+/// per emit: ~10-15 ns (uncontended).
 ///
 /// # Cloning
 ///
 /// `Clone` hands out a second **competitive consumer** — both
-/// drain from the same SegQueue and race for messages. Only
-/// clone if you want a competitive read pattern; for a
-/// broadcast pattern, drain into a channel + fan out yourself.
-pub struct MtSlotHandle<M, K>
+/// drain from the same SegQueue and race for messages. For
+/// broadcast (every consumer sees every message), drain into
+/// a channel and fan out yourself.
+pub struct SlotHandle<M, K>
 where
     M: Send + 'static,
     K: Send + 'static,
@@ -94,13 +122,20 @@ where
     pub(super) parser_kind: &'static str,
 }
 
-impl<M, K> MtSlotHandle<M, K>
+impl<M, K> SlotHandle<M, K>
 where
     M: Send + 'static,
     K: Send + 'static,
 {
     /// Drain all currently-queued messages into `out`. Returns
     /// the count drained. Lock-free.
+    ///
+    /// Per-drain cost: O(n) where n is the message count
+    /// — each pop is ~10-15 ns. For high-message-count drains
+    /// (100+ messages per call), the SegQueue pop loop is
+    /// notably slower than the pre-0.12 `Rc<RefCell<Vec>>` batch
+    /// move. Typical 0-2 messages per drain at netring's
+    /// `track_into` cadence makes this irrelevant in practice.
     pub fn drain(&mut self, out: &mut Vec<SlotMessage<M, K>>) -> usize {
         let mut n = 0;
         while let Some(msg) = self.inner.pop() {
@@ -110,18 +145,24 @@ where
         n
     }
 
+    /// Approximate message count currently in the queue.
+    /// Cheap inspection; result may be slightly stale under
+    /// concurrent push/pop.
     pub fn pending(&self) -> usize {
         self.inner.len()
     }
+
     pub fn parser_kind(&self) -> &'static str {
         self.parser_kind
     }
+
+    /// Discard all queued messages without draining.
     pub fn clear(&mut self) {
         while self.inner.pop().is_some() {}
     }
 }
 
-impl<M, K> Clone for MtSlotHandle<M, K>
+impl<M, K> Clone for SlotHandle<M, K>
 where
     M: Send + 'static,
     K: Send + 'static,
@@ -134,238 +175,246 @@ where
     }
 }
 
-// Send + Sync follow automatically because Arc<SegQueue<T>>:
-//   - Arc<T>: Send + Sync where T: Send + Sync
-//   - SegQueue<T>: Send + Sync where T: Send
-// SlotMessage<M, K>: Send when M: Send + K: Send (already guaranteed).
-```
-
-### `MtDriverBuilder<E>` (gated on `feature = "mt"`)
-
-```rust
-// src/driver/mt_typed.rs
-
-/// Multi-thread variant of [`crate::driver::DriverBuilder`].
-/// Mirrors the non-mt builder's surface but every
-/// `session_*` / `datagram_*` call returns
-/// [`MtSlotHandle`] instead of `SlotHandle`. The built
-/// `Driver<E>` is unchanged; only the slot internals + handle
-/// representation differ.
-pub struct MtDriverBuilder<E>
+impl<M, K> std::fmt::Debug for SlotHandle<M, K>
 where
-    E: FlowExtractor,
-    E::Key: Send + 'static,
-{ /* … same field shape as DriverBuilder<E> with Arc<SegQueue>-backed slots … */ }
-
-impl<E> MtDriverBuilder<E>
-where
-    E: FlowExtractor + Clone + Send + 'static,
-    E::Key: Hash + Eq + Clone + Send + 'static,
+    M: Send + 'static,
+    K: Send + 'static,
 {
-    pub fn config(&mut self, c: FlowTrackerConfig) -> &mut Self;
-    pub fn monotonic_timestamps(&mut self, on: bool) -> &mut Self;
-    pub fn emit_anomalies(&mut self, on: bool) -> &mut Self;
-    pub fn emit_packet_details(&mut self, on: bool) -> &mut Self;
-    pub fn dedup(&mut self, d: Dedup) -> &mut Self;
-    pub fn idle_timeout_fn<F>(&mut self, f: F) -> &mut Self
-    where F: Fn(&E::Key, Option<L4Proto>) -> Option<Duration> + Send + 'static;
-
-    pub fn session_on_ports<P, I>(&mut self, parser: P, ports: I) -> MtSlotHandle<P::Message, E::Key>
-    where P: SessionParser + Clone, I: IntoIterator<Item = u16>,
-          P::Message: Send + 'static;
-    pub fn session_broadcast<P>(&mut self, parser: P) -> MtSlotHandle<P::Message, E::Key>
-    where P: SessionParser + Clone, P::Message: Send + 'static;
-    pub fn session_heuristic<P>(&mut self, parser: P, sig: SignatureFn) -> MtSlotHandle<P::Message, E::Key>
-    where P: SessionParser + Clone, P::Message: Send + 'static;
-
-    pub fn datagram_on_ports<D, I>(&mut self, parser: D, ports: I) -> MtSlotHandle<D::Message, E::Key>
-    where D: DatagramParser + Clone, I: IntoIterator<Item = u16>,
-          D::Message: Send + 'static;
-    pub fn datagram_broadcast<D>(&mut self, parser: D) -> MtSlotHandle<D::Message, E::Key>
-    where D: DatagramParser + Clone, D::Message: Send + 'static;
-    pub fn datagram_heuristic<D>(&mut self, parser: D, sig: SignatureFn) -> MtSlotHandle<D::Message, E::Key>
-    where D: DatagramParser + Clone, D::Message: Send + 'static;
-
-    pub fn build(self) -> Driver<E>;
-}
-```
-
-### Finalizer on the existing `DriverBuilder<E>`
-
-```rust
-// src/driver/typed.rs
-impl<E> DriverBuilder<E>
-where
-    E: FlowExtractor + Clone + Send + 'static,
-    E::Key: Hash + Eq + Clone + Send + 'static,
-{
-    /// Promote this builder to its multi-thread variant. Call
-    /// before registering any slots (the existing slots, if any,
-    /// would be `Rc`-backed and can't be ported across).
-    #[cfg(feature = "mt")]
-    pub fn mt(self) -> MtDriverBuilder<E> { … }
-}
-```
-
-### Usage
-
-```rust
-#[cfg(feature = "mt")]
-fn shard() {
-    use flowscope::driver::{Driver, MtSlotHandle};
-    use flowscope::extract::{FiveTuple, FiveTupleKey};
-    use flowscope::http::{HttpMessage, HttpParser};
-
-    let mut builder = Driver::builder(FiveTuple::bidirectional()).mt();
-    let http_slot: MtSlotHandle<HttpMessage, FiveTupleKey> =
-        builder.session_on_ports(HttpParser::default(), [80]);
-    let mut driver = builder.build();
-
-    let cloned_handle = http_slot.clone(); // Send across thread boundary
-    std::thread::spawn(move || {
-        let mut h = cloned_handle;
-        let mut buf = Vec::new();
-        loop {
-            h.drain(&mut buf);
-            // process buf …
-        }
-    });
-
-    // Drive on this thread.
-    for view in views() {
-        let mut lifecycle = Vec::new();
-        driver.track_into(view, &mut lifecycle);
-        // … (drainers on other thread pull the typed messages)
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SlotHandle")
+            .field("parser_kind", &self.parser_kind)
+            .field("pending", &self.pending())
+            .finish()
     }
+}
+
+// Send + Sync follow automatically:
+//   Arc<T>:        Send + Sync where T: Send + Sync
+//   SegQueue<T>:   Send + Sync where T: Send
+//   SlotMessage<M, K>: Send where M: Send + K: Send (bound on the impl)
+```
+
+### Slot internals (`src/driver/typed_slot.rs`)
+
+```rust
+// Before:
+let mut buf = self.msg_buf.borrow_mut();
+for ev in self.session_scratch.drain(..) {
+    route_session_event(ev, parser_kind, &mut buf, lifecycle_out);
+}
+// route_session_event pushed into `buf.queue.push(...)`
+
+// After:
+for ev in self.session_scratch.drain(..) {
+    route_session_event(ev, parser_kind, &self.msg_buf, lifecycle_out);
+}
+// route_session_event pushes into `msg_buf.push(SlotMessage{...})`
+```
+
+The slot field changes from
+`msg_buf: Rc<RefCell<SlotBuf<P::Message, E::Key>>>` to
+`msg_buf: Arc<SegQueue<SlotMessage<P::Message, E::Key>>>`.
+
+### Usage (consumer code is unchanged)
+
+```rust
+use flowscope::driver::{Driver, SlotHandle, SlotMessage};
+use flowscope::extract::{FiveTuple, FiveTupleKey};
+use flowscope::http::{HttpMessage, HttpParser};
+
+let mut builder = Driver::builder(FiveTuple::bidirectional());
+let mut http_slot: SlotHandle<HttpMessage, FiveTupleKey> =
+    builder.session_on_ports(HttpParser::default(), [80]);
+let mut driver = builder.build();
+
+let mut events = Vec::new();
+let mut http_msgs: Vec<SlotMessage<HttpMessage, FiveTupleKey>> = Vec::new();
+
+for view in views() {
+    events.clear();
+    driver.track_into(view, &mut events);
+    http_msgs.clear();
+    http_slot.drain(&mut http_msgs);
+    // identical to 0.11
+}
+```
+
+### What changes for multi-thread consumers
+
+```rust
+let mut builder = Driver::builder(FiveTuple::bidirectional());
+let http_slot = builder.session_on_ports(HttpParser::default(), [80]);
+let mut driver = builder.build();
+
+// Clone the handle and move it to a tokio task:
+let drainer_handle = http_slot.clone();
+tokio::spawn(async move {
+    let mut h = drainer_handle;
+    let mut buf = Vec::new();
+    loop {
+        h.drain(&mut buf);
+        // process buf, push to a channel, …
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+});
+
+// Drive on this task:
+for view in views() {
+    driver.track_into(view, &mut events);
+    // The drainer in the other task sees typed messages without
+    // any LocalSet pinning.
 }
 ```
 
 ## Implementation steps
 
-1. **Cargo.toml**: add the dependency + feature gate. Verify
-   `cargo build --features mt` compiles with empty `mt_*`
-   stubs.
-2. **`src/driver/mt_slot.rs`**: define `MtSlotHandle<M, K>` with
-   `drain` / `pending` / `clear` / `parser_kind`. Include the
-   `Send + Sync` impl (auto). Internal `MtSlotBuf<M, K>` is just
-   a `pub(super)` newtype over `Arc<SegQueue<SlotMessage<M, K>>>`.
-3. **`src/driver/mt_typed_slot.rs`**: clone the structure of
-   `typed_slot.rs` + `typed_slot_heuristic.rs` with the slot
-   internals writing into `MtSlotBuf` (`SegQueue::push`) instead
-   of `RefCell::borrow_mut().queue.push`. Same `route_session_event`
-   shape, different terminal write.
-4. **`src/driver/mt_typed.rs`**: mirror the `DriverBuilder<E>` +
-   `Driver<E>` impl from `typed.rs`. The `Driver<E>` itself is
-   unchanged — only the *slot construction* path differs. So
-   `MtDriverBuilder::build()` returns the same `Driver<E>`,
-   carrying `Vec<Box<dyn ErasedSlot<E::Key>>>` populated with
-   `MtConcreteSlot` etc.
-5. **`src/driver/typed.rs`**: add the `mt()` finalizer that
-   moves the builder's state into `MtDriverBuilder<E>`.
-6. **`src/driver/mod.rs`** + **`src/lib.rs`**: re-export
-   `MtSlotHandle` and `MtDriverBuilder` behind the feature.
-7. **`tests/driver_mt.rs`**:
-   - `static_assertions::assert_impl_all!(MtSlotHandle<u32, u32>: Send, Sync);`
-   - `cross_thread_drain_basic` — spawn a thread holding a
-     cloned handle; drive the driver on the main thread; assert
-     all messages arrive.
-   - `pending_counts_correctly_under_concurrent_drain` —
-     push 1000 messages from the driver thread, drain
-     concurrently from N threads, assert sum.
-8. **`.github/workflows/rust.yml`**: add `"mt"` and
-   `"mt,l7,pcap"` matrix entries.
-9. **CHANGELOG** + **`docs/migration-0.11-to-0.12.md`** entry —
-   migration is one-line (add `.mt()` after `builder()`).
-10. **`docs/concepts.md`**: short section on single-thread vs
-    multi-thread handles and the cost tradeoff.
-11. **Bench addition**:
-    `benches/zero_alloc.rs::bench_mt_track_into_with_5_http_slots`
-    — verify steady-state allocation pressure. Expected: ~0
-    allocs in steady state once SegQueue blocks have been
-    allocated.
+1. **`Cargo.toml`**: add `crossbeam-queue = "0.3"` to
+   `[dependencies]` (not optional; not feature-gated).
+2. **`src/driver/slot.rs`**: rewrite per the API above. Drop the
+   `SlotBuf<M, K>` type — replaced by direct `SegQueue<SlotMessage<M,
+   K>>`. Tighten the generic bounds (`M: Send + 'static, K: Send +
+   'static`).
+3. **`src/driver/typed_slot.rs`**: update slot fields + the
+   `route_session_event` helper to take
+   `&Arc<SegQueue<SlotMessage<M, K>>>` instead of
+   `&mut SlotBuf<M, K>`. The push site is `msg_buf.push(SlotMessage
+   {...})` (no `borrow_mut` needed — SegQueue is lock-free).
+4. **`src/driver/typed_slot_heuristic.rs`**: same as typed_slot.rs.
+5. **Drop `Rc<RefCell>` imports** from the slot internals.
+6. **Slot `force_close_into`** (added in 0.11.1): already
+   composes with the new shape; just push into the SegQueue
+   from the same path.
+7. **Tests**:
+   - Existing `tests/driver.rs::slot_handle_capacity_is_reused`
+     becomes irrelevant (SegQueue doesn't expose a capacity
+     concept). Replace with `slot_handle_drain_stable_steady_state`
+     — assert allocator stays flat after warmup.
+   - Add `tests/driver.rs::send_sync_assertions` via
+     `static_assertions::assert_impl_all!`.
+   - New `tests/driver_send.rs::cross_thread_drain_basic`
+     — spawn a thread holding a cloned handle, drive the
+     driver on the main thread, assert messages cross.
+   - New `tests/driver_send.rs::competitive_consumer_clone_does_not_duplicate`
+     — clone the handle into two consumers, push 1000 messages,
+     drain from both, sum is exactly 1000 (no broadcast).
+8. **Bench**: re-run `cargo bench --bench zero_alloc`. Confirm
+   the 5-slot zero-alloc gate stays at 0.000 allocs/pkt
+   steady-state. SegQueue may add a one-time block allocation
+   during warmup (first 31 messages) but steady-state stays
+   flat.
+9. **CHANGELOG**: 0.12.0 entry. The migration recipe is two
+   lines:
+   > **0.12 break**: `SlotHandle<M, K>` is now `Send + Sync`.
+   > Auto-trait inheritance differences are very unlikely to
+   > surface; if your code asserts `!Send` on a SlotHandle,
+   > update the bound.
+10. **`docs/concepts.md`**: short note on the cost change for
+    high-message-count drains (rare in practice).
 
 ## Tests
 
-### Unit (in `src/driver/mt_slot.rs`)
+### Unit (in `src/driver/slot.rs`)
 
-- `drain_returns_pushed_in_order`
-- `pending_counts_under_pushes`
-- `clear_empties_queue`
-- `clone_yields_competitive_consumers`
+- `slot_handle_drain_basic`
+- `slot_handle_drain_returns_count`
+- `slot_handle_clear_drops_all`
+- `slot_handle_clone_competitive_consumers`
 
-### Integration (`tests/driver_mt.rs`)
+### Integration (`tests/driver.rs` / `tests/driver_send.rs`)
 
-- `send_sync_assertions`
-- `cross_thread_drain_basic`
-- `pending_counts_correctly_under_concurrent_drain`
-- `mt_driver_equivalent_to_st_for_offline_pcap` — drive the
-  same fixture pcap through both `Driver` shapes; compare the
-  set of typed messages (order may differ across drainers but
-  the set must match).
+- `static_assertions::assert_impl_all!(SlotHandle<u32, u32>: Send, Sync);`
+- `cross_thread_drain_basic` — push from driver thread, drain
+  from spawned thread.
+- `competitive_consumer_clone_does_not_duplicate`.
+- `mt_drainer_in_tokio_task_works` (gated on a `tokio` dev-dep
+  if not too heavy; otherwise use `std::thread`).
+- `pending_counts_are_consistent_under_concurrent_drain`.
+- All existing `tests/driver.rs` tests continue to pass
+  unchanged.
 
 ### Bench
 
-- `benches/zero_alloc.rs::bench_mt_track_into_with_5_http_slots`
-  — measures alloc/packet at the mt surface. Target: same
-  0.000 allocs/packet steady-state as the non-mt path, modulo
-  one-time SegQueue block initialisation.
+- `benches/zero_alloc.rs::bench_track_into_with_slots_steady_state`
+  — confirms 0.000 allocs/pkt after SegQueue warmup.
 
 ## Acceptance criteria
 
-- `cargo build --features mt` clean.
-- `cargo test --features mt` clean.
-- `cargo clippy --features mt --all-targets -- -D warnings` clean.
-- `cargo doc --features mt --no-deps` zero warnings.
-- New `mt` and `mt,l7,pcap` CI matrix entries clean.
-- `static_assertions::assert_impl_all!(MtSlotHandle<u32, u32>: Send, Sync);`
-  compiles.
-- `cargo bench --bench zero_alloc --features mt,l7,...`
-  hits ≤ 0.5 allocs/packet steady-state for the 5-slot
-  `mt` configuration.
-- Migration guide entry shows the one-line `.mt()` call.
+- `cargo build --all-features` clean.
+- `cargo test --all-features` clean — all existing tests pass
+  + the new Send/Sync ones.
+- `cargo clippy --all-features --all-targets -- -D warnings`
+  clean.
+- All 9 existing CI feature-matrix entries clean (no new
+  matrix entry needed — no feature flag).
+- `static_assertions::assert_impl_all!(SlotHandle<u32, FiveTupleKey>:
+  Send, Sync);` compiles.
+- `cargo bench --bench zero_alloc` confirms the 5-slot steady-
+  state gate stays at 0.000 allocs/pkt.
+- CHANGELOG 0.12.0 entry documents the `Send + Sync` transition.
+- Migration verified: take one of netring's sharded-test code
+  paths, port to the new shape, confirm it compiles and runs.
 
 ## Risks
 
-- **R1: SegQueue allocator pressure.** SegQueue internally
-  grows by linked-list blocks (~8 entries per block). For true
-  zero-alloc steady state, we need pushes to reuse freed
-  blocks. Mitigation: bench harness catches this. Fallback if
-  the data shows real per-message allocations: switch to
-  `ArrayQueue<N>` with a per-slot capacity knob.
-- **R2: `Clone` competitive-consumer semantics surprise
-  consumers.** Document explicitly in rustdoc. The single-
-  consumer case (one handle, no clones) is the common path.
-- **R3: Code duplication between typed_slot.rs and
-  mt_typed_slot.rs.** Mostly mechanical. A future refactor
-  could parameterise the slot impls over a `MsgSink` trait
-  (one impl `Rc<RefCell>`, one impl `Arc<SegQueue>`) — defer
-  unless the duplicated code becomes a maintenance burden.
-- **R4: SegQueue is Send + Sync only when `T: Send`.** All
-  our `SlotMessage<M, K>` types are Send when `M: Send` +
-  `K: Send`. The bound on `MtSlotHandle<M, K>` enforces both —
-  catches any future type that wouldn't compose.
+- **R1: SegQueue allocator pressure on cold start.** SegQueue
+  grows by ~31-item blocks; the first push allocates 1 block.
+  Subsequent pushes within the block are alloc-free.
+  Mitigation: bench warm-up already happens (existing pattern).
+  If real-world traffic shows blocks being allocated faster
+  than expected (e.g. >31 pending messages per slot per
+  packet, which would be extremely unusual), fall back to
+  `crossbeam_queue::ArrayQueue<N>` (bounded) with a per-slot
+  capacity knob. Document under future-work-on-perf if it
+  surfaces.
+- **R2: Drain pattern cost difference.** O(n) pop loop instead
+  of O(1) batch move. At >100 messages per drain (rare —
+  typical netring drain is 0-2 messages per `track_into`),
+  the loop adds ~1500 ns. Negligible at any sane drain
+  cadence. Documented in rustdoc.
+- **R3: `crossbeam-queue` always-on dep.** ~2 KB compiled
+  weight, no transitive deps beyond `crossbeam-utils`. The
+  weight is small relative to flowscope's existing
+  `etherparse` / `bytes` / `httparse` / etc. Accepted cost
+  for the API simplification.
+- **R4: `!Send` → `Send` auto-trait break.** Theoretical.
+  No shipped consumer code is known to assert `!Send` on
+  `SlotHandle`. CHANGELOG covers the recipe; pre-1.0 we ship.
+- **R5: Clone-as-competitive surprise.** Documented in
+  rustdoc + concepts. Single-consumer (no clone) stays the
+  default path; doesn't require the user to learn anything new.
 
 ## Effort
 
 | Step | LoC | Hours |
 |---|---|---|
-| `mt_slot.rs` | 150 | 4 |
-| `mt_typed_slot.rs` | 250 | 6 |
-| `mt_typed.rs` | 200 | 5 |
-| `typed.rs` `.mt()` finalizer | 20 | 1 |
-| `mod.rs` + `lib.rs` re-exports | 10 | 0.5 |
-| Cargo.toml + CI matrix | 10 | 0.5 |
-| Tests + assertions | 120 | 4 |
-| Bench addition | 40 | 1.5 |
-| CHANGELOG + migration + concepts docs | 60 | 1.5 |
-| **Total** | **~860** | **~24 hours (3 days)** |
+| `slot.rs` rewrite | 100 | 3 |
+| `typed_slot.rs` field + write-site update | 50 | 2 |
+| `typed_slot_heuristic.rs` field + write-site update | 50 | 2 |
+| `Cargo.toml` + `force_close_into` compose | 10 | 0.5 |
+| Tests (8 unit + integration) | 200 | 4 |
+| Bench verification | 20 | 1 |
+| CHANGELOG + concepts docs | 30 | 1 |
+| **Total** | **~460** | **~14 hours (~2 days)** |
+
+The consolidation is *less* code than the feature-gated mt
+variant (~860 LoC) because nothing is duplicated. ~2 days
+of work, half-day faster than the original 3-day estimate.
 
 ## Provenance
 
 Triggered by netring 0.21 Phase C (per-CPU sharding) +
 multi-thread tokio runtime ask. flowscope 0.11.0's
 `SlotHandle<M, K>` is `Rc<RefCell>`-backed and intentionally
-`!Send` (CHANGELOG explicitly documents this). 0.11 INDEX's
-"Deferred items" listed Send slot handles as "revisit when a
-consumer needs a Send variant" — netring 0.21 is now that
-consumer.
+`!Send`. 0.11 INDEX's "Deferred items" listed Send slot
+handles as "revisit when a consumer needs a Send variant."
+netring 0.21 is that consumer.
+
+**Why this differs from the wishlist's proposal** (`mt`
+feature flag + `MtSlotHandle`): the duplicated-types approach
+adds ~860 LoC, two matrix entries, and a feature flag for a
+~10 ns/emit saving that's negligible at netring's traffic
+rates. Consolidating to one always-Send shape ships ~460 LoC,
+zero new matrix entries, and a unified API. The per-emit
+cost difference at 1 Mpps × 10% L7 = 100k slot writes/sec ×
+~5 ns extra = 500 µs/sec = 0.05% of a core. The cost is
+real but invisible.
