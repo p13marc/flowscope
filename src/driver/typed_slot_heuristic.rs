@@ -3,16 +3,16 @@
 //! Mirror of [`super::heuristic`] adapted to the typed
 //! `SlotHandle` pattern. Each slot holds a per-flow detection
 //! state machine; when the signature matches it pins to the
-//! parser and writes typed messages into the slot's
-//! `Rc<RefCell<SlotBuf>>`.
+//! parser and pushes typed messages into the slot's
+//! `Arc<SegQueue<SlotMessage<M, K>>>`.
 
-use std::cell::RefCell;
 use std::collections::HashMap;
 use std::hash::Hash;
 use std::marker::PhantomData;
-use std::rc::Rc;
+use std::sync::Arc;
 
 use arrayvec::ArrayVec;
+use crossbeam_queue::SegQueue;
 
 use crate::PacketView;
 use crate::Timestamp;
@@ -24,7 +24,7 @@ use crate::session::{DatagramParser, SessionEvent, SessionParser};
 use crate::session_driver::FlowSessionDriver;
 use crate::tracker::FlowTrackerConfig;
 
-use super::slot::{SlotBuf, SlotHandle};
+use super::slot::{SlotHandle, SlotMessage};
 use super::typed::Event;
 use super::typed_slot::{ErasedSlot, route_session_event_pub};
 
@@ -61,6 +61,8 @@ pub(super) struct TypedHeuristicSessionSlot<E, P>
 where
     E: FlowExtractor,
     P: SessionParser,
+    P::Message: Send + 'static,
+    E::Key: Send + 'static,
 {
     extractor: E,
     driver: FlowSessionDriver<E, P, ()>,
@@ -68,7 +70,7 @@ where
     max_probe_packets: u8,
     parser_kind: &'static str,
     states: HashMap<E::Key, FlowDetection>,
-    msg_buf: Rc<RefCell<SlotBuf<P::Message, E::Key>>>,
+    msg_buf: Arc<SegQueue<SlotMessage<P::Message, E::Key>>>,
     session_scratch: Vec<SessionEvent<E::Key, P::Message>>,
     _marker: PhantomData<P>,
 }
@@ -87,13 +89,13 @@ where
         monotonic_timestamps: bool,
     ) -> (Self, SlotHandle<P::Message, E::Key>)
     where
-        E::Key: 'static,
-        P::Message: 'static,
+        E::Key: Send + 'static,
+        P::Message: Send + 'static,
     {
         let parser_kind = parser.parser_kind();
-        let msg_buf = Rc::new(RefCell::new(SlotBuf::new()));
+        let msg_buf = Arc::new(SegQueue::new());
         let handle = SlotHandle {
-            inner: Rc::clone(&msg_buf),
+            inner: Arc::clone(&msg_buf),
             parser_kind,
         };
         let slot = Self {
@@ -170,25 +172,22 @@ where
         let parser_kind = self.parser_kind;
         self.session_scratch.clear();
         self.driver.track_into(view, &mut self.session_scratch);
-        let mut buf = self.msg_buf.borrow_mut();
         for ev in self.session_scratch.drain(..) {
-            route_session_event_pub(ev, parser_kind, &mut buf, lifecycle_out);
+            route_session_event_pub(ev, parser_kind, &self.msg_buf, lifecycle_out);
         }
     }
 
     fn sweep_into(&mut self, now: Timestamp, lifecycle_out: &mut Vec<Event<E::Key>>) {
         let parser_kind = self.parser_kind;
-        let mut buf = self.msg_buf.borrow_mut();
         for ev in self.driver.sweep(now) {
-            route_session_event_pub(ev, parser_kind, &mut buf, lifecycle_out);
+            route_session_event_pub(ev, parser_kind, &self.msg_buf, lifecycle_out);
         }
     }
 
     fn finish_into(&mut self, lifecycle_out: &mut Vec<Event<E::Key>>) {
         let parser_kind = self.parser_kind;
-        let mut buf = self.msg_buf.borrow_mut();
         for ev in self.driver.finish() {
-            route_session_event_pub(ev, parser_kind, &mut buf, lifecycle_out);
+            route_session_event_pub(ev, parser_kind, &self.msg_buf, lifecycle_out);
         }
     }
 
@@ -201,9 +200,8 @@ where
         // Drop any per-flow heuristic detection state.
         self.states.remove(key);
         let parser_kind = self.parser_kind;
-        let mut buf = self.msg_buf.borrow_mut();
         for ev in self.driver.force_close(key, now) {
-            route_session_event_pub(ev, parser_kind, &mut buf, lifecycle_out);
+            route_session_event_pub(ev, parser_kind, &self.msg_buf, lifecycle_out);
         }
     }
 }
@@ -213,6 +211,8 @@ pub(super) struct TypedHeuristicDatagramSlot<E, D>
 where
     E: FlowExtractor,
     D: DatagramParser,
+    D::Message: Send + 'static,
+    E::Key: Send + 'static,
 {
     extractor: E,
     driver: FlowDatagramDriver<E, D, ()>,
@@ -220,7 +220,7 @@ where
     max_probe_packets: u8,
     parser_kind: &'static str,
     states: HashMap<E::Key, FlowDetection>,
-    msg_buf: Rc<RefCell<SlotBuf<D::Message, E::Key>>>,
+    msg_buf: Arc<SegQueue<SlotMessage<D::Message, E::Key>>>,
     session_scratch: Vec<SessionEvent<E::Key, D::Message>>,
     _marker: PhantomData<D>,
 }
@@ -239,13 +239,13 @@ where
         monotonic_timestamps: bool,
     ) -> (Self, SlotHandle<D::Message, E::Key>)
     where
-        E::Key: 'static,
-        D::Message: 'static,
+        E::Key: Send + 'static,
+        D::Message: Send + 'static,
     {
         let parser_kind = parser.parser_kind();
-        let msg_buf = Rc::new(RefCell::new(SlotBuf::new()));
+        let msg_buf = Arc::new(SegQueue::new());
         let handle = SlotHandle {
-            inner: Rc::clone(&msg_buf),
+            inner: Arc::clone(&msg_buf),
             parser_kind,
         };
         let slot = Self {
@@ -306,25 +306,22 @@ where
         let parser_kind = self.parser_kind;
         self.session_scratch.clear();
         self.driver.track_into(view, &mut self.session_scratch);
-        let mut buf = self.msg_buf.borrow_mut();
         for ev in self.session_scratch.drain(..) {
-            route_session_event_pub(ev, parser_kind, &mut buf, lifecycle_out);
+            route_session_event_pub(ev, parser_kind, &self.msg_buf, lifecycle_out);
         }
     }
 
     fn sweep_into(&mut self, now: Timestamp, lifecycle_out: &mut Vec<Event<E::Key>>) {
         let parser_kind = self.parser_kind;
-        let mut buf = self.msg_buf.borrow_mut();
         for ev in self.driver.sweep(now) {
-            route_session_event_pub(ev, parser_kind, &mut buf, lifecycle_out);
+            route_session_event_pub(ev, parser_kind, &self.msg_buf, lifecycle_out);
         }
     }
 
     fn finish_into(&mut self, lifecycle_out: &mut Vec<Event<E::Key>>) {
         let parser_kind = self.parser_kind;
-        let mut buf = self.msg_buf.borrow_mut();
         for ev in self.driver.finish() {
-            route_session_event_pub(ev, parser_kind, &mut buf, lifecycle_out);
+            route_session_event_pub(ev, parser_kind, &self.msg_buf, lifecycle_out);
         }
     }
 
@@ -336,9 +333,8 @@ where
     ) {
         self.states.remove(key);
         let parser_kind = self.parser_kind;
-        let mut buf = self.msg_buf.borrow_mut();
         for ev in self.driver.force_close(key, now) {
-            route_session_event_pub(ev, parser_kind, &mut buf, lifecycle_out);
+            route_session_event_pub(ev, parser_kind, &self.msg_buf, lifecycle_out);
         }
     }
 }

@@ -12,7 +12,9 @@
 //! let mut driver = builder.build();
 //! ```
 
-pub use crate::{AsPacketView, Error, ErrorCode, ErrorKind, Module, PacketView, Result, Timestamp};
+pub use crate::{
+    AnomalyFields, AsPacketView, Error, ErrorCode, ErrorKind, Module, PacketView, Result, Timestamp,
+};
 
 #[cfg(feature = "extractors")]
 pub use crate::extract::FiveTuple;

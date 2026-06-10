@@ -1,28 +1,29 @@
-//! Typed slot drain handles for the [`super::next::Driver`].
+//! Typed slot drain handles for the [`super::typed::Driver`].
 //!
 //! Plan 121 architecture. Each registered parser gets its own
 //! typed `SlotHandle<M, K>` at builder time. Per packet, the
 //! driver's `track_into` emits flow-lifecycle events (no `M`
 //! parameter on the event type); per-parser typed messages
-//! land in the slot's internal buffer, drained by the consumer
+//! land in the slot's internal queue, drained by the consumer
 //! through `SlotHandle::drain`.
 //!
-//! This replaces the closed-`M` sum-type shape on
-//! `super::Driver<E, M>` where every slot has to lift its
-//! `P::Message` into a single composite `M` via a lift closure.
-//! The closed shape is incompatible with netring's zero-allocation
-//! `monitor.protocol::<P>()` pattern; the typed-handle shape is
-//! what that pattern needs.
+//! Plan 122: the backing store is `Arc<crossbeam_queue::SegQueue<…>>`
+//! (lock-free MPMC). `SlotHandle<M, K>` is `Send + Sync` so the
+//! handle can be moved/cloned across threads — drain inside a
+//! tokio task while the driver runs on a dedicated capture
+//! thread, or fan out from one shard's driver to multiple
+//! consumer threads.
 
-use std::cell::RefCell;
-use std::rc::Rc;
+use std::sync::Arc;
+
+use crossbeam_queue::SegQueue;
 
 use crate::Timestamp;
 use crate::event::FlowSide;
 
 /// One typed message emitted by a registered parser.
 ///
-/// The buffer behind the `SlotHandle` holds these directly; the
+/// The queue behind the `SlotHandle` holds these directly; the
 /// `key` and `side` are the flow's metadata at the moment the
 /// parser produced the message.
 #[derive(Debug, Clone)]
@@ -34,55 +35,59 @@ pub struct SlotMessage<M, K> {
     pub ts: Timestamp,
 }
 
-/// Internal: shared buffer that the slot (writer) and the
-/// [`SlotHandle`] (drainer) both reference via `Rc<RefCell<…>>`.
-pub(super) struct SlotBuf<M, K> {
-    pub(super) queue: Vec<SlotMessage<M, K>>,
-}
-
-impl<M, K> SlotBuf<M, K> {
-    pub(super) fn new() -> Self {
-        Self { queue: Vec::new() }
-    }
-}
-
 /// Typed drain handle returned by the builder for each
-/// registered parser. The handle and the slot share a
-/// `Rc<RefCell<SlotBuf>>` so the slot can push and the handle
-/// can drain.
+/// registered parser. The slot pushes and the handle drains
+/// — both share the same `Arc<SegQueue>`.
 ///
-/// **Not `Send`** — single-threaded by design (matches netring's
-/// pattern of draining inside the event loop and posting via
-/// channels for cross-task delivery).
+/// **`Send + Sync`** — move the handle across threads, drain
+/// from a tokio task on another core, share via Arc with
+/// multiple drainers. The driver itself (`Driver<E>`) remains
+/// `!Send` (the central `FlowTracker` holds `Rc<RefCell>` state
+/// internally); only the *handle* side is cross-thread.
+///
+/// # Cloning semantics
+///
+/// `Clone` hands out a second **competitive consumer** — both
+/// drain from the same `SegQueue` and race for messages. The
+/// sum across all clones equals the number of messages pushed,
+/// matching MPMC semantics. For broadcast (every consumer sees
+/// every message), drain into a channel and fan out yourself.
 pub struct SlotHandle<M, K>
 where
-    M: 'static,
-    K: 'static,
+    M: Send + 'static,
+    K: Send + 'static,
 {
-    pub(super) inner: Rc<RefCell<SlotBuf<M, K>>>,
+    pub(super) inner: Arc<SegQueue<SlotMessage<M, K>>>,
     pub(super) parser_kind: &'static str,
 }
 
 impl<M, K> SlotHandle<M, K>
 where
-    M: 'static,
-    K: 'static,
+    M: Send + 'static,
+    K: Send + 'static,
 {
-    /// Drain buffered messages into `out`, reusing `out`'s
-    /// capacity. Returns the number drained.
+    /// Drain all currently-queued messages into `out`, reusing
+    /// `out`'s capacity. Returns the number drained.
+    ///
+    /// Per-pop cost is ~10-15 ns on uncontended `SegQueue`;
+    /// at the typical netring drain cadence (0-2 messages per
+    /// `track_into` call) the difference vs a `Vec` batch-move
+    /// is invisible. Bulk drains with hundreds of pending
+    /// messages will see the O(n) pop loop.
     pub fn drain(&mut self, out: &mut Vec<SlotMessage<M, K>>) -> usize {
-        let mut buf = self.inner.borrow_mut();
-        let n = buf.queue.len();
-        if n == 0 {
-            return 0;
+        let mut n = 0;
+        while let Some(msg) = self.inner.pop() {
+            out.push(msg);
+            n += 1;
         }
-        out.append(&mut buf.queue);
         n
     }
 
-    /// Number of messages currently buffered. Cheap inspection.
+    /// Approximate message count currently in the queue. Cheap
+    /// inspection; result may be slightly stale under
+    /// concurrent push/pop.
     pub fn pending(&self) -> usize {
-        self.inner.borrow().queue.len()
+        self.inner.len()
     }
 
     /// Parser kind identifier (from
@@ -95,18 +100,18 @@ where
     /// Discard any buffered messages without draining them.
     /// Useful between test runs.
     pub fn clear(&mut self) {
-        self.inner.borrow_mut().queue.clear();
+        while self.inner.pop().is_some() {}
     }
 }
 
 impl<M, K> Clone for SlotHandle<M, K>
 where
-    M: 'static,
-    K: 'static,
+    M: Send + 'static,
+    K: Send + 'static,
 {
     fn clone(&self) -> Self {
         Self {
-            inner: Rc::clone(&self.inner),
+            inner: Arc::clone(&self.inner),
             parser_kind: self.parser_kind,
         }
     }
@@ -114,8 +119,8 @@ where
 
 impl<M, K> std::fmt::Debug for SlotHandle<M, K>
 where
-    M: 'static,
-    K: 'static,
+    M: Send + 'static,
+    K: Send + 'static,
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("SlotHandle")
@@ -125,26 +130,33 @@ where
     }
 }
 
+// Send + Sync follow automatically from the field types:
+//   Arc<T>:        Send + Sync where T: Send + Sync
+//   SegQueue<T>:   Send + Sync where T: Send
+//   SlotMessage<M, K>: Send + Sync where M, K: Send + Sync
+// The bounds on the impl block (`M: Send + 'static, K: Send +
+// 'static`) provide the necessary `Send` constraint; the auto
+// traits flow through.
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn slot_handle_drain_basic() {
-        let buf = Rc::new(RefCell::new(SlotBuf::<u32, u8>::new()));
+        let queue = Arc::new(SegQueue::<SlotMessage<u32, u8>>::new());
         let mut handle = SlotHandle::<u32, u8> {
-            inner: Rc::clone(&buf),
+            inner: Arc::clone(&queue),
             parser_kind: "test",
         };
         assert_eq!(handle.pending(), 0);
-        // Slot writer (simulated) pushes a couple of messages.
-        buf.borrow_mut().queue.push(SlotMessage {
+        queue.push(SlotMessage {
             key: 1,
             side: FlowSide::Initiator,
             message: 100,
             ts: Timestamp::default(),
         });
-        buf.borrow_mut().queue.push(SlotMessage {
+        queue.push(SlotMessage {
             key: 2,
             side: FlowSide::Responder,
             message: 200,
@@ -160,7 +172,6 @@ mod tests {
         assert_eq!(out[1].message, 200);
         assert_eq!(handle.pending(), 0);
 
-        // Second drain on empty buffer is a no-op.
         let mut out2 = Vec::new();
         let n2 = handle.drain(&mut out2);
         assert_eq!(n2, 0);
@@ -169,12 +180,12 @@ mod tests {
 
     #[test]
     fn slot_handle_clear_drops_pending() {
-        let buf = Rc::new(RefCell::new(SlotBuf::<&'static str, u8>::new()));
+        let queue = Arc::new(SegQueue::<SlotMessage<&'static str, u8>>::new());
         let mut handle = SlotHandle::<&'static str, u8> {
-            inner: Rc::clone(&buf),
+            inner: Arc::clone(&queue),
             parser_kind: "test",
         };
-        buf.borrow_mut().queue.push(SlotMessage {
+        queue.push(SlotMessage {
             key: 1,
             side: FlowSide::Initiator,
             message: "x",
@@ -186,26 +197,34 @@ mod tests {
     }
 
     #[test]
-    fn slot_handle_drain_reuses_capacity() {
-        let buf = Rc::new(RefCell::new(SlotBuf::<u32, u8>::new()));
-        let mut handle = SlotHandle::<u32, u8> {
-            inner: Rc::clone(&buf),
+    fn slot_handle_clone_is_competitive_consumer() {
+        let queue = Arc::new(SegQueue::<SlotMessage<u32, u8>>::new());
+        let mut h1 = SlotHandle::<u32, u8> {
+            inner: Arc::clone(&queue),
             parser_kind: "test",
         };
-        let mut out: Vec<SlotMessage<u32, u8>> = Vec::with_capacity(32);
-        let initial_cap = out.capacity();
-        for _ in 0..10 {
-            buf.borrow_mut().queue.push(SlotMessage {
+        let mut h2 = h1.clone();
+        for i in 0..10 {
+            queue.push(SlotMessage {
                 key: 1,
                 side: FlowSide::Initiator,
-                message: 0,
+                message: i,
                 ts: Timestamp::default(),
             });
         }
-        handle.drain(&mut out);
-        assert_eq!(out.len(), 10);
-        out.clear();
-        // Capacity preserved across clear.
-        assert_eq!(out.capacity(), initial_cap);
+        let mut a = Vec::new();
+        let mut b = Vec::new();
+        h1.drain(&mut a);
+        h2.drain(&mut b);
+        // Sum is exactly 10 (no broadcast, no duplicate delivery).
+        assert_eq!(a.len() + b.len(), 10);
+    }
+
+    #[test]
+    fn slot_handle_is_send_and_sync() {
+        fn assert_send<T: Send>() {}
+        fn assert_sync<T: Sync>() {}
+        assert_send::<SlotHandle<u32, u8>>();
+        assert_sync::<SlotHandle<u32, u8>>();
     }
 }

@@ -2,16 +2,17 @@
 //!
 //! Each slot owns its inner [`crate::FlowSessionDriver`] /
 //! [`crate::FlowDatagramDriver`], a persistent `SessionEvent`
-//! scratch buffer (for zero-alloc dispatch), and a
-//! `Rc<RefCell<SlotBuf<M, K>>>` that the matching
+//! scratch buffer (for zero-alloc dispatch), and an
+//! `Arc<SegQueue<SlotMessage<M, K>>>` that the matching
 //! [`super::SlotHandle`] drains. The slot writes typed
-//! `SlotMessage<M, K>` into the buf and flow-lifecycle /
+//! `SlotMessage<M, K>` into the queue and flow-lifecycle /
 //! parser-close events into the caller's `Event<K>` Vec.
 
-use std::cell::RefCell;
 use std::hash::Hash;
 use std::marker::PhantomData;
-use std::rc::Rc;
+use std::sync::Arc;
+
+use crossbeam_queue::SegQueue;
 
 use crate::PacketView;
 use crate::Timestamp;
@@ -21,18 +22,18 @@ use crate::session::{DatagramParser, SessionEvent, SessionParser};
 use crate::session_driver::FlowSessionDriver;
 use crate::tracker::FlowTrackerConfig;
 
-use super::slot::{SlotBuf, SlotHandle, SlotMessage};
+use super::slot::{SlotHandle, SlotMessage};
 use super::typed::Event;
 
 /// Type-erased slot trait used by the typed driver. The slot
 /// emits flow-lifecycle / parser-close events into the
 /// caller's `&mut Vec<Event<K>>`; typed parser messages flow
-/// into the slot's private `SlotBuf` via shared `Rc<RefCell>`.
+/// into the slot's private `SegQueue` shared with the
+/// [`SlotHandle`] via `Arc`.
 ///
-/// **Not `Send`** — the typed driver is single-threaded by
-/// design. `Rc<RefCell>` over the slot buf is the cheap path;
-/// netring's pattern is to drain inside the event loop and
-/// post via channels for cross-task delivery.
+/// The driver itself remains single-threaded (the central
+/// `FlowTracker` is `!Send`); only the **handles** the builder
+/// returns are `Send + Sync` for cross-thread drain.
 pub(super) trait ErasedSlot<K> {
     fn track_into(
         &mut self,
@@ -45,7 +46,7 @@ pub(super) trait ErasedSlot<K> {
     /// Tear down the slot's per-flow state, draining any
     /// buffered bytes through the parser before removal.
     /// Typed messages flushed by the parser's `fin_*` land in
-    /// the slot buf; the slot's `ParserClosed` event lands in
+    /// the slot queue; the slot's `ParserClosed` event lands in
     /// `lifecycle_out`. No-op if the slot has no state for the
     /// flow.
     fn force_close_into(&mut self, key: &K, now: Timestamp, lifecycle_out: &mut Vec<Event<K>>);
@@ -56,11 +57,13 @@ pub(super) struct TypedConcreteSlot<E, P>
 where
     E: FlowExtractor,
     P: SessionParser,
+    P::Message: Send + 'static,
+    E::Key: Send + 'static,
 {
     driver: FlowSessionDriver<E, P, ()>,
     parser_kind: &'static str,
     ports: Option<smallvec::SmallVec<[u16; 4]>>,
-    msg_buf: Rc<RefCell<SlotBuf<P::Message, E::Key>>>,
+    msg_buf: Arc<SegQueue<SlotMessage<P::Message, E::Key>>>,
     session_scratch: Vec<SessionEvent<E::Key, P::Message>>,
 }
 
@@ -77,13 +80,13 @@ where
         monotonic_timestamps: bool,
     ) -> (Self, SlotHandle<P::Message, E::Key>)
     where
-        E::Key: 'static,
-        P::Message: 'static,
+        E::Key: Send + 'static,
+        P::Message: Send + 'static,
     {
         let parser_kind = parser.parser_kind();
-        let msg_buf = Rc::new(RefCell::new(SlotBuf::new()));
+        let msg_buf = Arc::new(SegQueue::new());
         let handle = SlotHandle {
-            inner: Rc::clone(&msg_buf),
+            inner: Arc::clone(&msg_buf),
             parser_kind,
         };
         let slot = Self {
@@ -119,25 +122,22 @@ where
         let parser_kind = self.parser_kind;
         self.session_scratch.clear();
         self.driver.track_into(view, &mut self.session_scratch);
-        let mut buf = self.msg_buf.borrow_mut();
         for ev in self.session_scratch.drain(..) {
-            route_session_event(ev, parser_kind, &mut buf, lifecycle_out);
+            route_session_event(ev, parser_kind, &self.msg_buf, lifecycle_out);
         }
     }
 
     fn sweep_into(&mut self, now: Timestamp, lifecycle_out: &mut Vec<Event<E::Key>>) {
         let parser_kind = self.parser_kind;
-        let mut buf = self.msg_buf.borrow_mut();
         for ev in self.driver.sweep(now) {
-            route_session_event(ev, parser_kind, &mut buf, lifecycle_out);
+            route_session_event(ev, parser_kind, &self.msg_buf, lifecycle_out);
         }
     }
 
     fn finish_into(&mut self, lifecycle_out: &mut Vec<Event<E::Key>>) {
         let parser_kind = self.parser_kind;
-        let mut buf = self.msg_buf.borrow_mut();
         for ev in self.driver.finish() {
-            route_session_event(ev, parser_kind, &mut buf, lifecycle_out);
+            route_session_event(ev, parser_kind, &self.msg_buf, lifecycle_out);
         }
     }
 
@@ -148,9 +148,8 @@ where
         lifecycle_out: &mut Vec<Event<E::Key>>,
     ) {
         let parser_kind = self.parser_kind;
-        let mut buf = self.msg_buf.borrow_mut();
         for ev in self.driver.force_close(key, now) {
-            route_session_event(ev, parser_kind, &mut buf, lifecycle_out);
+            route_session_event(ev, parser_kind, &self.msg_buf, lifecycle_out);
         }
     }
 }
@@ -160,11 +159,13 @@ pub(super) struct TypedConcreteDatagramSlot<E, D>
 where
     E: FlowExtractor,
     D: DatagramParser,
+    D::Message: Send + 'static,
+    E::Key: Send + 'static,
 {
     driver: FlowDatagramDriver<E, D, ()>,
     parser_kind: &'static str,
     ports: Option<smallvec::SmallVec<[u16; 4]>>,
-    msg_buf: Rc<RefCell<SlotBuf<D::Message, E::Key>>>,
+    msg_buf: Arc<SegQueue<SlotMessage<D::Message, E::Key>>>,
     session_scratch: Vec<SessionEvent<E::Key, D::Message>>,
     _marker: PhantomData<D>,
 }
@@ -182,13 +183,13 @@ where
         monotonic_timestamps: bool,
     ) -> (Self, SlotHandle<D::Message, E::Key>)
     where
-        E::Key: 'static,
-        D::Message: 'static,
+        E::Key: Send + 'static,
+        D::Message: Send + 'static,
     {
         let parser_kind = parser.parser_kind();
-        let msg_buf = Rc::new(RefCell::new(SlotBuf::new()));
+        let msg_buf = Arc::new(SegQueue::new());
         let handle = SlotHandle {
-            inner: Rc::clone(&msg_buf),
+            inner: Arc::clone(&msg_buf),
             parser_kind,
         };
         let slot = Self {
@@ -225,25 +226,22 @@ where
         let parser_kind = self.parser_kind;
         self.session_scratch.clear();
         self.driver.track_into(view, &mut self.session_scratch);
-        let mut buf = self.msg_buf.borrow_mut();
         for ev in self.session_scratch.drain(..) {
-            route_session_event(ev, parser_kind, &mut buf, lifecycle_out);
+            route_session_event(ev, parser_kind, &self.msg_buf, lifecycle_out);
         }
     }
 
     fn sweep_into(&mut self, now: Timestamp, lifecycle_out: &mut Vec<Event<E::Key>>) {
         let parser_kind = self.parser_kind;
-        let mut buf = self.msg_buf.borrow_mut();
         for ev in self.driver.sweep(now) {
-            route_session_event(ev, parser_kind, &mut buf, lifecycle_out);
+            route_session_event(ev, parser_kind, &self.msg_buf, lifecycle_out);
         }
     }
 
     fn finish_into(&mut self, lifecycle_out: &mut Vec<Event<E::Key>>) {
         let parser_kind = self.parser_kind;
-        let mut buf = self.msg_buf.borrow_mut();
         for ev in self.driver.finish() {
-            route_session_event(ev, parser_kind, &mut buf, lifecycle_out);
+            route_session_event(ev, parser_kind, &self.msg_buf, lifecycle_out);
         }
     }
 
@@ -254,15 +252,14 @@ where
         lifecycle_out: &mut Vec<Event<E::Key>>,
     ) {
         let parser_kind = self.parser_kind;
-        let mut buf = self.msg_buf.borrow_mut();
         for ev in self.driver.force_close(key, now) {
-            route_session_event(ev, parser_kind, &mut buf, lifecycle_out);
+            route_session_event(ev, parser_kind, &self.msg_buf, lifecycle_out);
         }
     }
 }
 
 /// Dispatch one inner-driver `SessionEvent`:
-/// - `Application` → typed message lands in the slot buf.
+/// - `Application` → typed message pushed onto the slot queue.
 /// - `Closed` → `ParserClosed` lifecycle event.
 /// - `Started` / `FlowTick` / anomalies → suppressed (the
 ///   central tracker is the source of truth for those at the
@@ -271,7 +268,7 @@ where
 fn route_session_event<K, M>(
     ev: SessionEvent<K, M>,
     parser_kind: &'static str,
-    buf: &mut SlotBuf<M, K>,
+    buf: &SegQueue<SlotMessage<M, K>>,
     lifecycle_out: &mut Vec<Event<K>>,
 ) {
     match ev {
@@ -282,7 +279,7 @@ fn route_session_event<K, M>(
             ts,
             parser_kind: _,
         } => {
-            buf.queue.push(SlotMessage {
+            buf.push(SlotMessage {
                 key,
                 side,
                 message,
@@ -328,7 +325,7 @@ fn view_matches_ports(view: PacketView<'_>, ports: &[u16]) -> bool {
 pub(super) fn route_session_event_pub<K, M>(
     ev: SessionEvent<K, M>,
     parser_kind: &'static str,
-    buf: &mut SlotBuf<M, K>,
+    buf: &SegQueue<SlotMessage<M, K>>,
     lifecycle_out: &mut Vec<Event<K>>,
 ) {
     route_session_event(ev, parser_kind, buf, lifecycle_out);

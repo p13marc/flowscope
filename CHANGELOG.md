@@ -1,5 +1,70 @@
 # Changelog
 
+## 0.12.0 (unreleased)
+
+The **cross-thread + structured-output cycle**. Driven by the
+netring 0.21 wishlist: per-CPU sharded capture with multi-thread
+tokio runtimes need `Send + Sync` slot handles, EVE JSON output
+for SIEM ingest, and `chrono` interop for legacy systems.
+
+### BREAKING (pre-1.0)
+
+- **`SlotHandle<M, K>` is now `Send + Sync`.** Backing storage
+  changed from `Rc<RefCell<Vec<SlotMessage>>>` to
+  `Arc<crossbeam_queue::SegQueue<SlotMessage>>` (lock-free MPMC).
+  Move the handle to a tokio task on another core, share via
+  `Arc` with multiple drainers, drain inside an async loop while
+  the driver runs on a dedicated capture thread. The driver
+  itself (`Driver<E>`) remains `!Send` (the central `FlowTracker`
+  holds `Rc<RefCell>` state internally).
+
+  Generic bounds tighten: `M: Send + 'static, K: Send + 'static`.
+  Every shipped `SessionParser::Message` and `DatagramParser::Message`
+  already meets this — the trait bounds require it — so in
+  practice nothing changes for existing consumers.
+
+  `Clone` hands out a second **competitive consumer**: both
+  handles drain from the same queue and race for messages
+  (sum of `clone().drain()` calls equals total pushed). For
+  broadcast semantics, drain into a channel and fan out.
+
+  Migration: typically nothing. If your code asserted `!Send`
+  on a `SlotHandle` (unusual), update the bound.
+
+### Added
+
+- **`flowscope::AnomalyFields` trait** (plan 126) — structured
+  field access for emit writers. Default-`None` methods:
+  `src_ip` / `src_port` / `dest_ip` / `dest_port` / `proto_str` /
+  `app_proto_str` / `anomaly_type` / `anomaly_event`. Shipped
+  impls:
+  - `L4Proto`: returns uppercase EVE labels (`"TCP"` / `"UDP"` /
+    `"ICMP"` / `"ICMPv6"` / `"SCTP"`). `Other(_)` returns `None`.
+  - `FiveTupleKey`: src/dest IP/port + proto; app proto via the
+    well-known port table.
+  - `AnomalyKind`: maps each variant to a Suricata EVE `type`
+    (`"stream"` for buffer/OOO/retransmit/watermark/eviction;
+    `"applayer"` for parse errors) and to the stable
+    `short_kind` slug for `anomaly_event`.
+
+  Custom keys (`Ipv4FlowKey`, etc.) opt in by implementing the
+  relevant accessors; emit writers extract typed fields without
+  going through `Debug` formatting.
+
+- **`Timestamp::write_iso8601` / `to_iso8601`** (plan 127) —
+  alloc-free `RFC 3339 / ISO 8601` rendering for log lines and
+  JSON output. Pure Howard Hinnant `civil_from_days` — no
+  chrono dep required. Format:
+  `YYYY-MM-DDTHH:MM:SS.NNNNNNNNNZ` (UTC, nanosecond precision).
+- **`chrono` interop feature** (plan 127) — when the `chrono`
+  feature is enabled, `From<chrono::DateTime<chrono::Utc>>`
+  for `Timestamp` and `TryFrom<Timestamp>` for
+  `chrono::DateTime<chrono::Utc>` (with `ChronoOutOfRange`
+  for the rare timestamp outside chrono's representable range).
+  Uses `default-features = false, features = ["alloc"]` —
+  alloc-free runtime path, alloc only for the test-side
+  cross-check against `to_rfc3339_opts`.
+
 ## 0.11.1
 
 Fills the one deferred-item gap from the 0.11.0 plan-121 audit
