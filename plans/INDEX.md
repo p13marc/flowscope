@@ -17,27 +17,19 @@ record; `plans/` is the working backlog.
 
 ### 0.12.0 cycle — Send slot handles + EVE + ergonomics
 
-Driven by the netring 0.21 dependency wishlist
-([`../flowscope-0.12-wishlist.md`](../flowscope-0.12-wishlist.md)).
-Consolidated to **5 implementation plans + 1 umbrella** after
-a second-pass review (the first-draft fanout of 6
-implementation plans collapsed plan 125's three 5-line
-constructors into the umbrella's Phase 7, and consolidated
-plan 122's feature-gated `MtSlotHandle` + `MtDriverBuilder`
-into a single always-Send `SlotHandle`).
+All 5 implementation plans (122 / 123 / 124 / 126 / 127) plus
+Phase 7 small wins shipped to master. Awaiting Phase 8 release
+(per-release consent required before `cargo publish`).
 
-Total estimated effort: **~9.75 working days**. One pre-1.0
-break (`SlotHandle: !Send` → `Send + Sync`); other additions
-are behind opt-in features (`emit-eve`, `chrono`).
-
-| Plan | Goal | Priority | Effort |
-|------|------|----------|--------|
-| [`128-cycle-0-12.md`](./128-cycle-0-12.md) | Umbrella — sequencing, release mechanics, Phase 7 small wins (`correlate::*::new_unbounded` ctors), Phase 8 release | — | 1.25 days (Phase 7 + 8) |
-| [`127-timestamp-iso8601.md`](./127-timestamp-iso8601.md) | `Timestamp::write_iso8601` + `to_iso8601` + optional `chrono` interop | P3 | 1 day |
-| [`126-anomaly-fields-trait.md`](./126-anomaly-fields-trait.md) | `AnomalyFields` trait + impls on `FiveTupleKey` / `L4Proto` / `AnomalyKind` | P2 | 1 day |
-| [`123-emit-eve.md`](./123-emit-eve.md) | `flowscope::emit::eve::EveJsonWriter` (Suricata EVE schema, ELK/Splunk/Tenzir compat) | P1 | 2.5 days |
-| [`124-deferred-driver-builder.md`](./124-deferred-driver-builder.md) | `Driver::deferred()` + `DeferredDriverBuilder::build_with(ext)` — late extractor selection | P1 | 2 days |
-| [`122-mt-slot-handle.md`](./122-mt-slot-handle.md) | Consolidate `SlotHandle` to `Send + Sync` via `Arc<crossbeam_queue::SegQueue>` (no feature flag) | P0 | 2 days |
+| Plan | Status |
+|------|--------|
+| 127 — `Timestamp` ISO 8601 + chrono interop | ✅ shipped (`781595f`) |
+| 126 — `AnomalyFields` trait + impls | ✅ shipped (`c7d8e18`) |
+| 122 — `SlotHandle: Send + Sync` (Arc<SegQueue>) | ✅ shipped (`44e68e8`) — pre-1.0 break |
+| 124 — `DeferredDriverBuilder<E>` | ✅ shipped (`3723b6a`) |
+| 123 — `EveJsonWriter` (Suricata EVE) | ✅ shipped (`99be89d`) |
+| 128 §Phase 7 — `correlate::*::new_unbounded` ctors | ✅ shipped |
+| 128 §Phase 8 — release mechanics | pending consent |
 
 Cycle theme: "add the Send-by-default slot handle,
 Suricata-compatible EVE emit, and the AnomalyFields /
@@ -262,11 +254,10 @@ Plan numbers retired (implementation shipped, file removed):
 - 117 → absorbed into 121 (legacy deletion + slot refactor
   overlap; one wider migration window beats two)
 
-Active: 21 (stale-deferred), 122 (Send SlotHandle
-consolidation, P0), 123 (EVE writer, P1), 124 (deferred
-driver builder, P1), 126 (AnomalyFields trait, P2), 127
-(Timestamp ISO 8601, P3), 128 (0.12 cycle umbrella + Phase
-7 small wins). Subsumed by consolidation:
+Active: 21 (stale-deferred), 128 (0.12 cycle umbrella, kept
+until Phase 8 release ships). Implementation plans 122, 123,
+124, 126, 127 shipped to master; their plan files retired
+per convention. Subsumed by consolidation:
 - 125 → folded into 128 §Phase 7 (3 trivial `correlate::*::new_unbounded`
   delegates don't earn a separate file)
 The next free number for a new plan is 129+.

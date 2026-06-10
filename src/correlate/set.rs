@@ -40,6 +40,14 @@ where
         }
     }
 
+    /// Unbounded capacity convenience constructor — equivalent
+    /// to `Self::new(window, bucket_width, usize::MAX)`. Prefer
+    /// [`Self::new`] with an explicit cap when memory pressure
+    /// matters. New in 0.12.0.
+    pub fn new_unbounded(window: Duration, bucket_width: Duration) -> Self {
+        Self::new(window, bucket_width, usize::MAX)
+    }
+
     /// Add `value` to the set for `key` at `now`.
     pub fn insert(&mut self, key: K, value: V, now: Timestamp) {
         self.evict_expired(now);

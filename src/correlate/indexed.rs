@@ -44,6 +44,14 @@ where
         }
     }
 
+    /// Unbounded LRU capacity convenience constructor —
+    /// equivalent to `Self::new(ttl, usize::MAX)`. Prefer
+    /// [`Self::new`] with an explicit cap when memory pressure
+    /// matters. New in 0.12.0.
+    pub fn new_unbounded(ttl: Duration) -> Self {
+        Self::new(ttl, usize::MAX)
+    }
+
     /// Insert / replace `key → value`. Records `ts` as the
     /// insertion timestamp for TTL accounting.
     pub fn insert(&mut self, key: K, value: V, ts: Timestamp) {

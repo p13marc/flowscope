@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.12.0 (unreleased)
+## 0.12.0
 
 The **cross-thread + structured-output cycle**. Driven by the
 netring 0.21 wishlist: per-CPU sharded capture with multi-thread
@@ -50,6 +50,15 @@ for SIEM ingest, and `chrono` interop for legacy systems.
   downstream pipelines. Severity mapping is identity by
   default (Critical=1, Error=2, Warning=3, Info=4) — override
   via `EveOptions::severity_numeric`.
+
+- **`correlate::*::new_unbounded` convenience constructors**
+  (plan 128 Phase 7) — three trivial delegates to the existing
+  `new` constructors with `usize::MAX` capacity, on
+  `TimeBucketedCounter::new_unbounded(window, bucket)`,
+  `TimeBucketedSet::new_unbounded(window, bucket)`,
+  `KeyIndexed::new_unbounded(ttl)`. Prefer the bounded
+  constructors when memory pressure matters; the unbounded
+  variants suit lifecycle-scoped or test contexts.
 
 - **`Driver::deferred()` constructor** (plan 124) — builds a
   `DeferredDriverBuilder<E>` that defers extractor *instance*
