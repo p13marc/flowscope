@@ -6,7 +6,8 @@
 //!
 //! - a [`Module`] discriminant identifying which subsystem produced
 //!   the error (HTTP / TLS / DNS / ICMP / pcap / reassembler /
-//!   tracker / pipeline / layers),
+//!   tracker / driver / emit / detect / aggregate / correlate /
+//!   layers),
 //! - an [`ErrorCode`] for ergonomic matching in user code
 //!   (`Parse` / `BufferOverflow` / `Io` / `Unsupported` /
 //!   `Truncated` / `Eof` / `Other`),
@@ -74,10 +75,21 @@ pub enum Module {
     Reassembler,
     /// Flow tracker.
     Tracker,
-    /// `flowscope::Pipeline` high-level surface.
-    Pipeline,
     /// `flowscope::layers` per-packet introspection.
     Layers,
+    /// Typed driver / slot-handle path (`flowscope::driver`).
+    /// New in 0.12.0 (plan 131).
+    Driver,
+    /// Emit writers (`flowscope::emit`). New in 0.12.0.
+    Emit,
+    /// Detection primitives (`flowscope::detect`). New in 0.12.0.
+    Detect,
+    /// Aggregation primitives (`flowscope::aggregate`).
+    /// New in 0.12.0.
+    Aggregate,
+    /// Cross-flow correlation primitives (`flowscope::correlate`).
+    /// New in 0.12.0.
+    Correlate,
 }
 
 impl fmt::Display for Module {
@@ -90,8 +102,12 @@ impl fmt::Display for Module {
             Module::Pcap => "pcap",
             Module::Reassembler => "reassembler",
             Module::Tracker => "tracker",
-            Module::Pipeline => "pipeline",
             Module::Layers => "layers",
+            Module::Driver => "driver",
+            Module::Emit => "emit",
+            Module::Detect => "detect",
+            Module::Aggregate => "aggregate",
+            Module::Correlate => "correlate",
         };
         f.write_str(s)
     }
@@ -325,5 +341,18 @@ mod tests {
     fn buffer_overflow_includes_cap() {
         let e = Error::buffer_overflow(Module::Http, 8192);
         assert!(e.to_string().contains("8192"));
+    }
+
+    #[test]
+    fn module_display_covers_all_variants() {
+        // Plan 131: new variants render as snake_case slugs.
+        assert_eq!(Module::Driver.to_string(), "driver");
+        assert_eq!(Module::Emit.to_string(), "emit");
+        assert_eq!(Module::Detect.to_string(), "detect");
+        assert_eq!(Module::Aggregate.to_string(), "aggregate");
+        assert_eq!(Module::Correlate.to_string(), "correlate");
+        // Pre-existing variants unchanged.
+        assert_eq!(Module::Http.to_string(), "http");
+        assert_eq!(Module::Layers.to_string(), "layers");
     }
 }
