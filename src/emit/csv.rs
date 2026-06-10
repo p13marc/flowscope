@@ -1,10 +1,9 @@
 //! [`FlowEventCsvWriter`] — RFC-4180-quoted CSV sink for
-//! `FlowEvent<FiveTupleKey>`.
+//! `FlowEvent<K>` where `K: KeyFields`.
 
 use std::io::{self, Write};
 
-use crate::FlowEvent;
-use crate::extract::FiveTupleKey;
+use crate::{FlowEvent, KeyFields};
 
 /// CSV writer for [`FlowEvent`] streams.
 ///
@@ -82,7 +81,10 @@ impl<W: Write> FlowEventCsvWriter<W> {
 
     /// Write one event to the sink. Skips event variants that
     /// don't match the configured schema (per [`CsvOptions`]).
-    pub fn write_event(&mut self, ev: &FlowEvent<FiveTupleKey>) -> io::Result<()> {
+    pub fn write_event<K>(&mut self, ev: &FlowEvent<K>) -> io::Result<()>
+    where
+        K: KeyFields,
+    {
         match ev {
             FlowEvent::Ended {
                 key, reason, stats, ..
@@ -94,16 +96,20 @@ impl<W: Write> FlowEventCsvWriter<W> {
                 let start = stats.started.to_unix_f64();
                 let end = stats.last_seen.to_unix_f64();
                 let dur = stats.duration_secs();
-                let proto = format!("{:?}", key.proto).to_lowercase();
+                let proto = key.proto_str().unwrap_or("").to_lowercase();
+                let src_ip = key.src_ip().map(|ip| ip.to_string()).unwrap_or_default();
+                let src_port = key.src_port().unwrap_or(0);
+                let dst_ip = key.dest_ip().map(|ip| ip.to_string()).unwrap_or_default();
+                let dst_port = key.dest_port().unwrap_or(0);
                 writeln!(
                     self.sink,
                     "{start:.6}{sep}{end:.6}{sep}{dur:.6}{sep}{}{sep}{}{sep}{}{sep}{}{sep}{}{sep}\
                      {}{sep}{}{sep}{}{sep}{}{sep}{}{sep}{}{sep}{}",
                     quote(&proto, sep),
-                    quote(&key.a.ip().to_string(), sep),
-                    key.a.port(),
-                    quote(&key.b.ip().to_string(), sep),
-                    key.b.port(),
+                    quote(&src_ip, sep),
+                    src_port,
+                    quote(&dst_ip, sep),
+                    dst_port,
                     stats.packets_initiator,
                     stats.packets_responder,
                     stats.bytes_initiator,
@@ -116,16 +122,20 @@ impl<W: Write> FlowEventCsvWriter<W> {
             FlowEvent::Started { key, ts, .. } if self.options.emit_started => {
                 let sep = self.options.sep();
                 let start = ts.to_unix_f64();
-                let proto = format!("{:?}", key.proto).to_lowercase();
+                let proto = key.proto_str().unwrap_or("").to_lowercase();
+                let src_ip = key.src_ip().map(|ip| ip.to_string()).unwrap_or_default();
+                let src_port = key.src_port().unwrap_or(0);
+                let dst_ip = key.dest_ip().map(|ip| ip.to_string()).unwrap_or_default();
+                let dst_port = key.dest_port().unwrap_or(0);
                 writeln!(
                     self.sink,
                     "started{sep}{start:.6}{sep}{start:.6}{sep}0.000000{sep}{}{sep}{}{sep}{}{sep}{}{sep}{}{sep}\
                      0{sep}0{sep}0{sep}0{sep}0{sep}0{sep}",
                     quote(&proto, sep),
-                    quote(&key.a.ip().to_string(), sep),
-                    key.a.port(),
-                    quote(&key.b.ip().to_string(), sep),
-                    key.b.port(),
+                    quote(&src_ip, sep),
+                    src_port,
+                    quote(&dst_ip, sep),
+                    dst_port,
                 )?;
             }
             _ => {}

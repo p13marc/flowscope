@@ -15,7 +15,7 @@
 use std::io::{self, Write};
 
 use crate::FlowEvent;
-use crate::extract::FiveTupleKey;
+use crate::KeyFields;
 
 /// Tab-separated Zeek `conn.log` writer for
 /// [`FlowEvent`](crate::FlowEvent) streams.
@@ -85,7 +85,10 @@ impl<W: Write> ZeekConnLogWriter<W> {
 
     /// Write one event. Only `FlowEvent::Ended` emits a row; all
     /// other variants are skipped silently.
-    pub fn write_event(&mut self, ev: &FlowEvent<FiveTupleKey>) -> io::Result<()> {
+    pub fn write_event<K>(&mut self, ev: &FlowEvent<K>) -> io::Result<()>
+    where
+        K: KeyFields,
+    {
         let FlowEvent::Ended {
             key,
             reason,
@@ -101,16 +104,16 @@ impl<W: Write> ZeekConnLogWriter<W> {
         let uid = format!("{}{:016x}", self.options.uid_prefix, self.uid_seq);
         let ts = stats.started.to_unix_f64();
         let duration = stats.duration_secs();
-        let proto = format!("{:?}", key.proto).to_lowercase();
+        let proto = key.proto_str().unwrap_or("").to_lowercase();
         let conn_state = reason.as_zeek_state();
+        let src_ip = key.src_ip().map(|ip| ip.to_string()).unwrap_or_default();
+        let src_port = key.src_port().unwrap_or(0);
+        let dst_ip = key.dest_ip().map(|ip| ip.to_string()).unwrap_or_default();
+        let dst_port = key.dest_port().unwrap_or(0);
 
         writeln!(
             self.sink,
-            "{ts:.6}\t{uid}\t{}\t{}\t{}\t{}\t{proto}\t{duration:.6}\t{}\t{}\t{conn_state}\t{}\t{}\t{}",
-            key.a.ip(),
-            key.a.port(),
-            key.b.ip(),
-            key.b.port(),
+            "{ts:.6}\t{uid}\t{src_ip}\t{src_port}\t{dst_ip}\t{dst_port}\t{proto}\t{duration:.6}\t{}\t{}\t{conn_state}\t{}\t{}\t{}",
             stats.bytes_initiator,
             stats.bytes_responder,
             history.as_str(),
