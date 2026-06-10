@@ -15,10 +15,60 @@ record; `plans/` is the working backlog.
 
 ## Active
 
-There are currently no active implementation plans. The 0.11.0
-zero-allocation cycle shipped (see CHANGELOG.md / git tag
-`0.11.0`); plans 118 / 119 / 120 / 121 are retired per
-convention. The 0.10 cycle and earlier are retired too.
+### 0.12.0 cycle — multi-thread + EVE + correlate ergonomics
+
+Driven by the netring 0.21 dependency wishlist
+([`../flowscope-0.12-wishlist.md`](../flowscope-0.12-wishlist.md)).
+Six implementation plans + one umbrella. Total estimated
+effort: **~10.75 working days**. No breaking changes —
+additions are behind opt-in features (`mt`, `emit-eve`,
+`chrono`) where they pull dependencies.
+
+| Plan | Goal | Priority | Effort |
+|------|------|----------|--------|
+| [`128-mt-eve-cycle.md`](./128-mt-eve-cycle.md) | Umbrella — sequencing, release mechanics, cycle acceptance criteria | — | 1 day (Phase 7) |
+| [`127-timestamp-iso8601.md`](./127-timestamp-iso8601.md) | `Timestamp::write_iso8601` + `to_iso8601` + optional `chrono` interop | P3 | 1 day |
+| [`126-anomaly-fields-trait.md`](./126-anomaly-fields-trait.md) | `AnomalyFields` trait + impls on `FiveTupleKey` / `L4Proto` / `AnomalyKind` | P2 | 1 day |
+| [`125-correlate-unbounded-ctors.md`](./125-correlate-unbounded-ctors.md) | `TimeBucketedCounter::new_unbounded`, `KeyIndexed::new_unbounded`, `TimeBucketedSet::new_unbounded` | P2 | ¼ day |
+| [`123-emit-eve.md`](./123-emit-eve.md) | `flowscope::emit::eve::EveJsonWriter` (Suricata EVE schema, ELK/Splunk/Tenzir compat) | P1 | 2.5 days |
+| [`124-deferred-driver-builder.md`](./124-deferred-driver-builder.md) | `Driver::deferred()` + `DeferredDriverBuilder::build_with(ext)` — late extractor selection | P1 | 2 days |
+| [`122-mt-slot-handle.md`](./122-mt-slot-handle.md) | `mt` feature: `MtSlotHandle` + `MtDriverBuilder` — `Send + Sync` slot handles backed by `crossbeam_queue::SegQueue` | P0 | 3 days |
+
+Cycle theme: "add the multi-thread runtime surface +
+Suricata-compatible EVE emit + the correlate / timestamp /
+anomaly-fields ergonomics that retire netring's duplicated
+upstream code."
+
+**My-analysis corrections** to the wishlist while writing the
+plans (full list in `plans/128-mt-eve-cycle.md` §Provenance):
+
+- **Plan 124**: wishlist proposed `Driver::deferred()` whose
+  `build()` panics if no extractor was set — sharpened to a
+  distinct `DeferredDriverBuilder<E>` type that only exposes
+  `build_with(ext)`. Compile-time guarantee preserved; no
+  runtime regression.
+- **Plan 125**: wishlist listed 5 primitives for
+  `new_unbounded` — trimmed to 3 (`TimeBucketedCounter`,
+  `KeyIndexed`, `TimeBucketedSet`). `BurstDetector` and
+  `TopK` have different signatures; `new_unbounded` doesn't
+  apply.
+- **Plan 126**: wishlist's `AnomalyKind` mapping referenced
+  variants that don't exist in shipped flowscope
+  (`SegmentOutOfWindow`, `TcpRstAfterFin`, etc. — likely
+  hallucinated). Corrected to the 6 actual variants
+  (`BufferOverflow`, `OutOfOrderSegment`,
+  `FlowTableEvictionPressure`, `SessionParseError`,
+  `RetransmittedSegment`, `ReassemblerHighWatermark`).
+- **Plan 127**: wishlist's "½ day" effort estimate undercounts
+  the hand-rolled date algorithm + chrono cross-check tests.
+  Realistic: ~1 day.
+
+Reference document (in repo root during the cycle, retire with
+the cycle):
+
+- [`../flowscope-0.12-wishlist.md`](../flowscope-0.12-wishlist.md)
+  — netring 0.21's distilled ask list. The plans above are
+  this document operationalised + corrected.
 
 ### Stale / deferred
 
@@ -201,8 +251,11 @@ Plan numbers retired (implementation shipped, file removed):
 - 117 → absorbed into 121 (legacy deletion + slot refactor
   overlap; one wider migration window beats two)
 
-Active: 21 (stale-deferred). The next free number for a new
-plan is 122+.
+Active: 21 (stale-deferred), 122 (mt slot handles, P0), 123
+(EVE writer, P1), 124 (deferred driver builder, P1), 125
+(correlate `new_unbounded` ctors, P2), 126 (AnomalyFields
+trait, P2), 127 (Timestamp ISO 8601, P3), 128 (0.12 cycle
+umbrella). The next free number for a new plan is 129+.
 
 ---
 
