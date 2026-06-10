@@ -13,6 +13,10 @@ additions. For most users the upgrade is no code change.
 | `TimeBucketedCounter::new(window, bucket, usize::MAX)` | `TimeBucketedCounter::new_unbounded(window, bucket)` |
 | Hand-rolled JSON for SIEM ingest | `EveJsonWriter` (Suricata 7.x EVE; `emit-eve` feature) |
 | `Driver::builder(extractor).…build()` (must commit to `extractor` up front) | `Driver::deferred().…build_with(extractor)` (commit at finalisation) |
+| `use flowscope::AnomalyFields;` for `src_ip` / `dest_port` / `proto_str` accessors | `use flowscope::KeyFields;` (plan 130 trait split) |
+| `Timestamp::try_into::<DateTime<Utc>>()?` | `ts.into()` — chrono From is infallible (plan 130 §4) |
+| `[features] = ["ja3", "ja4"]` in Cargo.toml | `[features] = ["tls-fingerprints"]` (plan 131) |
+| `[features] = ["tracing", "tracing-messages"]` | `[features] = ["tracing"]` — per-message emission is always-on; filter via `EnvFilter::new("flowscope.message=warn")` (plan 131) |
 
 ## 1. `SlotHandle<M, K>` is now `Send + Sync`
 
@@ -217,3 +221,132 @@ The 0.12 feature matrix grew by two entries:
 
 Both are opt-in; default features and existing combos are
 unchanged.
+
+## 7. `KeyFields` / `AnomalyFields` trait split (plan 130)
+
+The `AnomalyFields` trait shipped in 0.12 base conflated two
+concerns: 5-tuple key accessors and anomaly-classification
+accessors. Plan 130 split them along the natural cleavage:
+
+```rust,ignore
+// Before (0.12 base):
+pub trait AnomalyFields {
+    fn src_ip(&self)        -> Option<IpAddr>       { None }
+    fn src_port(&self)      -> Option<u16>          { None }
+    // … 4 more key methods …
+    fn anomaly_type(&self)  -> Option<&'static str> { None }
+    fn anomaly_event(&self) -> Option<&'static str> { None }
+}
+
+// After (0.12 final):
+pub trait KeyFields {
+    fn src_ip(&self)        -> Option<IpAddr>       { None }
+    fn src_port(&self)      -> Option<u16>          { None }
+    fn dest_ip(&self)       -> Option<IpAddr>       { None }
+    fn dest_port(&self)     -> Option<u16>          { None }
+    fn proto_str(&self)     -> Option<&'static str> { None }
+    fn app_proto_str(&self) -> Option<&'static str> { None }
+}
+
+pub trait AnomalyFields {
+    fn anomaly_type(&self)  -> Option<&'static str> { None }
+    fn anomaly_event(&self) -> Option<&'static str> { None }
+}
+```
+
+### Migration
+
+- Custom keys with `impl AnomalyFields for MyKey { fn src_ip(...) ... }`
+  → rename to `impl KeyFields for MyKey { ... }`.
+- `AnomalyKind` keeps its `impl AnomalyFields` unchanged.
+- Both traits live at the crate root and `prelude`. If you
+  used `use flowscope::prelude::*;` nothing changes.
+- Code calling `key.src_ip()` / `.dest_port()` etc. needs
+  `use flowscope::KeyFields;` in scope (or the prelude).
+
+The emit writers (CSV / NDJSON / Zeek / EVE) are now generic
+over `K: KeyFields` — custom keys flow through them by
+implementing the trait.
+
+## 8. Cargo feature changes (plan 131)
+
+Three changes:
+
+```toml
+# Before
+flowscope = { version = "0.12", features = ["ja3", "ja4", "tracing", "tracing-messages"] }
+
+# After
+flowscope = { version = "0.12", features = ["tls-fingerprints", "tracing"] }
+```
+
+- `ja3` + `ja4` → `tls-fingerprints`. Both fingerprints now
+  ship under one gate. Runtime selection via
+  `TlsConfig::ja3` / `TlsConfig::ja4` still works.
+- `tracing-messages` deleted. The `Message: Debug` bound was
+  already always-on; the feature was just toggling per-message
+  emission. Now the trace events are always emitted under
+  `tracing`; filter at runtime via `tracing-subscriber`:
+  ```rust,ignore
+  use tracing_subscriber::EnvFilter;
+  let filter = EnvFilter::new("info,flowscope.message=warn");
+  tracing_subscriber::fmt().with_env_filter(filter).init();
+  ```
+
+## 9. `Error::Module` variants (plan 131)
+
+- `Module::Pipeline` removed (Pipeline was deleted in 0.11;
+  the enum entry was dead code).
+- Five new variants added for subsystems that don't error
+  today but will as soon as one does: `Driver` / `Emit` /
+  `Detect` / `Aggregate` / `Correlate`.
+
+If your code matched on `Module::Pipeline`, drop the arm —
+the variant could only ever appear from code paths that no
+longer exist. `#[non_exhaustive]` means your `match` already
+had a wildcard arm.
+
+## 10. `Event::tcp()` cross-variant accessor (plan 130 §3)
+
+New additive accessor on `flowscope::driver::Event<K>`:
+
+```rust,ignore
+match ev {
+    Event::FlowPacket { key, side, len, ts, tcp, .. } => {
+        // pre-existing destructure still works
+        if let Some(info) = tcp { /* use TcpInfo */ }
+    }
+    other => {
+        // new: cross-variant accessor returns None on non-Packet
+        if let Some(info) = other.tcp() { /* TcpInfo if available */ }
+    }
+}
+```
+
+The `tcp` field is unchanged — still public on the variant,
+still `None` unless `DriverBuilder::emit_packet_details(true)`
+was set. The accessor just saves callers from repeating that
+destructure when they want "TCP info if available, on any
+variant."
+
+## 11. `Timestamp` → `chrono::DateTime<Utc>` is infallible
+
+`TryFrom<Timestamp>` → `From<Timestamp>`. The error case
+(`ChronoOutOfRange`) was unreachable in practice (`Timestamp::sec`
+is u32, chrono's range is ±262 143 years). Migration:
+
+```rust,ignore
+// Before
+let dt: DateTime<Utc> = ts.try_into().unwrap();
+
+// After
+let dt: DateTime<Utc> = ts.into();
+```
+
+The `ChronoOutOfRange` type was deleted.
+
+## 12. `BurstDetector::new_unbounded` + `TopK::new_unbounded` (plan 130 §5)
+
+Completing the `correlate::*::new_unbounded` set the 0.12
+base shipped for `TimeBucketedCounter` / `TimeBucketedSet` /
+`KeyIndexed`. Additive — no migration required.

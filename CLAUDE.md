@@ -9,7 +9,7 @@ the core.
 
 - Edition 2024, MSRV 1.88 (bumped from 1.85 in plan 99 for
   let-chains)
-- Single Cargo package; modules `http` / `tls` (+ `ja3`) / `dns` /
+- Single Cargo package; modules `http` / `tls` (+ `tls-fingerprints`) / `dns` /
   `pcap` are opt-in via Cargo features. Observability hooks
   (`metrics`, `tracing`) are opt-in too.
 - Pairs with [`netring`](https://crates.io/crates/netring) for live
@@ -21,11 +21,20 @@ the core.
 
 ## Implementation Status
 
-**0.12.0 cycle** (cross-thread + structured-output cycle,
-shipped 2026-06). Plans 122 / 123 / 124 / 126 / 127 +
-Phase 7 small wins. Triggered by the netring 0.21 dependency
-wishlist (per-CPU sharded capture; multi-thread tokio runtime
-ask; SIEM EVE-format ingest).
+**0.12.0 cycle** (cross-thread + structured-output + pre-1.0
+debt retirement cycle, shipped 2026-06).
+
+- **Base** (shipped first): plans 122 / 123 / 124 / 126 / 127 +
+  Phase 7 small wins. Triggered by the netring 0.21 dependency
+  wishlist (per-CPU sharded capture; multi-thread tokio runtime
+  ask; SIEM EVE-format ingest).
+- **Expanded scope** (post-strategic-review audit): plans 130 /
+  131 / 132 / 143 / 144 / 146 — pre-1.0 API debt retirement
+  (trait shape cleanup, error/features pruning, doc overhaul)
+  + named detectors (Beacon / PortScan / DGA) + TLS
+  modernisation (ECH) + DFIR / IR sinks (file hashes).
+
+Headlines (base):
 
 Headlines:
 
@@ -77,15 +86,39 @@ Headlines:
   `KeyIndexed::new_unbounded(ttl)`. 3 trivial delegates,
   retire netring's duplicated `correlate` module.
 
-Test count after the 0.12 cycle: 721 passing, zero clippy
+Headlines (expanded):
+
+- **Plan 130** — pre-1.0 trait shape cleanup. Split
+  `AnomalyFields` into `KeyFields` (5-tuple accessors) +
+  `AnomalyFields` (anomaly classification). Emit writers
+  (CSV / NDJSON / Zeek / EVE) become generic over
+  `K: KeyFields`. `Event::tcp()` cross-variant accessor.
+  `From<Timestamp> for chrono::DateTime<Utc>` (infallible —
+  `ChronoOutOfRange` deleted). `DriverBuilder` Send-bound
+  parity with `DeferredDriverBuilder`.
+  `TopK::new_unbounded()` + `BurstDetector::new_unbounded()`
+  complete the `correlate::*::new_unbounded` family.
+- **Plan 131** — `Error::Module::Pipeline` removed (was dead
+  code since 0.11). Five new variants added (Driver / Emit /
+  Detect / Aggregate / Correlate). `ja3` + `ja4` features
+  collapsed into `tls-fingerprints`. `tracing-messages`
+  deleted — per-message emission is always-on under
+  `tracing`; filter at runtime via `EnvFilter`.
+- **Plan 132** — doc overhaul (this work). Migration recipes
+  for plans 130 / 131 appended to
+  `docs/migration-0.11-to-0.12.md` §7-§12.
+
+Test count after the 0.12 cycle: 728 passing, zero clippy
 warnings under `--all-features --all-targets -D warnings`,
 zero rustdoc warnings. EVE example
 (`examples/05-export/eve_writer.rs`) verified end-to-end
 against `tests/data/mixed_short.pcap`.
 
-CI feature matrix grew by two entries: `chrono` and
-`emit-eve`. Cross-`SlotHandle` Send+Sync compile assertions
-in `tests/driver_send.rs` (via `static_assertions`).
+CI feature matrix net change: base added `chrono` + `emit-eve`
+(+2 entries); expanded collapsed `ja3` + `ja4` into a single
+`tls-fingerprints` entry (net -1) and deleted `tracing-messages`
+(no CI matrix entry). Cross-`SlotHandle` Send+Sync compile
+assertions in `tests/driver_send.rs` (via `static_assertions`).
 Migration recipes: `docs/migration-0.11-to-0.12.md`.
 
 **0.11.0 cycle** (zero-allocation cycle, shipped 2026-06).
@@ -330,7 +363,7 @@ src/
 ├── datagram_driver.rs           # FlowDatagramDriver — sync UDP mirror (plan 57, 0.3.0)
 ├── dedup.rs                     # Dedup — content-hash + window dedup (plan 49, 0.3.0)
 ├── obs.rs                       # metrics / tracing hooks (plan 40, 0.2.0)
-│                                # tracing-messages sub-feature (plan 56, 0.3.0)
+│                                # (former tracing-messages sub-feature removed in 0.12, plan 131 — always-on under `tracing`)
 ├── http/                        # `http` feature
 │   ├── exchange.rs              # HttpExchangeParser + HttpExchange + HttpOutcome (plan 107, 0.10)
 │   ├── parser.rs                # internal step() machine (httparse-based)
@@ -341,8 +374,8 @@ src/
 │   ├── parser.rs                # internal step() machine (tls-parser-based)
 │   ├── session.rs               # TlsParser (SessionParser, the only public shape since 0.9.0)
 │   ├── handshake.rs             # TlsHandshakeParser aggregator (plan 97, 0.9.0)
-│   ├── fingerprint.rs           # JA3 (gated by `ja3` feature)
-│   ├── ja4.rs                   # JA4 (gated by `ja4` feature, plan 97, 0.9.0)
+│   ├── fingerprint.rs           # JA3 (gated by `tls-fingerprints` feature; was `ja3` pre-0.12)
+│   ├── ja4.rs                   # JA4 (gated by `tls-fingerprints` feature; was `ja4`; plan 97, 0.9.0)
 │   └── types.rs                 # TlsClientHello / TlsServerHello / TlsAlert / TlsConfig
 ├── dns/                         # `dns` feature
 │   ├── parser.rs                # parse_message / parse_message_at (simple-dns-based)
@@ -431,7 +464,7 @@ The legacy `HttpFactory` / `TlsFactory` callback-handler shape
 # Default features
 cargo test
 
-# All features (incl. ja3, dns, pcap, metrics, tracing)
+# All features (incl. tls-fingerprints, dns, pcap, metrics, tracing)
 cargo test --all-features
 
 # Just one module

@@ -39,8 +39,7 @@ Protocol parsers + analysis modules (each behind its own feature):
 |---------|--------------|
 | `http`  | HTTP/1.x request/response parsing via `HttpParser` (`SessionParser`); `HttpExchangeParser` aggregates a request/response pair into one `HttpExchange` event |
 | `tls`   | TLS handshake observer (ClientHello/ServerHello/Alert) via `TlsParser` (`SessionParser`) — passive only, no decryption; `TlsHandshakeParser` aggregates a handshake into one event |
-| `ja3`   | [JA3](https://github.com/salesforce/ja3) client fingerprinting (sub-feature of `tls`) |
-| `ja4`   | [JA4](https://github.com/FoxIO-LLC/ja4) client fingerprinting (sub-feature of `tls`) |
+| `tls-fingerprints` | [JA3](https://github.com/salesforce/ja3) + [JA4](https://github.com/FoxIO-LLC/ja4) client TLS fingerprinting (sub-feature of `tls`) |
 | `dns`   | DNS message parser, per-flow query/response correlator. UDP via `DnsUdpParser` (`DatagramParser`); TCP via `DnsTcpParser` (`SessionParser`, RFC 1035 §4.2.2 length-framed); `DnsExchangeParser` aggregates query+response into one `DnsExchange` event |
 | `icmp`  | ICMPv4/v6 message parser (`IcmpParser` — `DatagramParser`) |
 | `pcap`  | pcap file source for offline replay |
@@ -50,7 +49,7 @@ Protocol parsers + analysis modules (each behind its own feature):
 | `chrono` | `From<DateTime<Utc>>` + `TryFrom<Timestamp>` for `chrono::DateTime<Utc>` interop on `Timestamp` (0.12) |
 | `aggregate` | `flowscope::aggregate` — `Histogram` + `Percentile` (t-digest) for SLO baselining |
 | `l7`    | Umbrella: `http` + `tls` + `dns` + `icmp` |
-| `full`  | All of the above (incl. `ja3`, `ja4`, `pcap`, `serde`, observability, `emit`, `emit-ndjson`, `emit-eve`, `aggregate`, `chrono`) |
+| `full`  | All of the above (incl. `tls-fingerprints`, `pcap`, `serde`, observability, `emit`, `emit-ndjson`, `emit-eve`, `aggregate`, `chrono`) |
 
 Plus always-on modules that don't need a feature flag:
 
