@@ -47,11 +47,15 @@
 //! New in 0.10.0 (plan 101).
 
 mod csv;
+#[cfg(feature = "emit-eve")]
+mod eve;
 #[cfg(feature = "emit-ndjson")]
 mod ndjson;
 mod zeek;
 
 pub use csv::{CsvOptions, FlowEventCsvWriter};
+#[cfg(feature = "emit-eve")]
+pub use eve::{EveJsonWriter, EveOptions};
 #[cfg(feature = "emit-ndjson")]
 pub use ndjson::{FlowEventNdjsonWriter, NdjsonOptions};
 pub use zeek::{ZeekConnLogWriter, ZeekOptions};

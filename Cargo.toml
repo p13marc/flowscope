@@ -131,6 +131,10 @@ tracing-messages = ["tracing"]
 # newline-delimited-JSON writer; pulls in `serde_json`.
 emit = ["tracker", "extractors"]
 emit-ndjson = ["emit", "serde", "dep:serde_json"]
+# Suricata EVE JSON writer (plan 123). Schema-compatible with
+# Suricata 7.x; pipes into Filebeat / Splunk / Tenzir / ECS
+# downstream pipelines without translation.
+emit-eve = ["emit", "dep:serde_json"]
 
 # Distribution / quantile primitives (plan 102 sub-B). Ships
 # `Histogram` (no deps) + `Percentile` (wraps the `tdigest` crate).
@@ -143,7 +147,7 @@ aggregate = ["dep:tdigest"]
 chrono = ["dep:chrono"]
 
 # Convenience: turn everything on.
-full = ["http", "tls", "ja3", "ja4", "dns", "icmp", "pcap", "metrics", "tracing", "tracing-messages", "serde", "emit", "emit-ndjson", "aggregate", "chrono"]
+full = ["http", "tls", "ja3", "ja4", "dns", "icmp", "pcap", "metrics", "tracing", "tracing-messages", "serde", "emit", "emit-ndjson", "emit-eve", "aggregate", "chrono"]
 
 [package.metadata.docs.rs]
 all-features = true
@@ -428,6 +432,10 @@ required-features = ["emit-ndjson"]
 [[test]]
 name = "emit_zeek"
 required-features = ["emit"]
+
+[[test]]
+name = "emit_eve"
+required-features = ["emit-eve", "tracker"]
 
 [[test]]
 name = "parser_helpers"

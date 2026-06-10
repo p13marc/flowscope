@@ -50,6 +50,7 @@ jobs:
           - "serde"             # 0.8: serde on core types
           - "serde,l7,pcap"     # 0.8: serde on L7 messages
           - "chrono"            # 0.12: chrono interop on Timestamp
+          - "emit-eve"          # 0.12: Suricata EVE JSON writer
     steps:
       - uses: actions/checkout@v4
       - name: Build (--no-default-features --features "${{ matrix.features }}")

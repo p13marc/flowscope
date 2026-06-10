@@ -33,6 +33,24 @@ for SIEM ingest, and `chrono` interop for legacy systems.
 
 ### Added
 
+- **`flowscope::emit::EveJsonWriter`** (plan 123, behind
+  `emit-eve` feature) — Suricata 7.x EVE JSON writer. One JSON
+  object per line in three `event_type` shapes:
+  - `"flow"` for `FlowEvent::Ended` (per-flow with
+    pkts_toserver / pkts_toclient / bytes / start / end / age /
+    reason).
+  - `"anomaly"` for `FlowAnomaly` / `TrackerAnomaly` (with
+    Suricata-style `anomaly.type` + `anomaly.event` +
+    `severity` numeric).
+  - `"stats"` for `FlowEvent::Tick` (opt-in via
+    `EveOptions::include_stats`).
+
+  Schema-compatible with Filebeat's Suricata module, Splunk
+  Suricata TA, Tenzir's `read_suricata`, and ECS-converting
+  downstream pipelines. Severity mapping is identity by
+  default (Critical=1, Error=2, Warning=3, Info=4) — override
+  via `EveOptions::severity_numeric`.
+
 - **`Driver::deferred()` constructor** (plan 124) — builds a
   `DeferredDriverBuilder<E>` that defers extractor *instance*
   selection until `.build_with(ext)`. Useful when slot
