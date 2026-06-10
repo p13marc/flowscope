@@ -466,7 +466,7 @@ where
     pub fn session_on_ports<P, I>(&mut self, parser: P, ports: I) -> SlotHandle<P::Message, E::Key>
     where
         P: SessionParser + Clone + Send + 'static,
-        P::Message: 'static,
+        P::Message: Send + 'static,
         I: IntoIterator<Item = u16>,
     {
         let port_set: smallvec::SmallVec<[u16; 4]> = ports.into_iter().collect();
@@ -485,7 +485,7 @@ where
     pub fn session_broadcast<P>(&mut self, parser: P) -> SlotHandle<P::Message, E::Key>
     where
         P: SessionParser + Clone + Send + 'static,
-        P::Message: 'static,
+        P::Message: Send + 'static,
     {
         let (slot, handle) = TypedConcreteSlot::new(
             self.extractor.clone(),
@@ -508,7 +508,7 @@ where
     ) -> SlotHandle<P::Message, E::Key>
     where
         P: SessionParser + Clone + Send + 'static,
-        P::Message: 'static,
+        P::Message: Send + 'static,
     {
         self.session_heuristic_with_budget(
             parser,
@@ -527,7 +527,7 @@ where
     ) -> SlotHandle<P::Message, E::Key>
     where
         P: SessionParser + Clone + Send + 'static,
-        P::Message: 'static,
+        P::Message: Send + 'static,
     {
         let (slot, handle) = TypedHeuristicSessionSlot::new(
             self.extractor.clone(),
@@ -545,7 +545,7 @@ where
     pub fn datagram_on_ports<D, I>(&mut self, parser: D, ports: I) -> SlotHandle<D::Message, E::Key>
     where
         D: DatagramParser + Clone + Send + 'static,
-        D::Message: 'static,
+        D::Message: Send + 'static,
         I: IntoIterator<Item = u16>,
     {
         let port_set: smallvec::SmallVec<[u16; 4]> = ports.into_iter().collect();
@@ -564,7 +564,7 @@ where
     pub fn datagram_broadcast<D>(&mut self, parser: D) -> SlotHandle<D::Message, E::Key>
     where
         D: DatagramParser + Clone + Send + 'static,
-        D::Message: 'static,
+        D::Message: Send + 'static,
     {
         let (slot, handle) = TypedConcreteDatagramSlot::new(
             self.extractor.clone(),
@@ -586,7 +586,7 @@ where
     ) -> SlotHandle<D::Message, E::Key>
     where
         D: DatagramParser + Clone + Send + 'static,
-        D::Message: 'static,
+        D::Message: Send + 'static,
     {
         self.datagram_heuristic_with_budget(
             parser,
@@ -605,7 +605,7 @@ where
     ) -> SlotHandle<D::Message, E::Key>
     where
         D: DatagramParser + Clone + Send + 'static,
-        D::Message: 'static,
+        D::Message: Send + 'static,
     {
         let (slot, handle) = TypedHeuristicDatagramSlot::new(
             self.extractor.clone(),

@@ -2,12 +2,49 @@
 
 ## 0.12.0
 
-The **cross-thread + structured-output cycle**. Driven by the
-netring 0.21 wishlist: per-CPU sharded capture with multi-thread
-tokio runtimes need `Send + Sync` slot handles, EVE JSON output
-for SIEM ingest, and `chrono` interop for legacy systems.
+The **cross-thread + structured-output + API debt retirement
+cycle**. Driven by the netring 0.21 wishlist (per-CPU sharded
+capture with multi-thread tokio runtimes need `Send + Sync`
+slot handles, EVE JSON output for SIEM ingest, chrono interop
+for legacy systems) plus a strategic-review pass on
+public-trait-shape debt before community adoption.
 
 ### BREAKING (pre-1.0)
+
+- **`AnomalyFields` split into `KeyFields` + `AnomalyFields`**
+  (plan 130). The single trait conflated two distinct concerns:
+  5-tuple key accessors (`src_ip` / `dest_port` / `proto_str`)
+  and anomaly-classification accessors (`anomaly_type` /
+  `anomaly_event`). Now split along the natural cleavage.
+  - Custom keys: replace `impl AnomalyFields for MyKey` with
+    `impl KeyFields for MyKey` when overriding key methods.
+  - `AnomalyKind` keeps `impl AnomalyFields` unchanged.
+  - Both traits live at the crate root; `prelude` re-exports
+    both. `use flowscope::prelude::*;` continues to work.
+
+- **Emit writers generic over `K: KeyFields`** (plan 130).
+  `FlowEventCsvWriter::write_event<K>` /
+  `FlowEventNdjsonWriter::write_event<K>` /
+  `ZeekConnLogWriter::write_event<K>` now accept any key
+  implementing `KeyFields`. Existing `FiveTupleKey` callers
+  unchanged; custom keys gain emit-writer compatibility by
+  implementing `KeyFields`.
+
+- **`From<Timestamp> for chrono::DateTime<Utc>`** (plan 130 §4)
+  replaces `TryFrom`. `Timestamp::sec` is u32 (≤ year 2106)
+  which fits inside chrono's representable range — the error
+  case was theatre. `ChronoOutOfRange` deleted; migration:
+  `ts.try_into().unwrap()` → `ts.into()`.
+
+- **`DriverBuilder<E>` registration methods gain `P::Message:
+  Send + 'static` bound** (plan 130). Parity with
+  `DeferredDriverBuilder<E>`. Every shipped parser already
+  satisfies `Send`, so this is invisible in practice.
+
+- **`SlotHandle<M, K>` is now `Send + Sync`.** Backing storage
+  changed from `Rc<RefCell<Vec<SlotMessage>>>` to
+  `Arc<crossbeam_queue::SegQueue<SlotMessage>>` (lock-free MPMC).
+  Move the handle to a tokio task on another core, share via
 
 - **`SlotHandle<M, K>` is now `Send + Sync`.** Backing storage
   changed from `Rc<RefCell<Vec<SlotMessage>>>` to
@@ -32,6 +69,24 @@ for SIEM ingest, and `chrono` interop for legacy systems.
   on a `SlotHandle` (unusual), update the bound.
 
 ### Added
+
+- **`Event::tcp(&self) -> Option<&TcpInfo>`** (plan 130 §3) —
+  cross-variant accessor on the typed `driver::Event<K>` that
+  returns the `FlowPacket.tcp` field when present, `None` on
+  every other variant. Useful for pipelines that want "TCP
+  info if available" without a destructuring `match` on
+  `FlowPacket`. The `tcp` field itself is unchanged but now
+  carries a loud rustdoc note that it's `None` unless
+  `DriverBuilder::emit_packet_details(true)` is set.
+
+- **`TopK::new_unbounded()`** + **`BurstDetector::new_unbounded(...)`**
+  (plan 130 §5) — convenience constructors completing the
+  `correlate::*::new_unbounded` set (`TimeBucketedCounter`,
+  `TimeBucketedSet`, `KeyIndexed` shipped earlier in 0.12
+  base). `TopK::new_unbounded` retains every observed key
+  (k = usize::MAX, no eviction). `BurstDetector::new_unbounded`
+  is naming-parity with the family (the detector has no LRU
+  cap; this is an alias for `new(...)`).
 
 - **`flowscope::emit::EveJsonWriter`** (plan 123, behind
   `emit-eve` feature) — Suricata 7.x EVE JSON writer. One JSON
