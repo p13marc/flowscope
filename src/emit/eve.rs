@@ -22,8 +22,8 @@ use std::net::IpAddr;
 
 use serde_json::json;
 
-use crate::AnomalyFields;
 use crate::event::{AnomalyKind, EndReason, FlowEvent, FlowStats, Severity};
+use crate::{AnomalyFields, KeyFields};
 
 /// Suricata EVE JSON writer. One JSON object per line.
 ///
@@ -111,7 +111,7 @@ where
     /// [`EveOptions`] produce no output and return `Ok(())`.
     pub fn write_event<K>(&mut self, ev: &FlowEvent<K>) -> io::Result<()>
     where
-        K: AnomalyFields,
+        K: KeyFields,
     {
         match ev {
             FlowEvent::Ended {
@@ -154,7 +154,7 @@ where
         ts: crate::Timestamp,
     ) -> io::Result<()>
     where
-        K: AnomalyFields,
+        K: KeyFields,
     {
         self.ts_buf.clear();
         let _ = ts.write_iso8601(&mut self.ts_buf);
@@ -190,7 +190,7 @@ where
         stats: &FlowStats,
     ) -> io::Result<()>
     where
-        K: AnomalyFields,
+        K: KeyFields,
     {
         // EVE convention: `timestamp` is the close time.
         self.ts_buf.clear();
@@ -229,7 +229,7 @@ where
 
     fn write_stats<K>(&mut self, key: &K, stats: &FlowStats, ts: crate::Timestamp) -> io::Result<()>
     where
-        K: AnomalyFields,
+        K: KeyFields,
     {
         self.ts_buf.clear();
         let _ = ts.write_iso8601(&mut self.ts_buf);
@@ -265,7 +265,7 @@ where
     }
 }
 
-fn insert_5tuple<K: AnomalyFields>(obj: &mut serde_json::Map<String, serde_json::Value>, key: &K) {
+fn insert_5tuple<K: KeyFields>(obj: &mut serde_json::Map<String, serde_json::Value>, key: &K) {
     if let Some(ip) = key.src_ip() {
         obj.insert("src_ip".into(), json!(ip.to_string()));
     }
@@ -300,7 +300,7 @@ fn insert_5tuple<K: AnomalyFields>(obj: &mut serde_json::Map<String, serde_json:
 /// across runs and across direction (A→B and B→A produce the
 /// same hash). 64-bit FNV at flowscope scales: collision
 /// probability ~5e-8 at 1 M flows.
-fn flow_hash<K: AnomalyFields>(key: &K) -> Option<u64> {
+fn flow_hash<K: KeyFields>(key: &K) -> Option<u64> {
     let proto = key.proto_str()?;
     let src_ip = key.src_ip()?;
     let src_port = key.src_port()?;

@@ -13,7 +13,8 @@
 //! ```
 
 pub use crate::{
-    AnomalyFields, AsPacketView, Error, ErrorCode, ErrorKind, Module, PacketView, Result, Timestamp,
+    AnomalyFields, AsPacketView, Error, ErrorCode, ErrorKind, KeyFields, Module, PacketView,
+    Result, Timestamp,
 };
 
 #[cfg(feature = "extractors")]

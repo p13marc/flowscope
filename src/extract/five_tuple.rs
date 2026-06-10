@@ -93,7 +93,7 @@ impl FiveTupleKey {
     }
 }
 
-impl crate::AnomalyFields for FiveTupleKey {
+impl crate::KeyFields for FiveTupleKey {
     fn src_ip(&self) -> Option<std::net::IpAddr> {
         Some(self.a.ip())
     }

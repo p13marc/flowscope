@@ -109,7 +109,7 @@ impl std::fmt::Display for L4Proto {
     }
 }
 
-impl crate::AnomalyFields for L4Proto {
+impl crate::KeyFields for L4Proto {
     /// Uppercase EVE-compatible label (`"TCP"` / `"UDP"` /
     /// `"ICMP"` / `"ICMPv6"` / `"SCTP"`). Returns `None` for
     /// [`L4Proto::Other`] (unknown numeric protocol).

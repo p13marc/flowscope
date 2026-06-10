@@ -468,6 +468,10 @@ name = "anomaly_fields"
 required-features = ["extractors", "tracker"]
 
 [[test]]
+name = "key_fields"
+required-features = ["extractors", "tracker"]
+
+[[test]]
 name = "driver_send"
 required-features = ["test-helpers", "extractors", "session", "reassembler"]
 
