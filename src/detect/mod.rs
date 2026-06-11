@@ -36,6 +36,7 @@
 //! assert!(!is_hex_string("not hex"));
 //! ```
 
+pub mod patterns;
 pub mod signatures;
 
 use std::collections::HashMap;
