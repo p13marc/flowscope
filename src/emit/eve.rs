@@ -63,6 +63,16 @@ pub struct EveOptions {
     /// mapping — `Critical=1, Error=2, Warning=3, Info=4`
     /// (Suricata's convention).
     pub severity_numeric: fn(Severity) -> u8,
+    /// EVE `anomaly.type` value used by
+    /// [`EveJsonWriter::write_owned_anomaly`] when the
+    /// `OwnedAnomaly` doesn't carry a `flowscope_kind`. Default
+    /// `"applayer"` — Suricata's convention for application-
+    /// layer detection events.
+    ///
+    /// Schema-permissive: downstream tooling tolerates any
+    /// string. Override for downstream detector frameworks that
+    /// classify on a different axis.
+    pub custom_anomaly_type: &'static str,
 }
 
 impl Default for EveOptions {
@@ -73,6 +83,7 @@ impl Default for EveOptions {
             include_anomalies: true,
             include_stats: false,
             severity_numeric: default_severity_numeric,
+            custom_anomaly_type: "applayer",
         }
     }
 }
@@ -143,6 +154,92 @@ where
     pub fn finish(mut self) -> io::Result<W> {
         self.flush()?;
         Ok(self.sink)
+    }
+
+    /// Emit `event_type: "anomaly"` from a canonical
+    /// [`crate::OwnedAnomaly`].
+    ///
+    /// Schema mapping:
+    /// - `kind` → `anomaly.event`
+    /// - `severity` → `severity` (via
+    ///   [`EveOptions::severity_numeric`])
+    /// - `(src_ip, src_port, dest_ip, dest_port, proto)` →
+    ///   top-level fields (each omitted if `None`)
+    /// - `observations` → `anomaly.labels.<label>: <value>`
+    /// - `metrics` → `anomaly.metrics.<label>: <number>`
+    /// - `anomaly.type` ← [`EveOptions::custom_anomaly_type`]
+    ///   unless `flowscope_kind.is_some()`, in which case the
+    ///   typed kind's [`crate::AnomalyFields::anomaly_type`]
+    ///   takes precedence (for bridged events).
+    ///
+    /// See [`crate::OwnedAnomaly`] for canonical detector-
+    /// shaped emission. Use [`Self::write_event`] for
+    /// flowscope-internal `FlowEvent` variants.
+    pub fn write_owned_anomaly(&mut self, a: &crate::OwnedAnomaly) -> io::Result<()> {
+        use crate::anomaly_fields::AnomalyFields;
+        self.ts_buf.clear();
+        let _ = a.ts.write_iso8601(&mut self.ts_buf);
+        let flow_id = self.next_flow_id();
+        let severity = (self.options.severity_numeric)(a.severity);
+
+        // anomaly.type: prefer flowscope_kind's classification (bridged
+        // tracker anomalies) over the configured default.
+        let anomaly_type: &str = a
+            .flowscope_kind
+            .as_ref()
+            .and_then(|k| k.anomaly_type())
+            .unwrap_or(self.options.custom_anomaly_type);
+
+        let mut obj = serde_json::Map::with_capacity(12);
+        obj.insert("timestamp".into(), json!(self.ts_buf));
+        obj.insert("flow_id".into(), json!(flow_id));
+        obj.insert("event_type".into(), json!("anomaly"));
+        if !self.options.in_iface.is_empty() {
+            obj.insert("in_iface".into(), json!(self.options.in_iface));
+        }
+
+        // Top-level 5-tuple fields from the OwnedAnomaly directly
+        // (no KeyFields re-traversal needed; the value carries
+        // the flattened fields).
+        if let Some(ip) = a.src_ip {
+            obj.insert("src_ip".into(), json!(ip.to_string()));
+        }
+        if let Some(p) = a.src_port {
+            obj.insert("src_port".into(), json!(p));
+        }
+        if let Some(ip) = a.dest_ip {
+            obj.insert("dest_ip".into(), json!(ip.to_string()));
+        }
+        if let Some(p) = a.dest_port {
+            obj.insert("dest_port".into(), json!(p));
+        }
+        if let Some(p) = a.proto {
+            obj.insert("proto".into(), json!(p));
+        }
+
+        let mut anomaly_obj = serde_json::Map::with_capacity(4);
+        anomaly_obj.insert("type".into(), json!(anomaly_type));
+        anomaly_obj.insert("event".into(), json!(a.kind.as_ref()));
+        anomaly_obj.insert("code".into(), json!(0u32));
+
+        if !a.observations.is_empty() {
+            let mut labels = serde_json::Map::with_capacity(a.observations.len());
+            for (label, value) in &a.observations {
+                labels.insert((*label).to_string(), json!(value.as_ref()));
+            }
+            anomaly_obj.insert("labels".into(), serde_json::Value::Object(labels));
+        }
+        if !a.metrics.is_empty() {
+            let mut metrics = serde_json::Map::with_capacity(a.metrics.len());
+            for (label, value) in &a.metrics {
+                metrics.insert((*label).to_string(), json!(value));
+            }
+            anomaly_obj.insert("metrics".into(), serde_json::Value::Object(metrics));
+        }
+
+        obj.insert("anomaly".into(), serde_json::Value::Object(anomaly_obj));
+        obj.insert("severity".into(), json!(severity));
+        self.write_line(&obj)
     }
 
     // ── Per-variant emit ────────────────────────────────────

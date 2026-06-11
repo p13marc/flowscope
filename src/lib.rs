@@ -93,6 +93,10 @@ pub mod layers;
 
 pub mod anomaly_fields;
 #[cfg(feature = "tracker")]
+pub mod anomaly;
+#[cfg(feature = "tracker")]
+pub use anomaly::{DetectorScore, OwnedAnomaly};
+#[cfg(feature = "tracker")]
 pub mod event;
 #[cfg(feature = "tracker")]
 pub mod history;

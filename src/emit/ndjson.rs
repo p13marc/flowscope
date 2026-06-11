@@ -72,6 +72,37 @@ impl<W: Write> FlowEventNdjsonWriter<W> {
         Ok(())
     }
 
+    /// Write a canonical [`crate::OwnedAnomaly`] as one NDJSON
+    /// record.
+    ///
+    /// Requires the `serde` feature on flowscope; `OwnedAnomaly`
+    /// derives `Serialize` behind that feature. Output shape:
+    ///
+    /// ```json
+    /// {
+    ///   "kind": "PortScanTRW",
+    ///   "severity": "warning",
+    ///   "ts": { "sec": 1700000000, "nsec": 0 },
+    ///   "src_ip": "10.0.0.1",
+    ///   "src_port": 33000,
+    ///   ...,
+    ///   "observations": [["verdict", "scanner"]],
+    ///   "metrics": [["log_likelihood", 3.7]],
+    ///   "flowscope_kind": null
+    /// }
+    /// ```
+    pub fn write_owned_anomaly(&mut self, a: &crate::OwnedAnomaly) -> io::Result<()> {
+        let result = if self.options.pretty {
+            serde_json::to_string_pretty(a)
+        } else {
+            serde_json::to_string(a)
+        };
+        let s = result.map_err(io::Error::other)?;
+        self.sink.write_all(s.as_bytes())?;
+        self.sink.write_all(b"\n")?;
+        Ok(())
+    }
+
     fn should_emit<K>(&self, ev: &FlowEvent<K>) -> bool {
         match ev {
             FlowEvent::Ended { .. } => true,

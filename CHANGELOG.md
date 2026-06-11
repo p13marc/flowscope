@@ -6,6 +6,47 @@ The **fully `Send + Sync` driver** + **canonical anomaly value type**
 + **detector-output uniformity** cycle. Driven by netring 0.21
 adoption friction; see `plans/0.13-wishlist-from-netring.md`.
 
+### Added
+
+- **`flowscope::OwnedAnomaly`** — canonical owned, serialisable
+  detector-output value (plan 147). `kind` slug,
+  `Severity`, `Timestamp`, flattened 5-tuple fields,
+  `SmallVec<[..; 4]>` observations + metrics (zero-alloc for
+  the typical 2-5 observation case), `Option<AnomalyKind>`
+  bridge field. Construct via `OwnedAnomaly::new` + the
+  `with_key` / `with_observation` / `with_metric` builders, or
+  bridge a flowscope-internal typed event via
+  `OwnedAnomaly::from_flow_anomaly`. Wire-stable under
+  `#[non_exhaustive]`; serde-feature-gated `Serialize` +
+  `Deserialize` for cross-process retention.
+- **`flowscope::DetectorScore`** trait — output-side conversion
+  to `OwnedAnomaly` (plan 147). `name() -> &'static str` +
+  `into_anomaly(ts) -> OwnedAnomaly`. Lets consumers route any
+  detector score through a uniform emit path without trying
+  to unify the heterogeneous detector input surfaces.
+  Implemented on `ScanScore<K>` (`"PortScanTRW"`),
+  `BeaconScore<K>` (`"BeaconCv"`), `DgaScore` (`"DgaScorer"`).
+- **Per-score `into_anomaly` inherent methods** —
+  `ScanScore::into_anomaly(ts)` /
+  `BeaconScore::into_anomaly(ts)` /
+  `DgaScore::into_anomaly(ts, Option<&dyn KeyFields>)`. The
+  DGA variant takes an optional flow key for 5-tuple context
+  (DGA scoring is keyless on the detector side but consumers
+  usually have the DNS-query flow context).
+- **`EveJsonWriter::write_owned_anomaly`** —
+  `event_type: "anomaly"` emission from an `OwnedAnomaly`
+  (plan 147). Observations nest under `anomaly.labels`,
+  metrics under `anomaly.metrics`. `anomaly.type` follows
+  the bridged `AnomalyKind`'s classification when
+  `flowscope_kind.is_some()`; otherwise
+  `EveOptions::custom_anomaly_type` (default `"applayer"`).
+- **`FlowEventNdjsonWriter::write_owned_anomaly`** — one
+  NDJSON line per anomaly, using the `serde`-derived shape
+  on `OwnedAnomaly`.
+- **`EveOptions::custom_anomaly_type: &'static str`** field —
+  default EVE `anomaly.type` value for non-bridged
+  `OwnedAnomaly` emissions. Default `"applayer"`.
+
 ### Changed
 
 - **`Driver<E>: Send + Sync`** unconditionally (plan 156). The

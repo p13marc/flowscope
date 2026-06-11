@@ -160,6 +160,48 @@ impl DgaScorer {
     }
 }
 
+impl DgaScore {
+    /// Convert into the canonical [`OwnedAnomaly`] shape with
+    /// the given timestamp and (optionally) a flow key for
+    /// 5-tuple context. DGA scoring is keyless on the detector
+    /// side, but consumers usually have a flow key from the DNS
+    /// query context — pass it here to populate `src_ip` / `dest_ip`
+    /// / etc.
+    ///
+    /// Severity is `Info` by default; downstream consumers
+    /// threshold on `log_likelihood` to escalate.
+    ///
+    /// Metrics emitted: `log_likelihood`, `length`,
+    /// `vowel_ratio`, `digit_ratio`, `max_consonant_run`,
+    /// `char_entropy`.
+    pub fn into_anomaly(
+        self,
+        ts: crate::Timestamp,
+        flow_key: Option<&dyn crate::KeyFields>,
+    ) -> crate::OwnedAnomaly {
+        let mut a = crate::OwnedAnomaly::new("DgaScorer", crate::event::Severity::Info, ts);
+        if let Some(key) = flow_key {
+            a = a.with_key(key);
+        }
+        a.with_metric("log_likelihood", self.log_likelihood as f64)
+            .with_metric("length", self.length as f64)
+            .with_metric("vowel_ratio", self.vowel_ratio as f64)
+            .with_metric("digit_ratio", self.digit_ratio as f64)
+            .with_metric("max_consonant_run", self.max_consonant_run as f64)
+            .with_metric("char_entropy", self.char_entropy as f64)
+    }
+}
+
+impl crate::DetectorScore for DgaScore {
+    fn name(&self) -> &'static str {
+        "DgaScorer"
+    }
+
+    fn into_anomaly(self, ts: crate::Timestamp) -> crate::OwnedAnomaly {
+        self.into_anomaly(ts, None)
+    }
+}
+
 impl Default for DgaScorer {
     fn default() -> Self {
         Self::new()

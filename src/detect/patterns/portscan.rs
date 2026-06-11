@@ -154,6 +154,47 @@ where
     }
 }
 
+impl<K> ScanScore<K>
+where
+    K: crate::KeyFields + Clone,
+{
+    /// Convert into the canonical [`OwnedAnomaly`] shape with
+    /// the given timestamp. Severity follows `verdict`:
+    /// `Scanner` → `Warning`, `Benign`/`Inconclusive` → `Info`.
+    ///
+    /// Metrics emitted: `log_likelihood`, `n_observed`.
+    /// Observations emitted: `verdict` (slug).
+    pub fn into_anomaly(self, ts: crate::Timestamp) -> crate::OwnedAnomaly {
+        let severity = match self.verdict {
+            ScanVerdict::Scanner => crate::event::Severity::Warning,
+            ScanVerdict::Benign | ScanVerdict::Inconclusive => crate::event::Severity::Info,
+        };
+        let verdict_slug = match self.verdict {
+            ScanVerdict::Scanner => "scanner",
+            ScanVerdict::Benign => "benign",
+            ScanVerdict::Inconclusive => "inconclusive",
+        };
+        crate::OwnedAnomaly::new("PortScanTRW", severity, ts)
+            .with_key(&self.key)
+            .with_observation("verdict", verdict_slug)
+            .with_metric("log_likelihood", self.log_likelihood)
+            .with_metric("n_observed", self.n_observed as f64)
+    }
+}
+
+impl<K> crate::DetectorScore for ScanScore<K>
+where
+    K: crate::KeyFields + Clone,
+{
+    fn name(&self) -> &'static str {
+        "PortScanTRW"
+    }
+
+    fn into_anomaly(self, ts: crate::Timestamp) -> crate::OwnedAnomaly {
+        self.into_anomaly(ts)
+    }
+}
+
 impl<K> Default for PortScanDetector<K>
 where
     K: Hash + Eq + Clone,
