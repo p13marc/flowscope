@@ -241,7 +241,8 @@ mod tests {
         let mut a = OwnedAnomaly::new("Test", Severity::Info, Timestamp::new(0, 0));
         for i in 0..6 {
             // Use a known-static label; the spillage matters, not the label content.
-            a.observations.push(("test_label", Cow::Owned(format!("{i}"))));
+            a.observations
+                .push(("test_label", Cow::Owned(format!("{i}"))));
         }
         assert_eq!(a.observations.len(), 6);
         assert!(a.observations.spilled(), "6 observations spill to heap");

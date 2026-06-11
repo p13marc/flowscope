@@ -189,7 +189,10 @@ where
     /// [`Self::with_config`] / [`Self::with_emit_anomalies`].
     pub fn with_idle_timeout_fn<G>(mut self, f: G) -> Self
     where
-        G: Fn(&E::Key, Option<crate::L4Proto>) -> Option<std::time::Duration> + Send + Sync + 'static,
+        G: Fn(&E::Key, Option<crate::L4Proto>) -> Option<std::time::Duration>
+            + Send
+            + Sync
+            + 'static,
     {
         self.tracker.set_idle_timeout_fn(f);
         self

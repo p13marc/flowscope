@@ -38,7 +38,10 @@ fn portscan_score_into_anomaly_carries_5tuple_and_metrics() {
 
     let anomaly = score.into_anomaly(Timestamp::new(1_700_000_000, 0));
     assert_eq!(anomaly.kind, "PortScanTRW");
-    assert_eq!(anomaly.src_ip, Some(IpAddr::from(Ipv4Addr::new(10, 0, 0, 1))));
+    assert_eq!(
+        anomaly.src_ip,
+        Some(IpAddr::from(Ipv4Addr::new(10, 0, 0, 1)))
+    );
     assert_eq!(anomaly.src_port, Some(33000));
     assert_eq!(anomaly.dest_port, Some(80));
     assert_eq!(anomaly.proto, Some("TCP"));
@@ -60,9 +63,11 @@ fn portscan_score_into_anomaly_carries_5tuple_and_metrics() {
 
 #[test]
 fn beacon_score_into_anomaly_carries_window_metrics() {
-    let mut d: BeaconDetector<FiveTupleKey> = BeaconDetector::new()
-        .with_window(10)
-        .with_interval_range(std::time::Duration::from_millis(50), std::time::Duration::from_secs(60));
+    let mut d: BeaconDetector<FiveTupleKey> =
+        BeaconDetector::new().with_window(10).with_interval_range(
+            std::time::Duration::from_millis(50),
+            std::time::Duration::from_secs(60),
+        );
     let key = sample_key();
 
     // Feed regular observations until the detector emits a score.
@@ -82,7 +87,12 @@ fn beacon_score_into_anomaly_carries_window_metrics() {
     assert_eq!(anomaly.severity, Severity::Warning);
     assert!(anomaly.metrics.iter().any(|(l, _)| *l == "score"));
     assert!(anomaly.metrics.iter().any(|(l, _)| *l == "cv_dt"));
-    assert!(anomaly.metrics.iter().any(|(l, _)| *l == "mean_interval_secs"));
+    assert!(
+        anomaly
+            .metrics
+            .iter()
+            .any(|(l, _)| *l == "mean_interval_secs")
+    );
 }
 
 #[test]
@@ -92,7 +102,10 @@ fn dga_score_into_anomaly_keyed_inherent_path() {
     let key = sample_key();
     let anomaly = score.into_anomaly(Timestamp::new(1_700_000_000, 0), Some(&key));
     assert_eq!(anomaly.kind, "DgaScorer");
-    assert_eq!(anomaly.src_ip, Some(IpAddr::from(Ipv4Addr::new(10, 0, 0, 1))));
+    assert_eq!(
+        anomaly.src_ip,
+        Some(IpAddr::from(Ipv4Addr::new(10, 0, 0, 1)))
+    );
     assert!(anomaly.metrics.iter().any(|(l, _)| *l == "log_likelihood"));
     assert!(anomaly.metrics.iter().any(|(l, _)| *l == "char_entropy"));
 }
@@ -108,11 +121,15 @@ fn dga_score_via_detectorscore_trait_keyless() {
 
 #[test]
 fn eve_writer_writes_owned_anomaly_round_trip() {
-    let a = OwnedAnomaly::new("PortScanTRW", Severity::Warning, Timestamp::new(1_700_000_000, 0))
-        .with_key(&sample_key())
-        .with_observation("verdict", "scanner")
-        .with_metric("log_likelihood", 3.7)
-        .with_metric("n_observed", 47.0);
+    let a = OwnedAnomaly::new(
+        "PortScanTRW",
+        Severity::Warning,
+        Timestamp::new(1_700_000_000, 0),
+    )
+    .with_key(&sample_key())
+    .with_observation("verdict", "scanner")
+    .with_metric("log_likelihood", 3.7)
+    .with_metric("n_observed", 47.0);
 
     let mut out: Vec<u8> = Vec::new();
     let mut w = EveJsonWriter::new(&mut out);
@@ -181,9 +198,13 @@ fn eve_writer_flowscope_kind_overrides_custom_anomaly_type() {
 
 #[test]
 fn ndjson_writer_writes_owned_anomaly_emits_valid_json() {
-    let a = OwnedAnomaly::new("PortScanTRW", Severity::Warning, Timestamp::new(1_700_000_000, 0))
-        .with_key(&sample_key())
-        .with_metric("log_likelihood", 3.7);
+    let a = OwnedAnomaly::new(
+        "PortScanTRW",
+        Severity::Warning,
+        Timestamp::new(1_700_000_000, 0),
+    )
+    .with_key(&sample_key())
+    .with_metric("log_likelihood", 3.7);
 
     let mut out: Vec<u8> = Vec::new();
     let mut w = FlowEventNdjsonWriter::new(&mut out);

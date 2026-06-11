@@ -421,7 +421,8 @@ where
     ) -> (Self, super::BroadcastSlotHandle<P::Message, E::Key>) {
         let parser_kind = parser.parser_kind();
         let broadcast = super::broadcast::BroadcastInner::new();
-        let handle = super::BroadcastSlotHandle::new(std::sync::Arc::clone(&broadcast), parser_kind);
+        let handle =
+            super::BroadcastSlotHandle::new(std::sync::Arc::clone(&broadcast), parser_kind);
         let driver = FlowSessionDriver::with_config(extractor, parser, config)
             .with_monotonic_timestamps(monotonic_timestamps);
         let slot = Self {

@@ -187,7 +187,10 @@ fn driver_survives_thread_spawn_and_back() {
     });
 
     let (_driver, events) = handle.join().expect("worker thread panicked");
-    assert!(!events.is_empty(), "driver produced events on worker thread");
+    assert!(
+        !events.is_empty(),
+        "driver produced events on worker thread"
+    );
 
     let mut msgs = Vec::new();
     let drained = slot.drain(&mut msgs);
@@ -241,8 +244,7 @@ fn drain_n_returns_actual_count_when_queue_smaller() {
 #[test]
 fn drain_n_with_empty_queue_returns_zero() {
     let mut builder = Driver::builder(FiveTuple::bidirectional());
-    let mut slot: SlotHandle<usize, FiveTupleKey> =
-        builder.session_on_ports(CountParser, [80]);
+    let mut slot: SlotHandle<usize, FiveTupleKey> = builder.session_on_ports(CountParser, [80]);
     let _driver = builder.build();
 
     let mut out = Vec::new();

@@ -8,8 +8,8 @@
 ))]
 
 use flowscope::driver::{BroadcastSlotHandle, Driver};
-use flowscope::extract::parse::test_frames::ipv4_tcp;
 use flowscope::extract::FiveTuple;
+use flowscope::extract::parse::test_frames::ipv4_tcp;
 use flowscope::{PacketView, SessionParser, Timestamp};
 use static_assertions::assert_impl_all;
 
@@ -35,8 +35,16 @@ impl SessionParser for CountParser {
 
 fn tcp_packet(sport: u16, dport: u16, seq: u32, payload: &[u8]) -> Vec<u8> {
     ipv4_tcp(
-        [1; 6], [2; 6], [10, 0, 0, 1], [10, 0, 0, 2],
-        sport, dport, seq, 0, 0x18, payload,
+        [1; 6],
+        [2; 6],
+        [10, 0, 0, 1],
+        [10, 0, 0, 2],
+        sport,
+        dport,
+        seq,
+        0,
+        0x18,
+        payload,
     )
 }
 

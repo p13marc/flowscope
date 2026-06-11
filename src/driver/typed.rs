@@ -709,8 +709,11 @@ where
 /// Lazy-built at `build_with` time; takes the extractor + the
 /// shared config and produces the boxed type-erased slot.
 type DeferredMaterialiser<E> = Box<
-    dyn FnOnce(&E, &FlowTrackerConfig, bool)
-            -> Box<dyn ErasedSlot<<E as FlowExtractor>::Key> + Send + Sync>
+    dyn FnOnce(
+            &E,
+            &FlowTrackerConfig,
+            bool,
+        ) -> Box<dyn ErasedSlot<<E as FlowExtractor>::Key> + Send + Sync>
         + Send
         + Sync,
 >;

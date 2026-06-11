@@ -91,9 +91,9 @@ pub mod extract;
 #[cfg(feature = "extractors")]
 pub mod layers;
 
-pub mod anomaly_fields;
 #[cfg(feature = "tracker")]
 pub mod anomaly;
+pub mod anomaly_fields;
 #[cfg(feature = "tracker")]
 pub use anomaly::{DetectorScore, OwnedAnomaly};
 #[cfg(feature = "tracker")]

@@ -297,7 +297,10 @@ where
     /// Set a per-key idle-timeout override.
     pub fn with_idle_timeout_fn<G>(mut self, f: G) -> Self
     where
-        G: Fn(&E::Key, Option<crate::L4Proto>) -> Option<std::time::Duration> + Send + Sync + 'static,
+        G: Fn(&E::Key, Option<crate::L4Proto>) -> Option<std::time::Duration>
+            + Send
+            + Sync
+            + 'static,
     {
         self.driver = self.driver.with_idle_timeout_fn(f);
         self

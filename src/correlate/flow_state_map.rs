@@ -208,7 +208,11 @@ mod tests {
         };
         m.feed(&ev);
         m.sweep(Timestamp::new(70, 0));
-        assert_eq!(m.len(), 1, "entry refreshed by Packet at t=50, sweep at t=70 within 60s TTL");
+        assert_eq!(
+            m.len(),
+            1,
+            "entry refreshed by Packet at t=50, sweep at t=70 within 60s TTL"
+        );
         // But sweep at t=120 (>= 50 + 60) evicts.
         m.sweep(Timestamp::new(120, 0));
         assert_eq!(m.len(), 0);

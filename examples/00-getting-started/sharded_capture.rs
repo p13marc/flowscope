@@ -59,10 +59,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let path = args
         .next()
         .unwrap_or_else(|| "tests/data/mixed_short.pcap".to_string());
-    let n_shards: usize = args
-        .next()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(4);
+    let n_shards: usize = args.next().and_then(|s| s.parse().ok()).unwrap_or(4);
 
     println!("[sharded_capture] {} shards, pcap = {}", n_shards, path);
 
@@ -99,7 +96,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         dispatched += 1;
     }
-    println!("[sharded_capture] dispatched {} packets to shards", dispatched);
+    println!(
+        "[sharded_capture] dispatched {} packets to shards",
+        dispatched
+    );
 
     // Drop senders so workers exit cleanly.
     drop(shard_senders);
