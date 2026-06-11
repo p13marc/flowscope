@@ -193,3 +193,104 @@ fn driver_survives_thread_spawn_and_back() {
     let drained = slot.drain(&mut msgs);
     assert_eq!(drained, 10, "10 messages drained on main thread");
 }
+
+// Plan 149 (0.13) — bounded drain.
+
+fn fill_slot(
+    _slot: &mut SlotHandle<usize, FiveTupleKey>,
+    driver: &mut Driver<FiveTuple>,
+    count: u32,
+) {
+    let mut events = Vec::new();
+    let mut seq: u32 = 2000;
+    for i in 0..count {
+        let frame = tcp_packet(33000, 80, seq, b"z");
+        let view = PacketView::new(&frame, Timestamp::new(i, 0));
+        driver.track_into(view, &mut events);
+        seq = seq.wrapping_add(1);
+    }
+}
+
+#[test]
+fn drain_n_respects_max_when_queue_larger() {
+    let mut builder = Driver::builder(FiveTuple::bidirectional());
+    let mut slot = builder.session_on_ports(CountParser, [80]);
+    let mut driver = builder.build();
+    fill_slot(&mut slot, &mut driver, 100);
+
+    let mut out = Vec::new();
+    let drained = slot.drain_n(&mut out, 10);
+    assert_eq!(drained, 10);
+    assert_eq!(out.len(), 10);
+    assert_eq!(slot.pending(), 90);
+}
+
+#[test]
+fn drain_n_returns_actual_count_when_queue_smaller() {
+    let mut builder = Driver::builder(FiveTuple::bidirectional());
+    let mut slot = builder.session_on_ports(CountParser, [80]);
+    let mut driver = builder.build();
+    fill_slot(&mut slot, &mut driver, 5);
+
+    let mut out = Vec::new();
+    let drained = slot.drain_n(&mut out, 100);
+    assert_eq!(drained, 5);
+    assert_eq!(out.len(), 5);
+}
+
+#[test]
+fn drain_n_with_empty_queue_returns_zero() {
+    let mut builder = Driver::builder(FiveTuple::bidirectional());
+    let mut slot: SlotHandle<usize, FiveTupleKey> =
+        builder.session_on_ports(CountParser, [80]);
+    let _driver = builder.build();
+
+    let mut out = Vec::new();
+    let drained = slot.drain_n(&mut out, 100);
+    assert_eq!(drained, 0);
+    assert!(out.is_empty());
+}
+
+#[test]
+fn drain_n_max_zero_is_no_op() {
+    let mut builder = Driver::builder(FiveTuple::bidirectional());
+    let mut slot = builder.session_on_ports(CountParser, [80]);
+    let mut driver = builder.build();
+    fill_slot(&mut slot, &mut driver, 50);
+
+    let mut out = Vec::new();
+    let drained = slot.drain_n(&mut out, 0);
+    assert_eq!(drained, 0);
+    assert_eq!(slot.pending(), 50);
+}
+
+#[test]
+fn drain_n_max_usize_drains_everything() {
+    let mut builder = Driver::builder(FiveTuple::bidirectional());
+    let mut slot = builder.session_on_ports(CountParser, [80]);
+    let mut driver = builder.build();
+    fill_slot(&mut slot, &mut driver, 25);
+
+    let mut out = Vec::new();
+    let drained = slot.drain_n(&mut out, usize::MAX);
+    assert_eq!(drained, 25);
+    assert_eq!(slot.pending(), 0);
+}
+
+#[test]
+fn drain_n_drains_in_two_batches() {
+    let mut builder = Driver::builder(FiveTuple::bidirectional());
+    let mut slot = builder.session_on_ports(CountParser, [80]);
+    let mut driver = builder.build();
+    fill_slot(&mut slot, &mut driver, 30);
+
+    let mut out_a = Vec::new();
+    let drained_a = slot.drain_n(&mut out_a, 10);
+    assert_eq!(drained_a, 10);
+    assert_eq!(slot.pending(), 20);
+
+    let mut out_b = Vec::new();
+    let drained_b = slot.drain_n(&mut out_b, 20);
+    assert_eq!(drained_b, 20);
+    assert_eq!(slot.pending(), 0);
+}

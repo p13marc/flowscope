@@ -8,6 +8,13 @@ adoption friction; see `plans/0.13-wishlist-from-netring.md`.
 
 ### Added
 
+- **`SlotHandle::drain_n(out, max) -> usize`** — bounded drain
+  for back-pressure (plan 149). `max = 0` is a no-op;
+  `max = usize::MAX` is equivalent to [`drain`]. The micro-
+  optimisation `swap()` + opaque `SlotBuf<M, K>` variant
+  considered for round 1 was deferred — `SegQueue::pop` is
+  ~10ns and downstream emit dwarfs it. If a future benchmark
+  proves it matters, `swap` ships in 0.14 with the same shape.
 - **`flowscope::OwnedAnomaly`** — canonical owned, serialisable
   detector-output value (plan 147). `kind` slug,
   `Severity`, `Timestamp`, flattened 5-tuple fields,

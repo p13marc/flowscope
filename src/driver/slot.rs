@@ -84,6 +84,33 @@ where
         n
     }
 
+    /// Drain at most `max` queued messages into `out`. Returns
+    /// the number actually drained.
+    ///
+    /// Bounded variant of [`drain`](Self::drain). Use when:
+    ///
+    /// - The consumer wants explicit back-pressure (drop the
+    ///   rest if downstream can't keep up).
+    /// - Drain cadence is unpredictable — one shard's drain
+    ///   shouldn't monopolise a CPU when another shard has
+    ///   packets waiting.
+    ///
+    /// `max = 0` is a valid no-op that returns 0 without
+    /// touching the queue. `max = usize::MAX` is behaviourally
+    /// identical to [`drain`](Self::drain).
+    ///
+    /// Plan 149 (0.13).
+    pub fn drain_n(&mut self, out: &mut Vec<SlotMessage<M, K>>, max: usize) -> usize {
+        let mut n = 0;
+        while n < max
+            && let Some(msg) = self.inner.pop()
+        {
+            out.push(msg);
+            n += 1;
+        }
+        n
+    }
+
     /// Approximate message count currently in the queue. Cheap
     /// inspection; result may be slightly stale under
     /// concurrent push/pop.
