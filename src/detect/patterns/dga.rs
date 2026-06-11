@@ -160,6 +160,7 @@ impl DgaScorer {
     }
 }
 
+#[cfg(feature = "tracker")]
 impl DgaScore {
     /// Convert into the canonical [`OwnedAnomaly`](crate::OwnedAnomaly) shape with
     /// the given timestamp and (optionally) a flow key for
@@ -174,6 +175,9 @@ impl DgaScore {
     /// Metrics emitted: `log_likelihood`, `length`,
     /// `vowel_ratio`, `digit_ratio`, `max_consonant_run`,
     /// `char_entropy`.
+    ///
+    /// Gated on the `tracker` feature — `OwnedAnomaly` lives
+    /// there.
     pub fn into_anomaly(
         self,
         ts: crate::Timestamp,
@@ -192,6 +196,7 @@ impl DgaScore {
     }
 }
 
+#[cfg(feature = "tracker")]
 impl crate::DetectorScore for DgaScore {
     fn name(&self) -> &'static str {
         "DgaScorer"

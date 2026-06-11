@@ -154,6 +154,7 @@ where
     }
 }
 
+#[cfg(feature = "tracker")]
 impl<K> ScanScore<K>
 where
     K: crate::KeyFields + Clone,
@@ -164,6 +165,9 @@ where
     ///
     /// Metrics emitted: `log_likelihood`, `n_observed`.
     /// Observations emitted: `verdict` (slug).
+    ///
+    /// Gated on the `tracker` feature — `OwnedAnomaly` lives
+    /// there.
     pub fn into_anomaly(self, ts: crate::Timestamp) -> crate::OwnedAnomaly {
         let severity = match self.verdict {
             ScanVerdict::Scanner => crate::event::Severity::Warning,
@@ -182,6 +186,7 @@ where
     }
 }
 
+#[cfg(feature = "tracker")]
 impl<K> crate::DetectorScore for ScanScore<K>
 where
     K: crate::KeyFields + Clone,

@@ -53,6 +53,11 @@
 mod bucketed;
 mod burst;
 mod ewma;
+// FlowStateMap defaults its key type to `crate::extract::FiveTupleKey`,
+// which only exists under the `extractors` feature. Gate the module
+// here so consumers running with `--no-default-features` (no extractors)
+// still get the rest of `correlate`.
+#[cfg(feature = "extractors")]
 mod flow_state_map;
 mod indexed;
 mod sequence;
@@ -62,6 +67,7 @@ mod topk;
 pub use bucketed::TimeBucketedCounter;
 pub use burst::{BurstDetector, BurstHit};
 pub use ewma::Ewma;
+#[cfg(feature = "extractors")]
 pub use flow_state_map::FlowStateMap;
 pub use indexed::KeyIndexed;
 pub use sequence::{KeylessSequencePattern, SequencePattern};

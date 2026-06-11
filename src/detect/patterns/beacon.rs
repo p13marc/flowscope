@@ -167,6 +167,7 @@ where
     }
 }
 
+#[cfg(feature = "tracker")]
 impl<K> BeaconScore<K>
 where
     K: crate::KeyFields + Clone,
@@ -178,6 +179,9 @@ where
     ///
     /// Metrics emitted: `score`, `cv_dt`, `cv_bytes`,
     /// `mean_interval_secs`, `n`.
+    ///
+    /// Gated on the `tracker` feature — `OwnedAnomaly` lives
+    /// there.
     pub fn into_anomaly(self, ts: crate::Timestamp) -> crate::OwnedAnomaly {
         crate::OwnedAnomaly::new("BeaconCv", crate::event::Severity::Warning, ts)
             .with_key(&self.key)
@@ -189,6 +193,7 @@ where
     }
 }
 
+#[cfg(feature = "tracker")]
 impl<K> crate::DetectorScore for BeaconScore<K>
 where
     K: crate::KeyFields + Clone,
