@@ -79,7 +79,7 @@ fn truncate_reason(s: &str) -> String {
 /// the wiring.
 /// Boxed per-flow parser factory closure. Each new flow gets its
 /// parser by calling this on the flow's key.
-type ParserFactory<K, P> = Box<dyn FnMut(&K) -> P + Send>;
+type ParserFactory<K, P> = Box<dyn FnMut(&K) -> P + Send + Sync>;
 
 fn build_reassembler_factory(config: &FlowTrackerConfig) -> BufferedReassemblerFactory {
     let mut f = BufferedReassemblerFactory::default();
@@ -111,8 +111,8 @@ fn build_reassembler_factory(config: &FlowTrackerConfig) -> BufferedReassemblerF
 pub struct FlowSessionDriver<E, P, S = ()>
 where
     E: FlowExtractor,
-    E::Key: Hash + Eq + Clone + Send + 'static,
-    P: SessionParser + Send + 'static,
+    E::Key: Hash + Eq + Clone + Send + Sync + 'static,
+    P: SessionParser + Send + Sync + 'static,
     S: Send + 'static,
 {
     driver: FlowDriver<E, BufferedReassemblerFactory, S>,
@@ -129,8 +129,8 @@ where
 impl<E, P> FlowSessionDriver<E, P, ()>
 where
     E: FlowExtractor,
-    E::Key: Hash + Eq + Clone + Send + 'static,
-    P: SessionParser + Clone + Send + 'static,
+    E::Key: Hash + Eq + Clone + Send + Sync + 'static,
+    P: SessionParser + Clone + Send + Sync + 'static,
 {
     /// Construct with default tracker config and `S = ()`. `parser`
     /// is cloned once per flow to give each session a fresh instance.
@@ -158,14 +158,14 @@ where
 impl<E, P> FlowSessionDriver<E, P, ()>
 where
     E: FlowExtractor,
-    E::Key: Hash + Eq + Clone + Send + 'static,
-    P: SessionParser + Send + 'static,
+    E::Key: Hash + Eq + Clone + Send + Sync + 'static,
+    P: SessionParser + Send + Sync + 'static,
 {
     /// Construct with default tracker config and a per-flow parser
     /// factory closure. Drops the `P: Clone` requirement of [`Self::new`].
     pub fn with_factory<F>(extractor: E, factory: F) -> Self
     where
-        F: FnMut(&E::Key) -> P + Send + 'static,
+        F: FnMut(&E::Key) -> P + Send + Sync + 'static,
     {
         Self::with_factory_and_config(extractor, factory, FlowTrackerConfig::default())
     }
@@ -174,7 +174,7 @@ where
     /// factory closure.
     pub fn with_factory_and_config<F>(extractor: E, factory: F, config: FlowTrackerConfig) -> Self
     where
-        F: FnMut(&E::Key) -> P + Send + 'static,
+        F: FnMut(&E::Key) -> P + Send + Sync + 'static,
     {
         let reassembler = build_reassembler_factory(&config);
         Self {
@@ -189,8 +189,8 @@ where
 impl<E, P, S> FlowSessionDriver<E, P, S>
 where
     E: FlowExtractor,
-    E::Key: Hash + Eq + Clone + Send + 'static,
-    P: SessionParser + Clone + Send + 'static,
+    E::Key: Hash + Eq + Clone + Send + Sync + 'static,
+    P: SessionParser + Clone + Send + Sync + 'static,
     S: Default + Send + 'static,
 {
     /// Construct with default tracker config and per-flow state
@@ -218,8 +218,8 @@ where
 impl<E, P, S> FlowSessionDriver<E, P, S>
 where
     E: FlowExtractor,
-    E::Key: Hash + Eq + Clone + Send + 'static,
-    P: SessionParser + Clone + Send + 'static,
+    E::Key: Hash + Eq + Clone + Send + Sync + 'static,
+    P: SessionParser + Clone + Send + Sync + 'static,
     S: Send + 'static,
 {
     /// Construct with default tracker config and a custom per-flow
@@ -227,7 +227,7 @@ where
     /// should be derived from the flow key.
     pub fn with_state_init<G>(extractor: E, parser: P, init: G) -> Self
     where
-        G: FnMut(&E::Key) -> S + Send + 'static,
+        G: FnMut(&E::Key) -> S + Send + Sync + 'static,
     {
         Self::with_state_init_and_config(extractor, parser, FlowTrackerConfig::default(), init)
     }
@@ -241,7 +241,7 @@ where
         init: G,
     ) -> Self
     where
-        G: FnMut(&E::Key) -> S + Send + 'static,
+        G: FnMut(&E::Key) -> S + Send + Sync + 'static,
     {
         let reassembler = build_reassembler_factory(&config);
         Self {
@@ -256,16 +256,16 @@ where
 impl<E, P, S> FlowSessionDriver<E, P, S>
 where
     E: FlowExtractor,
-    E::Key: Hash + Eq + Clone + Send + 'static,
-    P: SessionParser + Send + 'static,
+    E::Key: Hash + Eq + Clone + Send + Sync + 'static,
+    P: SessionParser + Send + Sync + 'static,
     S: Send + 'static,
 {
     /// Construct with default tracker config, a per-flow parser
     /// factory, and a custom per-flow state initialiser.
     pub fn with_state_factory<FP, FS>(extractor: E, parser_factory: FP, state_init: FS) -> Self
     where
-        FP: FnMut(&E::Key) -> P + Send + 'static,
-        FS: FnMut(&E::Key) -> S + Send + 'static,
+        FP: FnMut(&E::Key) -> P + Send + Sync + 'static,
+        FS: FnMut(&E::Key) -> S + Send + Sync + 'static,
     {
         Self::with_state_factory_and_config(
             extractor,
@@ -284,8 +284,8 @@ where
         config: FlowTrackerConfig,
     ) -> Self
     where
-        FP: FnMut(&E::Key) -> P + Send + 'static,
-        FS: FnMut(&E::Key) -> S + Send + 'static,
+        FP: FnMut(&E::Key) -> P + Send + Sync + 'static,
+        FS: FnMut(&E::Key) -> S + Send + Sync + 'static,
     {
         let reassembler = build_reassembler_factory(&config);
         Self {
@@ -306,8 +306,8 @@ where
 impl<E, P, S> FlowSessionDriver<E, P, S>
 where
     E: FlowExtractor,
-    E::Key: Hash + Eq + Clone + Send + 'static,
-    P: SessionParser + Send + 'static,
+    E::Key: Hash + Eq + Clone + Send + Sync + 'static,
+    P: SessionParser + Send + Sync + 'static,
     S: Send + 'static,
 {
     /// Opt in to forwarding [`SessionEvent::FlowAnomaly`] /
@@ -326,7 +326,7 @@ where
     /// tracker. Mirrors [`FlowDriver::with_idle_timeout_fn`].
     pub fn with_idle_timeout_fn<G>(mut self, f: G) -> Self
     where
-        G: Fn(&E::Key, Option<crate::L4Proto>) -> Option<std::time::Duration> + Send + 'static,
+        G: Fn(&E::Key, Option<crate::L4Proto>) -> Option<std::time::Duration> + Send + Sync + 'static,
     {
         self.driver = self.driver.with_idle_timeout_fn(f);
         self

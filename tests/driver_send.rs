@@ -160,3 +160,36 @@ fn competitive_consumer_clone_does_not_duplicate() {
         "messages distributed between competitive consumers, not duplicated"
     );
 }
+
+// Plan 156 (0.13) — `Driver<E>` itself is Send + Sync.
+#[test]
+fn driver_is_send_and_sync() {
+    fn assert_send_sync<T: Send + Sync>() {}
+    assert_send_sync::<Driver<FiveTuple>>();
+}
+
+#[test]
+fn driver_survives_thread_spawn_and_back() {
+    let mut builder = Driver::builder(FiveTuple::bidirectional());
+    let mut slot = builder.session_on_ports(CountParser, [80]);
+    let mut driver = builder.build();
+
+    let mut events = Vec::new();
+    let handle = thread::spawn(move || {
+        let mut seq: u32 = 1000;
+        for i in 0..10u32 {
+            let frame = tcp_packet(33000, 80, seq, b"y");
+            let view = PacketView::new(&frame, Timestamp::new(i, 0));
+            driver.track_into(view, &mut events);
+            seq = seq.wrapping_add(1);
+        }
+        (driver, events)
+    });
+
+    let (_driver, events) = handle.join().expect("worker thread panicked");
+    assert!(!events.is_empty(), "driver produced events on worker thread");
+
+    let mut msgs = Vec::new();
+    let drained = slot.drain(&mut msgs);
+    assert_eq!(drained, 10, "10 messages drained on main thread");
+}

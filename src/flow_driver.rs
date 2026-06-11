@@ -144,7 +144,7 @@ where
     /// should be derived from the flow key.
     pub fn with_state_init<G>(extractor: E, factory: F, init: G) -> Self
     where
-        G: FnMut(&E::Key) -> S + Send + 'static,
+        G: FnMut(&E::Key) -> S + Send + Sync + 'static,
     {
         Self::with_state_init_and_config(extractor, factory, FlowTrackerConfig::default(), init)
     }
@@ -158,7 +158,7 @@ where
         init: G,
     ) -> Self
     where
-        G: FnMut(&E::Key) -> S + Send + 'static,
+        G: FnMut(&E::Key) -> S + Send + Sync + 'static,
     {
         Self {
             tracker: FlowTracker::with_config_and_state(extractor, config, init),
@@ -189,7 +189,7 @@ where
     /// [`Self::with_config`] / [`Self::with_emit_anomalies`].
     pub fn with_idle_timeout_fn<G>(mut self, f: G) -> Self
     where
-        G: Fn(&E::Key, Option<crate::L4Proto>) -> Option<std::time::Duration> + Send + 'static,
+        G: Fn(&E::Key, Option<crate::L4Proto>) -> Option<std::time::Duration> + Send + Sync + 'static,
     {
         self.tracker.set_idle_timeout_fn(f);
         self

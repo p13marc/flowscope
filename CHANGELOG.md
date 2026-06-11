@@ -1,5 +1,42 @@
 # Changelog
 
+## 0.13.0 (in progress)
+
+The **fully `Send + Sync` driver** + **canonical anomaly value type**
++ **detector-output uniformity** cycle. Driven by netring 0.21
+adoption friction; see `plans/0.13-wishlist-from-netring.md`.
+
+### Changed
+
+- **`Driver<E>: Send + Sync`** unconditionally (plan 156). The
+  0.12 CHANGELOG claimed the central `FlowTracker` held
+  `Rc<RefCell>` internals making the driver `!Send`; that
+  description was incorrect — the actual `!Send` source was
+  the `Vec<Box<dyn ErasedSlot<E::Key>>>` slot list's missing
+  `+ Send` bound. Adding `+ Send + Sync` to the trait object
+  and the matching parser `Send + Sync` bound at registration
+  sites is a structural one-line fix with no `unsafe`, no
+  runtime overhead, and no opt-in knob. Drivers built with
+  `Driver::builder` now move freely between worker threads
+  in a tokio multi-thread runtime; `tokio::spawn(driver_task)`
+  on the default runtime just works. Stale `Rc<RefCell>` doc
+  comments at `src/driver/{slot,mod}.rs` rewritten. All shipped
+  parsers (HTTP / DNS / TLS / ICMP) already satisfied the
+  Send + Sync bound; the change is strictly additive on the
+  type level.
+
+  Bounds tightening that *might* break consumer code:
+  - `SessionParser` / `DatagramParser` impls registered through
+    `DriverBuilder::session_on_ports` etc. now require
+    `Send + Sync` (was `Send` alone).
+  - `P::Message` / `D::Message` now require `Send + Sync` (was
+    `Send`).
+  - Closures stored inside the driver (`StateInit`, `IdleTimeoutFn`,
+    `ParserFactory`) now require `Send + Sync` (was `Send`).
+  All shipped types satisfy these bounds; downstream impls
+  almost certainly do too (anything holding `&'static`, `Arc`,
+  `Bytes`, primitive state).
+
 ## 0.12.0
 
 The **cross-thread + structured-output + API debt retirement

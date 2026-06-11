@@ -24,21 +24,28 @@
 //!   session/datagram drivers.
 //! - Each `.session_*` / `.datagram_*` builder call returns a
 //!   typed [`SlotHandle<M, K>`]; the slot's typed messages flow
-//!   into the handle's internal buffer via shared
-//!   `Rc<RefCell<…>>`.
+//!   into the handle's internal buffer via a shared
+//!   `Arc<crossbeam_queue::SegQueue<_>>`.
 //! - Per-packet: `driver.track_into(view, &mut events)` emits
 //!   flow-lifecycle events; `slot.drain(&mut msgs)` drains the
 //!   typed messages produced this packet.
 //! - Zero-allocation in steady state across the full dispatch
 //!   path including registered slots.
 //!
-//! Plan 122: `SlotHandle<M, K>` is `Send + Sync` (backed by
-//! `Arc<crossbeam_queue::SegQueue>`). Move the handle to a
+//! Plan 122 (0.12): `SlotHandle<M, K>` is `Send + Sync` (backed
+//! by `Arc<crossbeam_queue::SegQueue>`). Move the handle to a
 //! worker thread, share via `Arc` with multiple drainers, drain
-//! from a tokio task on another core. The driver itself
-//! (`Driver<E>`) remains `!Send` (central `FlowTracker` holds
-//! `Rc<RefCell>` internals) — only the handle side is
-//! cross-thread.
+//! from a tokio task on another core.
+//!
+//! Plan 156 (0.13): the driver itself (`Driver<E>`) is also
+//! `Send + Sync`. The 0.12 docs claimed otherwise on the basis
+//! that `FlowTracker` used `Rc<RefCell>` interior mutability;
+//! this was never true — the actual `!Send` source was a
+//! missing `+ Send` bound on the `Box<dyn ErasedSlot<_>>` slot
+//! list. Tightening that bound (no `unsafe`, no opt-in knob)
+//! makes the whole driver Send+Sync. The 0.13 typical pattern
+//! is `tokio::spawn(driver_task)` on the default multi-thread
+//! runtime.
 
 mod slot;
 mod typed;

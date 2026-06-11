@@ -51,7 +51,7 @@ use crate::view::PacketView;
 
 /// Boxed per-flow parser factory closure. Each new flow gets its
 /// parser by calling this on the flow's key.
-type ParserFactory<K, P> = Box<dyn FnMut(&K) -> P + Send>;
+type ParserFactory<K, P> = Box<dyn FnMut(&K) -> P + Send + Sync>;
 
 /// Cap on the size of `poison_reason()` strings carried through
 /// [`AnomalyKind::SessionParseError`]. Matches the
@@ -102,8 +102,8 @@ impl<K: Send + 'static> ReassemblerFactory<K> for NoopReassemblerFactory {
 pub struct FlowDatagramDriver<E, P, S = ()>
 where
     E: FlowExtractor,
-    E::Key: Hash + Eq + Clone + Send + 'static,
-    P: DatagramParser + Send + 'static,
+    E::Key: Hash + Eq + Clone + Send + Sync + 'static,
+    P: DatagramParser + Send + Sync + 'static,
     S: Send + 'static,
 {
     driver: FlowDriver<E, NoopReassemblerFactory, S>,
@@ -115,8 +115,8 @@ where
 impl<E, P> FlowDatagramDriver<E, P, ()>
 where
     E: FlowExtractor,
-    E::Key: Hash + Eq + Clone + Send + 'static,
-    P: DatagramParser + Clone + Send + 'static,
+    E::Key: Hash + Eq + Clone + Send + Sync + 'static,
+    P: DatagramParser + Clone + Send + Sync + 'static,
 {
     /// Construct with default tracker config and `S = ()`. `parser`
     /// is cloned once per flow to give each flow a fresh instance.
@@ -138,14 +138,14 @@ where
 impl<E, P> FlowDatagramDriver<E, P, ()>
 where
     E: FlowExtractor,
-    E::Key: Hash + Eq + Clone + Send + 'static,
-    P: DatagramParser + Send + 'static,
+    E::Key: Hash + Eq + Clone + Send + Sync + 'static,
+    P: DatagramParser + Send + Sync + 'static,
 {
     /// Construct with default tracker config and a per-flow parser
     /// factory closure. Drops the `P: Clone` requirement of [`Self::new`].
     pub fn with_factory<F>(extractor: E, factory: F) -> Self
     where
-        F: FnMut(&E::Key) -> P + Send + 'static,
+        F: FnMut(&E::Key) -> P + Send + Sync + 'static,
     {
         Self::with_factory_and_config(extractor, factory, FlowTrackerConfig::default())
     }
@@ -154,7 +154,7 @@ where
     /// factory closure.
     pub fn with_factory_and_config<F>(extractor: E, factory: F, config: FlowTrackerConfig) -> Self
     where
-        F: FnMut(&E::Key) -> P + Send + 'static,
+        F: FnMut(&E::Key) -> P + Send + Sync + 'static,
     {
         Self {
             driver: FlowDriver::with_config(extractor, NoopReassemblerFactory, config),
@@ -168,8 +168,8 @@ where
 impl<E, P, S> FlowDatagramDriver<E, P, S>
 where
     E: FlowExtractor,
-    E::Key: Hash + Eq + Clone + Send + 'static,
-    P: DatagramParser + Clone + Send + 'static,
+    E::Key: Hash + Eq + Clone + Send + Sync + 'static,
+    P: DatagramParser + Clone + Send + Sync + 'static,
     S: Default + Send + 'static,
 {
     /// Construct with default tracker config and per-flow state
@@ -193,15 +193,15 @@ where
 impl<E, P, S> FlowDatagramDriver<E, P, S>
 where
     E: FlowExtractor,
-    E::Key: Hash + Eq + Clone + Send + 'static,
-    P: DatagramParser + Clone + Send + 'static,
+    E::Key: Hash + Eq + Clone + Send + Sync + 'static,
+    P: DatagramParser + Clone + Send + Sync + 'static,
     S: Send + 'static,
 {
     /// Construct with default tracker config and a custom per-flow
     /// state initialiser.
     pub fn with_state_init<G>(extractor: E, parser: P, init: G) -> Self
     where
-        G: FnMut(&E::Key) -> S + Send + 'static,
+        G: FnMut(&E::Key) -> S + Send + Sync + 'static,
     {
         Self::with_state_init_and_config(extractor, parser, FlowTrackerConfig::default(), init)
     }
@@ -215,7 +215,7 @@ where
         init: G,
     ) -> Self
     where
-        G: FnMut(&E::Key) -> S + Send + 'static,
+        G: FnMut(&E::Key) -> S + Send + Sync + 'static,
     {
         Self {
             driver: FlowDriver::with_state_init_and_config(
@@ -234,16 +234,16 @@ where
 impl<E, P, S> FlowDatagramDriver<E, P, S>
 where
     E: FlowExtractor,
-    E::Key: Hash + Eq + Clone + Send + 'static,
-    P: DatagramParser + Send + 'static,
+    E::Key: Hash + Eq + Clone + Send + Sync + 'static,
+    P: DatagramParser + Send + Sync + 'static,
     S: Send + 'static,
 {
     /// Construct with default tracker config, a per-flow parser
     /// factory, and a custom per-flow state initialiser.
     pub fn with_state_factory<FP, FS>(extractor: E, parser_factory: FP, state_init: FS) -> Self
     where
-        FP: FnMut(&E::Key) -> P + Send + 'static,
-        FS: FnMut(&E::Key) -> S + Send + 'static,
+        FP: FnMut(&E::Key) -> P + Send + Sync + 'static,
+        FS: FnMut(&E::Key) -> S + Send + Sync + 'static,
     {
         Self::with_state_factory_and_config(
             extractor,
@@ -262,8 +262,8 @@ where
         config: FlowTrackerConfig,
     ) -> Self
     where
-        FP: FnMut(&E::Key) -> P + Send + 'static,
-        FS: FnMut(&E::Key) -> S + Send + 'static,
+        FP: FnMut(&E::Key) -> P + Send + Sync + 'static,
+        FS: FnMut(&E::Key) -> S + Send + Sync + 'static,
     {
         Self {
             driver: FlowDriver::with_state_init_and_config(
@@ -283,8 +283,8 @@ where
 impl<E, P, S> FlowDatagramDriver<E, P, S>
 where
     E: FlowExtractor,
-    E::Key: Hash + Eq + Clone + Send + 'static,
-    P: DatagramParser + Send + 'static,
+    E::Key: Hash + Eq + Clone + Send + Sync + 'static,
+    P: DatagramParser + Send + Sync + 'static,
     S: Send + 'static,
 {
     /// Opt in to forwarding [`SessionEvent::FlowAnomaly`] /
@@ -297,7 +297,7 @@ where
     /// Set a per-key idle-timeout override.
     pub fn with_idle_timeout_fn<G>(mut self, f: G) -> Self
     where
-        G: Fn(&E::Key, Option<crate::L4Proto>) -> Option<std::time::Duration> + Send + 'static,
+        G: Fn(&E::Key, Option<crate::L4Proto>) -> Option<std::time::Duration> + Send + Sync + 'static,
     {
         self.driver = self.driver.with_idle_timeout_fn(f);
         self

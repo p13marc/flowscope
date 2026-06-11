@@ -47,9 +47,11 @@ Headlines:
   `M: Send + 'static, K: Send + 'static` — every shipped
   parser already meets this. Bench gate
   `track_into_5_slots_steady_state` confirmed at **0.000
-  allocs/pkt** post-change. The `Driver<E>` itself stays
-  `!Send` (central `FlowTracker` holds `Rc<RefCell>`
-  internals) — only the handle side is cross-thread.
+  allocs/pkt** post-change. **0.13 update (plan 156):** the
+  whole `Driver<E>` is now also `Send + Sync` — the 0.12 doc
+  claim about `Rc<RefCell>` was incorrect; the actual `!Send`
+  source was a missing `+ Send` bound on the slot trait
+  object. Fixed structurally with no `unsafe`.
 - **Plan 123** — `flowscope::emit::EveJsonWriter` behind
   `emit-eve` feature. Suricata 7.x EVE schema:
   `event_type: "flow"` for `Ended`, `"anomaly"` for
@@ -184,10 +186,10 @@ Public surface after the cycle: `Driver<E>`, `DriverBuilder<E>`,
 typed driver; `FlowDriver`, `FlowSessionDriver`,
 `FlowDatagramDriver` kept as raw sync primitives.
 
-The typed `Driver<E>` itself remains `!Send` (central
-`FlowTracker` holds `Rc<RefCell>` internals); only the
-`SlotHandle<M, K>` side is cross-thread (`Send + Sync` since
-0.12). Move a handle to a tokio task on a worker core while
+The typed `Driver<E>` is `Send + Sync` since 0.13 (plan 156 —
+strictly structural; no `unsafe`). `SlotHandle<M, K>` is
+`Send + Sync` since 0.12. Move the driver to a tokio task on
+a worker core, share a handle via `Arc` with multiple drainers,
 the driver runs on the capture thread, or share via `Arc` with
 multiple drainers (competitive-consumer semantics — each clone
 pops from the same `SegQueue`).

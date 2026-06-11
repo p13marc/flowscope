@@ -56,7 +56,8 @@ use super::typed_slot::{ErasedSlot, TypedConcreteDatagramSlot, TypedConcreteSlot
 use super::typed_slot_heuristic::{TypedHeuristicDatagramSlot, TypedHeuristicSessionSlot};
 
 /// Per-key idle-timeout predicate, boxed.
-type IdleTimeoutFn<K> = Box<dyn Fn(&K, Option<L4Proto>) -> Option<Duration> + Send + 'static>;
+type IdleTimeoutFn<K> =
+    Box<dyn Fn(&K, Option<L4Proto>) -> Option<Duration> + Send + Sync + 'static>;
 
 /// Flow-lifecycle event type for the typed driver.
 ///
@@ -194,21 +195,30 @@ impl<K> Event<K> {
 
 /// Plan 121 typed driver. Emits flow-lifecycle [`Event<K>`] only;
 /// per-parser typed messages flow through [`SlotHandle`].
+///
+/// `Driver<E>` is `Send + Sync` since 0.13 — every field is
+/// structurally Send+Sync (`Arc<SegQueue<_>>` slot queues,
+/// owned `FlowDriver`, `Vec<Box<dyn ErasedSlot<_> + Send + Sync>>`
+/// slot list). Methods take `&mut self`, so the `Sync` impl is
+/// decorative — you can borrow the driver across threads, but
+/// only one caller mutates at a time. The headline use case is
+/// `tokio::spawn(driver_task)` on the default multi-thread
+/// runtime.
 pub struct Driver<E>
 where
     E: FlowExtractor,
-    E::Key: Hash + Eq + Clone + Send + 'static,
+    E::Key: Hash + Eq + Clone + Send + Sync + 'static,
 {
     central: FlowDriver<E, NoopReassemblerFactory, ()>,
     extractor: E,
     emit_packet_details: bool,
-    slots: Vec<Box<dyn ErasedSlot<E::Key>>>,
+    slots: Vec<Box<dyn ErasedSlot<E::Key> + Send + Sync>>,
 }
 
 impl<E> Driver<E>
 where
     E: FlowExtractor + Clone + Send + 'static,
-    E::Key: Hash + Eq + Clone + Send + 'static,
+    E::Key: Hash + Eq + Clone + Send + Sync + 'static,
 {
     /// Begin building.
     pub fn builder(extractor: E) -> DriverBuilder<E> {
@@ -403,7 +413,7 @@ where
 pub struct DriverBuilder<E>
 where
     E: FlowExtractor,
-    E::Key: Hash + Eq + Clone + Send + 'static,
+    E::Key: Hash + Eq + Clone + Send + Sync + 'static,
 {
     extractor: E,
     config: FlowTrackerConfig,
@@ -412,13 +422,13 @@ where
     emit_packet_details: bool,
     dedup: Option<Dedup>,
     idle_timeout_fn: Option<IdleTimeoutFn<E::Key>>,
-    slots: Vec<Box<dyn ErasedSlot<E::Key>>>,
+    slots: Vec<Box<dyn ErasedSlot<E::Key> + Send + Sync>>,
 }
 
 impl<E> DriverBuilder<E>
 where
     E: FlowExtractor + Clone + Send + 'static,
-    E::Key: Hash + Eq + Clone + Send + 'static,
+    E::Key: Hash + Eq + Clone + Send + Sync + 'static,
 {
     /// Override the central tracker's config.
     pub fn config(&mut self, c: FlowTrackerConfig) -> &mut Self {
@@ -455,7 +465,7 @@ where
     /// Per-key idle-timeout override.
     pub fn idle_timeout_fn<F>(&mut self, f: F) -> &mut Self
     where
-        F: Fn(&E::Key, Option<L4Proto>) -> Option<Duration> + Send + 'static,
+        F: Fn(&E::Key, Option<L4Proto>) -> Option<Duration> + Send + Sync + 'static,
     {
         self.idle_timeout_fn = Some(Box::new(f));
         self
@@ -465,8 +475,8 @@ where
     /// typed drain handle for the parser's output.
     pub fn session_on_ports<P, I>(&mut self, parser: P, ports: I) -> SlotHandle<P::Message, E::Key>
     where
-        P: SessionParser + Clone + Send + 'static,
-        P::Message: Send + 'static,
+        P: SessionParser + Clone + Send + Sync + 'static,
+        P::Message: Send + Sync + 'static,
         I: IntoIterator<Item = u16>,
     {
         let port_set: smallvec::SmallVec<[u16; 4]> = ports.into_iter().collect();
@@ -484,8 +494,8 @@ where
     /// Register a session parser that observes every flow.
     pub fn session_broadcast<P>(&mut self, parser: P) -> SlotHandle<P::Message, E::Key>
     where
-        P: SessionParser + Clone + Send + 'static,
-        P::Message: Send + 'static,
+        P: SessionParser + Clone + Send + Sync + 'static,
+        P::Message: Send + Sync + 'static,
     {
         let (slot, handle) = TypedConcreteSlot::new(
             self.extractor.clone(),
@@ -507,8 +517,8 @@ where
         signature: SignatureFn,
     ) -> SlotHandle<P::Message, E::Key>
     where
-        P: SessionParser + Clone + Send + 'static,
-        P::Message: Send + 'static,
+        P: SessionParser + Clone + Send + Sync + 'static,
+        P::Message: Send + Sync + 'static,
     {
         self.session_heuristic_with_budget(
             parser,
@@ -526,8 +536,8 @@ where
         max_probe_packets: u8,
     ) -> SlotHandle<P::Message, E::Key>
     where
-        P: SessionParser + Clone + Send + 'static,
-        P::Message: Send + 'static,
+        P: SessionParser + Clone + Send + Sync + 'static,
+        P::Message: Send + Sync + 'static,
     {
         let (slot, handle) = TypedHeuristicSessionSlot::new(
             self.extractor.clone(),
@@ -544,8 +554,8 @@ where
     /// Register a datagram parser bound to a port set.
     pub fn datagram_on_ports<D, I>(&mut self, parser: D, ports: I) -> SlotHandle<D::Message, E::Key>
     where
-        D: DatagramParser + Clone + Send + 'static,
-        D::Message: Send + 'static,
+        D: DatagramParser + Clone + Send + Sync + 'static,
+        D::Message: Send + Sync + 'static,
         I: IntoIterator<Item = u16>,
     {
         let port_set: smallvec::SmallVec<[u16; 4]> = ports.into_iter().collect();
@@ -563,8 +573,8 @@ where
     /// Register a datagram parser that observes every flow.
     pub fn datagram_broadcast<D>(&mut self, parser: D) -> SlotHandle<D::Message, E::Key>
     where
-        D: DatagramParser + Clone + Send + 'static,
-        D::Message: Send + 'static,
+        D: DatagramParser + Clone + Send + Sync + 'static,
+        D::Message: Send + Sync + 'static,
     {
         let (slot, handle) = TypedConcreteDatagramSlot::new(
             self.extractor.clone(),
@@ -585,8 +595,8 @@ where
         signature: SignatureFn,
     ) -> SlotHandle<D::Message, E::Key>
     where
-        D: DatagramParser + Clone + Send + 'static,
-        D::Message: Send + 'static,
+        D: DatagramParser + Clone + Send + Sync + 'static,
+        D::Message: Send + Sync + 'static,
     {
         self.datagram_heuristic_with_budget(
             parser,
@@ -604,8 +614,8 @@ where
         max_probe_packets: u8,
     ) -> SlotHandle<D::Message, E::Key>
     where
-        D: DatagramParser + Clone + Send + 'static,
-        D::Message: Send + 'static,
+        D: DatagramParser + Clone + Send + Sync + 'static,
+        D::Message: Send + Sync + 'static,
     {
         let (slot, handle) = TypedHeuristicDatagramSlot::new(
             self.extractor.clone(),
@@ -660,8 +670,10 @@ where
 /// Lazy-built at `build_with` time; takes the extractor + the
 /// shared config and produces the boxed type-erased slot.
 type DeferredMaterialiser<E> = Box<
-    dyn FnOnce(&E, &FlowTrackerConfig, bool) -> Box<dyn ErasedSlot<<E as FlowExtractor>::Key>>
-        + Send,
+    dyn FnOnce(&E, &FlowTrackerConfig, bool)
+            -> Box<dyn ErasedSlot<<E as FlowExtractor>::Key> + Send + Sync>
+        + Send
+        + Sync,
 >;
 
 /// Builder for [`Driver`] without an extractor instance up
@@ -670,7 +682,7 @@ type DeferredMaterialiser<E> = Box<
 pub struct DeferredDriverBuilder<E>
 where
     E: FlowExtractor,
-    E::Key: Hash + Eq + Clone + Send + 'static,
+    E::Key: Hash + Eq + Clone + Send + Sync + 'static,
 {
     config: FlowTrackerConfig,
     monotonic_timestamps: bool,
@@ -684,7 +696,7 @@ where
 impl<E> DeferredDriverBuilder<E>
 where
     E: FlowExtractor + Clone + Send + 'static,
-    E::Key: Hash + Eq + Clone + Send + 'static,
+    E::Key: Hash + Eq + Clone + Send + Sync + 'static,
 {
     /// Override the central tracker's config.
     pub fn config(&mut self, c: FlowTrackerConfig) -> &mut Self {
@@ -721,7 +733,7 @@ where
     /// Per-key idle-timeout override.
     pub fn idle_timeout_fn<F>(&mut self, f: F) -> &mut Self
     where
-        F: Fn(&E::Key, Option<L4Proto>) -> Option<Duration> + Send + 'static,
+        F: Fn(&E::Key, Option<L4Proto>) -> Option<Duration> + Send + Sync + 'static,
     {
         self.idle_timeout_fn = Some(Box::new(f));
         self
@@ -730,8 +742,8 @@ where
     /// Register a session parser bound to a port set.
     pub fn session_on_ports<P, I>(&mut self, parser: P, ports: I) -> SlotHandle<P::Message, E::Key>
     where
-        P: SessionParser + Clone + Send + 'static,
-        P::Message: Send + 'static,
+        P: SessionParser + Clone + Send + Sync + 'static,
+        P::Message: Send + Sync + 'static,
         I: IntoIterator<Item = u16>,
     {
         let port_set: smallvec::SmallVec<[u16; 4]> = ports.into_iter().collect();
@@ -743,8 +755,8 @@ where
     /// Register a session parser that observes every flow.
     pub fn session_broadcast<P>(&mut self, parser: P) -> SlotHandle<P::Message, E::Key>
     where
-        P: SessionParser + Clone + Send + 'static,
-        P::Message: Send + 'static,
+        P: SessionParser + Clone + Send + Sync + 'static,
+        P::Message: Send + Sync + 'static,
     {
         let (handle, mat) = make_session_materialiser::<E, P>(parser, None);
         self.pending.push(mat);
@@ -758,8 +770,8 @@ where
         signature: SignatureFn,
     ) -> SlotHandle<P::Message, E::Key>
     where
-        P: SessionParser + Clone + Send + 'static,
-        P::Message: Send + 'static,
+        P: SessionParser + Clone + Send + Sync + 'static,
+        P::Message: Send + Sync + 'static,
     {
         self.session_heuristic_with_budget(
             parser,
@@ -776,8 +788,8 @@ where
         max_probe_packets: u8,
     ) -> SlotHandle<P::Message, E::Key>
     where
-        P: SessionParser + Clone + Send + 'static,
-        P::Message: Send + 'static,
+        P: SessionParser + Clone + Send + Sync + 'static,
+        P::Message: Send + Sync + 'static,
     {
         let (handle, mat) =
             make_session_heuristic_materialiser::<E, P>(parser, signature, max_probe_packets);
@@ -788,8 +800,8 @@ where
     /// Register a datagram parser bound to a port set.
     pub fn datagram_on_ports<D, I>(&mut self, parser: D, ports: I) -> SlotHandle<D::Message, E::Key>
     where
-        D: DatagramParser + Clone + Send + 'static,
-        D::Message: Send + 'static,
+        D: DatagramParser + Clone + Send + Sync + 'static,
+        D::Message: Send + Sync + 'static,
         I: IntoIterator<Item = u16>,
     {
         let port_set: smallvec::SmallVec<[u16; 4]> = ports.into_iter().collect();
@@ -801,8 +813,8 @@ where
     /// Register a datagram parser that observes every flow.
     pub fn datagram_broadcast<D>(&mut self, parser: D) -> SlotHandle<D::Message, E::Key>
     where
-        D: DatagramParser + Clone + Send + 'static,
-        D::Message: Send + 'static,
+        D: DatagramParser + Clone + Send + Sync + 'static,
+        D::Message: Send + Sync + 'static,
     {
         let (handle, mat) = make_datagram_materialiser::<E, D>(parser, None);
         self.pending.push(mat);
@@ -817,8 +829,8 @@ where
         signature: SignatureFn,
     ) -> SlotHandle<D::Message, E::Key>
     where
-        D: DatagramParser + Clone + Send + 'static,
-        D::Message: Send + 'static,
+        D: DatagramParser + Clone + Send + Sync + 'static,
+        D::Message: Send + Sync + 'static,
     {
         self.datagram_heuristic_with_budget(
             parser,
@@ -835,8 +847,8 @@ where
         max_probe_packets: u8,
     ) -> SlotHandle<D::Message, E::Key>
     where
-        D: DatagramParser + Clone + Send + 'static,
-        D::Message: Send + 'static,
+        D: DatagramParser + Clone + Send + Sync + 'static,
+        D::Message: Send + Sync + 'static,
     {
         let (handle, mat) =
             make_datagram_heuristic_materialiser::<E, D>(parser, signature, max_probe_packets);
@@ -862,7 +874,8 @@ where
                 .tracker_mut()
                 .set_idle_timeout_fn(move |k, l4| f(k, l4));
         }
-        let mut slots: Vec<Box<dyn ErasedSlot<E::Key>>> = Vec::with_capacity(self.pending.len());
+        let mut slots: Vec<Box<dyn ErasedSlot<E::Key> + Send + Sync>> =
+            Vec::with_capacity(self.pending.len());
         for materialiser in self.pending {
             slots.push(materialiser(
                 &extractor,
@@ -887,9 +900,9 @@ fn make_session_materialiser<E, P>(
 ) -> (SlotHandle<P::Message, E::Key>, DeferredMaterialiser<E>)
 where
     E: FlowExtractor + Clone + Send + 'static,
-    E::Key: Hash + Eq + Clone + Send + 'static,
-    P: SessionParser + Clone + Send + 'static,
-    P::Message: Send + 'static,
+    E::Key: Hash + Eq + Clone + Send + Sync + 'static,
+    P: SessionParser + Clone + Send + Sync + 'static,
+    P::Message: Send + Sync + 'static,
 {
     let parser_kind = parser.parser_kind();
     let msg_buf: Arc<SegQueue<SlotMessage<P::Message, E::Key>>> = Arc::new(SegQueue::new());
@@ -900,7 +913,7 @@ where
     let materialiser: DeferredMaterialiser<E> = Box::new(move |ext, cfg, mono| {
         let slot =
             TypedConcreteSlot::with_queue(ext.clone(), parser, cfg.clone(), ports, mono, msg_buf);
-        Box::new(slot) as Box<dyn ErasedSlot<E::Key>>
+        Box::new(slot) as Box<dyn ErasedSlot<E::Key> + Send + Sync>
     });
     (handle, materialiser)
 }
@@ -912,9 +925,9 @@ fn make_session_heuristic_materialiser<E, P>(
 ) -> (SlotHandle<P::Message, E::Key>, DeferredMaterialiser<E>)
 where
     E: FlowExtractor + Clone + Send + 'static,
-    E::Key: Hash + Eq + Clone + Send + 'static,
-    P: SessionParser + Clone + Send + 'static,
-    P::Message: Send + 'static,
+    E::Key: Hash + Eq + Clone + Send + Sync + 'static,
+    P: SessionParser + Clone + Send + Sync + 'static,
+    P::Message: Send + Sync + 'static,
 {
     let parser_kind = parser.parser_kind();
     let msg_buf: Arc<SegQueue<SlotMessage<P::Message, E::Key>>> = Arc::new(SegQueue::new());
@@ -932,7 +945,7 @@ where
             mono,
             msg_buf,
         );
-        Box::new(slot) as Box<dyn ErasedSlot<E::Key>>
+        Box::new(slot) as Box<dyn ErasedSlot<E::Key> + Send + Sync>
     });
     (handle, materialiser)
 }
@@ -943,9 +956,9 @@ fn make_datagram_materialiser<E, D>(
 ) -> (SlotHandle<D::Message, E::Key>, DeferredMaterialiser<E>)
 where
     E: FlowExtractor + Clone + Send + 'static,
-    E::Key: Hash + Eq + Clone + Send + 'static,
-    D: DatagramParser + Clone + Send + 'static,
-    D::Message: Send + 'static,
+    E::Key: Hash + Eq + Clone + Send + Sync + 'static,
+    D: DatagramParser + Clone + Send + Sync + 'static,
+    D::Message: Send + Sync + 'static,
 {
     let parser_kind = parser.parser_kind();
     let msg_buf: Arc<SegQueue<SlotMessage<D::Message, E::Key>>> = Arc::new(SegQueue::new());
@@ -962,7 +975,7 @@ where
             mono,
             msg_buf,
         );
-        Box::new(slot) as Box<dyn ErasedSlot<E::Key>>
+        Box::new(slot) as Box<dyn ErasedSlot<E::Key> + Send + Sync>
     });
     (handle, materialiser)
 }
@@ -974,9 +987,9 @@ fn make_datagram_heuristic_materialiser<E, D>(
 ) -> (SlotHandle<D::Message, E::Key>, DeferredMaterialiser<E>)
 where
     E: FlowExtractor + Clone + Send + 'static,
-    E::Key: Hash + Eq + Clone + Send + 'static,
-    D: DatagramParser + Clone + Send + 'static,
-    D::Message: Send + 'static,
+    E::Key: Hash + Eq + Clone + Send + Sync + 'static,
+    D: DatagramParser + Clone + Send + Sync + 'static,
+    D::Message: Send + Sync + 'static,
 {
     let parser_kind = parser.parser_kind();
     let msg_buf: Arc<SegQueue<SlotMessage<D::Message, E::Key>>> = Arc::new(SegQueue::new());
@@ -994,7 +1007,7 @@ where
             mono,
             msg_buf,
         );
-        Box::new(slot) as Box<dyn ErasedSlot<E::Key>>
+        Box::new(slot) as Box<dyn ErasedSlot<E::Key> + Send + Sync>
     });
     (handle, materialiser)
 }

@@ -41,9 +41,10 @@ pub struct SlotMessage<M, K> {
 ///
 /// **`Send + Sync`** — move the handle across threads, drain
 /// from a tokio task on another core, share via Arc with
-/// multiple drainers. The driver itself (`Driver<E>`) remains
-/// `!Send` (the central `FlowTracker` holds `Rc<RefCell>` state
-/// internally); only the *handle* side is cross-thread.
+/// multiple drainers. Since 0.13 the whole `Driver<E>` is also
+/// `Send + Sync`, so the common pattern is to `tokio::spawn` the
+/// driver task on the default multi-thread runtime and drain
+/// the handle from anywhere.
 ///
 /// # Cloning semantics
 ///

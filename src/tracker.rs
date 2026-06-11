@@ -158,7 +158,7 @@ pub struct FlowTrackerStats {
     pub packets_unmatched: u64,
 }
 
-type StateInit<K, S> = Box<dyn FnMut(&K) -> S + Send + 'static>;
+type StateInit<K, S> = Box<dyn FnMut(&K) -> S + Send + Sync + 'static>;
 
 /// Per-key idle-timeout override predicate. Receives the flow's
 /// key and (when extractable) the L4 protocol, returns
@@ -166,9 +166,12 @@ type StateInit<K, S> = Box<dyn FnMut(&K) -> S + Send + 'static>;
 /// [`FlowTrackerConfig`], or `None` to fall through to the
 /// default.
 ///
-/// `Send + 'static` matches the existing `StateInit` shape on
-/// `FlowTracker`. `Sync` isn't required.
-pub type IdleTimeoutFn<K> = Box<dyn Fn(&K, Option<L4Proto>) -> Option<Duration> + Send + 'static>;
+/// `Send + Sync + 'static` matches the bounds the typed
+/// `Driver<E>` carries — closures stored inside the driver must
+/// satisfy both so the whole driver can move between worker
+/// threads in a tokio multi-thread runtime.
+pub type IdleTimeoutFn<K> =
+    Box<dyn Fn(&K, Option<L4Proto>) -> Option<Duration> + Send + Sync + 'static>;
 
 /// Bidirectional flow tracker, generic over an extractor `E` and
 /// optional per-flow user state `S`.
@@ -199,7 +202,7 @@ impl<E: FlowExtractor, S: Send + 'static> FlowTracker<E, S> {
     /// closure is called once on first sight of each new flow.
     pub fn with_state<F>(extractor: E, init: F) -> Self
     where
-        F: FnMut(&E::Key) -> S + Send + 'static,
+        F: FnMut(&E::Key) -> S + Send + Sync + 'static,
     {
         Self::with_config_and_state(extractor, FlowTrackerConfig::default(), init)
     }
@@ -207,7 +210,7 @@ impl<E: FlowExtractor, S: Send + 'static> FlowTracker<E, S> {
     /// Same as [`with_state`](Self::with_state) but with explicit config.
     pub fn with_config_and_state<F>(extractor: E, config: FlowTrackerConfig, init: F) -> Self
     where
-        F: FnMut(&E::Key) -> S + Send + 'static,
+        F: FnMut(&E::Key) -> S + Send + Sync + 'static,
     {
         let cap = NonZeroUsize::new(config.max_flows.max(1)).unwrap();
         Self {
@@ -837,7 +840,7 @@ impl<E: FlowExtractor, S: Send + 'static> FlowTracker<E, S> {
     /// ```
     pub fn set_idle_timeout_fn<F>(&mut self, f: F)
     where
-        F: Fn(&E::Key, Option<L4Proto>) -> Option<Duration> + Send + 'static,
+        F: Fn(&E::Key, Option<L4Proto>) -> Option<Duration> + Send + Sync + 'static,
     {
         self.idle_timeout_fn = Some(Box::new(f));
     }

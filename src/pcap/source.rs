@@ -131,8 +131,8 @@ impl<R: Read> PcapFlowSource<R> {
     pub fn sessions<E, P>(self, extractor: E, parser: P) -> SessionIter<R, E, P>
     where
         E: FlowExtractor,
-        E::Key: std::hash::Hash + Eq + Clone + Send + 'static,
-        P: SessionParser + Clone + Send + 'static,
+        E::Key: std::hash::Hash + Eq + Clone + Send + Sync + 'static,
+        P: SessionParser + Clone + Send + Sync + 'static,
     {
         SessionIter {
             views: self.views(),
@@ -149,8 +149,8 @@ impl<R: Read> PcapFlowSource<R> {
     pub fn datagrams<E, P>(self, extractor: E, parser: P) -> DatagramIter<R, E, P>
     where
         E: FlowExtractor,
-        E::Key: std::hash::Hash + Eq + Clone + Send + 'static,
-        P: DatagramParser + Clone + Send + 'static,
+        E::Key: std::hash::Hash + Eq + Clone + Send + Sync + 'static,
+        P: DatagramParser + Clone + Send + Sync + 'static,
     {
         DatagramIter {
             views: self.views(),
@@ -255,8 +255,8 @@ where
 pub struct SessionIter<R: Read, E, P>
 where
     E: FlowExtractor,
-    E::Key: std::hash::Hash + Eq + Clone + Send + 'static,
-    P: SessionParser + Clone + Send + 'static,
+    E::Key: std::hash::Hash + Eq + Clone + Send + Sync + 'static,
+    P: SessionParser + Clone + Send + Sync + 'static,
 {
     views: ViewIter<R>,
     driver: FlowSessionDriver<E, P>,
@@ -268,8 +268,8 @@ where
 impl<R: Read, E, P> Iterator for SessionIter<R, E, P>
 where
     E: FlowExtractor,
-    E::Key: std::hash::Hash + Eq + Clone + Send + 'static,
-    P: SessionParser + Clone + Send + 'static,
+    E::Key: std::hash::Hash + Eq + Clone + Send + Sync + 'static,
+    P: SessionParser + Clone + Send + Sync + 'static,
 {
     type Item = crate::Result<SessionEvent<E::Key, P::Message>>;
 
@@ -307,8 +307,8 @@ where
 pub struct DatagramIter<R: Read, E, P>
 where
     E: FlowExtractor,
-    E::Key: std::hash::Hash + Eq + Clone + Send + 'static,
-    P: DatagramParser + Clone + Send + 'static,
+    E::Key: std::hash::Hash + Eq + Clone + Send + Sync + 'static,
+    P: DatagramParser + Clone + Send + Sync + 'static,
 {
     views: ViewIter<R>,
     driver: FlowDatagramDriver<E, P>,
@@ -320,8 +320,8 @@ where
 impl<R: Read, E, P> Iterator for DatagramIter<R, E, P>
 where
     E: FlowExtractor,
-    E::Key: std::hash::Hash + Eq + Clone + Send + 'static,
-    P: DatagramParser + Clone + Send + 'static,
+    E::Key: std::hash::Hash + Eq + Clone + Send + Sync + 'static,
+    P: DatagramParser + Clone + Send + Sync + 'static,
 {
     type Item = crate::Result<SessionEvent<E::Key, P::Message>>;
 

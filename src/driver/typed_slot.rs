@@ -56,9 +56,9 @@ pub(super) trait ErasedSlot<K> {
 pub(super) struct TypedConcreteSlot<E, P>
 where
     E: FlowExtractor,
-    P: SessionParser,
-    P::Message: Send + 'static,
-    E::Key: Send + 'static,
+    P: SessionParser + Sync,
+    P::Message: Send + Sync + 'static,
+    E::Key: Send + Sync + 'static,
 {
     driver: FlowSessionDriver<E, P, ()>,
     parser_kind: &'static str,
@@ -70,7 +70,9 @@ where
 impl<E, P> TypedConcreteSlot<E, P>
 where
     E: FlowExtractor + Clone,
-    P: SessionParser + Clone,
+    P: SessionParser + Clone + Sync,
+    P::Message: Send + Sync + 'static,
+    E::Key: Send + Sync + 'static,
 {
     pub(super) fn new(
         extractor: E,
@@ -80,8 +82,8 @@ where
         monotonic_timestamps: bool,
     ) -> (Self, SlotHandle<P::Message, E::Key>)
     where
-        E::Key: Send + 'static,
-        P::Message: Send + 'static,
+        E::Key: Send + Sync + 'static,
+        P::Message: Send + Sync + 'static,
     {
         let parser_kind = parser.parser_kind();
         let msg_buf = Arc::new(SegQueue::new());
@@ -113,8 +115,8 @@ where
         msg_buf: Arc<SegQueue<SlotMessage<P::Message, E::Key>>>,
     ) -> Self
     where
-        E::Key: Send + 'static,
-        P::Message: Send + 'static,
+        E::Key: Send + Sync + 'static,
+        P::Message: Send + Sync + 'static,
     {
         let parser_kind = parser.parser_kind();
         Self {
@@ -131,9 +133,9 @@ where
 impl<E, P> ErasedSlot<E::Key> for TypedConcreteSlot<E, P>
 where
     E: FlowExtractor + Send,
-    E::Key: Hash + Eq + Clone + Send + 'static,
-    P: SessionParser + Send + 'static,
-    P::Message: Send + 'static,
+    E::Key: Hash + Eq + Clone + Send + Sync + 'static,
+    P: SessionParser + Send + Sync + 'static,
+    P::Message: Send + Sync + 'static,
 {
     fn track_into(
         &mut self,
@@ -185,9 +187,9 @@ where
 pub(super) struct TypedConcreteDatagramSlot<E, D>
 where
     E: FlowExtractor,
-    D: DatagramParser,
-    D::Message: Send + 'static,
-    E::Key: Send + 'static,
+    D: DatagramParser + Sync,
+    D::Message: Send + Sync + 'static,
+    E::Key: Send + Sync + 'static,
 {
     driver: FlowDatagramDriver<E, D, ()>,
     parser_kind: &'static str,
@@ -200,7 +202,9 @@ where
 impl<E, D> TypedConcreteDatagramSlot<E, D>
 where
     E: FlowExtractor + Clone,
-    D: DatagramParser + Clone,
+    D: DatagramParser + Clone + Sync,
+    D::Message: Send + Sync + 'static,
+    E::Key: Send + Sync + 'static,
 {
     pub(super) fn new(
         extractor: E,
@@ -210,8 +214,8 @@ where
         monotonic_timestamps: bool,
     ) -> (Self, SlotHandle<D::Message, E::Key>)
     where
-        E::Key: Send + 'static,
-        D::Message: Send + 'static,
+        E::Key: Send + Sync + 'static,
+        D::Message: Send + Sync + 'static,
     {
         let parser_kind = parser.parser_kind();
         let msg_buf = Arc::new(SegQueue::new());
@@ -239,8 +243,8 @@ where
         msg_buf: Arc<SegQueue<SlotMessage<D::Message, E::Key>>>,
     ) -> Self
     where
-        E::Key: Send + 'static,
-        D::Message: Send + 'static,
+        E::Key: Send + Sync + 'static,
+        D::Message: Send + Sync + 'static,
     {
         let parser_kind = parser.parser_kind();
         Self {
@@ -258,9 +262,9 @@ where
 impl<E, D> ErasedSlot<E::Key> for TypedConcreteDatagramSlot<E, D>
 where
     E: FlowExtractor + Send,
-    E::Key: Hash + Eq + Clone + Send + 'static,
-    D: DatagramParser + Send + 'static,
-    D::Message: Send + 'static,
+    E::Key: Hash + Eq + Clone + Send + Sync + 'static,
+    D: DatagramParser + Send + Sync + 'static,
+    D::Message: Send + Sync + 'static,
 {
     fn track_into(
         &mut self,
