@@ -21,6 +21,71 @@ the core.
 
 ## Implementation Status
 
+**0.13.0 cycle** (netring 0.21 adoption — Send+Sync driver +
+canonical anomaly value + broadcast + DX, shipped 2026-06).
+
+Plans 147 / 149 / 150 / 152 / 153 / 154 / 155 / 156. Triggered
+by the netring 0.21 adoption wishlist
+(`plans/0.13-wishlist-from-netring.md`).
+
+Headlines:
+
+- **Plan 156 structural fix (no `unsafe`)** — `Driver<E>` is
+  `Send + Sync` unconditionally. The 0.12 CHANGELOG + doc
+  comments claimed it was `!Send` because `FlowTracker` held
+  `Rc<RefCell>` state, but that was incorrect — direct grep
+  found zero `Rc<RefCell>` in tree. The real cause was a
+  missing `+ Send` bound on the `Vec<Box<dyn ErasedSlot<_>>>`
+  trait object. Fixed structurally: 1-line trait-object bound
+  + `P: Send + Sync` audit at builder registration sites.
+  Effort dropped from the wishlist's 3-4 days (unsafe newtype
+  + Miri audit) to ~3 hours. Stale doc comments cleaned up at
+  5 sites (`src/driver/{slot,mod}.rs` + 0.12 retired plans).
+- **Plan 147** — `flowscope::OwnedAnomaly` canonical detector-
+  output value (six fields + `SmallVec<[..; 4]>` for
+  observations + metrics; zero-alloc typical case) +
+  `flowscope::DetectorScore` trait (`name()` +
+  `into_anomaly(ts)`) implemented on `ScanScore<K>`,
+  `BeaconScore<K>`, `DgaScore`. Per-score `into_anomaly`
+  inherent methods on each. `EveJsonWriter::write_owned_anomaly`
+  + `FlowEventNdjsonWriter::write_owned_anomaly`. New
+  `EveOptions::custom_anomaly_type` field (default
+  `"applayer"`). Absorbs wishlist 147 + 148 + 151 into one
+  coherent ship.
+- **Plan 149** — `SlotHandle::drain_n(out, max) -> usize` for
+  bounded back-pressure. `swap`/`SlotBuf` micro-optimisation
+  variants deferred to 0.14 (SegQueue::pop is ~10ns; downstream
+  emit dwarfs it).
+- **Plan 150** — `flowscope::driver::BroadcastSlotHandle<M, K>`
+  fan-out delivery + `DriverBuilder::session_on_ports_broadcast_each`.
+  `Arc<BroadcastInner>` holds `Mutex<Vec<Weak<SegQueue<...>>>>`.
+  Each `Clone` is a separate subscriber; push fans out to all
+  live queues; dead `Weak`s prune inline. New `M: Clone` bound
+  on the broadcast variant (every shipped parser message
+  already derives `Clone`).
+- **Plan 152** — `PcapFlowSource::with_speed_factor(f64)` for
+  time-realistic replay. Tokio-blocking caveat documented.
+  `replay_at_wall_clock` from the wishlist dropped — low value.
+- **Plan 153** — `flowscope::test_helpers::events` synthetic-
+  event constructors (under existing `test-helpers` feature).
+  Includes a `::driver` sub-module for the typed `Event<K>`.
+- **Plan 154** — `flowscope::correlate::FlowStateMap<T, K>`
+  per-flow typed state, layered over `KeyIndexed<K, T>`
+  (~80 LoC instead of the originally-proposed 200). Plus
+  `KeyIndexed::get_mut` (mutable TTL-aware lookup) and a fix:
+  `KeyIndexed::new_unbounded` now uses `lru::LruCache::unbounded()`
+  instead of `LruCache::new(usize::MAX)` (the latter caused
+  hashbrown capacity overflow — a regression I caught during
+  154 implementation, was shipped in 0.12).
+- **Plan 155** — `examples/00-getting-started/sharded_capture.rs`
+  + `docs/sharded.md` recipe. Built on 156's Send+Sync driver.
+
+Test count after the 0.13 cycle: **809 passing** (up from 772 at
+0.12.0 release, +37 new), zero clippy warnings under
+`--all-features --all-targets -D warnings`, zero rustdoc
+warnings. New modules registered: `src/anomaly.rs`,
+`src/correlate/flow_state_map.rs`, `src/driver/broadcast.rs`.
+
 **0.12.0 cycle** (cross-thread + structured-output + pre-1.0
 debt retirement cycle, shipped 2026-06).
 
@@ -316,6 +381,7 @@ src/
 ├── error.rs                     # flowscope::Error / ErrorKind / Module / ErrorCode (plan 96, 0.9.0)
 ├── prelude.rs                   # flowscope::prelude::* (plan 94, 0.9.0)
 ├── anomaly_fields.rs            # AnomalyFields trait (plan 126, 0.12.0)
+├── anomaly.rs                   # OwnedAnomaly value + DetectorScore trait (plan 147, 0.13.0)
 ├── timestamp.rs                 # Timestamp + write_iso8601 + to_iso8601 + chrono interop (plan 127, 0.12.0)
 ├── view.rs                      # PacketView<'a> = (frame: &[u8], ts) + .layers() (plan 94, 0.9.0)
 ├── extractor.rs                 # FlowExtractor trait + Extracted/Orientation + AnomalyFields for L4Proto (0.12.0)
@@ -331,7 +397,8 @@ src/
 │   ├── bucketed.rs              # TimeBucketedCounter<K>
 │   ├── burst.rs                 # BurstDetector<K, E> + BurstHit<K>             (plan 102 sub-A, 0.10)
 │   ├── ewma.rs                  # Ewma<K>                                       (plan 102 sub-A, 0.10)
-│   ├── indexed.rs               # KeyIndexed<K, V>     (.peek added in plan 110 sub-B, 0.10)
+│   ├── flow_state_map.rs        # FlowStateMap<T, K> per-flow typed state       (plan 154, 0.13.0)
+│   ├── indexed.rs               # KeyIndexed<K, V>  (.peek 0.10; .get_mut + new_unbounded fix in plan 154, 0.13.0)
 │   ├── sequence.rs              # SequencePattern + KeylessSequencePattern
 │   ├── set.rs                   # TimeBucketedSet<K, V>                         (plan 102 sub-A, 0.10)
 │   └── topk.rs                  # TopK<K> (Misra-Gries)                         (plan 102 sub-A, 0.10)
@@ -355,17 +422,18 @@ src/
 ├── emit/                        # flowscope::emit (plan 101, 0.10; `emit` / `emit-ndjson` / `emit-eve` features)
 │   ├── mod.rs                   # public re-exports
 │   ├── csv.rs                   # FlowEventCsvWriter + CsvOptions
-│   ├── eve.rs                   # EveJsonWriter + EveOptions + flow_hash       (plan 123, 0.12.0)
-│   ├── ndjson.rs                # FlowEventNdjsonWriter + NdjsonOptions (gated on `emit-ndjson`)
+│   ├── eve.rs                   # EveJsonWriter + EveOptions + flow_hash (plan 123, 0.12.0; .write_owned_anomaly + .custom_anomaly_type plan 147, 0.13.0)
+│   ├── ndjson.rs                # FlowEventNdjsonWriter + NdjsonOptions (gated on `emit-ndjson`; .write_owned_anomaly plan 147, 0.13.0)
 │   └── zeek.rs                  # ZeekConnLogWriter + ZeekOptions
 ├── well_known/                  # flowscope::well_known (plan 102 sub-D, 0.10)
 │   └── mod.rs                   # protocol_label / entries / curated table
 ├── layers/fast.rs               # LayerParser + LayerStack zero-alloc (plan 94 Tier 3 fast path, 0.9.0)
-├── driver/                      # flowscope::driver — typed Driver<E> + SlotHandle<M, K> (plan 121, 0.11.0)
-│   ├── mod.rs                   # public re-exports (Driver / DriverBuilder / DeferredDriverBuilder / Event / SlotHandle / SlotMessage)
-│   ├── slot.rs                  # SlotHandle<M, K> + SlotMessage<M, K> — Arc<crossbeam_queue::SegQueue> backing (Send + Sync, plan 122, 0.12.0)
-│   ├── typed.rs                 # Driver<E> + DriverBuilder<E> + DeferredDriverBuilder<E> + Event<K> + map_flow_event (plan 124, 0.12.0)
-│   ├── typed_slot.rs            # TypedConcreteSlot + TypedConcreteDatagramSlot (with_queue ctors for deferred path)
+├── driver/                      # flowscope::driver — typed Driver<E> + SlotHandle<M, K> (plan 121, 0.11.0; Send+Sync since plan 156, 0.13.0)
+│   ├── mod.rs                   # public re-exports (Driver / DriverBuilder / DeferredDriverBuilder / Event / SlotHandle / SlotMessage / BroadcastSlotHandle)
+│   ├── broadcast.rs             # BroadcastSlotHandle<M, K> + BroadcastInner — fan-out delivery (plan 150, 0.13.0)
+│   ├── slot.rs                  # SlotHandle<M, K> + SlotMessage<M, K> — Arc<crossbeam_queue::SegQueue> backing (Send + Sync, plan 122, 0.12.0; .drain_n added plan 149, 0.13.0)
+│   ├── typed.rs                 # Driver<E> + DriverBuilder<E> + DeferredDriverBuilder<E> + Event<K> + map_flow_event (plan 124, 0.12.0; .session_on_ports_broadcast_each added plan 150, 0.13.0)
+│   ├── typed_slot.rs            # TypedConcreteSlot + TypedConcreteDatagramSlot + TypedBroadcastSlot (plan 150 broadcast variant, 0.13.0)
 │   └── typed_slot_heuristic.rs  # TypedHeuristicSessionSlot + TypedHeuristicDatagramSlot (FlowDetection FSM)
 ├── segment_reassembler.rs       # SegmentBufferReassembler OOO hole-fill (plan 74, 0.9.0)
 ├── extract/                     # built-in extractors (extractors feature)

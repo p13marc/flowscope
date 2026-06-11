@@ -161,7 +161,7 @@ impl DgaScorer {
 }
 
 impl DgaScore {
-    /// Convert into the canonical [`OwnedAnomaly`] shape with
+    /// Convert into the canonical [`OwnedAnomaly`](crate::OwnedAnomaly) shape with
     /// the given timestamp and (optionally) a flow key for
     /// 5-tuple context. DGA scoring is keyless on the detector
     /// side, but consumers usually have a flow key from the DNS

@@ -15,34 +15,63 @@ record; `plans/` is the working backlog.
 
 ## Active
 
-### 0.13.0 cycle — netring-0.21 driven (drafted 2026-06-11)
+### 0.13.0 cycle — netring-0.21 driven (shipped 2026-06-11)
 
-**Status:** plan-of-record drafted; no code shipped.
+**Status:** all 8 implementation plans shipped to master
+(`2095f28` → `7735587`). Phase E release gated on per-release
+consent per `feedback_release_consent.md`.
 
 Umbrella: [`157-cycle-0-13-umbrella.md`](./157-cycle-0-13-umbrella.md).
 
-Triggered by [`flowscope-0.13-wishlist.md`](../flowscope-0.13-wishlist.md)
+Triggered by [`0.13-wishlist-from-netring.md`](./0.13-wishlist-from-netring.md)
 (netring 0.21 adoption). Verification pass against the 0.12.0
 source surfaced one major finding — Plan 156's premise was
 wrong, the !Send root cause is structural (one missing `+ Send`
 on a trait object), not interior-mutability. See umbrella §1.
 
-**Plans (after consolidation pass):**
+**Shipped (all 8 implementation plans + umbrella):**
 
-| Plan | Title | Priority |
-|------|-------|----------|
-| [156](./156-send-driver.md) | `Driver<E>: Send + Sync` unconditionally (~3 hr structural fix; no unsafe) | P0 |
-| [147](./147-owned-anomaly-eve.md) | `OwnedAnomaly` + `DetectorScore` trait + per-score `into_anomaly` + emit-writer methods. Absorbs wishlist 147 + 148 + 151. | P0 |
-| [149](./149-slothandle-drain-n.md) | `SlotHandle::drain_n` bounded drain (`swap`/`SlotBuf` deferred to 0.14) | P1 |
-| [150](./150-broadcast-slothandle.md) | `BroadcastSlotHandle<M, K>` | P1 |
-| [152](./152-pcap-replay-pacing.md) | `PcapFlowSource::with_speed_factor` (`replay_at_wall_clock` dropped) | P2 |
-| [153](./153-test-helpers-events.md) | `flowscope::test_helpers::events` synthetic-event constructors | P2 |
-| [154](./154-flow-state-map.md) | `FlowStateMap<T, K>` per-flow typed state (layered over `KeyIndexed`) | P2 |
-| [155](./155-sharded-recipe.md) | Sharded-driver example + recipe | P3 |
+| Plan | Commit | Title |
+|------|--------|-------|
+| 156 | `2095f28` | `Driver<E>: Send + Sync` unconditionally — structural 1-line fix (no `unsafe`); cleaned up stale `Rc<RefCell>` doc comments at 5 sites |
+| 147 | `6e3fdfa` | `OwnedAnomaly` + `DetectorScore` trait + per-score `into_anomaly` + `EveJsonWriter::write_owned_anomaly` + `FlowEventNdjsonWriter::write_owned_anomaly` + `EveOptions::custom_anomaly_type`. Absorbs wishlist 147 + 148 + 151 |
+| 149 | `02ddcfc` | `SlotHandle::drain_n(out, max) -> usize` bounded drain (`swap`/`SlotBuf` deferred to 0.14) |
+| 150 | `bbf673c` | `BroadcastSlotHandle<M, K>` + `DriverBuilder::session_on_ports_broadcast_each` fan-out delivery |
+| 152 | `650ac34` | `PcapFlowSource::with_speed_factor(f64)` — tokio-blocking caveat documented |
+| 153 | `be02971` | `flowscope::test_helpers::events` synthetic-event constructors |
+| 154 | `be02971` | `FlowStateMap<T, K>` per-flow typed state (layered over `KeyIndexed`) + `KeyIndexed::get_mut` + fix `KeyIndexed::new_unbounded` hashbrown overflow |
+| 155 | `7735587` | `examples/00-getting-started/sharded_capture.rs` + `docs/sharded.md` recipe |
 
-Total effort: ~7 days (wishlist estimated 12; round-1 estimated 8).
-P0 alone (147 + 156): ~2.5 days. P0+P1 (147, 149, 150, 156): ~5 days.
-Phasing in 4 PRs — see umbrella §5.
+**Phase E — Release mechanics (pending consent):**
+
+| Step | Status |
+|------|--------|
+| Final bench gate + clippy + docs sweep | ✅ clean |
+| `cargo publish` dry-run | pending |
+| Per-release consent | pending |
+| Tag + push (`0.13.0`) | pending |
+
+**Test counts:** 809 passing (up from 772 in 0.12.0 — +37 new),
+zero clippy warnings under `--all-features --all-targets -D warnings`,
+zero rustdoc warnings.
+
+**Cycle theme:** netring-0.21 adoption ergonomics — `Driver<E>:
+Send + Sync` to unblock tokio multi-thread runtime, OwnedAnomaly
++ DetectorScore for canonical detector output, BroadcastSlotHandle
+for fan-out subscribers, drain_n for bounded back-pressure,
+FlowStateMap for per-flow typed state, pcap pacing for demos +
+behaviour-realistic offline replay.
+
+**Headline finding:** the wishlist's Plan 156 claimed
+`Driver<E>: !Send` because `FlowTracker` held `Rc<RefCell>`
+state, requiring an `unsafe SendCell<T>` newtype + opt-in
+`SendMode` enum (~3–4 days work + Miri audit). Direct
+verification: zero `Rc<RefCell>` in the live tree (only stale
+doc comments). Real cause: `Vec<Box<dyn ErasedSlot<E::Key>>>`
+missing a `+ Send` bound. Fix was structural: 1-line trait-
+object bound + matching `P: Send + Sync` audit. No `unsafe`,
+no opt-in knob, no runtime overhead. Dropped Plan 156 effort
+from 3–4 days to ~3 hours.
 
 ---
 
@@ -286,28 +315,29 @@ Plan numbers retired (implementation shipped, file removed):
 00–04, 12, 20, 22–25, 30–61, 62, 70–73, 74, 75, 76–82, 83–91,
 93, 94, 96, 97, 99, 100, 101, 102, 106, 107, 110, 112, 113,
 115, 116, 118, 119, 120, 121, 122, 123, 124, 126, 127, 128,
-130, 131, 132, 143, 144, 146. Subsumed by consolidation:
+130, 131, 132, 143, 144, 146, 147, 149, 150, 152, 153, 154,
+155, 156. Subsumed by consolidation:
 - 103, 104, 105 → rolled into plan 102 (utility modules)
 - 111 → rolled into plan 110 (DX polish)
 - 114 → rolled into plan 113 (dynamic dispatch)
 - 108, 109 → rolled into plan 116 (driver+event unification)
 - 117 → absorbed into 121 (legacy deletion + slot refactor
   overlap; one wider migration window beats two)
+- 148, 151 → absorbed into 147 (0.13 cycle: detector trait
+  collapsed into `DetectorScore` on the output side; the
+  separate `OwnedAnomaly` plan merged with EVE writer
+  integration into one coherent ship)
 
 Active: 21 (stale-deferred), 151 (0.12 expanded-cycle
-umbrella — kept until Phase E release ships).
-Implementation plans 122, 123, 124, 126, 127, 130, 131, 132,
-143, 144, 146 all shipped to master; their plan files
-retired per convention. Subsumed by consolidation:
-- 125 → folded into 130 §Phase 7 leftovers (TopK +
-  BurstDetector `new_unbounded` were missed in the initial
-  128 Phase 7 ship; 130 picks them up)
-- 140, 141, 142, 145 → drafted then deferred from the 0.12
-  cycle (see stale-deferred table above); designs captured
-  in `git log` at commit `cee5577`. Resurrect under fresh
-  plan numbers when consumer demand lands.
-- 147-150 reserved for in-cycle adjustments / follow-ups
-The next free number for a new plan is 152+.
+umbrella — kept until 0.12 release ships), 157 (0.13 cycle
+umbrella — kept until 0.13 release ships).
+Implementation plans 147, 149, 150, 152, 153, 154, 155, 156
+shipped to master in the 0.13 cycle; plan files retired per
+convention.
+
+The next free number for a new plan is 158+. (158-200 reserved
+for the post-0.13 cycle / 1.0-prep audits; see umbrella
+157 §13 for the 1.0 stability-audit sketch.)
 
 ---
 

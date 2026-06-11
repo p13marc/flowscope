@@ -1,6 +1,11 @@
 # Plan 157 — 0.13 cycle umbrella
 
-**Status:** drafting, 2026-06-11. Triggered by the netring-side
+**Status:** all 8 implementation plans shipped to master
+2026-06-11 (`2095f28` → `7735587`); 809 tests passing, zero
+clippy warnings, zero rustdoc warnings. Phase E release gated
+on per-release consent per `feedback_release_consent.md`.
+
+Triggered by the netring-side
 [`flowscope-0.13-wishlist.md`](../flowscope-0.13-wishlist.md)
 (10 asks: plans 147–156). This umbrella synthesises my own
 verification pass against the 0.12.0 source, calls out where the

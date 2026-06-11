@@ -158,7 +158,7 @@ impl<K> ScanScore<K>
 where
     K: crate::KeyFields + Clone,
 {
-    /// Convert into the canonical [`OwnedAnomaly`] shape with
+    /// Convert into the canonical [`OwnedAnomaly`](crate::OwnedAnomaly) shape with
     /// the given timestamp. Severity follows `verdict`:
     /// `Scanner` → `Warning`, `Benign`/`Inconclusive` → `Info`.
     ///

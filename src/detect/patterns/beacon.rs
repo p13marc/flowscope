@@ -171,7 +171,7 @@ impl<K> BeaconScore<K>
 where
     K: crate::KeyFields + Clone,
 {
-    /// Convert into the canonical [`OwnedAnomaly`] shape with
+    /// Convert into the canonical [`OwnedAnomaly`](crate::OwnedAnomaly) shape with
     /// the given timestamp. Severity is always `Warning` —
     /// `BeaconDetector::observe` only emits a score when the
     /// detector has actually found a beacon-shaped pattern.
