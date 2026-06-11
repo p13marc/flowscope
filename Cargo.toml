@@ -224,6 +224,16 @@ path = "examples/03-detection/dns_tunnel_detector.rs"
 required-features = ["pcap", "dns", "extractors"]
 
 [[example]]
+name = "c2_beacon_finder"
+path = "examples/03-detection/c2_beacon_finder.rs"
+required-features = ["pcap", "extractors", "tracker"]
+
+[[example]]
+name = "dga_finder"
+path = "examples/03-detection/dga_finder.rs"
+required-features = ["pcap", "dns", "extractors"]
+
+[[example]]
 name = "failed_auth_burst"
 path = "examples/03-detection/failed_auth_burst.rs"
 required-features = ["pcap", "http"]

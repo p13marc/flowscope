@@ -58,6 +58,8 @@ the categories sort logically in `ls`.
 | **`port_scan_detector`** | `pcap,extractors,tracker` | SYN-without-ACK rate per `(src, dst)` via `TimeBucketedCounter` + distinct-port set via `TimeBucketedSet` (plan 102 sub-A). |
 | **`dns_tunnel_detector`** | `pcap,dns,extractors` | High Shannon entropy + long-label + high-rate DNS queries = probable DNS tunnel. Uses `flowscope::detect::shannon_entropy`. |
 | **`failed_auth_burst`** | `pcap,http` | HTTP 401/403 burst followed by 200 — credential-stuffing pattern via `BurstDetector` (plan 102 sub-A). |
+| **`c2_beacon_finder`** | `pcap,extractors,tracker` | RITA-style CV beacon detector via `flowscope::detect::patterns::BeaconDetector` (plan 143). |
+| **`dga_finder`** | `pcap,dns,extractors` | Bigram log-likelihood DGA scoring on DNS query SLDs via `flowscope::detect::patterns::DgaScorer` (plan 143). |
 | **`tcp_retransmit_audit`** | `pcap,extractors,reassembler` | Per-flow retransmit-rate ranking. Production reliability signal. |
 
 ## 04 — observability / SRE
