@@ -341,6 +341,11 @@ name = "threaded_slot_drain"
 path = "examples/08-performance/threaded_slot_drain.rs"
 required-features = ["pcap", "http"]
 
+[[example]]
+name = "sharded_capture"
+path = "examples/00-getting-started/sharded_capture.rs"
+required-features = ["pcap", "http"]
+
 # ── 09 reassembly / low-level ────────────────────────
 [[example]]
 name = "pcap_flow_summary"

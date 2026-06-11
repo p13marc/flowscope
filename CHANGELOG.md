@@ -8,6 +8,13 @@ adoption friction; see `plans/0.13-wishlist-from-netring.md`.
 
 ### Added
 
+- **`examples/00-getting-started/sharded_capture.rs`** +
+  **`docs/sharded.md`** — sharded-driver recipe (plan 155).
+  Shows the N-thread + per-shard `Driver<E>` pattern with
+  cross-shard aggregation via `AtomicU64` counters. Built on
+  plan 156's `Driver<E>: Send + Sync`. Recipe covers the
+  when-to-shard decision, CPU pinning, netring composition,
+  and the per-shard detector pitfall.
 - **`flowscope::correlate::FlowStateMap<T, K>`** — per-flow
   typed state with automatic eviction on `FlowEvent::Ended`
   + TTL sweep (plan 154). Layered over `KeyIndexed<K, T>` —
