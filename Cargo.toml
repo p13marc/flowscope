@@ -139,6 +139,14 @@ emit-ndjson = ["emit", "serde", "dep:serde_json"]
 # downstream pipelines without translation.
 emit-eve = ["emit", "dep:serde_json"]
 
+# File-hash sinks (plan 146, 0.12.0) — streaming SHA-256 / MD5
+# hashing for the reassembled payload stream plus MIME-class
+# detection from the first ~64 bytes. Bridges flowscope into
+# DFIR / IR pipelines (VirusTotal hash matching, Suricata
+# file_md5 / file_sha256 ergonomics) without storing the file
+# bytes themselves.
+file-hash = ["reassembler", "dep:sha2", "dep:md-5", "dep:hex"]
+
 # Distribution / quantile primitives (plan 102 sub-B). Ships
 # `Histogram` (no deps) + `Percentile` (wraps the `tdigest` crate).
 aggregate = ["dep:tdigest"]
@@ -150,7 +158,7 @@ aggregate = ["dep:tdigest"]
 chrono = ["dep:chrono"]
 
 # Convenience: turn everything on.
-full = ["http", "tls", "tls-fingerprints", "dns", "icmp", "pcap", "metrics", "tracing", "serde", "emit", "emit-ndjson", "emit-eve", "aggregate", "chrono"]
+full = ["http", "tls", "tls-fingerprints", "dns", "icmp", "pcap", "metrics", "tracing", "serde", "emit", "emit-ndjson", "emit-eve", "aggregate", "chrono", "file-hash"]
 
 [package.metadata.docs.rs]
 all-features = true

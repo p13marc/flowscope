@@ -36,6 +36,8 @@
 //! assert!(!is_hex_string("not hex"));
 //! ```
 
+#[cfg(feature = "file-hash")]
+pub mod file;
 pub mod patterns;
 pub mod signatures;
 
