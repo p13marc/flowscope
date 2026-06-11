@@ -49,32 +49,33 @@ that hardens the public surface before adoption traffic.
 
 ## Status
 
-In progress. 0.12.0-base shipped to master 2026-06; expansion
-plans drafted 2026-06.
+**Implementation complete.** All 6 expanded-cycle plans shipped
+to master 2026-06 (commits `7778c8e` → `1ed1228`). Awaiting
+Phase E release consent before `cargo publish`.
 
 ## Cycle sequencing
 
 **Phase A — API debt retirement** (must land first; affects
 every following plan's references):
 
-| Plan | Title | Effort | Status |
-|---|---|---|---|
-| 130 | Trait shape + API symmetry cleanup | 2 days | drafted |
-| 131 | Error module + feature-flag pruning | 1 day | drafted |
-| 132 | Documentation overhaul | 2 days | drafted |
+| Plan | Title | Status |
+|---|---|---|
+| 130 | Trait shape + API symmetry cleanup | ✅ shipped (5 commits, `7778c8e` → `0c5ece5`) |
+| 131 | Error module + feature-flag pruning | ✅ shipped (3 commits, `4332da7` → `a1bbd11`) |
+| 132 | Documentation overhaul | ✅ shipped (`1c16a9d`) |
 
 **Phase B — Named detectors**:
 
-| Plan | Title | Effort | Status |
-|---|---|---|---|
-| 143 | Detection-patterns library | 4 days | drafted |
+| Plan | Title | Status |
+|---|---|---|
+| 143 | Detection-patterns library | ✅ shipped (2 commits, ending `7c09bcd`) |
 
 **Phase C — Targeted modernisation + IR**:
 
-| Plan | Title | Effort | Status |
-|---|---|---|---|
-| 144 | ECH signal extraction | 1.5 days | drafted |
-| 146 | File hash sinks | 3 days | drafted |
+| Plan | Title | Status |
+|---|---|---|
+| 144 | ECH signal extraction | ✅ shipped (2 commits, `0f800e4` + `61011ca` clippy fix) |
+| 146 | File hash sinks | ✅ shipped (`1ed1228`) |
 
 **Phase E — release mechanics**:
 
