@@ -126,3 +126,209 @@ mod tests {
         assert_eq!(m[0].1, b"hello");
     }
 }
+
+// ── Plan 153 (0.13) — synthetic event constructors ────────────
+
+/// Synthetic event constructors for downstream test crates.
+///
+/// Each function takes minimal-required fields; the rest are
+/// filled with sensible defaults (`Default::default()` for
+/// `FlowStats`, `None` for optional `L4Proto`, `Initiator` for
+/// `FlowSide`). Saves the `#[doc(hidden)] pub fn new` escape
+/// hatch dance — downstream tests can write
+/// `events::started(key, ts)` instead of multi-line field-init.
+///
+/// Plan 153 (0.13).
+pub mod events {
+    use crate::event::{AnomalyKind, EndReason, FlowEvent, FlowSide, FlowStats};
+    use crate::extractor::L4Proto;
+    use crate::Timestamp;
+
+    /// `FlowEvent::Started` with `l4 = None` and `Initiator` side.
+    pub fn started<K>(key: K, ts: Timestamp) -> FlowEvent<K> {
+        FlowEvent::Started {
+            key,
+            side: FlowSide::Initiator,
+            ts,
+            l4: None,
+        }
+    }
+
+    /// `FlowEvent::Started` with explicit L4.
+    pub fn started_with_l4<K>(key: K, l4: L4Proto, ts: Timestamp) -> FlowEvent<K> {
+        FlowEvent::Started {
+            key,
+            side: FlowSide::Initiator,
+            ts,
+            l4: Some(l4),
+        }
+    }
+
+    /// `FlowEvent::Established` with `l4 = None`.
+    pub fn established<K>(key: K, ts: Timestamp) -> FlowEvent<K> {
+        FlowEvent::Established { key, ts, l4: None }
+    }
+
+    /// `FlowEvent::Ended` with `EndReason::IdleTimeout` and
+    /// empty stats. `last_seen` set to `ts`.
+    pub fn ended<K>(key: K, ts: Timestamp) -> FlowEvent<K> {
+        let stats = FlowStats {
+            last_seen: ts,
+            ..FlowStats::default()
+        };
+        FlowEvent::Ended {
+            key,
+            reason: EndReason::IdleTimeout,
+            stats,
+            history: Default::default(),
+            l4: None,
+        }
+    }
+
+    /// `FlowEvent::Ended` with caller-supplied reason + stats.
+    pub fn ended_with<K>(key: K, reason: EndReason, stats: FlowStats) -> FlowEvent<K> {
+        FlowEvent::Ended {
+            key,
+            reason,
+            stats,
+            history: Default::default(),
+            l4: None,
+        }
+    }
+
+    /// `FlowEvent::Tick` with empty stats.
+    pub fn tick<K>(key: K, ts: Timestamp) -> FlowEvent<K> {
+        FlowEvent::Tick {
+            key,
+            stats: FlowStats::default(),
+            ts,
+        }
+    }
+
+    /// `FlowEvent::FlowAnomaly`.
+    pub fn flow_anomaly<K>(key: K, kind: AnomalyKind, ts: Timestamp) -> FlowEvent<K> {
+        FlowEvent::FlowAnomaly { key, kind, ts }
+    }
+
+    /// `FlowEvent::TrackerAnomaly`.
+    pub fn tracker_anomaly<K>(kind: AnomalyKind, ts: Timestamp) -> FlowEvent<K> {
+        FlowEvent::TrackerAnomaly { kind, ts }
+    }
+
+    /// `FlowEvent::Packet` with default `Initiator` side.
+    pub fn packet<K>(key: K, len: usize, ts: Timestamp) -> FlowEvent<K> {
+        FlowEvent::Packet {
+            key,
+            side: FlowSide::Initiator,
+            len,
+            ts,
+        }
+    }
+
+    /// `FlowEvent::Packet` with explicit side.
+    pub fn packet_side<K>(key: K, side: FlowSide, len: usize, ts: Timestamp) -> FlowEvent<K> {
+        FlowEvent::Packet {
+            key,
+            side,
+            len,
+            ts,
+        }
+    }
+
+    /// Typed `driver::Event<K>` constructors.
+    pub mod driver {
+        use crate::driver::Event;
+        use crate::event::{AnomalyKind, EndReason, FlowSide, FlowStats};
+        use crate::extractor::{L4Proto, TcpInfo};
+        use crate::Timestamp;
+
+        /// `Event::FlowStarted` with `l4 = None`.
+        pub fn flow_started<K>(key: K, ts: Timestamp) -> Event<K> {
+            Event::FlowStarted { key, ts, l4: None }
+        }
+
+        /// `Event::FlowStarted` with explicit L4.
+        pub fn flow_started_with_l4<K>(key: K, l4: L4Proto, ts: Timestamp) -> Event<K> {
+            Event::FlowStarted {
+                key,
+                ts,
+                l4: Some(l4),
+            }
+        }
+
+        /// `Event::FlowEstablished` with `l4 = None`.
+        pub fn flow_established<K>(key: K, ts: Timestamp) -> Event<K> {
+            Event::FlowEstablished { key, ts, l4: None }
+        }
+
+        /// `Event::FlowEnded` with `EndReason::IdleTimeout` and
+        /// empty stats.
+        pub fn flow_ended<K>(key: K, ts: Timestamp) -> Event<K> {
+            Event::FlowEnded {
+                key,
+                reason: EndReason::IdleTimeout,
+                stats: FlowStats::default(),
+                history: Default::default(),
+                l4: None,
+                ts,
+            }
+        }
+
+        /// `Event::FlowPacket` with `Initiator` side and no tcp info.
+        pub fn flow_packet<K>(key: K, len: usize, ts: Timestamp) -> Event<K> {
+            Event::FlowPacket {
+                key,
+                side: FlowSide::Initiator,
+                len,
+                ts,
+                tcp: None,
+            }
+        }
+
+        /// `Event::FlowPacket` with explicit fields.
+        pub fn flow_packet_full<K>(
+            key: K,
+            side: FlowSide,
+            len: usize,
+            tcp: Option<TcpInfo>,
+            ts: Timestamp,
+        ) -> Event<K> {
+            Event::FlowPacket {
+                key,
+                side,
+                len,
+                ts,
+                tcp,
+            }
+        }
+
+        /// `Event::FlowTick`.
+        pub fn flow_tick<K>(key: K, ts: Timestamp) -> Event<K> {
+            Event::FlowTick {
+                key,
+                stats: FlowStats::default(),
+                ts,
+            }
+        }
+
+        /// `Event::ParserClosed` with `EndReason::ParserDone`.
+        pub fn parser_closed<K>(key: K, parser_kind: &'static str, ts: Timestamp) -> Event<K> {
+            Event::ParserClosed {
+                key,
+                parser_kind,
+                reason: EndReason::ParserDone,
+                ts,
+            }
+        }
+
+        /// `Event::FlowAnomaly`.
+        pub fn flow_anomaly<K>(key: K, kind: AnomalyKind, ts: Timestamp) -> Event<K> {
+            Event::FlowAnomaly { key, kind, ts }
+        }
+
+        /// `Event::TrackerAnomaly`.
+        pub fn tracker_anomaly<K>(kind: AnomalyKind, ts: Timestamp) -> Event<K> {
+            Event::TrackerAnomaly { kind, ts }
+        }
+    }
+}

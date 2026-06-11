@@ -53,6 +53,7 @@
 mod bucketed;
 mod burst;
 mod ewma;
+mod flow_state_map;
 mod indexed;
 mod sequence;
 mod set;
@@ -61,6 +62,7 @@ mod topk;
 pub use bucketed::TimeBucketedCounter;
 pub use burst::{BurstDetector, BurstHit};
 pub use ewma::Ewma;
+pub use flow_state_map::FlowStateMap;
 pub use indexed::KeyIndexed;
 pub use sequence::{KeylessSequencePattern, SequencePattern};
 pub use set::TimeBucketedSet;

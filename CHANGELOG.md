@@ -8,6 +8,28 @@ adoption friction; see `plans/0.13-wishlist-from-netring.md`.
 
 ### Added
 
+- **`flowscope::correlate::FlowStateMap<T, K>`** — per-flow
+  typed state with automatic eviction on `FlowEvent::Ended`
+  + TTL sweep (plan 154). Layered over `KeyIndexed<K, T>` —
+  ~150 LoC. `get_or_default(&key, now)` lazily constructs
+  `T::default()`; `feed(&FlowEvent)` drives eviction/refresh;
+  `sweep(now)` removes idle entries. Defaults `K` to
+  `FiveTupleKey` for the common case.
+- **`flowscope::test_helpers::events`** — synthetic
+  `FlowEvent` + `driver::Event` constructors (plan 153). Use
+  `events::started(key, ts)` instead of the multi-line field-
+  init dance. Sub-module `events::driver` mirrors the typed
+  driver's `Event<K>` variants. Saves the `#[doc(hidden)]
+  pub fn new` escape hatch downstream test crates have been
+  using.
+- **`flowscope::correlate::KeyIndexed::get_mut`** — mutable
+  TTL-aware get (plan 154 prereq). Mirrors `get` returning
+  `&mut V` so consumers mutate in place without
+  `remove` + `insert`.
+- Fix: `KeyIndexed::new_unbounded` now uses
+  `lru::LruCache::unbounded()` under the hood instead of
+  `LruCache::new(usize::MAX)`. The latter caused hashbrown
+  capacity overflow on first insert. Plan 154 follow-up.
 - **`PcapFlowSource::with_speed_factor(f64)`** — time-realistic
   pcap replay pacing (plan 152). `1.0` = original timing, `2.0`
   = double speed, `f64::INFINITY` = as-fast-as-possible

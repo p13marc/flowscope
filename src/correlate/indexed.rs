@@ -44,12 +44,20 @@ where
         }
     }
 
-    /// Unbounded LRU capacity convenience constructor —
-    /// equivalent to `Self::new(ttl, usize::MAX)`. Prefer
-    /// [`Self::new`] with an explicit cap when memory pressure
-    /// matters. New in 0.12.0.
+    /// Unbounded LRU capacity convenience constructor.
+    /// Uses `lru::LruCache::unbounded()` under the hood so no
+    /// pre-allocation happens — entries are added as needed.
+    /// Prefer [`Self::new`] with an explicit cap when memory
+    /// pressure matters.
+    ///
+    /// New in 0.12.0; backing fixed to `lru::unbounded()` in
+    /// 0.13 (plan 154 follow-up — `new(ttl, usize::MAX)` caused
+    /// hashbrown capacity overflow on insert).
     pub fn new_unbounded(ttl: Duration) -> Self {
-        Self::new(ttl, usize::MAX)
+        Self {
+            ttl,
+            inner: LruCache::unbounded(),
+        }
     }
 
     /// Insert / replace `key → value`. Records `ts` as the
@@ -71,6 +79,24 @@ where
             return None;
         }
         Some(&entry.0)
+    }
+
+    /// Get the value for `key` with mutable access, if the
+    /// entry has not exceeded `ttl` relative to `now`. Bumps
+    /// LRU recency on hit.
+    ///
+    /// Mirror of [`Self::get`] returning `&mut V`. Useful for
+    /// callers wanting to mutate the cached value in place
+    /// without a `remove` + `insert` dance.
+    ///
+    /// Plan 154 (0.13).
+    pub fn get_mut(&mut self, key: &K, now: Timestamp) -> Option<&mut V> {
+        let entry = self.inner.get_mut(key)?;
+        let inserted = entry.1;
+        if now.to_duration().saturating_sub(inserted.to_duration()) > self.ttl {
+            return None;
+        }
+        Some(&mut entry.0)
     }
 
     /// Read-only get — does NOT bump LRU recency. Use when the
