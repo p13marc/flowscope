@@ -51,6 +51,7 @@ use crate::reassembler::NoopReassemblerFactory;
 use crate::session::{DatagramParser, SessionParser};
 use crate::tracker::{FlowTracker, FlowTrackerConfig};
 
+use super::BroadcastSlotHandle;
 use super::slot::{SlotHandle, SlotMessage};
 use super::typed_slot::{ErasedSlot, TypedConcreteDatagramSlot, TypedConcreteSlot};
 use super::typed_slot_heuristic::{TypedHeuristicDatagramSlot, TypedHeuristicSessionSlot};
@@ -481,6 +482,44 @@ where
     {
         let port_set: smallvec::SmallVec<[u16; 4]> = ports.into_iter().collect();
         let (slot, handle) = TypedConcreteSlot::new(
+            self.extractor.clone(),
+            parser,
+            self.config.clone(),
+            Some(port_set),
+            self.monotonic_timestamps,
+        );
+        self.slots.push(Box::new(slot));
+        handle
+    }
+
+    /// Register a session parser bound to a port set, with
+    /// **broadcast** (fan-out) consumer semantics. Returns a
+    /// [`BroadcastSlotHandle`] — each [`Clone`] of the handle
+    /// is a separate subscriber that sees **every** message.
+    ///
+    /// Plan 150 (0.13). Compare with
+    /// [`Self::session_on_ports`] (competitive-consumer MPMC).
+    /// Use broadcast when multiple downstream consumers each
+    /// need their own copy of every message — typically a
+    /// logger + a metrics aggregator + a sink. Each subscriber's
+    /// queue grows independently; cap with
+    /// [`BroadcastSlotHandle::drain_n`].
+    ///
+    /// Requires `P::Message: Clone` (each push clones once per
+    /// live subscriber).
+    pub fn session_on_ports_broadcast_each<P, I>(
+        &mut self,
+        parser: P,
+        ports: I,
+    ) -> BroadcastSlotHandle<P::Message, E::Key>
+    where
+        P: SessionParser + Clone + Send + Sync + 'static,
+        P::Message: Send + Sync + Clone + 'static,
+        E::Key: Send + Sync + Clone + 'static,
+        I: IntoIterator<Item = u16>,
+    {
+        let port_set: smallvec::SmallVec<[u16; 4]> = ports.into_iter().collect();
+        let (slot, handle) = super::typed_slot::TypedBroadcastSlot::new(
             self.extractor.clone(),
             parser,
             self.config.clone(),

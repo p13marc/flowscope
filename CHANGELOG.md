@@ -8,6 +8,25 @@ adoption friction; see `plans/0.13-wishlist-from-netring.md`.
 
 ### Added
 
+- **`BroadcastSlotHandle<M, K>`** + 
+  **`DriverBuilder::session_on_ports_broadcast_each`** —
+  fan-out drain handle for session parsers (plan 150). Where
+  `SlotHandle::clone` produces a competitive consumer (MPMC —
+  one message goes to one drainer), `BroadcastSlotHandle::clone`
+  produces a fresh subscriber that sees **every** message.
+  Backed by `Arc<BroadcastInner>` holding a
+  `Mutex<Vec<Weak<SegQueue<...>>>>` subscriber list; the slot's
+  push fans out to every live subscriber, pruning dead Weaks
+  inline. Per-push cost is O(subscribers) clones + atomic
+  pushes — typically negligible (logger + metrics + sink = 3
+  subscribers). New `M: Clone` bound on the broadcast variant
+  (every shipped parser message — `HttpMessage`, `DnsMessage`,
+  `TlsMessage` — already derives `Clone`). Drop-prunes
+  subscribers lazily.
+  
+  For 0.13: shipped for `session_on_ports` only. Datagram +
+  heuristic broadcast variants defer to 0.14 if a consumer
+  asks.
 - **`SlotHandle::drain_n(out, max) -> usize`** — bounded drain
   for back-pressure (plan 149). `max = 0` is a no-op;
   `max = usize::MAX` is equivalent to [`drain`]. The micro-

@@ -47,11 +47,13 @@
 //! is `tokio::spawn(driver_task)` on the default multi-thread
 //! runtime.
 
+mod broadcast;
 mod slot;
 mod typed;
 mod typed_slot;
 mod typed_slot_heuristic;
 
+pub use broadcast::BroadcastSlotHandle;
 pub use slot::{SlotHandle, SlotMessage};
 pub use typed::{DeferredDriverBuilder, Driver, DriverBuilder, Event};
 pub use typed_slot_heuristic::{DEFAULT_PROBE_PACKETS, PROBE_BUFFER_CAP};

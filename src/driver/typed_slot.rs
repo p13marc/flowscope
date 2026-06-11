@@ -384,3 +384,152 @@ pub(super) fn route_session_event_pub<K, M>(
 ) {
     route_session_event(ev, parser_kind, buf, lifecycle_out);
 }
+
+// ── Broadcast variant — Plan 150 (0.13) ──────────────────────
+
+/// Broadcast-routed session-parser slot. Fan-outs every typed
+/// message to every clone of the returned [`super::BroadcastSlotHandle`].
+///
+/// Used by [`super::DriverBuilder::session_on_ports_broadcast_each`].
+pub(super) struct TypedBroadcastSlot<E, P>
+where
+    E: FlowExtractor,
+    P: SessionParser + Sync,
+    P::Message: Send + Sync + Clone + 'static,
+    E::Key: Send + Sync + Clone + 'static,
+{
+    driver: FlowSessionDriver<E, P, ()>,
+    parser_kind: &'static str,
+    ports: Option<smallvec::SmallVec<[u16; 4]>>,
+    broadcast: std::sync::Arc<super::broadcast::BroadcastInner<P::Message, E::Key>>,
+    session_scratch: Vec<SessionEvent<E::Key, P::Message>>,
+}
+
+impl<E, P> TypedBroadcastSlot<E, P>
+where
+    E: FlowExtractor + Clone,
+    P: SessionParser + Clone + Sync,
+    P::Message: Send + Sync + Clone + 'static,
+    E::Key: Send + Sync + Clone + 'static,
+{
+    pub(super) fn new(
+        extractor: E,
+        parser: P,
+        config: FlowTrackerConfig,
+        ports: Option<smallvec::SmallVec<[u16; 4]>>,
+        monotonic_timestamps: bool,
+    ) -> (Self, super::BroadcastSlotHandle<P::Message, E::Key>) {
+        let parser_kind = parser.parser_kind();
+        let broadcast = super::broadcast::BroadcastInner::new();
+        let handle = super::BroadcastSlotHandle::new(std::sync::Arc::clone(&broadcast), parser_kind);
+        let driver = FlowSessionDriver::with_config(extractor, parser, config)
+            .with_monotonic_timestamps(monotonic_timestamps);
+        let slot = Self {
+            driver,
+            parser_kind,
+            ports,
+            broadcast,
+            session_scratch: Vec::new(),
+        };
+        (slot, handle)
+    }
+}
+
+impl<E, P> ErasedSlot<E::Key> for TypedBroadcastSlot<E, P>
+where
+    E: FlowExtractor + Send,
+    E::Key: Hash + Eq + Clone + Send + Sync + 'static,
+    P: SessionParser + Send + Sync + 'static,
+    P::Message: Send + Sync + Clone + 'static,
+{
+    fn track_into(
+        &mut self,
+        view: PacketView<'_>,
+        _ts: Timestamp,
+        lifecycle_out: &mut Vec<Event<E::Key>>,
+    ) {
+        if let Some(ports) = &self.ports
+            && !view_matches_ports(view, ports)
+        {
+            return;
+        }
+        let parser_kind = self.parser_kind;
+        self.session_scratch.clear();
+        self.driver.track_into(view, &mut self.session_scratch);
+        for ev in self.session_scratch.drain(..) {
+            route_broadcast_event(ev, parser_kind, &self.broadcast, lifecycle_out);
+        }
+    }
+
+    fn sweep_into(&mut self, now: Timestamp, lifecycle_out: &mut Vec<Event<E::Key>>) {
+        let parser_kind = self.parser_kind;
+        for ev in self.driver.sweep(now) {
+            route_broadcast_event(ev, parser_kind, &self.broadcast, lifecycle_out);
+        }
+    }
+
+    fn finish_into(&mut self, lifecycle_out: &mut Vec<Event<E::Key>>) {
+        let parser_kind = self.parser_kind;
+        for ev in self.driver.finish() {
+            route_broadcast_event(ev, parser_kind, &self.broadcast, lifecycle_out);
+        }
+    }
+
+    fn force_close_into(
+        &mut self,
+        key: &E::Key,
+        now: Timestamp,
+        lifecycle_out: &mut Vec<Event<E::Key>>,
+    ) {
+        let parser_kind = self.parser_kind;
+        for ev in self.driver.force_close(key, now) {
+            route_broadcast_event(ev, parser_kind, &self.broadcast, lifecycle_out);
+        }
+    }
+}
+
+/// Broadcast-variant route — fans out to every subscriber via
+/// `BroadcastInner::push` instead of pushing to a single
+/// `SegQueue`.
+fn route_broadcast_event<K, M>(
+    ev: SessionEvent<K, M>,
+    parser_kind: &'static str,
+    broadcast: &super::broadcast::BroadcastInner<M, K>,
+    lifecycle_out: &mut Vec<Event<K>>,
+) where
+    M: Send + Sync + Clone + 'static,
+    K: Send + Sync + Clone + 'static,
+{
+    match ev {
+        SessionEvent::Application {
+            key,
+            side,
+            message,
+            ts,
+            parser_kind: _,
+        } => {
+            broadcast.push(SlotMessage {
+                key,
+                side,
+                message,
+                ts,
+            });
+        }
+        SessionEvent::Closed {
+            key, reason, stats, ..
+        } => {
+            lifecycle_out.push(Event::ParserClosed {
+                key,
+                parser_kind,
+                reason,
+                ts: stats.last_seen,
+            });
+        }
+        SessionEvent::Started { .. }
+        | SessionEvent::FlowAnomaly { .. }
+        | SessionEvent::TrackerAnomaly { .. }
+        | SessionEvent::FlowTick { .. } => {
+            // Suppressed; the central tracker is authoritative.
+        }
+    }
+}
