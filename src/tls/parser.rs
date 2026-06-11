@@ -133,12 +133,15 @@ fn build_client_hello(
     let mut supported_versions: Vec<TlsVersion> = Vec::new();
     let mut supported_groups: Vec<u16> = Vec::new();
     let mut extension_types: Vec<u16> = Vec::new();
+    let mut ech_present = false;
+    let mut ech_config_id: Option<u8> = None;
 
     if let Some(ext_bytes) = ch.ext
         && let Ok((_, exts)) = parse_tls_extensions(ext_bytes)
     {
         for ext in &exts {
-            extension_types.push(extension_id(ext));
+            let id = extension_id(ext);
+            extension_types.push(id);
             match ext {
                 TlsExtension::SNI(items) => {
                     for (_kind, host) in items {
@@ -165,6 +168,21 @@ fn build_client_hello(
                         supported_groups.push(g.0);
                     }
                 }
+                TlsExtension::Unknown(_, body) if id == 0xfe0d => {
+                    // ECH ClientHello outer (RFC draft §5.1):
+                    //   1B  ECHClientHelloType    (0=outer, 1=inner)
+                    //   1B  HPKE config_id
+                    //   2B  HPKE KDF id
+                    //   2B  HPKE AEAD id
+                    //   2B  enc.len + enc bytes
+                    //   2B  payload.len + payload bytes
+                    if let [ty, cid, _, ..] = **body
+                        && ty == 0
+                    {
+                        ech_present = true;
+                        ech_config_id = Some(cid);
+                    }
+                }
                 _ => {}
             }
         }
@@ -182,6 +200,9 @@ fn build_client_hello(
         supported_versions,
         supported_groups,
         extension_types,
+        ech_present,
+        ech_config_id,
+        sni_is_outer: ech_present,
     }
 }
 
@@ -234,6 +255,12 @@ fn build_server_hello(
         compression,
         alpn,
         supported_version,
+        // ECH retry_configs sit inside the encrypted
+        // EncryptedExtensions; the plaintext-only observer can't
+        // see them. Best-effort default `false` — consumers
+        // wanting fidelity pair with a server-side keyed
+        // implementation. Plan 144.
+        ech_retry_configs: false,
     }
 }
 

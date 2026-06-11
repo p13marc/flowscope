@@ -111,6 +111,9 @@ mod tests {
             supported_versions: vec![],
             supported_groups: vec![29, 23],
             extension_types: vec![0, 23, 65281],
+            ech_present: false,
+            ech_config_id: None,
+            sni_is_outer: false,
         };
         let (canonical, _hash) = ja3(&ch);
         assert!(canonical.starts_with("771,4865-4866,"), "got {canonical:?}");

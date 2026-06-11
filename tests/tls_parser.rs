@@ -91,6 +91,55 @@ fn client_hello_with_sni(host: &str) -> Vec<u8> {
     record(22, 0x0303, &hs)
 }
 
+fn client_hello_with_ech(host: &str, config_id: u8) -> Vec<u8> {
+    let mut body = Vec::new();
+    body.extend_from_slice(&0x0303u16.to_be_bytes());
+    body.extend_from_slice(&[0u8; 32]);
+    body.push(0);
+    body.extend_from_slice(&2u16.to_be_bytes());
+    body.extend_from_slice(&0x1301u16.to_be_bytes());
+    body.push(1);
+    body.push(0);
+
+    let mut exts = Vec::new();
+    // SNI (outer / cover)
+    let host_bytes = host.as_bytes();
+    let mut sni_data = Vec::new();
+    let server_name_list_len = (3 + host_bytes.len()) as u16;
+    sni_data.extend_from_slice(&server_name_list_len.to_be_bytes());
+    sni_data.push(0);
+    sni_data.extend_from_slice(&(host_bytes.len() as u16).to_be_bytes());
+    sni_data.extend_from_slice(host_bytes);
+    exts.extend_from_slice(&0u16.to_be_bytes());
+    exts.extend_from_slice(&(sni_data.len() as u16).to_be_bytes());
+    exts.extend_from_slice(&sni_data);
+
+    // ECH (extension type 0xfe0d, outer form).
+    // Body layout (RFC draft §5.1):
+    //   1B  ECHClientHelloType (0 = outer)
+    //   1B  HPKE config_id
+    //   2B  HPKE KDF
+    //   2B  HPKE AEAD
+    //   2B  enc.len + enc bytes (use 0 bytes for the smoke test)
+    //   2B  payload.len + payload bytes
+    let mut ech_body = Vec::new();
+    ech_body.push(0); // outer
+    ech_body.push(config_id);
+    ech_body.extend_from_slice(&0x0001u16.to_be_bytes()); // KDF
+    ech_body.extend_from_slice(&0x0001u16.to_be_bytes()); // AEAD
+    ech_body.extend_from_slice(&0u16.to_be_bytes()); // enc.len
+    ech_body.extend_from_slice(&0u16.to_be_bytes()); // payload.len
+    exts.extend_from_slice(&0xfe0du16.to_be_bytes());
+    exts.extend_from_slice(&(ech_body.len() as u16).to_be_bytes());
+    exts.extend_from_slice(&ech_body);
+
+    body.extend_from_slice(&(exts.len() as u16).to_be_bytes());
+    body.extend_from_slice(&exts);
+
+    let hs = handshake(1, &body);
+    record(22, 0x0303, &hs)
+}
+
 fn server_hello() -> Vec<u8> {
     let mut body = Vec::new();
     body.extend_from_slice(&0x0303u16.to_be_bytes());
@@ -119,6 +168,37 @@ fn feed_resp(parser: &mut TlsParser, captured: &mut Captured, bytes: &[u8]) {
     let mut out = Vec::new();
     parser.feed_responder(bytes, Timestamp::default(), &mut out);
     captured.ingest(out);
+}
+
+#[test]
+fn ech_extension_marks_present_and_captures_config_id() {
+    let mut parser = TlsParser::default();
+    let mut captured = Captured::default();
+    let bytes = client_hello_with_ech("cover.example.com", 7);
+    feed_init(&mut parser, &mut captured, &bytes);
+    assert_eq!(captured.client_hellos.len(), 1);
+    let ch = &captured.client_hellos[0];
+    assert!(ch.ech_present, "ECH extension should be detected");
+    assert_eq!(ch.ech_config_id, Some(7));
+    assert!(
+        ch.sni_is_outer,
+        "when ECH is present, the parsed SNI is the outer cover"
+    );
+    // SNI carries the outer cover (it's still the SNI extension
+    // bytes; passive observers can't see the inner SNI).
+    assert_eq!(ch.sni.as_deref(), Some("cover.example.com"));
+}
+
+#[test]
+fn non_ech_client_hello_leaves_fields_default() {
+    let mut parser = TlsParser::default();
+    let mut captured = Captured::default();
+    let bytes = client_hello_with_sni("example.com");
+    feed_init(&mut parser, &mut captured, &bytes);
+    let ch = &captured.client_hellos[0];
+    assert!(!ch.ech_present);
+    assert!(ch.ech_config_id.is_none());
+    assert!(!ch.sni_is_outer);
 }
 
 #[test]

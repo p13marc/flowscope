@@ -63,6 +63,37 @@ pub struct TlsHandshake {
     pub resumption_attempted: bool,
     /// Final outcome.
     pub outcome: HandshakeOutcome,
+
+    // ── ECH — plan 144, 0.12.0 ───────────────────────────
+    /// Aggregated ECH outcome derived from the client's
+    /// `ech_present` flag plus the server's
+    /// `ech_retry_configs` plaintext-fallback signal.
+    pub ech_outcome: EchOutcome,
+    /// HPKE `config_id` from the client's outer ECHClientHello,
+    /// when ECH was offered.
+    pub ech_config_id: Option<u8>,
+}
+
+/// Aggregate ECH outcome on a [`TlsHandshake`]. Plan 144, 0.12.0.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
+#[non_exhaustive]
+pub enum EchOutcome {
+    /// Client did not offer ECH.
+    NotOffered,
+    /// Client offered ECH and the server did not signal
+    /// rejection in observable plaintext. Most ECH-accepted
+    /// handshakes land here (EncryptedExtensions carries
+    /// retry_configs encrypted; we can't see them).
+    Accepted,
+    /// Client offered ECH; server's plaintext EE carries
+    /// retry_configs — explicit rejection on early handshake
+    /// errors.
+    Rejected,
+    /// Client offered ECH; outcome indeterminate (handshake
+    /// did not reach ServerHello / EncryptedExtensions).
+    Unknown,
 }
 
 impl Default for TlsHandshake {
@@ -77,6 +108,8 @@ impl Default for TlsHandshake {
             cipher_suite: None,
             resumption_attempted: false,
             outcome: HandshakeOutcome::Truncated,
+            ech_outcome: EchOutcome::NotOffered,
+            ech_config_id: None,
         }
     }
 }
@@ -137,6 +170,12 @@ impl TlsHandshakeParser {
                     // 41 = pre_shared_key, 35 = session_ticket
                     self.accumulator.resumption_attempted =
                         ch.extension_types.iter().any(|&e| e == 41 || e == 35);
+                    // Plan 144: capture ECH offer state from the
+                    // outer ClientHello.
+                    if ch.ech_present {
+                        self.accumulator.ech_outcome = EchOutcome::Unknown;
+                        self.accumulator.ech_config_id = ch.ech_config_id;
+                    }
                     self.state = State::AwaitingServerHello;
                 }
                 TlsMessage::ServerHello(sh) => {
@@ -145,6 +184,15 @@ impl TlsHandshakeParser {
                     self.accumulator.version =
                         Some(sh.supported_version.unwrap_or(sh.legacy_version));
                     self.accumulator.outcome = HandshakeOutcome::Completed;
+                    // Plan 144: derive ECH outcome from the
+                    // server's plaintext-observable signal.
+                    if matches!(self.accumulator.ech_outcome, EchOutcome::Unknown) {
+                        self.accumulator.ech_outcome = if sh.ech_retry_configs {
+                            EchOutcome::Rejected
+                        } else {
+                            EchOutcome::Accepted
+                        };
+                    }
                     let done = std::mem::take(&mut self.accumulator);
                     out.push(done);
                     self.state = State::Completed;

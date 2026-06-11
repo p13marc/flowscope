@@ -226,19 +226,14 @@ mod tls_client_hello {
     use flowscope::tls::{TlsClientHello, TlsVersion};
 
     fn fixture(sni: Option<&str>) -> TlsClientHello {
-        TlsClientHello {
-            record_version: TlsVersion::Tls1_0,
-            legacy_version: TlsVersion::Tls1_2,
-            random: [0; 32],
-            session_id: bytes::Bytes::new(),
-            cipher_suites: vec![],
-            compression: bytes::Bytes::from_static(&[0]),
-            sni: sni.map(str::to_string),
-            alpn: vec![],
-            supported_versions: vec![],
-            supported_groups: vec![],
-            extension_types: vec![],
-        }
+        // TlsClientHello is #[non_exhaustive] since 0.12 plan 144 —
+        // construct via Default + mutate (the documented pattern).
+        let mut hello = TlsClientHello::default();
+        hello.record_version = TlsVersion::Tls1_0;
+        hello.legacy_version = TlsVersion::Tls1_2;
+        hello.compression = bytes::Bytes::from_static(&[0]);
+        hello.sni = sni.map(str::to_string);
+        hello
     }
 
     #[test]

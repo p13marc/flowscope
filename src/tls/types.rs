@@ -1,8 +1,9 @@
 use bytes::Bytes;
 
 /// Parsed TLS ClientHello — what the client offered to the server.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[non_exhaustive]
 pub struct TlsClientHello {
     /// Record-layer protocol version (the version on the outer
     /// record, often `Tls1_0` for TLS 1.3 ClientHellos for
@@ -31,6 +32,23 @@ pub struct TlsClientHello {
     /// Extension types in the order they appeared. Useful for
     /// fingerprinting (JA3, JA4).
     pub extension_types: Vec<u16>,
+
+    // ── ECH (Encrypted Client Hello) — plan 144, 0.12.0 ───
+    /// `true` if the ClientHello carried the
+    /// `encrypted_client_hello` extension (RFC type 0xfe0d,
+    /// `draft-ietf-tls-esni`). Outer-form only — inner is
+    /// encrypted and not observable passively.
+    pub ech_present: bool,
+    /// HPKE `config_id` byte from the outer `ECHClientHello`
+    /// struct, when ECH is present. Useful for clustering
+    /// clients by ECH config rotation.
+    pub ech_config_id: Option<u8>,
+    /// When `ech_present == true`, the [`Self::sni`] above is
+    /// the outer (public cover) domain — **not** the real
+    /// target. The inner SNI is encrypted under the ECH
+    /// ciphertext and cannot be extracted without the ECH
+    /// private key. Default `false`.
+    pub sni_is_outer: bool,
 }
 
 impl TlsClientHello {
@@ -45,8 +63,9 @@ impl TlsClientHello {
 }
 
 /// Parsed TLS ServerHello.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[non_exhaustive]
 pub struct TlsServerHello {
     pub record_version: TlsVersion,
     pub legacy_version: TlsVersion,
@@ -61,6 +80,15 @@ pub struct TlsServerHello {
     /// `supported_versions` extension — present in TLS 1.3 to
     /// signal the actual negotiated version.
     pub supported_version: Option<TlsVersion>,
+
+    // ── ECH — plan 144, 0.12.0 ───────────────────────────
+    /// Best-effort signal that the server returned
+    /// `retry_configs` in EncryptedExtensions (ECH rejection).
+    /// Encrypted-EE retry-configs are not passively observable
+    /// without ECH keys; this field captures only the plaintext
+    /// fallback path on early handshake errors. Default
+    /// `false`. New in 0.12.0.
+    pub ech_retry_configs: bool,
 }
 
 /// TLS Alert record (RFC 5246 §7.2).
@@ -96,6 +124,12 @@ pub enum TlsVersion {
     Tls1_2,
     Tls1_3,
     Other(u16),
+}
+
+impl Default for TlsVersion {
+    fn default() -> Self {
+        TlsVersion::Tls1_3
+    }
 }
 
 impl TlsVersion {

@@ -192,6 +192,9 @@ mod tests {
             supported_versions: vec![TlsVersion::Tls1_2, TlsVersion::Tls1_3],
             supported_groups: vec![],
             extension_types: vec![0, 16, 43, 45],
+            ech_present: false,
+            ech_config_id: None,
+            sni_is_outer: false,
         }
     }
 
