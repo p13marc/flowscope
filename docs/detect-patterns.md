@@ -173,6 +173,89 @@ composite scoring:
   rightmost" heuristic; for strict eTLD+1 handling pair with
   the `publicsuffix` crate.
 
+## Emitting detector output via `OwnedAnomaly` (0.13)
+
+Every shipped detector's score implements
+[`flowscope::DetectorScore`] and has an inherent
+`into_anomaly(ts: Timestamp) -> OwnedAnomaly` method that
+converts it to the canonical [`flowscope::OwnedAnomaly`] shape:
+
+- **`ScanScore<K>`** → `"PortScanTRW"` slug; verdict
+  observation + `log_likelihood` + `n_observed` metrics;
+  severity follows verdict (`Scanner` → `Warning`,
+  `Benign`/`Inconclusive` → `Info`).
+- **`BeaconScore<K>`** → `"BeaconCv"` slug; `score` + `cv_dt`
+  + `cv_bytes` + `mean_interval_secs` + `n` metrics; severity
+  `Warning` (beacon only emits when it has a hit).
+- **`DgaScore`** → `"DgaScorer"` slug; six feature metrics
+  (`log_likelihood`, `length`, `vowel_ratio`, `digit_ratio`,
+  `max_consonant_run`, `char_entropy`); severity `Info`
+  (consumer thresholds on `log_likelihood` to escalate).
+
+DGA is keyless on the detector side but consumers usually have
+the DNS-query flow context — the inherent method takes
+`Option<&dyn KeyFields>` for the flow key. The `DetectorScore`
+trait impl is the keyless convenience (`into_anomaly(ts)`
+delegates to `into_anomaly(ts, None)`).
+
+End-to-end emit example:
+
+```rust,ignore
+use flowscope::detect::patterns::PortScanDetector;
+use flowscope::emit::EveJsonWriter;
+use flowscope::extract::FiveTupleKey;
+
+let mut port_scan: PortScanDetector<FiveTupleKey> =
+    PortScanDetector::new();
+let mut eve = EveJsonWriter::new(std::io::stdout());
+
+for (key, success) in connection_outcomes {
+    let score = port_scan.observe(key, success);
+    eve.write_owned_anomaly(&score.into_anomaly(ts))?;
+}
+```
+
+For generic-over-detector routing, write the function bound
+on `DetectorScore`:
+
+```rust,ignore
+use flowscope::{DetectorScore, Timestamp};
+use flowscope::emit::EveJsonWriter;
+use std::io::Write;
+
+fn emit<S: DetectorScore, W: Write>(
+    eve: &mut EveJsonWriter<W>,
+    score: S,
+    ts: Timestamp,
+) -> std::io::Result<()> {
+    eve.write_owned_anomaly(&score.into_anomaly(ts))
+}
+```
+
+For custom detectors, implement `DetectorScore` on your score
+type and you get the same uniform emit path:
+
+```rust,ignore
+use flowscope::{DetectorScore, OwnedAnomaly, Timestamp};
+use flowscope::event::Severity;
+
+struct MyScore { hits: u32, max_burst: u32 }
+
+impl DetectorScore for MyScore {
+    fn name(&self) -> &'static str { "MyCustomDetector" }
+    fn into_anomaly(self, ts: Timestamp) -> OwnedAnomaly {
+        OwnedAnomaly::new("MyCustomDetector", Severity::Warning, ts)
+            .with_metric("hits", self.hits as f64)
+            .with_metric("max_burst", self.max_burst as f64)
+    }
+}
+```
+
+See [`docs/eve-format.md`](eve-format.md) §"Custom anomaly
+emission via `OwnedAnomaly` (0.13)" for the EVE schema mapping
+and [`docs/recipes.md`](recipes.md) §"0.13 patterns" for the
+end-to-end recipe.
+
 ## Examples
 
 - `examples/03-detection/c2_beacon_finder.rs` — replay a pcap,

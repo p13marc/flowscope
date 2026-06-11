@@ -175,10 +175,129 @@ via `EveOptions::include_stats = true`:
 }
 ```
 
+## Custom anomaly emission via `OwnedAnomaly` (0.13)
+
+The 0.12 path emits `event_type: "anomaly"` from a typed
+[`FlowEvent::FlowAnomaly`] / `TrackerAnomaly` — the `anomaly.type`
+and `anomaly.event` fields come from the typed `AnomalyKind`
+variant's classification.
+
+The 0.13 path emits the same `event_type: "anomaly"` shape from
+a [`flowscope::OwnedAnomaly`] — a canonical owned detector-
+output value that carries:
+
+- `kind: Cow<'static, str>` — detector slug, becomes
+  `anomaly.event`.
+- `severity: Severity` — same severity tier as the typed path.
+- `ts: Timestamp` — event time, becomes `timestamp`.
+- 5-tuple flattened fields (`src_ip` / `src_port` /
+  `dest_ip` / `dest_port` / `proto`) — each omitted if `None`.
+- `observations: SmallVec<[(label, value); 4]>` — labels are
+  `&'static str` (compile-time constants); values are
+  `Cow<'static, str>`. Becomes the **`anomaly.labels`**
+  nested object.
+- `metrics: SmallVec<[(label, f64); 4]>` — labels are
+  `&'static str`; values are `f64`. Becomes the
+  **`anomaly.metrics`** nested object.
+- `flowscope_kind: Option<AnomalyKind>` — set when bridging a
+  flowscope-internal event into the owned shape (via
+  `OwnedAnomaly::from_flow_anomaly`); informs the
+  `anomaly.type` value when present.
+
+### When to use which path
+
+| You want to emit … | Use … |
+|---|---|
+| A flowscope-internal tracker anomaly (`BufferOverflow`, `OutOfOrderSegment`, …) | `EveJsonWriter::write_event(&FlowEvent::FlowAnomaly { … })` — same as 0.12 |
+| A detector output (`PortScanTRW`, `BeaconCv`, `DgaScorer`, custom) | `EveJsonWriter::write_owned_anomaly(&owned)` |
+| Both, through one routing function | `write_owned_anomaly`, bridging tracker anomalies via `OwnedAnomaly::from_flow_anomaly` |
+
+### Shape
+
+```json
+{
+  "timestamp": "2026-06-11T12:34:56.789012345Z",
+  "flow_id": 21,
+  "event_type": "anomaly",
+  "src_ip": "10.0.0.1", "src_port": 33000,
+  "dest_ip": "10.0.0.2", "dest_port": 80,
+  "proto": "TCP",
+  "anomaly": {
+    "type": "applayer",
+    "event": "PortScanTRW",
+    "code": 0,
+    "labels":  { "verdict": "scanner" },
+    "metrics": { "log_likelihood": 4.158, "n_observed": 4 }
+  },
+  "severity": 3
+}
+```
+
+- `anomaly.type` ← `EveOptions::custom_anomaly_type`
+  (default `"applayer"`; Suricata-compatible values:
+  `"stream"`, `"applayer"`, `"decode"`; schema-permissive).
+  When `flowscope_kind.is_some()`, the typed kind's
+  classification takes precedence (so bridged tracker
+  anomalies get `"stream"` etc. as before).
+- `anomaly.event` ← `OwnedAnomaly::kind` slug.
+- `anomaly.labels` / `anomaly.metrics` — both omitted when
+  the corresponding SmallVec is empty.
+
+### Wiring detector output
+
+Every shipped detector's score implements `flowscope::DetectorScore`
++ has an inherent `into_anomaly(ts) -> OwnedAnomaly`. Typical
+end-to-end shape:
+
+```rust,ignore
+use flowscope::{DetectorScore, OwnedAnomaly};
+use flowscope::detect::patterns::PortScanDetector;
+use flowscope::extract::FiveTupleKey;
+
+let mut port_scan: PortScanDetector<FiveTupleKey> =
+    PortScanDetector::new();
+let score = port_scan.observe(key, success);
+// score: ScanScore<FiveTupleKey>
+eve.write_owned_anomaly(&score.into_anomaly(ts))?;
+```
+
+### Custom detectors
+
+Implement `DetectorScore` on your score type to route through
+the same EVE path uniformly:
+
+```rust,ignore
+use flowscope::{DetectorScore, OwnedAnomaly, Timestamp};
+use flowscope::event::Severity;
+
+struct MyScore { hits: u32 }
+
+impl DetectorScore for MyScore {
+    fn name(&self) -> &'static str { "MyCustomDetector" }
+    fn into_anomaly(self, ts: Timestamp) -> OwnedAnomaly {
+        OwnedAnomaly::new("MyCustomDetector", Severity::Warning, ts)
+            .with_metric("hits", self.hits as f64)
+    }
+}
+```
+
+### `EveOptions::custom_anomaly_type`
+
+New field on `EveOptions` (0.13). Sets the `anomaly.type` value
+for `write_owned_anomaly` calls when the anomaly has no
+`flowscope_kind`:
+
+```rust,ignore
+let mut options = EveOptions::default();
+options.custom_anomaly_type = "applayer";  // default
+let mut eve = EveJsonWriter::with_options(sink, options);
+```
+
 ## What's NOT emitted
 
 - Per-message records (`event_type: "http"` / `"dns"` /
-  `"tls"`). Out of scope for 0.12 — file an issue if needed.
+  `"tls"`). Out of scope for the 0.12-0.13 cycle — file an
+  issue if needed.
 - Alerts (`event_type: "alert"`). flowscope does not run
   Suricata rules; rule alerts come from Suricata.
 - Field ordering. `serde_json::Map` uses insertion-order
@@ -188,9 +307,9 @@ via `EveOptions::include_stats = true`:
 ## Schema version
 
 This document targets Suricata 7.x EVE. The exact mapping is
-locked for the 0.12 cycle; field additions will be additive.
-For ECS-strict pipelines, pipe through Logstash with the
-ECS-Suricata conversion module.
+locked through the 0.13 cycle; field additions will be
+additive. For ECS-strict pipelines, pipe through Logstash with
+the ECS-Suricata conversion module.
 
 ## Custom keys
 

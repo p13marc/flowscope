@@ -55,9 +55,39 @@ Protocol parsers + analysis modules (each behind its own feature):
 Plus always-on modules that don't need a feature flag:
 
 - **`flowscope::driver`** — typed `Driver<E>` with per-parser
-  `SlotHandle<M, K>` drain handles. **`Send + Sync` since 0.12**
-  — drain from a tokio task on a separate thread while the
-  driver runs on a dedicated capture thread.
+  `SlotHandle<M, K>` drain handles. The handle has been
+  `Send + Sync` since 0.12; **the whole `Driver<E>` is
+  `Send + Sync` since 0.13** — `tokio::spawn(driver_task)` on
+  the default multi-thread runtime just works. The 0.12
+  CHANGELOG claimed `Driver<E>` was `!Send` because of
+  `Rc<RefCell>` interior mutability; that was incorrect, the
+  real `!Send` source was a missing `+ Send` bound on the
+  internal slot trait object. Fixed structurally in 0.13 — no
+  `unsafe`, no opt-in knob, no runtime overhead.
+- **`flowscope::driver::BroadcastSlotHandle<M, K>`** (0.13) —
+  fan-out sibling of `SlotHandle`. `Clone` produces a fresh
+  subscriber that sees **every** message (not a competitive
+  consumer). Register via
+  `DriverBuilder::session_on_ports_broadcast_each`. Backed by
+  `Arc<BroadcastInner>` with a `Mutex<Vec<Weak<SegQueue<…>>>>`
+  subscriber list; dead subscribers prune lazily on push. Use
+  when multiple downstream consumers each need their own copy
+  of every message (logger + metrics + sink).
+- **`flowscope::OwnedAnomaly` + `flowscope::DetectorScore`** (0.13) —
+  canonical owned detector-output value (`kind` slug +
+  `Severity` + `Timestamp` + flattened 5-tuple + `SmallVec`-
+  backed observations + metrics) plus a small output-side
+  trait every shipped detector score (`ScanScore<K>`,
+  `BeaconScore<K>`, `DgaScore`) implements. Uniform routing
+  through `EveJsonWriter::write_owned_anomaly` (Suricata EVE
+  with `anomaly.labels` + `anomaly.metrics` shapes) and
+  `FlowEventNdjsonWriter::write_owned_anomaly`. New
+  `EveOptions::custom_anomaly_type` field (default
+  `"applayer"`) for non-bridged emissions.
+- **`flowscope::correlate::FlowStateMap<T, K>`** (0.13) —
+  per-flow typed state. Auto-evicts on `FlowEvent::Ended`;
+  TTL sweep. Defaults `K` to `FiveTupleKey`. Layered over
+  `KeyIndexed<K, T>`.
 - **`flowscope::KeyFields` + `flowscope::AnomalyFields`** (0.12) —
   structured key (`src_ip` / `dest_port` / `proto_str` / …) and
   anomaly classification (`anomaly_type` / `anomaly_event`)
@@ -103,14 +133,14 @@ Plus always-on modules that don't need a feature flag:
 
 ```toml
 [dependencies]
-flowscope = { version = "0.12", features = ["full"] }
+flowscope = { version = "0.13", features = ["full"] }
 ```
 
 MSRV is Rust 1.88.
 
 One builder chain, one typed slot handle per protocol. The
-`Driver<E>` shape introduced in 0.11 + slot handles that are
-`Send + Sync` since 0.12:
+`Driver<E>` shape introduced in 0.11; the whole driver +
+slot handles are `Send + Sync` since 0.13:
 
 ```rust,no_run
 use flowscope::driver::{Driver, Event, SlotMessage};
@@ -210,11 +240,58 @@ while let Some(evt) = s.next().await { /* ... */ }
 
 ## Status
 
+0.13.0 — netring-0.21 adoption cycle: fully `Send + Sync`
+driver + canonical anomaly value type + broadcast delivery +
+bounded back-pressure + per-flow typed state.
+
+Headlines (0.13):
+
+- **`Driver<E>: Send + Sync` unconditionally** (plan 156).
+  `tokio::spawn(driver_task)` on the default multi-thread
+  runtime just works. The 0.12 CHANGELOG misattributed the
+  `!Send` source to `Rc<RefCell>` interior mutability; the
+  real cause was a missing `+ Send` bound on a trait object.
+  Fixed structurally — no `unsafe`, no opt-in knob, no
+  runtime overhead. See `docs/migration-0.12-to-0.13.md`.
+- **`flowscope::OwnedAnomaly` + `DetectorScore` trait** (plan 147).
+  Canonical owned detector-output value with
+  `SmallVec<[..; 4]>`-backed observations + metrics (zero-
+  alloc typical case). Every shipped detector score
+  (`ScanScore<K>` / `BeaconScore<K>` / `DgaScore`) gets an
+  `into_anomaly(ts)` method + `DetectorScore` impl. Routes
+  through `EveJsonWriter::write_owned_anomaly` (with
+  `anomaly.labels` + `anomaly.metrics` sub-objects) +
+  `FlowEventNdjsonWriter::write_owned_anomaly`.
+- **`BroadcastSlotHandle<M, K>`** (plan 150) — fan-out
+  sibling of `SlotHandle`. Each `Clone` is a separate
+  subscriber that sees every message (vs the competitive-
+  consumer MPMC semantics of `SlotHandle::clone`). Register
+  via `DriverBuilder::session_on_ports_broadcast_each`.
+- **`SlotHandle::drain_n(out, max) -> usize`** (plan 149) —
+  bounded back-pressure for shard run-loops. `max = 0`
+  is a no-op; `max = usize::MAX` is identical to `drain`.
+- **`PcapFlowSource::with_speed_factor(f64)`** (plan 152) —
+  time-realistic pcap replay. `1.0` = original timing;
+  `f64::INFINITY` = unpaced (default). Tokio caveat
+  documented (uses `std::thread::sleep`).
+- **`flowscope::correlate::FlowStateMap<T, K>`** (plan 154) —
+  per-flow typed state with auto-evict on `FlowEvent::Ended`
+  + TTL sweep. Plus `KeyIndexed::get_mut`. Plus a fix:
+  `KeyIndexed::new_unbounded` now uses
+  `lru::LruCache::unbounded()` instead of `new(usize::MAX)`
+  (the latter caused a hashbrown overflow — a 0.12
+  regression caught while implementing plan 154).
+- **`flowscope::test_helpers::events`** (plan 153) —
+  synthetic `FlowEvent` + `driver::Event` constructors.
+- **Sharded-driver example + recipe** (plan 155) —
+  `examples/00-getting-started/sharded_capture.rs` +
+  [`docs/sharded.md`](docs/sharded.md).
+
 0.12.0 — Cross-thread + structured-output + pre-1.0 debt
 retirement + named-detector / TLS-modernisation / DFIR-sinks
 cycle.
 
-Headlines:
+Headlines (0.12):
 
 - **`SlotHandle<M, K>` is `Send + Sync`** — pre-1.0 break.
   Backing storage moved from `Rc<RefCell<Vec<…>>>` to
@@ -273,9 +350,11 @@ Core flow APIs (`FlowExtractor`, `FlowTracker`, `Reassembler`,
 `SessionParser`, `DatagramParser`) are settled; public structs
 and enums are `#[non_exhaustive]` so future variants and fields
 are additive. See [`CHANGELOG.md`](CHANGELOG.md) for the
-release history and
+release history,
+[`docs/migration-0.12-to-0.13.md`](docs/migration-0.12-to-0.13.md)
+for the 0.12 → 0.13 cheat sheet, and
 [`docs/migration-0.11-to-0.12.md`](docs/migration-0.11-to-0.12.md)
-for the 0.11 → 0.12 cheat sheet.
+for the prior cycle.
 
 See [`docs/getting-started.md`](docs/getting-started.md) for a
 hello-world,

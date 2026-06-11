@@ -924,6 +924,200 @@ For the full set of migration recipes from prior versions, see:
   — parser API break + `Driver<E>` introduction.
 - [`docs/migration-0.11-to-0.12.md`](migration-0.11-to-0.12.md)
   — `SlotHandle: Send + Sync` and the new opt-in features.
+- [`docs/migration-0.12-to-0.13.md`](migration-0.12-to-0.13.md)
+  — `Driver<E>: Send + Sync`, `OwnedAnomaly` + `DetectorScore`,
+  `BroadcastSlotHandle`, `drain_n`, `FlowStateMap`.
+
+## 0.13 patterns
+
+### Emitting detector-shaped anomalies via `OwnedAnomaly`
+
+Every shipped detector's score (`ScanScore<K>`, `BeaconScore<K>`,
+`DgaScore`) has an `into_anomaly(ts) -> OwnedAnomaly` method.
+Route through `EveJsonWriter::write_owned_anomaly` or
+`FlowEventNdjsonWriter::write_owned_anomaly` for a uniform emit
+shape across detector types:
+
+```rust,ignore
+use std::fs::File;
+use std::io::BufWriter;
+use flowscope::detect::patterns::PortScanDetector;
+use flowscope::emit::EveJsonWriter;
+use flowscope::extract::FiveTupleKey;
+use flowscope::Timestamp;
+
+let mut port_scan: PortScanDetector<FiveTupleKey> = PortScanDetector::new();
+let mut eve = EveJsonWriter::new(BufWriter::new(File::create("eve.json")?));
+
+let score = port_scan.observe(flow_key, success);
+eve.write_owned_anomaly(&score.into_anomaly(ts))?;
+```
+
+For generic-over-detector routing, write the function bound on
+the `DetectorScore` trait — every detector's score implements it:
+
+```rust,ignore
+use flowscope::{DetectorScore, Timestamp};
+use flowscope::emit::EveJsonWriter;
+use std::io::Write;
+
+fn emit<S: DetectorScore, W: Write>(
+    eve: &mut EveJsonWriter<W>,
+    score: S,
+    ts: Timestamp,
+) -> std::io::Result<()> {
+    eve.write_owned_anomaly(&score.into_anomaly(ts))
+}
+```
+
+To bridge a flowscope-internal `FlowEvent::FlowAnomaly` into the
+owned shape (so a single routing function handles both detector
+output and tracker anomalies):
+
+```rust,ignore
+use flowscope::{FlowEvent, OwnedAnomaly};
+if let FlowEvent::FlowAnomaly { key, kind, ts } = event {
+    eve.write_owned_anomaly(
+        &OwnedAnomaly::from_flow_anomaly(&key, kind, ts)
+    )?;
+}
+```
+
+See [`docs/eve-format.md`](eve-format.md) §"Custom anomaly
+emission via `OwnedAnomaly` (0.13)" for the EVE schema details.
+
+### Fan-out to multiple consumers via `BroadcastSlotHandle`
+
+`SlotHandle::clone` is **competitive consumer** semantics
+(MPMC — each message goes to exactly one drainer). When you
+want **broadcast** semantics (each consumer sees every message),
+register through the broadcast variant:
+
+```rust,ignore
+use flowscope::driver::{Driver, BroadcastSlotHandle};
+use flowscope::extract::{FiveTuple, FiveTupleKey};
+use flowscope::http::{HttpMessage, HttpParser};
+
+let mut builder = Driver::builder(FiveTuple::bidirectional());
+let mut http_logger: BroadcastSlotHandle<HttpMessage, FiveTupleKey> =
+    builder.session_on_ports_broadcast_each(HttpParser::default(), [80, 8080]);
+let mut http_metrics = http_logger.clone();
+let mut http_alerter = http_logger.clone();
+let mut driver = builder.build();
+
+// In the event loop, drain each subscriber independently:
+let mut log_buf = Vec::new();
+let mut metric_buf = Vec::new();
+let mut alert_buf = Vec::new();
+http_logger.drain(&mut log_buf);
+http_metrics.drain(&mut metric_buf);
+http_alerter.drain(&mut alert_buf);
+// log_buf, metric_buf, alert_buf each see every HTTP message.
+```
+
+Trade-off vs the MPMC `SlotHandle`:
+
+| Aspect             | `SlotHandle`        | `BroadcastSlotHandle` |
+|--------------------|---------------------|-----------------------|
+| Clone semantics    | Competitive consumer (MPMC) | Broadcast (each clone sees every message) |
+| Per-push cost      | O(1) atomic         | O(subscribers) clones + pushes |
+| `M` bound          | `Send`              | `Send + Clone` |
+| Memory per subscriber | Shares one queue | One private queue each |
+
+For 0.13, the broadcast variant exists for `session_on_ports`
+only. Datagram + heuristic broadcast variants defer to 0.14
+if a consumer asks.
+
+### Bounded back-pressure via `SlotHandle::drain_n`
+
+When shards / async tasks drain slot handles, an unbounded
+`drain` call can monopolise a CPU if one slot has thousands of
+pending messages. `drain_n(out, max)` caps per-call drain
+volume:
+
+```rust,ignore
+let mut messages = Vec::with_capacity(64);
+loop {
+    let drained = http_slot.drain_n(&mut messages, 64);
+    if drained == 0 { break; }
+    for msg in messages.drain(..) {
+        // forward to a channel, write to disk, …
+    }
+}
+```
+
+`max = 0` is a valid no-op; `max = usize::MAX` is equivalent to
+`drain()`. The shipped sharded-driver example
+(`examples/00-getting-started/sharded_capture.rs`) uses
+`drain_n(out, 64)` as the canonical pattern.
+
+### Per-flow typed state via `FlowStateMap`
+
+For per-flow side-channel state (custom counters, decoder
+context, etc.), use `FlowStateMap<T, K>`. It auto-evicts on
+`FlowEvent::Ended` and supports TTL sweep:
+
+```rust,ignore
+use std::time::Duration;
+use flowscope::correlate::FlowStateMap;
+use flowscope::driver::Event;
+
+#[derive(Default)]
+struct PerFlow {
+    packets: u64,
+    bytes: u64,
+}
+
+let mut state: FlowStateMap<PerFlow> = FlowStateMap::new(Duration::from_secs(60));
+
+for event in driver_events {
+    // Drive lifecycle: evict on Ended, refresh last-seen on others.
+    state.feed(&event);
+
+    if let Event::FlowPacket { key, len, ts, .. } = event {
+        let entry = state.get_or_default(&key, ts);
+        entry.packets += 1;
+        entry.bytes += len as u64;
+    }
+}
+
+// Periodic sweep (driven by your tick handler):
+state.sweep(current_packet_ts);
+```
+
+Defaults `K` to `FiveTupleKey`. Layered over `KeyIndexed<K, T>`,
+so the underlying TTL + LRU machinery is shared with
+`flowscope::correlate`.
+
+### Cross-thread `Driver<E>` via `tokio::spawn` (0.13)
+
+Now that `Driver<E>: Send + Sync` (0.13), the default tokio
+multi-thread runtime just works:
+
+```rust,ignore
+#[tokio::main]  // multi-thread default
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let mut builder = flowscope::driver::Driver::builder(
+        flowscope::extract::FiveTuple::bidirectional());
+    let mut http_slot = builder.session_on_ports(
+        flowscope::http::HttpParser::default(), [80, 8080]);
+    let mut driver = builder.build();
+
+    let handle = tokio::spawn(async move {
+        // Driver runs on whatever worker thread the executor picks.
+        for view in source { driver.track_into(view, &mut events); }
+    });
+    handle.await?;
+    Ok(())
+}
+```
+
+Before 0.13, this required `#[tokio::main(flavor = "current_thread")]`
+or `tokio::task::LocalSet::run_until` because the driver was
+incorrectly classified as `!Send`. The 0.13 cycle's plan 156 fixed
+this structurally — no `unsafe`, no opt-in knob, no runtime
+overhead. See [`docs/migration-0.12-to-0.13.md`](migration-0.12-to-0.13.md)
+§1 for the full story.
 
 ## Re-exporting flowscope types
 

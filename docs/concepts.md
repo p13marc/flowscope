@@ -22,8 +22,9 @@ gives you out of the box:
 │  One builder, one typed `SlotHandle<M, K>` per parser,      │
 │  zero-allocation `track_into` + `drain` per packet.         │
 │  90 % of users; offline + simple online pipelines.          │
-│  Slot handles are `Send + Sync` (0.12) for cross-thread     │
-│  drain.                                                     │
+│  Slot handles are `Send + Sync` (0.12); the whole driver is │
+│  `Send + Sync` (0.13) — `tokio::spawn(driver_task)` on the  │
+│  default multi-thread runtime just works.                   │
 │  `Driver::builder(ext).session_on_ports(p, [80]).build()`   │
 └─────────────────────────────────────────────────────────────┘
 ┌─ Tier 2 — raw `FlowSessionDriver` / `FlowDatagramDriver` ───┐

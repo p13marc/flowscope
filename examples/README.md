@@ -29,6 +29,7 @@ the categories sort logically in `ls`.
 | **`inspect_packet`** | `pcap,extractors` | Dump a layered view of every packet: L2 / L3 / L4 / tunnel headers via the dynamic walk on `flowscope::layers`. |
 | **`unified_driver_demo`** | `pcap,http,dns` | Plan-121 typed `Driver<E>` showcase — port-routed HTTP + DNS slots plus a signature-based heuristic catch-all. Drain each parser slot independently. |
 | **`sharded_capture`** | `pcap,http` | N-thread sharded driver pattern with cross-shard aggregation via `AtomicU64` counters (0.13, plan 155). Built on `Driver<E>: Send + Sync` — each shard owns its own dispatcher. See [`docs/sharded.md`](../docs/sharded.md) for the recipe. |
+| **`broadcast_subscribers`** | `pcap,http` | `BroadcastSlotHandle` fan-out delivery (0.13, plan 150) — one HTTP parser, three subscribers (logger / metrics / alerter), each sees every message. Contrast with `SlotHandle::clone`'s competitive-consumer semantics. |
 
 ## 01 — L7 message logging
 

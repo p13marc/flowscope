@@ -19,7 +19,7 @@ After each, the right doc to read next is called out.
 
 ```toml
 [dependencies]
-flowscope = "0.12"
+flowscope = "0.13"
 ```
 
 MSRV is Rust 1.88 (June 2025).
@@ -29,7 +29,7 @@ The default features cover the core stack (`extractors`,
 and observability piecemeal:
 
 ```toml
-flowscope = { version = "0.12", features = ["l7", "pcap", "metrics", "tracing", "emit-eve"] }
+flowscope = { version = "0.13", features = ["l7", "pcap", "metrics", "tracing", "emit-eve"] }
 ```
 
 | Feature | What it adds |
@@ -91,8 +91,12 @@ Build with `cargo run --features http,pcap`.
 `SlotHandle<P::Message, E::Key>`. Each registration returns a
 fresh handle — register HTTP on 80/8080, TLS on 443, DNS on 53;
 drain each independently per packet. The handle is `Send + Sync`
-(0.12); move it to a tokio task or share via `Arc` if you want
-cross-thread drain.
+(0.12) and the whole `Driver<E>` is `Send + Sync` since 0.13 —
+`tokio::spawn(driver_task)` on the default multi-thread runtime
+just works. For broadcast delivery (every clone sees every
+message, not competitive-consumer), register through
+`session_on_ports_broadcast_each` and use `BroadcastSlotHandle`
+(0.13).
 
 For per-flow user state on the central tracker, drop to
 `FlowDriver`. For raw sync session/datagram primitives, see
