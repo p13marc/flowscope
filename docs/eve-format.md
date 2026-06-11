@@ -27,9 +27,13 @@ eve.finish()?; // flush + recover the sink
 ```
 
 `EveJsonWriter::write_event` accepts any `FlowEvent<K>` whose
-`K` implements `flowscope::AnomalyFields`. `FiveTupleKey`,
-`L4Proto`, and `AnomalyKind` impls ship out of the box;
-custom keys opt in by implementing the trait.
+`K` implements `flowscope::KeyFields` (5-tuple accessors). The
+shipped impls — `FiveTupleKey` and `L4Proto` (`KeyFields`),
+`AnomalyKind` (`AnomalyFields`) — cover the canonical case;
+custom keys opt in by implementing `KeyFields`. (The
+`KeyFields` / `AnomalyFields` split happened in 0.12 plan 130
+— pre-split, both kinds of accessors lived on a single
+`AnomalyFields` trait.)
 
 ## Event types
 
@@ -57,9 +61,9 @@ Every emitted record carries:
 | `flow_id`    | u64                   | monotonic counter on the writer (one writer = one stream)             |
 | `event_type` | string                | `"flow"` / `"anomaly"` / `"stats"`                                    |
 | `in_iface`   | string (optional)     | `EveOptions::in_iface`; field is omitted when the option is empty     |
-| `src_ip` / `src_port` / `dest_ip` / `dest_port` | string / u16 | `AnomalyFields` accessors on the key (each field omitted if `None`) |
-| `proto`      | string (optional)     | `AnomalyFields::proto_str` — uppercase EVE convention                 |
-| `app_proto`  | string (optional)     | `AnomalyFields::app_proto_str` — well-known port label                |
+| `src_ip` / `src_port` / `dest_ip` / `dest_port` | string / u16 | `KeyFields` accessors on the key (each field omitted if `None`) |
+| `proto`      | string (optional)     | `KeyFields::proto_str` — uppercase EVE convention                 |
+| `app_proto`  | string (optional)     | `KeyFields::app_proto_str` — well-known port label                |
 | `flow_hash`  | string (16-char hex)  | FNV-1a over `(proto, sorted endpoints)` — direction-invariant         |
 
 `flow_hash` is omitted if `proto_str` or any of the four
@@ -191,15 +195,15 @@ ECS-Suricata conversion module.
 ## Custom keys
 
 `FiveTupleKey` ships an impl. To use your own key type,
-implement `flowscope::AnomalyFields`:
+implement `flowscope::KeyFields`:
 
 ```rust
 use std::net::IpAddr;
-use flowscope::AnomalyFields;
+use flowscope::KeyFields;
 
 struct MyKey { src: IpAddr, dst: IpAddr, sport: u16, dport: u16 }
 
-impl AnomalyFields for MyKey {
+impl KeyFields for MyKey {
     fn src_ip(&self) -> Option<IpAddr> { Some(self.src) }
     fn src_port(&self) -> Option<u16> { Some(self.sport) }
     fn dest_ip(&self) -> Option<IpAddr> { Some(self.dst) }
@@ -208,4 +212,5 @@ impl AnomalyFields for MyKey {
 }
 ```
 
-`AnomalyFields` is in scope through `flowscope::prelude::*`.
+`KeyFields` and `AnomalyFields` are both in scope through
+`flowscope::prelude::*`.

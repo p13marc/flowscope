@@ -46,8 +46,8 @@ the categories sort logically in `ls`.
 
 | Example | Features | What it shows |
 |---|---|---|
-| **`extract_iocs`** | `pcap,http,tls,ja3,ja4,dns,extractors` | Dedup'd list of hostnames (SNI + HTTP Host + DNS qnames), IPs, JA3/JA4 fingerprints, user-agents — the starting point for IR enrichment. |
-| **`tls_inventory`** | `tls,ja3,ja4,pcap` | Aggregated TLS handshake catalog via `TlsHandshakeParser` — outcomes, top SNIs, top JA3/JA4. |
+| **`extract_iocs`** | `pcap,http,tls,tls-fingerprints,dns,extractors` | Dedup'd list of hostnames (SNI + HTTP Host + DNS qnames), IPs, JA3/JA4 fingerprints, user-agents — the starting point for IR enrichment. |
+| **`tls_inventory`** | `tls,tls-fingerprints,pcap` | Aggregated TLS handshake catalog via `TlsHandshakeParser` — outcomes, top SNIs, top JA3/JA4. |
 
 ## 03 — security / detection
 
@@ -111,7 +111,7 @@ the categories sort logically in `ls`.
 
 | Example | Features | What it shows |
 |---|---|---|
-| **`multi_parser_pipeline`** | `pcap,extractors,reassembler,session` | `FlowMultiSessionDriver` composite driver — port-routed + broadcast parsers with a user sum type. |
+| **`multi_parser_pipeline`** | `pcap,extractors,reassembler,session` | Multiple session parsers under one `Driver<E>` — each registration call returns its own typed slot handle. No closed-`M` sum type required. |
 | **`multi_protocol_monitor`** | `l7,pcap` | The older "open the source N times, one driver per parser" pattern; kept as a comparison reference. |
 
 > For the 0.10 unified `Driver<E, M>` equivalent of the

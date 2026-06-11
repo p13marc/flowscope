@@ -104,19 +104,44 @@ Headlines (expanded):
   collapsed into `tls-fingerprints`. `tracing-messages`
   deleted — per-message emission is always-on under
   `tracing`; filter at runtime via `EnvFilter`.
-- **Plan 132** — doc overhaul (this work). Migration recipes
-  for plans 130 / 131 appended to
-  `docs/migration-0.11-to-0.12.md` §7-§12.
+- **Plan 132** — doc overhaul. Migration recipes for plans
+  130 / 131 appended to `docs/migration-0.11-to-0.12.md`
+  §7-§12.
+- **Plan 143** — `flowscope::detect::patterns` module:
+  `BeaconDetector<K>` (RITA-style composite CV score),
+  `PortScanDetector<K>` (Threshold Random Walk, Jung 2004),
+  `DgaScorer` (bigram log-likelihood with embedded English
+  baseline corpus compiled at first use). Always-on; no
+  Cargo feature gate. Examples:
+  `examples/03-detection/{c2_beacon_finder,dga_finder}.rs`.
+- **Plan 144** — TLS ECH (Encrypted Client Hello) signal
+  extraction. `TlsClientHello` gains `ech_present` /
+  `ech_config_id` / `sni_is_outer`; `TlsServerHello` gains
+  `ech_retry_configs`; `TlsHandshake` gains `EchOutcome`
+  (NotOffered / Accepted / Rejected / Unknown) +
+  `ech_config_id`. Required `TlsClientHello` /
+  `TlsServerHello` to become `#[non_exhaustive]` + derive
+  `Default`; `TlsVersion` derives `Default` with `Tls1_3`
+  as the `#[default]` variant. Reference:
+  `draft-ietf-tls-esni-22`.
+- **Plan 146** — `flowscope::detect::file` module behind the
+  new `file-hash` Cargo feature: `Sha256Sink` + `Md5Sink`
+  streaming hash sinks for reassembled payload windows,
+  plus a 16-format `FileType` magic-byte classifier
+  (`Pe` / `Elf` / `MachO` / `Pdf` / `Png` / `Jpeg` / `Gif` /
+  `Webp` / `Zip` / `Gzip` / `Bzip2` / `Xz` / `Mp4` / `Mp3` /
+  `Sqlite3` / `Unknown`). With `tls-fingerprints` enabled,
+  adds zero new transitive deps.
 
-Test count after the 0.12 cycle: 728 passing, zero clippy
+Test count after the 0.12 cycle: 772 passing, zero clippy
 warnings under `--all-features --all-targets -D warnings`,
 zero rustdoc warnings. EVE example
 (`examples/05-export/eve_writer.rs`) verified end-to-end
 against `tests/data/mixed_short.pcap`.
 
-CI feature matrix net change: base added `chrono` + `emit-eve`
-(+2 entries); expanded collapsed `ja3` + `ja4` into a single
-`tls-fingerprints` entry (net -1) and deleted `tracing-messages`
+CI feature matrix changes: base added `chrono` + `emit-eve`;
+expanded collapsed `ja3` + `ja4` into a single `tls-fingerprints`
+entry and deleted `tracing-messages`
 (no CI matrix entry). Cross-`SlotHandle` Send+Sync compile
 assertions in `tests/driver_send.rs` (via `static_assertions`).
 Migration recipes: `docs/migration-0.11-to-0.12.md`.
@@ -310,7 +335,17 @@ src/
 │   └── topk.rs                  # TopK<K> (Misra-Gries)                         (plan 102 sub-A, 0.10)
 ├── detect/                      # flowscope::detect (plan 102 sub-C, 0.10)
 │   ├── mod.rs                   # shannon_entropy + 5 light primitives + NgramDist
-│   └── signatures.rs            # 10 magic-byte recognizers + registry          (plan 113 sub-A, 0.10)
+│   ├── signatures.rs            # 10 magic-byte recognizers + registry          (plan 113 sub-A, 0.10)
+│   ├── patterns/                # Named detectors (plan 143, 0.12.0; always-on)
+│   │   ├── mod.rs               # public re-exports
+│   │   ├── beacon.rs            # BeaconDetector<K> — RITA CV composite score
+│   │   ├── portscan.rs          # PortScanDetector<K> — TRW (Jung 2004)
+│   │   └── dga.rs               # DgaScorer — bigram log-likelihood + embedded baseline
+│   └── file/                    # File hash sinks (plan 146, 0.12.0; `file-hash` feature)
+│       ├── mod.rs               # FileHashSink trait + re-exports
+│       ├── types.rs             # FileHashEvent + FileType + magic-byte classify
+│       ├── sha256.rs            # Sha256Sink (sha2 crate)
+│       └── md5.rs               # Md5Sink (md-5 crate)
 ├── aggregate/                   # flowscope::aggregate (plan 102 sub-B, 0.10; `aggregate` feature)
 │   ├── mod.rs                   # public re-exports
 │   ├── histogram.rs             # Histogram + HistogramError

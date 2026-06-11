@@ -157,10 +157,12 @@ impl TlsVersion {
 #[derive(Debug, Clone)]
 pub struct TlsConfig {
     /// Compute JA3 fingerprints for every ClientHello (requires
-    /// `ja3` feature). Default: `false` even with the feature on.
+    /// `tls-fingerprints` feature; was `ja3` pre-0.12). Default:
+    /// `false` even with the feature on.
     pub ja3: bool,
     /// Compute JA4 fingerprints for every ClientHello (requires
-    /// `ja4` feature). Default: `false` even with the feature on.
+    /// `tls-fingerprints` feature; was `ja4` pre-0.12). Default:
+    /// `false` even with the feature on.
     pub ja4: bool,
     /// Maximum bytes buffered per direction before the reassembler
     /// gives up and goes Desynced. Defaults to 64 KiB — TLS records

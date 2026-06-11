@@ -46,10 +46,11 @@ Protocol parsers + analysis modules (each behind its own feature):
 | `emit`  | `flowscope::emit` — `FlowEventCsvWriter` + `ZeekConnLogWriter` (RFC-4180 quoting, `conn.log` headers) |
 | `emit-ndjson` | adds `FlowEventNdjsonWriter` to `emit`; pulls in `serde_json` |
 | `emit-eve` | adds `EveJsonWriter` — Suricata 7.x EVE JSON for Filebeat / Splunk / Tenzir / ECS pipelines (0.12) |
-| `chrono` | `From<DateTime<Utc>>` + `TryFrom<Timestamp>` for `chrono::DateTime<Utc>` interop on `Timestamp` (0.12) |
+| `chrono` | Infallible `From` interop in both directions between `Timestamp` and `chrono::DateTime<Utc>` (0.12) |
+| `file-hash` | `flowscope::detect::file::{Sha256Sink, Md5Sink, FileType}` — streaming hashes + magic-byte MIME classification (0.12) |
 | `aggregate` | `flowscope::aggregate` — `Histogram` + `Percentile` (t-digest) for SLO baselining |
 | `l7`    | Umbrella: `http` + `tls` + `dns` + `icmp` |
-| `full`  | All of the above (incl. `tls-fingerprints`, `pcap`, `serde`, observability, `emit`, `emit-ndjson`, `emit-eve`, `aggregate`, `chrono`) |
+| `full`  | All of the above (incl. `tls-fingerprints`, `pcap`, `serde`, observability, `emit`, `emit-ndjson`, `emit-eve`, `aggregate`, `chrono`, `file-hash`) |
 
 Plus always-on modules that don't need a feature flag:
 
@@ -57,10 +58,32 @@ Plus always-on modules that don't need a feature flag:
   `SlotHandle<M, K>` drain handles. **`Send + Sync` since 0.12**
   — drain from a tokio task on a separate thread while the
   driver runs on a dedicated capture thread.
-- **`flowscope::AnomalyFields`** (0.12) — structured key + anomaly
-  accessors (`src_ip` / `dest_port` / `proto_str` / `anomaly_type` …)
-  consumed by `EveJsonWriter`. Impl on `FiveTupleKey`, `L4Proto`,
-  `AnomalyKind` ships out of the box; custom keys opt in.
+- **`flowscope::KeyFields` + `flowscope::AnomalyFields`** (0.12) —
+  structured key (`src_ip` / `dest_port` / `proto_str` / …) and
+  anomaly classification (`anomaly_type` / `anomaly_event`)
+  accessors consumed by every emit writer (CSV / NDJSON / Zeek /
+  EVE). Impls on `FiveTupleKey` + `L4Proto` (KeyFields) and
+  `AnomalyKind` (AnomalyFields) ship out of the box; custom
+  keys opt in.
+- **`flowscope::detect::patterns`** (0.12) — three named
+  detectors: `BeaconDetector<K>` (CV-composite, RITA-style),
+  `PortScanDetector<K>` (Threshold Random Walk, Jung 2004),
+  `DgaScorer` (bigram log-likelihood with embedded English
+  baseline). Always-on; no Cargo feature gate.
+- **`flowscope::detect::file`** (0.12, `file-hash` feature) —
+  `Sha256Sink` + `Md5Sink` streaming-hash sinks for
+  reassembled payload windows, with `FileType` magic-byte
+  classification (16 formats: PE / ELF / Mach-O / PDF / PNG /
+  JPEG / GIF / WebP / ZIP / Gzip / Bzip2 / Xz / MP4 / MP3 /
+  SQLite3 / Unknown). Bridges flowscope into DFIR / IR
+  pipelines (VirusTotal hash matching, Suricata
+  `file_md5` ergonomics) without storing file bytes.
+- **TLS ECH signal extraction** (0.12) — `TlsClientHello` gains
+  `ech_present` / `ech_config_id` / `sni_is_outer` when
+  extension `0xfe0d` is observed; `TlsHandshake` aggregates an
+  `EchOutcome` (NotOffered / Accepted / Rejected / Unknown).
+  Outer SNI marked as cover-domain so downstream pipelines
+  don't silently mis-attribute target identity.
 - **`flowscope::correlate`** — cross-flow correlation primitives:
   `TimeBucketedCounter`, `TimeBucketedSet`, `KeyIndexed`,
   `BurstDetector`, `TopK`, `Ewma`, `SequencePattern`. All bucketed
@@ -187,7 +210,11 @@ while let Some(evt) = s.next().await { /* ... */ }
 
 ## Status
 
-0.12.0 — Cross-thread + structured-output cycle.
+0.12.0 — Cross-thread + structured-output + pre-1.0 debt
+retirement + named-detector / TLS-modernisation / DFIR-sinks
+cycle.
+
+Headlines:
 
 - **`SlotHandle<M, K>` is `Send + Sync`** — pre-1.0 break.
   Backing storage moved from `Rc<RefCell<Vec<…>>>` to
@@ -201,12 +228,25 @@ while let Some(evt) = s.next().await { /* ... */ }
 - **`Driver::deferred()`** + `DeferredDriverBuilder::build_with(ext)`
   — late extractor selection for consumer-built monitor chains.
   Compile-time guarantee preserved (no panicking `build()`).
-- **`flowscope::AnomalyFields` trait** — structured field
-  access on flow keys / anomaly kinds. Shipped impls on
-  `FiveTupleKey`, `L4Proto`, `AnomalyKind`; custom keys opt in.
+- **`KeyFields` / `AnomalyFields` trait split** (plan 130) —
+  pre-1.0 break. The previous monolithic `AnomalyFields` trait
+  conflated 5-tuple key accessors with anomaly classification;
+  split along the natural cleavage so the type system reflects
+  what's a key property vs an anomaly property. Emit writers
+  are now generic over `K: KeyFields`.
+- **`flowscope::detect::patterns`** — three named detectors:
+  `BeaconDetector` / `PortScanDetector` / `DgaScorer`. Always-on.
+- **TLS ECH signal extraction** — outer SNI flagged + ECH
+  outcome aggregated; no silent target mis-attribution.
+- **`file-hash` feature** — `Sha256Sink` + `Md5Sink` + 16-format
+  MIME classifier for DFIR / IR pipelines.
 - **`Timestamp::write_iso8601` / `to_iso8601`** — alloc-free
   RFC 3339 / ISO 8601 rendering. Optional `chrono` feature
-  adds `From<DateTime<Utc>>` + `TryFrom<Timestamp>` interop.
+  adds infallible `From` interop in both directions.
+- **Pre-1.0 feature pruning** (plan 131) — `ja3` + `ja4`
+  collapsed into `tls-fingerprints`; `tracing-messages` deleted
+  (per-message tracing is now always-on under `tracing`;
+  filter at runtime via `EnvFilter`).
 - **`correlate::*::new_unbounded` ctors** on
   `TimeBucketedCounter`, `TimeBucketedSet`, `KeyIndexed`.
 

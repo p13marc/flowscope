@@ -17,9 +17,9 @@ record; `plans/` is the working backlog.
 
 ### 0.12.0 expanded cycle — pre-1.0 maximally complete release
 
-User opted post-strategic-review to expand the 0.12 cycle and
-ship everything in one 0.12.0 release before crates.io. 1.0
-timing is community-adoption-driven.
+**Status:** all 11 implementation plans shipped to master
+(`781595f` → `1ed1228`). Phase E release gated on per-release
+consent per `feedback_release_consent.md`.
 
 Umbrella: [`151-cycle-0-12-expanded.md`](./151-cycle-0-12-expanded.md).
 
@@ -34,38 +34,25 @@ Umbrella: [`151-cycle-0-12-expanded.md`](./151-cycle-0-12-expanded.md).
 | 123 — `EveJsonWriter` (Suricata EVE) | ✅ shipped (`99be89d`) |
 | 128 §Phase 7 — `correlate::*::new_unbounded` ctors (3 of 5) | ✅ shipped (`f300750`) |
 
-**Expansion (drafted, not yet implemented):**
+**Expansion (shipped to master, awaiting Phase E release consent):**
 
-Phase A — API debt retirement (pre-1.0 cleanup):
+| Plan | Commit(s) | Title |
+|------|-----------|-------|
+| 130 | `7778c8e` → `0c5ece5` (5 commits) | KeyFields/AnomalyFields trait split + emit writers generic over K + Event::tcp() + chrono From + DriverBuilder Send-bound parity + TopK/Burst `new_unbounded` |
+| 131 | `4332da7` → `a1bbd11` (3 commits) | Error::Module Pipeline removal + 5 new variants; `ja3+ja4 → tls-fingerprints`; `tracing-messages` always-on under `tracing` |
+| 132 | `1c16a9d` | Docs: migration §7-§12 + README + CLAUDE.md scope updates |
+| 143 | `7c09bcd` (2 commits) | `flowscope::detect::patterns::{BeaconDetector, PortScanDetector, DgaScorer}` + 2 examples + docs |
+| 144 | `0f800e4` + `61011ca` | ECH signal on `TlsClientHello` / `TlsServerHello` / `TlsHandshake` + EchOutcome aggregate + docs |
+| 146 | `1ed1228` | `flowscope::detect::file::{Sha256Sink, Md5Sink, FileHashSink}` + 16-format `FileType` MIME classifier + docs |
 
-| Plan | Goal | Priority | Effort |
-|------|------|----------|--------|
-| [`130-api-symmetry-cleanup.md`](./130-api-symmetry-cleanup.md) | KeyFields/AnomalyFields split + emit-writers generic over K + Event::FlowPacket.tcp accessor + Timestamp chrono symmetry + DriverBuilder bound parity + BurstDetector/TopK `new_unbounded` | P0 | 2 days |
-| [`131-error-module-features.md`](./131-error-module-features.md) | `Module::Pipeline` removal + 5 new variants; `ja3+ja4 → tls-fingerprints`; `tracing-messages` → runtime knob | P0 | 1 day |
-| [`132-doc-overhaul.md`](./132-doc-overhaul.md) | Typed `Driver<E>` primacy in docs/getting-started + docs/concepts + docs/recipes + src/lib.rs top-level rustdoc | P0 | 2 days |
+**Phase E — Release mechanics (pending consent):**
 
-Phase B — Named detectors:
-
-| Plan | Goal | Priority | Effort |
-|------|------|----------|--------|
-| [`143-detect-patterns.md`](./143-detect-patterns.md) | `flowscope::detect::patterns::{BeaconDetector, PortScanDetector, DgaScorer}` | P2 | 4 days |
-
-Phase C — Targeted modernisation + IR:
-
-| Plan | Goal | Priority | Effort |
-|------|------|----------|--------|
-| [`144-ech-signal.md`](./144-ech-signal.md) | ECH outer-SNI signal on `TlsClientHello` + `TlsHandshake` | P3 | 1.5 days |
-| [`146-file-hash-sinks.md`](./146-file-hash-sinks.md) | `flowscope::detect::file::{Sha256Sink, Md5Sink}` + MIME classification (`file-hash` feature) | P3 | 3 days |
-
-Phase E — Release mechanics (Phase 8 from cycle 128, deferred):
-
-| Step | Effort |
+| Step | Status |
 |------|--------|
-| Final bench gate + clippy + docs sweep | 0.5 days |
-| `cargo publish` dry-run + per-release consent | 0.25 days |
-| Tag + push (`0.12.0`) | 0.25 days |
-
-**Total estimated effort:** ~14.5 working days, ~3 calendar weeks single-developer.
+| Final bench gate + clippy + docs sweep | ✅ clean |
+| `cargo publish` dry-run | ✅ packages clean (211 files, 1.7 MiB) |
+| Per-release consent | pending |
+| Tag + push (`0.12.0`) | pending |
 
 **Deferred to a future cycle** (drafted then deferred per user judgement to keep 0.12 shippable; designs captured in `git log` for resurrection when a specific consumer ask lands):
 
@@ -267,7 +254,8 @@ CHANGELOG header.
 Plan numbers retired (implementation shipped, file removed):
 00–04, 12, 20, 22–25, 30–61, 62, 70–73, 74, 75, 76–82, 83–91,
 93, 94, 96, 97, 99, 100, 101, 102, 106, 107, 110, 112, 113,
-115, 116, 118, 119, 120, 121. Subsumed by consolidation:
+115, 116, 118, 119, 120, 121, 122, 123, 124, 126, 127, 128,
+130, 131, 132, 143, 144, 146. Subsumed by consolidation:
 - 103, 104, 105 → rolled into plan 102 (utility modules)
 - 111 → rolled into plan 110 (DX polish)
 - 114 → rolled into plan 113 (dynamic dispatch)
@@ -275,12 +263,11 @@ Plan numbers retired (implementation shipped, file removed):
 - 117 → absorbed into 121 (legacy deletion + slot refactor
   overlap; one wider migration window beats two)
 
-Active: 21 (stale-deferred), 130-132 (Phase A debt
-retirement), 143 (Phase B named detectors), 144 + 146
-(Phase C surgical additions), 151 (0.12 expanded-cycle
-umbrella). Implementation plans 122, 123, 124, 126, 127
-shipped to master; their plan files retired per convention.
-Subsumed by consolidation:
+Active: 21 (stale-deferred), 151 (0.12 expanded-cycle
+umbrella — kept until Phase E release ships).
+Implementation plans 122, 123, 124, 126, 127, 130, 131, 132,
+143, 144, 146 all shipped to master; their plan files
+retired per convention. Subsumed by consolidation:
 - 125 → folded into 130 §Phase 7 leftovers (TopK +
   BurstDetector `new_unbounded` were missed in the initial
   128 Phase 7 ship; 130 picks them up)

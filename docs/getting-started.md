@@ -39,7 +39,7 @@ flowscope = { version = "0.12", features = ["l7", "pcap", "metrics", "tracing", 
 | `pcap` | Offline pcap source |
 | `metrics`, `tracing` | Observability (zero-cost when off) |
 | `serde` | `Serialize` + `Deserialize` on every public event / message type |
-| `ja3`, `ja4` | TLS ClientHello fingerprinting (sub-feature of `tls`) |
+| `tls-fingerprints` | JA3 + JA4 TLS client fingerprinting (sub-feature of `tls`) |
 | `emit`, `emit-ndjson`, `emit-eve` | Structured event sinks — CSV / Zeek / NDJSON / Suricata EVE JSON |
 | `chrono` | `Timestamp` ↔ `chrono::DateTime<Utc>` interop |
 | `test-helpers` | Reusable parser stubs for downstream test crates |

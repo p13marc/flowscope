@@ -3,11 +3,18 @@
 ## 0.12.0
 
 The **cross-thread + structured-output + API debt retirement
-cycle**. Driven by the netring 0.21 wishlist (per-CPU sharded
-capture with multi-thread tokio runtimes need `Send + Sync`
-slot handles, EVE JSON output for SIEM ingest, chrono interop
-for legacy systems) plus a strategic-review pass on
-public-trait-shape debt before community adoption.
++ named-detector + TLS-modernisation + DFIR-sinks cycle**.
+
+Base scope driven by the netring 0.21 wishlist (per-CPU
+sharded capture with multi-thread tokio runtimes need
+`Send + Sync` slot handles, EVE JSON output for SIEM ingest,
+chrono interop for legacy systems). Expanded post-strategic-
+review with public-trait-shape debt cleanup (KeyFields split,
+chrono symmetry, error/feature pruning) plus three
+high-leverage features: a named-detector library
+(BeaconDetector / PortScanDetector / DgaScorer), ECH signal
+extraction on TLS handshakes, and streaming file-hash sinks
+for DFIR / IR pipelines.
 
 ### BREAKING (pre-1.0)
 
@@ -68,11 +75,6 @@ public-trait-shape debt before community adoption.
   changed from `Rc<RefCell<Vec<SlotMessage>>>` to
   `Arc<crossbeam_queue::SegQueue<SlotMessage>>` (lock-free MPMC).
   Move the handle to a tokio task on another core, share via
-
-- **`SlotHandle<M, K>` is now `Send + Sync`.** Backing storage
-  changed from `Rc<RefCell<Vec<SlotMessage>>>` to
-  `Arc<crossbeam_queue::SegQueue<SlotMessage>>` (lock-free MPMC).
-  Move the handle to a tokio task on another core, share via
   `Arc` with multiple drainers, drain inside an async loop while
   the driver runs on a dedicated capture thread. The driver
   itself (`Driver<E>`) remains `!Send` (the central `FlowTracker`
@@ -92,6 +94,59 @@ public-trait-shape debt before community adoption.
   on a `SlotHandle` (unusual), update the bound.
 
 ### Added
+
+- **`flowscope::detect::patterns`** module (plan 143) — three
+  packaged named-detector recipes with pinned algorithm
+  references and tuned thresholds. Always-on; no Cargo feature
+  gate.
+  - **`PortScanDetector<K>`** — Threshold Random Walk
+    (Jung et al., IEEE S&P 2004). Per-source sequential
+    hypothesis test on connection outcomes. Defaults:
+    θ0 = 0.8, θ1 = 0.2, α = β = 0.01. Verdict resets state on
+    cross.
+  - **`BeaconDetector<K>`** — RITA-style composite
+    coefficient-of-variation score on (inter-arrival,
+    bytes) tuples. Suppresses chatty short-lived flows
+    (n ≥ 10 observations and mean interval ∈ [10 s, 24 h]).
+  - **`DgaScorer`** — bigram log-likelihood scorer over a
+    37-class alphabet; bigram table compiled at first use
+    from an embedded English baseline corpus. Returns
+    auxiliary features (length, vowel ratio, digit ratio,
+    max consonant run, char entropy) for composite scoring.
+
+- **ECH (Encrypted Client Hello) signal extraction** (plan 144,
+  draft-ietf-tls-esni-22):
+  - `TlsClientHello::ech_present: bool`,
+    `ech_config_id: Option<u8>`, `sni_is_outer: bool` —
+    surfaced when extension type `0xfe0d` is observed in the
+    ClientHello.
+  - `TlsServerHello::ech_retry_configs: bool` —
+    best-effort plaintext-fallback signal (encrypted-EE
+    retry_configs are not passively observable).
+  - `TlsHandshake::ech_outcome: EchOutcome` (NotOffered /
+    Accepted / Rejected / Unknown) + `ech_config_id`.
+  - `TlsClientHello` and `TlsServerHello` gained
+    `#[non_exhaustive]` + `#[derive(Default)]`; `TlsVersion`
+    gained `#[derive(Default)]` with `Tls1_3` as the default
+    variant.
+
+- **`flowscope::detect::file`** — streaming-hash sinks behind
+  the new `file-hash` Cargo feature (plan 146):
+  - `Sha256Sink` (sha2 crate), `Md5Sink` (md-5 crate) —
+    streaming hashes over reassembled payload windows with
+    constant-overhead first-64-byte MIME probe.
+  - `FileHashSink` trait — algorithm() / update() / finish() /
+    bytes_hashed(). Consumer-implementable for non-shipped
+    hashes.
+  - `FileHashEvent` — algorithm + lowercase hex digest +
+    byte count + best-effort `FileType` classification.
+  - `FileType` enum — 16 magic-byte-detected types:
+    `Pe` / `Elf` / `MachO` / `Pdf` / `Png` / `Jpeg` / `Gif` /
+    `Webp` / `Zip` / `Gzip` / `Bzip2` / `Xz` / `Mp4` / `Mp3` /
+    `Sqlite3` / `Unknown`. Bridges flowscope into DFIR / IR
+    pipelines (VirusTotal hash matching, Suricata
+    `file_md5` / `file_sha256` ergonomics) without storing
+    file bytes.
 
 - **`Event::tcp(&self) -> Option<&TcpInfo>`** (plan 130 §3) —
   cross-variant accessor on the typed `driver::Event<K>` that
@@ -178,14 +233,18 @@ public-trait-shape debt before community adoption.
   JSON output. Pure Howard Hinnant `civil_from_days` — no
   chrono dep required. Format:
   `YYYY-MM-DDTHH:MM:SS.NNNNNNNNNZ` (UTC, nanosecond precision).
-- **`chrono` interop feature** (plan 127) — when the `chrono`
-  feature is enabled, `From<chrono::DateTime<chrono::Utc>>`
-  for `Timestamp` and `TryFrom<Timestamp>` for
-  `chrono::DateTime<chrono::Utc>` (with `ChronoOutOfRange`
-  for the rare timestamp outside chrono's representable range).
-  Uses `default-features = false, features = ["alloc"]` —
-  alloc-free runtime path, alloc only for the test-side
-  cross-check against `to_rfc3339_opts`.
+- **`chrono` interop feature** (plan 127, refined by plan 130
+  §4 later in the same cycle) — when the `chrono` feature is
+  enabled, infallible `From<chrono::DateTime<chrono::Utc>>` for
+  `Timestamp` and infallible `From<Timestamp>` for
+  `chrono::DateTime<chrono::Utc>`. (The plan 127 ship initially
+  used a `TryFrom` shape with a `ChronoOutOfRange` error type
+  for the theoretical out-of-range case; plan 130 §4 retired
+  it before release — `Timestamp::sec: u32` fits inside
+  chrono's range with room to spare. See the BREAKING section
+  above.) Uses `chrono` `default-features = false, features =
+  ["alloc"]` — alloc-free runtime path, alloc only for
+  the test-side cross-check against `to_rfc3339_opts`.
 
 ## 0.11.1
 

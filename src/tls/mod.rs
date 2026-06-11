@@ -38,10 +38,10 @@
 //! - TLS 1.0 — TLS 1.3 (visibility limited after
 //!   ChangeCipherSpec in 1.2 and after ServerHello in 1.3 since
 //!   records are encrypted onward).
-//! - Optional [JA3](https://github.com/salesforce/ja3) fingerprinting
-//!   behind the `ja3` feature.
-//! - Optional [JA4](https://github.com/FoxIO-LLC/ja4) fingerprinting
-//!   behind the `ja4` feature.
+//! - Optional [JA3](https://github.com/salesforce/ja3) and
+//!   [JA4](https://github.com/FoxIO-LLC/ja4) client fingerprinting
+//!   behind the `tls-fingerprints` feature (was `ja3` + `ja4`
+//!   pre-0.12; collapsed in plan 131).
 //!
 //! # Convenience accessors
 //!
@@ -79,7 +79,7 @@ mod parser;
 mod session;
 mod types;
 
-pub use handshake::{HandshakeOutcome, TlsHandshake, TlsHandshakeParser};
+pub use handshake::{EchOutcome, HandshakeOutcome, TlsHandshake, TlsHandshakeParser};
 pub use session::{TlsMessage, TlsParser};
 pub use types::*;
 

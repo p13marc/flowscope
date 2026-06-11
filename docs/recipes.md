@@ -646,7 +646,7 @@ for view in source.views() {
 }
 ```
 
-Build with `--features tls,ja3,ja4` to get both fingerprints
+Build with `--features tls,tls-fingerprints` to get both fingerprints
 populated. `TlsHandshakeParser::default()` turns on JA3/JA4
 when their features are compiled in.
 

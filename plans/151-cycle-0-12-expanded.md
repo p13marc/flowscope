@@ -104,7 +104,7 @@ Total pre-1.0 breaks shipped in the expanded 0.12 cycle
 | 130 | `DriverBuilder` registration gains `P::Message: Send` | invisible — every shipped parser already satisfies it |
 | 131 | `Module::Pipeline` enum variant removed | drop the `match` arm (was dead code since 0.11) |
 | 131 | `ja3` + `ja4` features collapsed into `tls-fingerprints` | rename in Cargo.toml |
-| 131 | `tracing-messages` feature removed | use `DriverBuilder::with_trace_messages(bool)` |
+| 131 | `tracing-messages` feature removed | per-message tracing is now always-on under `tracing`; filter at runtime via `tracing-subscriber::EnvFilter` (e.g. `EnvFilter::new("flowscope.message=warn")`) |
 | 144 | `TlsClientHello` / `TlsServerHello` / `TlsHandshake` grow ECH fields | additive, `#[non_exhaustive]` covers it |
 
 Net: 9 user-visible changes; **3 are silent** (covered by
@@ -115,7 +115,8 @@ dead code since 0.11, TLS field additions are
 migration** (per the table above: `KeyFields` import, `K`
 bound on custom keys, `Event::tcp()` accessor, infallible
 chrono `From`, `tls-fingerprints` feature rename,
-`with_trace_messages(bool)` runtime knob). All mechanical;
+`tracing-subscriber` `EnvFilter` for runtime suppression).
+All mechanical;
 CHANGELOG entries provide one-line recipes.
 
 ## CI matrix changes

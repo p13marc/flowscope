@@ -100,14 +100,18 @@ use chrono::{DateTime, Utc};
 // Convert from chrono:
 let ts: Timestamp = utc_now.into();
 
-// Convert to chrono:
-let dt: DateTime<Utc> = Timestamp::new(1_700_000_000, 0)
-    .try_into()
-    .map_err(|e| /* ChronoOutOfRange */ ...)?;
+// Convert to chrono — infallible since plan 130 §4:
+let dt: DateTime<Utc> = Timestamp::new(1_700_000_000, 0).into();
 ```
 
 The runtime path is alloc-free regardless; the feature pulls
 chrono with `default-features = false, features = ["alloc"]`.
+
+> The plan 127 ship initially used a `TryFrom` shape with a
+> `ChronoOutOfRange` error type for the theoretical-only
+> out-of-range case; plan 130 §4 retired it before release
+> because `Timestamp::sec: u32` fits inside chrono's range with
+> room to spare. The full break recipe is in §11 below.
 
 ## 3. `Driver::deferred()`
 

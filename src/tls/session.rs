@@ -26,8 +26,8 @@ pub enum TlsMessage {
     /// Either-direction TLS alert.
     Alert(TlsAlert),
     /// JA3 fingerprint computed from a [`Self::ClientHello`]. Only
-    /// emitted when [`TlsConfig::ja3`] is true (and the `ja3` feature
-    /// is on).
+    /// emitted when [`TlsConfig::ja3`] is true (and the
+    /// `tls-fingerprints` feature is on; was `ja3` pre-0.12).
     #[cfg(feature = "tls-fingerprints")]
     Ja3 {
         /// MD5 hex digest of the canonical string.
@@ -36,8 +36,8 @@ pub enum TlsMessage {
         canonical: String,
     },
     /// JA4 fingerprint computed from a [`Self::ClientHello`]. Only
-    /// emitted when [`TlsConfig::ja4`] is true (and the `ja4`
-    /// feature is on).
+    /// emitted when [`TlsConfig::ja4`] is true (and the
+    /// `tls-fingerprints` feature is on; was `ja4` pre-0.12).
     #[cfg(feature = "tls-fingerprints")]
     Ja4 {
         /// Underscore-joined fingerprint (e.g.

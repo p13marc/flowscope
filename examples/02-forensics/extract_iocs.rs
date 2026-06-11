@@ -12,7 +12,7 @@
 //! Output is grouped by category and sorted by frequency.
 //!
 //! ```bash
-//! cargo run --features pcap,http,tls,ja3,ja4,dns,extractors --example extract_iocs
+//! cargo run --features pcap,http,tls,tls-fingerprints,dns,extractors --example extract_iocs
 //! ```
 
 use std::collections::{BTreeSet, HashMap};
