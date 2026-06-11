@@ -111,7 +111,7 @@ pub enum TlsAlertLevel {
     Other(u8),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(
     feature = "serde",
@@ -122,14 +122,9 @@ pub enum TlsVersion {
     Tls1_0,
     Tls1_1,
     Tls1_2,
+    #[default]
     Tls1_3,
     Other(u16),
-}
-
-impl Default for TlsVersion {
-    fn default() -> Self {
-        TlsVersion::Tls1_3
-    }
 }
 
 impl TlsVersion {
