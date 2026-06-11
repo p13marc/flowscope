@@ -15,11 +15,42 @@ record; `plans/` is the working backlog.
 
 ## Active
 
+### 0.13.0 cycle — netring-0.21 driven (drafted 2026-06-11)
+
+**Status:** plan-of-record drafted; no code shipped.
+
+Umbrella: [`157-cycle-0-13-umbrella.md`](./157-cycle-0-13-umbrella.md).
+
+Triggered by [`flowscope-0.13-wishlist.md`](../flowscope-0.13-wishlist.md)
+(netring 0.21 adoption). Verification pass against the 0.12.0
+source surfaced one major finding — Plan 156's premise was
+wrong, the !Send root cause is structural (one missing `+ Send`
+on a trait object), not interior-mutability. See umbrella §1.
+
+**Plans (after consolidation pass):**
+
+| Plan | Title | Priority |
+|------|-------|----------|
+| [156](./156-send-driver.md) | `Driver<E>: Send + Sync` unconditionally (~3 hr structural fix; no unsafe) | P0 |
+| [147](./147-owned-anomaly-eve.md) | `OwnedAnomaly` + `DetectorScore` trait + per-score `into_anomaly` + emit-writer methods. Absorbs wishlist 147 + 148 + 151. | P0 |
+| [149](./149-slothandle-drain-n.md) | `SlotHandle::drain_n` bounded drain (`swap`/`SlotBuf` deferred to 0.14) | P1 |
+| [150](./150-broadcast-slothandle.md) | `BroadcastSlotHandle<M, K>` | P1 |
+| [152](./152-pcap-replay-pacing.md) | `PcapFlowSource::with_speed_factor` (`replay_at_wall_clock` dropped) | P2 |
+| [153](./153-test-helpers-events.md) | `flowscope::test_helpers::events` synthetic-event constructors | P2 |
+| [154](./154-flow-state-map.md) | `FlowStateMap<T, K>` per-flow typed state (layered over `KeyIndexed`) | P2 |
+| [155](./155-sharded-recipe.md) | Sharded-driver example + recipe | P3 |
+
+Total effort: ~7 days (wishlist estimated 12; round-1 estimated 8).
+P0 alone (147 + 156): ~2.5 days. P0+P1 (147, 149, 150, 156): ~5 days.
+Phasing in 4 PRs — see umbrella §5.
+
+---
+
 ### 0.12.0 expanded cycle — pre-1.0 maximally complete release
 
 **Status:** all 11 implementation plans shipped to master
-(`781595f` → `1ed1228`). Phase E release gated on per-release
-consent per `feedback_release_consent.md`.
+(`781595f` → `1ed1228`); release shipped to crates.io as
+0.12.0 on 2026-06-11. Cycle closed.
 
 Umbrella: [`151-cycle-0-12-expanded.md`](./151-cycle-0-12-expanded.md).
 
