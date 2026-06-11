@@ -19,6 +19,10 @@ use crate::error::{Error, Module};
 /// iterators that hand off to `netring-flow`.
 pub struct PcapFlowSource<R: Read> {
     reader: PcapReader<R>,
+    /// Pace replay at `speed_factor × real-time` between
+    /// consecutive packets. `None` (default) = as-fast-as-possible.
+    /// Plan 152 (0.13).
+    speed_factor: Option<f64>,
 }
 
 impl PcapFlowSource<BufReader<File>> {
@@ -27,7 +31,10 @@ impl PcapFlowSource<BufReader<File>> {
         let file = File::open(path).map_err(|e| Error::io(Module::Pcap, e))?;
         let reader = PcapReader::new(BufReader::new(file))
             .map_err(|e| Error::parse_with(Module::Pcap, "invalid pcap header", e))?;
-        Ok(Self { reader })
+        Ok(Self {
+            reader,
+            speed_factor: None,
+        })
     }
 }
 
@@ -37,7 +44,42 @@ impl<R: Read> PcapFlowSource<R> {
         Ok(Self {
             reader: PcapReader::new(reader)
                 .map_err(|e| Error::parse_with(Module::Pcap, "invalid pcap header", e))?,
+            speed_factor: None,
         })
+    }
+
+    /// Pace packet emission at `factor × real-time`.
+    ///
+    /// `1.0` = original timing; `2.0` = double speed;
+    /// `f64::INFINITY` = as-fast-as-possible (default — equivalent
+    /// to not calling this method).
+    ///
+    /// Sleeps `std::thread::sleep(dt / factor)` between
+    /// consecutive packets, where `dt` is the pcap-recorded
+    /// inter-arrival time. Precision is bounded by the OS scheduler
+    /// (~1 ms on Linux, ~15 ms on Windows). Suitable for demos and
+    /// behaviour-realistic offline replay; **not** for microsecond-
+    /// precise traffic regeneration.
+    ///
+    /// # Tokio caveat
+    ///
+    /// `std::thread::sleep` blocks the current thread. Iterating a
+    /// paced source inside a tokio task without `spawn_blocking`
+    /// will monopolise the worker. Either:
+    /// - Iterate inside `tokio::task::spawn_blocking`, or
+    /// - Run on `#[tokio::main(flavor = "current_thread")]` with a
+    ///   dedicated thread for the source.
+    ///
+    /// Panics if `factor <= 0` or NaN.
+    ///
+    /// Plan 152 (0.13).
+    pub fn with_speed_factor(mut self, factor: f64) -> Self {
+        assert!(
+            factor > 0.0 && factor.is_finite() || factor == f64::INFINITY,
+            "speed_factor must be > 0 (got {factor})",
+        );
+        self.speed_factor = Some(factor);
+        self
     }
 
     /// Iterate raw [`crate::PacketView`]s. Each call yields the next packet
@@ -51,6 +93,8 @@ impl<R: Read> PcapFlowSource<R> {
     pub fn views(self) -> ViewIter<R> {
         ViewIter {
             reader: self.reader,
+            speed_factor: self.speed_factor,
+            prev_pcap_ts: None,
         }
     }
 
@@ -166,6 +210,11 @@ pub use crate::view::OwnedPacketView;
 /// Iterator yielding `crate::Result<OwnedPacketView>`.
 pub struct ViewIter<R: Read> {
     reader: PcapReader<R>,
+    /// `Some(factor)` paces replay; `None` = as-fast-as-possible.
+    speed_factor: Option<f64>,
+    /// pcap timestamp of the previously-emitted packet, used to
+    /// compute inter-arrival sleeps when `speed_factor.is_some()`.
+    prev_pcap_ts: Option<std::time::Duration>,
 }
 
 impl<R: Read> Iterator for ViewIter<R> {
@@ -175,6 +224,22 @@ impl<R: Read> Iterator for ViewIter<R> {
         let pkt = self.reader.next_packet()?;
         match pkt {
             Ok(p) => {
+                // Plan 152: pace emission via std::thread::sleep
+                // when speed_factor is set.
+                if let Some(factor) = self.speed_factor
+                    && factor.is_finite()
+                {
+                    if let Some(prev) = self.prev_pcap_ts {
+                        let dt = p.timestamp.saturating_sub(prev);
+                        // Divide by factor; INFINITY case is
+                        // excluded by .is_finite() above.
+                        let nanos = (dt.as_nanos() as f64 / factor) as u64;
+                        if nanos > 0 {
+                            std::thread::sleep(std::time::Duration::from_nanos(nanos));
+                        }
+                    }
+                    self.prev_pcap_ts = Some(p.timestamp);
+                }
                 let ts = Timestamp::new(p.timestamp.as_secs() as u32, p.timestamp.subsec_nanos());
                 Some(Ok(OwnedPacketView {
                     frame: p.data.into_owned(),

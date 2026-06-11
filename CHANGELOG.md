@@ -8,6 +8,13 @@ adoption friction; see `plans/0.13-wishlist-from-netring.md`.
 
 ### Added
 
+- **`PcapFlowSource::with_speed_factor(f64)`** — time-realistic
+  pcap replay pacing (plan 152). `1.0` = original timing, `2.0`
+  = double speed, `f64::INFINITY` = as-fast-as-possible
+  (default). Sleeps `std::thread::sleep(dt / factor)` between
+  consecutive packets. Tokio caveat documented: blocking sleep
+  monopolises the worker; use `spawn_blocking` or a dedicated
+  thread.
 - **`BroadcastSlotHandle<M, K>`** + 
   **`DriverBuilder::session_on_ports_broadcast_each`** —
   fan-out drain handle for session parsers (plan 150). Where
