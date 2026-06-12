@@ -43,25 +43,23 @@ exists; no refactor needed. See umbrella §1.1.
 | 165 | `5f5c88d` | `flowscope::well_known::LabelTable` value type + `FiveTupleKey::protocol_label_with` / `app_label_with` (site-custom port label extensibility) |
 | 167 | `5f5c88d` | Discoverability sweep — prelude expanded with ~10 `correlate` + ICMP + `well_known` re-exports + new `docs/discoverability.md` one-page tour |
 
-**Phase D-bis — Pre-release polish (drafted, awaiting implementation):**
+**Phase D-bis — Pre-release polish (shipped):**
 
-The 0.14 cycle scope was extended after the audit pass. Five
-small additions before crates.io publish (consolidation of the
-post-audit "feature gaps" review).
+The 0.14 cycle scope was extended after the audit pass per
+user instruction "do not defer features if you think they
+have values". All five plans shipped to master.
 
-| Plan | Title | Effort | Breaking? |
-|------|-------|--------|-----------|
-| [170](./170-icmp-mtu-signal.md) | `IcmpType::mtu_signal()` + `MtuSignalKind` (PMTUD signal across v4/v6) | ½ day | no |
-| [171](./171-rolling-rate-completeness.md) | `RollingRate` completeness: `sum`, `top_k`, `clear`, `len` | ½ day | no |
-| [172](./172-label-table-completeness.md) | `LabelTable` completeness: `remove`, `contains`, `is_empty`, `len`; remove `override_count` | ¼ day | **YES** — drop `override_count` (shipped to master `5f5c88d`, never on crates.io) |
-| [173](./173-flowstats-throughput.md) | `FlowStats::throughput_bps*` accessors (safe-divide over duration) | ¼ day | no |
-| [174](./174-dx-sweep.md) | DX sweep: 3 runnable examples + rustdoc cross-links + README/CLAUDE/discoverability/recipes/CHANGELOG | 1 day | no |
+| Plan | Commit | Title |
+|------|--------|-------|
+| 170 | `f5251c3` | `IcmpType::mtu_signal()` + `MtuSignalKind` (unified v4 FragNeeded + v6 PacketTooBig with preserved next-hop MTU) |
+| 171 | `0bf68c0` | `RollingRate` completeness — `sum(k, now)` + `top_k(n, now)` + `clear()` + `len(now)` + `is_empty` doc clarification |
+| 172 | `14e467a` | `LabelTable` completeness — `remove`, `contains`, `is_empty`, `len`. **Breaking**: removed `override_count` in favor of idiomatic `len()` (safe; never on crates.io). |
+| 173 | `cf1202d` | `FlowStats::throughput_bps*` accessors — overall + per-side lifetime-average throughput with safe-divide built in |
+| 174 | `ddf40bc` | DX sweep — 3 runnable examples (`bandwidth_by_app` / `icmp_explained_drops` / `direction_skew_anomaly`) + rustdoc cross-links + README/CLAUDE/CHANGELOG/discoverability/recipes updates |
 
-Total ~3 days. Strictly additive *except* plan 172's
-`override_count` removal — safe because the method has only
-been on master for hours, never released. Dependency order:
-170 / 171 / 172 / 173 in any order, then 174 (which references
-the others).
+Strictly additive except plan 172's `override_count` removal
+(only breaking change in the 0.14 cycle). Test count after
+polish: **915 passing** (up from 884 mid-cycle, +31 polish).
 
 **Phase E — Release mechanics (pending consent):**
 
@@ -399,8 +397,8 @@ Plan numbers retired (implementation shipped, file removed):
 93, 94, 96, 97, 99, 100, 101, 102, 106, 107, 110, 112, 113,
 115, 116, 118, 119, 120, 121, 122, 123, 124, 126, 127, 128,
 130, 131, 132, 143, 144, 146, 147, 149, 150, 152, 153, 154,
-155, 156, 160, 161, 162, 163, 164, 165, 167, 168. Subsumed by
-consolidation:
+155, 156, 160, 161, 162, 163, 164, 165, 167, 168, 170, 171,
+172, 173, 174. Subsumed by consolidation:
 - 103, 104, 105 → rolled into plan 102 (utility modules)
 - 111 → rolled into plan 110 (DX polish)
 - 114 → rolled into plan 113 (dynamic dispatch)
@@ -418,9 +416,9 @@ consolidation:
 Active: 21 (stale-deferred), 151 (0.12 expanded-cycle
 umbrella — durable record), 157 (0.13 cycle umbrella —
 durable record), 169 (0.14 cycle umbrella — kept until 0.14
-release ships), 170-174 (0.14 pre-release polish — drafted,
-implementation pending).
+release ships).
 Implementation plans 160, 161, 162, 163, 164, 165, 167, 168
+(base) + 170, 171, 172, 173, 174 (pre-release polish) all
 shipped to master in the 0.14 cycle; plan files retired per
 convention.
 
