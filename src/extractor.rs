@@ -113,6 +113,11 @@ impl crate::KeyFields for L4Proto {
     /// Uppercase EVE-compatible label (`"TCP"` / `"UDP"` /
     /// `"ICMP"` / `"ICMPv6"` / `"SCTP"`). Returns `None` for
     /// [`L4Proto::Other`] (unknown numeric protocol).
+    ///
+    /// Sibling to [`L4Proto::canonical_name`] — `proto_str` is
+    /// the uppercase Suricata/EVE-shaped variant (Option-
+    /// returning for unknown protos); `canonical_name` is the
+    /// lowercase always-Some metric-label variant.
     fn proto_str(&self) -> Option<&'static str> {
         Some(match self {
             L4Proto::Tcp => "TCP",
@@ -122,6 +127,36 @@ impl crate::KeyFields for L4Proto {
             L4Proto::Sctp => "SCTP",
             L4Proto::Other(_) => return None,
         })
+    }
+}
+
+impl L4Proto {
+    /// Stable lowercase short slug for any `L4Proto`. Always
+    /// `Some`-equivalent (never empty, never panics):
+    ///
+    /// - `Tcp` → `"tcp"`
+    /// - `Udp` → `"udp"`
+    /// - `Icmp` → `"icmp"`
+    /// - `IcmpV6` → `"icmp6"`
+    /// - `Sctp` → `"sctp"`
+    /// - `Other(_)` → `"other"`
+    ///
+    /// Sibling to [`crate::KeyFields::proto_str`] (uppercase,
+    /// EVE/Suricata schema-shaped, `None` for `Other`). Use
+    /// this method for metric labels, log slugs, and
+    /// `app_label` fallbacks where lowercase + always-Some is
+    /// the right contract.
+    ///
+    /// Plan 163 (0.14).
+    pub fn canonical_name(&self) -> &'static str {
+        match self {
+            L4Proto::Tcp => "tcp",
+            L4Proto::Udp => "udp",
+            L4Proto::Icmp => "icmp",
+            L4Proto::IcmpV6 => "icmp6",
+            L4Proto::Sctp => "sctp",
+            L4Proto::Other(_) => "other",
+        }
     }
 }
 

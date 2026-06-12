@@ -884,6 +884,61 @@ impl<E: FlowExtractor, S: Default + Send + 'static> FlowTracker<E, S> {
     }
 }
 
+// ── Plan 161 (0.14) — specialised ICMP-inner lookup ──────────
+//
+// `IcmpInner` carries a partial 5-tuple — the embedded original
+// packet's headers from an ICMPv4 / ICMPv6 error message. The
+// canonical use case is "join an ICMP error back to a live
+// flow", which is FiveTupleKey-shaped. Specialise the impl
+// block on the FiveTuple extractor; custom extractor key types
+// (IpPair, MacPair, user-defined) don't have a meaningful
+// "lookup by 5-tuple" semantics here.
+
+#[cfg(feature = "icmp")]
+impl<S: Send + 'static> FlowTracker<crate::extract::FiveTuple, S> {
+    /// Join an ICMP error's embedded inner 5-tuple back to a
+    /// live flow. Returns the canonical [`crate::extract::FiveTupleKey`]
+    /// if a matching flow exists, or `None` if the tracker has
+    /// no such flow (truncated embed, parse error, or the flow
+    /// already expired).
+    ///
+    /// **Bidirectional-tracker contract**: assumes the
+    /// underlying extractor is
+    /// [`crate::extract::FiveTuple::bidirectional()`] — the
+    /// standard configuration. For unidirectional trackers,
+    /// callers can use [`crate::extract::FiveTupleKey::from_inner_literal`]
+    /// + [`Self::get`] directly.
+    ///
+    /// O(1) hash lookup. Read-only.
+    ///
+    /// Plan 161 (0.14).
+    pub fn lookup_inner(
+        &self,
+        inner: &crate::icmp::IcmpInner,
+    ) -> Option<crate::extract::FiveTupleKey> {
+        let key = crate::extract::FiveTupleKey::from_inner_canonical(inner)?;
+        if self.flows.contains(&key) {
+            Some(key)
+        } else {
+            None
+        }
+    }
+
+    /// Companion: read the current [`FlowStats`] for a flow
+    /// matching the ICMP inner, if any. Saves the second
+    /// lookup for the common "join then read stats" pattern.
+    ///
+    /// Plan 161 (0.14).
+    pub fn stats_for_inner(
+        &self,
+        inner: &crate::icmp::IcmpInner,
+    ) -> Option<(crate::extract::FiveTupleKey, FlowStats)> {
+        let key = crate::extract::FiveTupleKey::from_inner_canonical(inner)?;
+        let stats = self.flows.peek(&key)?.stats.clone();
+        Some((key, stats))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

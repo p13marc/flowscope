@@ -7,6 +7,39 @@ The **operations-layer ergonomics** cycle. Driven by netring
 
 ### Added
 
+- **`FiveTupleKey::from_inner_canonical(&IcmpInner) -> Option<FiveTupleKey>`**
+  + **`FiveTupleKey::from_inner_literal(&IcmpInner) -> Option<FiveTupleKey>`**
+  (plan 161). Public canonicalisation helpers that build a
+  `FiveTupleKey` from an ICMPv4 / ICMPv6 error message's
+  embedded original 5-tuple. The canonical variant applies the
+  same `src > dst` swap as `FiveTuple::bidirectional()`; the
+  literal variant preserves the orientation for
+  `FiveTuple::unidirectional()` consumers. Returns `None` when
+  a port-carrying proto (TCP / UDP / SCTP) has missing ports.
+  Gated on the `icmp` feature.
+- **`FlowTracker<FiveTuple, S>::lookup_inner(&IcmpInner) -> Option<FiveTupleKey>`**
+  + **`stats_for_inner(&IcmpInner) -> Option<(FiveTupleKey, FlowStats)>`**
+  (plan 161). Specialised impl block (FiveTupleKey-shaped
+  lookups are FiveTuple-extractor specific). Joins an ICMP
+  error back to a live flow with one method call — replaces
+  the hand-rolled `HashMap<FlowKey, FlowStats>` mirror cache
+  every L4 monitor was rebuilding. Direction-agnostic via the
+  canonicalisation helper. O(1) hash lookup. Gated on `icmp`.
+  
+  Verified-wrong wishlist claim: the plan 161 caveat asserted
+  `FlowTracker` was "mutate-only". `FlowTracker<E, S>` actually
+  exposes `get`, `snapshot_stats`, `flows`, `iter_active`
+  already — no refactor needed.
+- **`L4Proto::canonical_name() -> &'static str`** (plan 163).
+  Lowercase, always-Some sibling to the existing `proto_str()`
+  (which is uppercase + `Option`, for EVE / Suricata schema).
+  Returns `"tcp"`, `"udp"`, `"icmp"`, `"icmp6"`, `"sctp"`,
+  `"other"`. Use for metric labels and snake_case slugs.
+- **`FiveTupleKey::app_label() -> &'static str`** (plan 163).
+  Always-Some companion to `protocol_label()`. Falls back to
+  `proto.canonical_name()` when no well-known L7 label matches.
+  Removes the `is_tcp: bool` workaround from bandwidth-by-app
+  reports.
 - **`flowscope::icmp::DestUnreachableKind`** enum + 
   **`IcmpType::dest_unreachable_kind() -> Option<DestUnreachableKind>`**
   (plan 162). Unified v4/v6 vocabulary for the ~17 ICMPv4 and

@@ -91,6 +91,111 @@ impl FiveTupleKey {
     pub fn protocol_label(&self) -> Option<&'static str> {
         crate::well_known::protocol_label(self.proto, self.a.port(), self.b.port())
     }
+
+    /// Construct a canonical `FiveTupleKey` from a partial
+    /// 5-tuple (typically the embedded original 5-tuple from
+    /// an ICMPv4 / ICMPv6 error message — see
+    /// [`crate::icmp::IcmpInner`]).
+    ///
+    /// Applies the same `src > dst`-swap canonicalisation that
+    /// [`FiveTuple::bidirectional()`]'s extractor uses, so the
+    /// returned key matches the live flow's key regardless of
+    /// which direction the flow started in.
+    ///
+    /// Returns `None` if a port-carrying proto (TCP / UDP /
+    /// SCTP) has missing ports — without ports the lookup
+    /// can't disambiguate the flow.
+    ///
+    /// **Bidirectional-extractor assumption**: this method
+    /// produces a key matching the standard
+    /// `FiveTuple::bidirectional()` extractor. If your tracker
+    /// runs `FiveTuple::unidirectional()`, the returned key
+    /// may not match the live flow's literal orientation —
+    /// call [`Self::from_inner_literal`] instead, or call this
+    /// method with the inner's `src` and `dst` swapped if you
+    /// know the flow was responder-initiated.
+    ///
+    /// Plan 161 (0.14).
+    #[cfg(feature = "icmp")]
+    pub fn from_inner_canonical(inner: &crate::icmp::IcmpInner) -> Option<Self> {
+        use crate::extractor::L4Proto;
+        let needs_ports = matches!(inner.proto, L4Proto::Tcp | L4Proto::Udp | L4Proto::Sctp);
+        let src_port = if needs_ports {
+            inner.src_port?
+        } else {
+            inner.src_port.unwrap_or(0)
+        };
+        let dst_port = if needs_ports {
+            inner.dst_port?
+        } else {
+            inner.dst_port.unwrap_or(0)
+        };
+        let src = SocketAddr::new(inner.src, src_port);
+        let dst = SocketAddr::new(inner.dst, dst_port);
+        // Mirror the canonicalisation in extract_from_parsed
+        // (file head, line ~186).
+        let (a, b) = if src > dst { (dst, src) } else { (src, dst) };
+        Some(FiveTupleKey {
+            proto: inner.proto,
+            a,
+            b,
+        })
+    }
+
+    /// Construct a `FiveTupleKey` from an [`crate::icmp::IcmpInner`]
+    /// preserving the literal `(src, dst)` orientation —
+    /// **does not** apply the bidirectional canonicalisation.
+    ///
+    /// Use this when the live tracker runs
+    /// `FiveTuple::unidirectional()` and the caller wants to
+    /// match flows by literal orientation. For bidirectional
+    /// trackers, prefer [`Self::from_inner_canonical`].
+    ///
+    /// Same `None`-on-missing-ports contract as
+    /// [`Self::from_inner_canonical`].
+    ///
+    /// Plan 161 (0.14).
+    #[cfg(feature = "icmp")]
+    pub fn from_inner_literal(inner: &crate::icmp::IcmpInner) -> Option<Self> {
+        use crate::extractor::L4Proto;
+        let needs_ports = matches!(inner.proto, L4Proto::Tcp | L4Proto::Udp | L4Proto::Sctp);
+        let src_port = if needs_ports {
+            inner.src_port?
+        } else {
+            inner.src_port.unwrap_or(0)
+        };
+        let dst_port = if needs_ports {
+            inner.dst_port?
+        } else {
+            inner.dst_port.unwrap_or(0)
+        };
+        Some(FiveTupleKey {
+            proto: inner.proto,
+            a: SocketAddr::new(inner.src, src_port),
+            b: SocketAddr::new(inner.dst, dst_port),
+        })
+    }
+
+    /// Always-`Some` companion to [`Self::protocol_label`].
+    /// Falls back to [`crate::L4Proto::canonical_name`] when
+    /// no port-based label matches.
+    ///
+    /// Use this for bandwidth-by-app and metric-label reports
+    /// where "we don't know the L7 app, but we know the L4" is
+    /// the right fallback. Use `protocol_label()` directly when
+    /// an L7 label is the *only* acceptable answer.
+    ///
+    /// Examples:
+    /// - `(TCP, 80, 33000)` → `"http"` (well-known port match)
+    /// - `(TCP, 33000, 33001)` → `"tcp"` (L4 fallback)
+    /// - `(SCTP, 100, 200)` → `"sctp"` (L4 fallback)
+    ///
+    /// Plan 163 (0.14).
+    #[inline]
+    pub fn app_label(&self) -> &'static str {
+        self.protocol_label()
+            .unwrap_or_else(|| self.proto.canonical_name())
+    }
 }
 
 impl crate::KeyFields for FiveTupleKey {
@@ -355,5 +460,65 @@ mod tests {
         set.insert(e1.key);
         set.insert(e2.key);
         assert_eq!(set.len(), 1, "bidirectional keys must hash equal");
+    }
+
+    // ── Plan 163 (0.14) — app_label + canonical_name tests ──
+
+    use std::net::SocketAddr;
+
+    fn tuple(proto: L4Proto, a_port: u16, b_port: u16) -> FiveTupleKey {
+        FiveTupleKey {
+            proto,
+            a: SocketAddr::from(([10, 0, 0, 1], a_port)),
+            b: SocketAddr::from(([10, 0, 0, 2], b_port)),
+        }
+    }
+
+    #[test]
+    fn canonical_name_returns_lowercase_slug_for_every_l4proto() {
+        assert_eq!(L4Proto::Tcp.canonical_name(), "tcp");
+        assert_eq!(L4Proto::Udp.canonical_name(), "udp");
+        assert_eq!(L4Proto::Icmp.canonical_name(), "icmp");
+        assert_eq!(L4Proto::IcmpV6.canonical_name(), "icmp6");
+        assert_eq!(L4Proto::Sctp.canonical_name(), "sctp");
+    }
+
+    #[test]
+    fn canonical_name_returns_other_for_other_variant() {
+        assert_eq!(L4Proto::Other(132).canonical_name(), "other");
+    }
+
+    #[test]
+    fn app_label_returns_well_known_label_when_port_matches() {
+        // Port 80 hits the well-known TCP table → "http".
+        let k = tuple(L4Proto::Tcp, 80, 33000);
+        assert_eq!(k.app_label(), "http");
+        // Reverse direction also matches.
+        let k = tuple(L4Proto::Tcp, 33000, 80);
+        assert_eq!(k.app_label(), "http");
+    }
+
+    #[test]
+    fn app_label_falls_back_to_canonical_name_when_no_port_match() {
+        // No well-known TCP port → "tcp".
+        let k = tuple(L4Proto::Tcp, 33000, 33001);
+        assert_eq!(k.app_label(), "tcp");
+        // SCTP — no well-known port table at all → "sctp".
+        let k = tuple(L4Proto::Sctp, 100, 200);
+        assert_eq!(k.app_label(), "sctp");
+        // Unknown L4 → "other".
+        let k = tuple(L4Proto::Other(99), 100, 200);
+        assert_eq!(k.app_label(), "other");
+    }
+
+    #[test]
+    fn app_label_and_proto_str_remain_distinct() {
+        // proto_str is uppercase + Option<&'static str>;
+        // canonical_name is lowercase + always-Some.
+        use crate::KeyFields;
+        assert_eq!(L4Proto::Tcp.proto_str(), Some("TCP"));
+        assert_eq!(L4Proto::Tcp.canonical_name(), "tcp");
+        assert_eq!(L4Proto::Other(42).proto_str(), None);
+        assert_eq!(L4Proto::Other(42).canonical_name(), "other");
     }
 }
