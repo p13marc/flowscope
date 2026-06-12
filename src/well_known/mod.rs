@@ -174,6 +174,108 @@ const UDP_TABLE: &[(u16, &str)] = &[
     (5061, "sip"),
 ];
 
+// ── Plan 165 (0.14) — LabelTable extensibility ───────────────
+
+/// Caller-supplied port → label table that layers over (or
+/// replaces) the built-in [`protocol_label`] dispatch.
+///
+/// Use for site-custom services ("our internal gRPC on
+/// 8765", "metrics scrape on 9101"). The built-in table
+/// covers ~80 standard ports; this struct lets you add the
+/// rest without forking the source.
+///
+/// `Clone + Send + Sync`. Labels are `&'static str` — match
+/// the built-in contract. For runtime-loaded labels (e.g.
+/// from a YAML/JSON config), use `Box::leak(string)` to
+/// bridge:
+///
+/// ```rust,ignore
+/// let leaked: &'static str = Box::leak(String::from("gRPC-Internal").into_boxed_str());
+/// table.set(L4Proto::Tcp, 8765, leaked);
+/// ```
+///
+/// Plan 165 (0.14).
+#[derive(Clone, Default, Debug)]
+pub struct LabelTable {
+    overrides: std::collections::HashMap<(L4Proto, u16), &'static str>,
+    /// If `true` (default), unknown ports fall back to the
+    /// built-in [`protocol_label`] table. If `false`, only
+    /// `overrides` are consulted.
+    inherit_builtin: bool,
+}
+
+impl LabelTable {
+    /// Empty table that inherits the built-in entries when no
+    /// override matches.
+    pub fn new() -> Self {
+        Self {
+            overrides: std::collections::HashMap::new(),
+            inherit_builtin: true,
+        }
+    }
+
+    /// Empty table that does NOT inherit the built-in
+    /// entries. Strict whitelist semantics.
+    pub fn standalone() -> Self {
+        Self {
+            overrides: std::collections::HashMap::new(),
+            inherit_builtin: false,
+        }
+    }
+
+    /// Add or override a single `(proto, port) → label` entry.
+    pub fn set(&mut self, proto: L4Proto, port: u16, label: &'static str) -> &mut Self {
+        self.overrides.insert((proto, port), label);
+        self
+    }
+
+    /// Bulk-set from an iterator. Convenient for config-
+    /// driven table population.
+    pub fn extend<I>(&mut self, entries: I) -> &mut Self
+    where
+        I: IntoIterator<Item = (L4Proto, u16, &'static str)>,
+    {
+        for (proto, port, label) in entries {
+            self.overrides.insert((proto, port), label);
+        }
+        self
+    }
+
+    /// Lookup. Same shape as the free function
+    /// [`protocol_label`].
+    ///
+    /// Algorithm:
+    /// - Try the override map on `(proto, src_port)`.
+    /// - Try the override map on `(proto, dst_port)`.
+    /// - If [`inherit_builtin`](Self::inherit_builtin), fall
+    ///   back to the built-in [`protocol_label`].
+    /// - Else return `None`.
+    pub fn lookup(&self, proto: L4Proto, src_port: u16, dst_port: u16) -> Option<&'static str> {
+        if let Some(label) = self.overrides.get(&(proto, src_port)) {
+            return Some(*label);
+        }
+        if let Some(label) = self.overrides.get(&(proto, dst_port)) {
+            return Some(*label);
+        }
+        if self.inherit_builtin {
+            protocol_label(proto, src_port, dst_port)
+        } else {
+            None
+        }
+    }
+
+    /// `true` if this table falls back to the built-in
+    /// [`protocol_label`] dispatch when no override matches.
+    pub fn inherit_builtin(&self) -> bool {
+        self.inherit_builtin
+    }
+
+    /// Number of overrides currently registered.
+    pub fn override_count(&self) -> usize {
+        self.overrides.len()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -262,5 +364,78 @@ mod tests {
         assert!(v.contains(&(L4Proto::Tcp, 80, "http")));
         assert!(v.contains(&(L4Proto::Udp, 53, "dns")));
         assert!(v.contains(&(L4Proto::Udp, 4789, "vxlan")));
+    }
+
+    // ── Plan 165 (0.14) — LabelTable tests ───────────────────
+
+    #[test]
+    fn label_table_new_starts_empty_inheriting_builtin() {
+        let t = LabelTable::new();
+        assert!(t.inherit_builtin());
+        assert_eq!(t.override_count(), 0);
+    }
+
+    #[test]
+    fn label_table_standalone_does_not_inherit() {
+        let t = LabelTable::standalone();
+        assert!(!t.inherit_builtin());
+    }
+
+    #[test]
+    fn label_table_lookup_uses_override_first() {
+        let mut t = LabelTable::new();
+        t.set(L4Proto::Tcp, 80, "internal-proxy");
+        // Override wins over the built-in "http".
+        assert_eq!(t.lookup(L4Proto::Tcp, 80, 33000), Some("internal-proxy"));
+    }
+
+    #[test]
+    fn label_table_lookup_falls_back_to_builtin_when_inherit() {
+        let t = LabelTable::new();
+        // No overrides; built-in lookup applies.
+        assert_eq!(t.lookup(L4Proto::Tcp, 80, 33000), Some("http"));
+    }
+
+    #[test]
+    fn label_table_standalone_returns_none_when_no_override() {
+        let t = LabelTable::standalone();
+        assert_eq!(t.lookup(L4Proto::Tcp, 80, 33000), None);
+    }
+
+    #[test]
+    fn label_table_extend_bulk_sets_entries() {
+        let mut t = LabelTable::new();
+        t.extend([
+            (L4Proto::Tcp, 8765, "grpc-internal"),
+            (L4Proto::Tcp, 9101, "metrics-scrape"),
+        ]);
+        assert_eq!(t.override_count(), 2);
+        assert_eq!(t.lookup(L4Proto::Tcp, 8765, 0), Some("grpc-internal"));
+        assert_eq!(t.lookup(L4Proto::Tcp, 9101, 0), Some("metrics-scrape"));
+    }
+
+    #[test]
+    fn label_table_set_overrides_existing_label() {
+        let mut t = LabelTable::new();
+        t.set(L4Proto::Tcp, 8765, "old");
+        t.set(L4Proto::Tcp, 8765, "new");
+        assert_eq!(t.lookup(L4Proto::Tcp, 8765, 0), Some("new"));
+        assert_eq!(t.override_count(), 1);
+    }
+
+    #[test]
+    fn label_table_lookup_tries_src_port_first_then_dst() {
+        let mut t = LabelTable::new();
+        t.set(L4Proto::Tcp, 8765, "src-side");
+        // src_port = 8765 matches first.
+        assert_eq!(t.lookup(L4Proto::Tcp, 8765, 9100), Some("src-side"));
+        // dst_port = 8765 also matches when src misses.
+        assert_eq!(t.lookup(L4Proto::Tcp, 33000, 8765), Some("src-side"));
+    }
+
+    #[test]
+    fn label_table_is_send_and_sync() {
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<LabelTable>();
     }
 }

@@ -196,6 +196,33 @@ impl FiveTupleKey {
         self.protocol_label()
             .unwrap_or_else(|| self.proto.canonical_name())
     }
+
+    /// Companion to [`Self::protocol_label`] that consults a
+    /// caller-provided [`crate::well_known::LabelTable`]
+    /// first. The table can override or extend the built-in
+    /// well-known ports — typically used for site-custom
+    /// services ("our gRPC on 8765").
+    ///
+    /// Plan 165 (0.14).
+    #[inline]
+    pub fn protocol_label_with(
+        &self,
+        table: &crate::well_known::LabelTable,
+    ) -> Option<&'static str> {
+        table.lookup(self.proto, self.a.port(), self.b.port())
+    }
+
+    /// Always-`Some` variant of [`Self::protocol_label_with`].
+    /// Falls back to [`crate::L4Proto::canonical_name`] when
+    /// neither the table override nor (if inherited) the
+    /// built-in dispatch matches.
+    ///
+    /// Plan 165 (0.14).
+    #[inline]
+    pub fn app_label_with(&self, table: &crate::well_known::LabelTable) -> &'static str {
+        self.protocol_label_with(table)
+            .unwrap_or_else(|| self.proto.canonical_name())
+    }
 }
 
 impl crate::KeyFields for FiveTupleKey {

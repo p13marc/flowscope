@@ -7,6 +7,35 @@ The **operations-layer ergonomics** cycle. Driven by netring
 
 ### Added
 
+- **`flowscope::correlate::RollingRate<K, V>`** + 
+  **`flowscope::correlate::RateValue`** (plan 164). Per-key
+  per-second rate over a sliding window. Sibling to
+  `TimeBucketedCounter` but generic over the value type
+  (bytes/sec, request count, latency sums). Bucket-reuse
+  zero-alloc when consecutive records fall in the same
+  bucket. `RateValue` is a small sealed-style trait
+  implemented for `u64` / `u32` / `i64` / `i32` / `f64` /
+  `f32`. Methods: `new_unbounded` / `record` / `rate` /
+  `snapshot` / `for_each_bucket` / `evict_expired` /
+  `bucket_count` / `is_empty`.
+- **`flowscope::well_known::LabelTable`** + 
+  **`FiveTupleKey::protocol_label_with`** + 
+  **`FiveTupleKey::app_label_with`** (plan 165). Site-custom
+  port label extensibility. `LabelTable::new` inherits the
+  built-in table; `LabelTable::standalone` is whitelist-only.
+  `Send + Sync + Clone`. Labels are `&'static str` (use
+  `Box::leak` for runtime-loaded strings).
+- **Discoverability sweep** (plan 167):
+  - **Prelude expanded** with `TimeBucketedCounter`,
+    `TimeBucketedSet`, `KeyIndexed`, `BurstDetector`, `Ewma`,
+    `TopK`, `RollingRate`, `FlowStateMap`, `IcmpType`,
+    `IcmpMessage`, `IcmpInner`, `LabelTable`. The full
+    prelude manifest is in `docs/discoverability.md`.
+  - **New `docs/discoverability.md`** — one-page tour
+    grouped by use case ("count things per key over time" /
+    "react to ICMP errors" / "emit structured anomalies" /
+    …). Lists every shipped primitive with one-line pitches
+    + rustdoc links.
 - **`FiveTupleKey::from_inner_canonical(&IcmpInner) -> Option<FiveTupleKey>`**
   + **`FiveTupleKey::from_inner_literal(&IcmpInner) -> Option<FiveTupleKey>`**
   (plan 161). Public canonicalisation helpers that build a

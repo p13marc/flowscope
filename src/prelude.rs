@@ -29,6 +29,16 @@ pub use crate::event::{AnomalyKind, EndReason, FlowEvent, FlowSide, FlowStats};
 #[cfg(feature = "tracker")]
 pub use crate::tracker::{FlowTracker, FlowTrackerConfig};
 
+// Plan 167 (0.14): discoverability sweep — surface the
+// `correlate::*` primitives in the prelude so users don't
+// have to know the module path to find them.
+#[cfg(all(feature = "tracker", feature = "extractors"))]
+pub use crate::correlate::FlowStateMap;
+#[cfg(feature = "tracker")]
+pub use crate::correlate::{
+    BurstDetector, Ewma, KeyIndexed, RollingRate, TimeBucketedCounter, TimeBucketedSet, TopK,
+};
+
 #[cfg(feature = "session")]
 pub use crate::session::{DatagramParser, SessionEvent, SessionParser};
 
@@ -52,4 +62,8 @@ pub use crate::pcap::PcapFlowSource;
 // Plan 162 (0.14): ICMP error classification — frequently
 // imported by `on_icmp_error` consumers.
 #[cfg(feature = "icmp")]
-pub use crate::icmp::DestUnreachableKind;
+pub use crate::icmp::{DestUnreachableKind, IcmpInner, IcmpMessage, IcmpType};
+
+// Plan 165 (0.14): site-custom port label table.
+#[cfg(feature = "extractors")]
+pub use crate::well_known::LabelTable;

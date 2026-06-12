@@ -53,6 +53,7 @@
 mod bucketed;
 mod burst;
 mod ewma;
+mod rolling_rate;
 // FlowStateMap defaults its key type to `crate::extract::FiveTupleKey`,
 // which only exists under the `extractors` feature. Gate the module
 // here so consumers running with `--no-default-features` (no extractors)
@@ -70,6 +71,7 @@ pub use ewma::Ewma;
 #[cfg(feature = "extractors")]
 pub use flow_state_map::FlowStateMap;
 pub use indexed::KeyIndexed;
+pub use rolling_rate::{RateValue, RollingRate};
 pub use sequence::{KeylessSequencePattern, SequencePattern};
 pub use set::TimeBucketedSet;
 pub use topk::TopK;
