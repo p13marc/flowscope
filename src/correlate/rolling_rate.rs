@@ -210,9 +210,86 @@ where
         }
     }
 
-    /// True if no buckets are tracked.
+    /// Raw sum of `V` over the active window for `k`. No
+    /// per-second divide — sibling to [`Self::rate`] for the
+    /// "bytes-in-the-last-minute" / "requests-in-the-last-5"
+    /// report shape. Returns `V::default()` if `k` is absent
+    /// or has no in-window samples.
+    ///
+    /// Plan 171 (0.14).
+    pub fn sum(&self, k: &K, now: Timestamp) -> V {
+        let cutoff = self.cutoff_for(now);
+        let mut total = V::default();
+        for (ts, bucket) in &self.buckets {
+            if *ts < cutoff {
+                continue;
+            }
+            if let Some(v) = bucket.get(k) {
+                total += *v;
+            }
+        }
+        total
+    }
+
+    /// Sorted top-N entries by rate (descending). Ties broken
+    /// by insertion order in the underlying snapshot. Returns
+    /// at most `n` entries; fewer if the in-window key count
+    /// is smaller. `top_k(0)` returns an empty `Vec`.
+    ///
+    /// Lighter-weight than maintaining a separate
+    /// [`super::TopK`] — `top_k` sorts at query time,
+    /// [`super::TopK`] sorts at update time. Pick the latter
+    /// for hot paths.
+    ///
+    /// Plan 171 (0.14).
+    pub fn top_k(&self, n: usize, now: Timestamp) -> Vec<(K, f64)> {
+        if n == 0 {
+            return Vec::new();
+        }
+        let mut snap: Vec<(K, f64)> = self.snapshot(now).collect();
+        snap.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        snap.truncate(n);
+        snap
+    }
+
+    /// Drop every recorded bucket. After this call,
+    /// [`Self::is_empty`] is `true`, [`Self::bucket_count`] is
+    /// `0`, every [`Self::rate`] returns `0.0`, every
+    /// [`Self::sum`] returns `V::default()`.
+    ///
+    /// Plan 171 (0.14).
+    pub fn clear(&mut self) {
+        self.buckets.clear();
+    }
+
+    /// True if no buckets are tracked at all. This is a
+    /// **storage**-state query — it does NOT consider whether
+    /// the tracked buckets are inside the current window.
+    ///
+    /// For an in-window count, use [`Self::len`].
     pub fn is_empty(&self) -> bool {
         self.buckets.is_empty() || self.buckets.iter().all(|(_, m)| m.is_empty())
+    }
+
+    /// Number of unique keys observed in the active window at
+    /// `now`. Outside-window keys are not counted. Allocates
+    /// one transient `HashSet` — for zero-alloc, use
+    /// [`Self::for_each_bucket`] with a caller-owned
+    /// accumulator.
+    ///
+    /// Plan 171 (0.14).
+    pub fn len(&self, now: Timestamp) -> usize {
+        let cutoff = self.cutoff_for(now);
+        let mut seen: std::collections::HashSet<&K> = std::collections::HashSet::new();
+        for (ts, bucket) in &self.buckets {
+            if *ts < cutoff {
+                continue;
+            }
+            for k in bucket.keys() {
+                seen.insert(k);
+            }
+        }
+        seen.len()
     }
 
     /// Number of active buckets currently tracked. Bounded
@@ -388,5 +465,109 @@ mod tests {
         // Sum = 1.5s / 60s = 0.025 latency-seconds-per-sec.
         let rate = r.rate(&"/users", Timestamp::new(30, 0));
         assert!((rate - (1.5 / 60.0)).abs() < 1e-9);
+    }
+
+    // ── Plan 171 (0.14) — completeness sweep tests ─────────
+
+    #[test]
+    fn sum_returns_raw_v_without_window_divide() {
+        let mut r = rr_bytes();
+        r.record("http", 100, Timestamp::new(0, 0));
+        r.record("http", 200, Timestamp::new(10, 0));
+        r.record("http", 300, Timestamp::new(30, 0));
+        // sum = 600. rate = 600 / 60s = 10 B/s.
+        let s = r.sum(&"http", Timestamp::new(35, 0));
+        assert_eq!(s, 600);
+        let rate = r.rate(&"http", Timestamp::new(35, 0));
+        assert!((rate - (s as f64 / 60.0)).abs() < 1e-9);
+    }
+
+    #[test]
+    fn sum_zero_for_absent_key() {
+        let r = rr_bytes();
+        assert_eq!(r.sum(&"http", Timestamp::new(0, 0)), 0);
+    }
+
+    #[test]
+    fn sum_zero_for_outside_window_samples() {
+        let mut r = rr_bytes();
+        r.record("http", 600, Timestamp::new(0, 0));
+        // Look 200s after — well past the 60s window.
+        assert_eq!(r.sum(&"http", Timestamp::new(200, 0)), 0);
+    }
+
+    #[test]
+    fn top_k_returns_sorted_descending() {
+        let mut r = rr_bytes();
+        r.record("a", 100, Timestamp::new(0, 0));
+        r.record("b", 500, Timestamp::new(0, 0));
+        r.record("c", 200, Timestamp::new(0, 0));
+        r.record("d", 50, Timestamp::new(0, 0));
+        r.record("e", 350, Timestamp::new(0, 0));
+
+        let top3 = r.top_k(3, Timestamp::new(0, 100_000_000));
+        assert_eq!(top3.len(), 3);
+        assert_eq!(top3[0].0, "b"); // 500
+        assert_eq!(top3[1].0, "e"); // 350
+        assert_eq!(top3[2].0, "c"); // 200
+        // Descending rates.
+        assert!(top3[0].1 >= top3[1].1);
+        assert!(top3[1].1 >= top3[2].1);
+    }
+
+    #[test]
+    fn top_k_zero_returns_empty_vec_no_panic() {
+        let mut r = rr_bytes();
+        r.record("a", 100, Timestamp::new(0, 0));
+        assert!(r.top_k(0, Timestamp::new(0, 100_000_000)).is_empty());
+    }
+
+    #[test]
+    fn top_k_larger_than_keyset_returns_all() {
+        let mut r = rr_bytes();
+        r.record("a", 100, Timestamp::new(0, 0));
+        r.record("b", 200, Timestamp::new(0, 0));
+        let top = r.top_k(100, Timestamp::new(0, 100_000_000));
+        assert_eq!(top.len(), 2);
+    }
+
+    #[test]
+    fn clear_resets_everything() {
+        let mut r = rr_bytes();
+        r.record("a", 100, Timestamp::new(0, 0));
+        r.record("b", 200, Timestamp::new(10, 0));
+        assert!(!r.is_empty());
+
+        r.clear();
+        assert!(r.is_empty());
+        assert_eq!(r.bucket_count(), 0);
+        assert_eq!(r.rate(&"a", Timestamp::new(15, 0)), 0.0);
+        assert_eq!(r.sum(&"a", Timestamp::new(15, 0)), 0);
+        assert_eq!(r.len(Timestamp::new(15, 0)), 0);
+    }
+
+    #[test]
+    fn len_counts_unique_keys_in_window() {
+        let mut r = rr_bytes();
+        r.record("a", 100, Timestamp::new(0, 0));
+        r.record("b", 200, Timestamp::new(0, 0));
+        r.record("a", 50, Timestamp::new(10, 0)); // dup key, different bucket
+        r.record("c", 30, Timestamp::new(30, 0));
+        assert_eq!(r.len(Timestamp::new(35, 0)), 3);
+    }
+
+    #[test]
+    fn len_excludes_outside_window_keys() {
+        let mut r = rr_bytes();
+        r.record("old", 100, Timestamp::new(0, 0));
+        r.record("new", 200, Timestamp::new(120, 0));
+        // Window is 60s — only "new" is in-window at t=130.
+        assert_eq!(r.len(Timestamp::new(130, 0)), 1);
+    }
+
+    #[test]
+    fn len_empty_on_fresh_instance() {
+        let r = rr_bytes();
+        assert_eq!(r.len(Timestamp::new(0, 0)), 0);
     }
 }
