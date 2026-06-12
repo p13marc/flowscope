@@ -150,6 +150,12 @@ pub mod dns;
 pub mod http;
 #[cfg(feature = "icmp")]
 pub mod icmp;
+// Plan 162 (0.14): top-level re-export for the unified
+// ICMPv4/v6 Destination Unreachable classification. Parallels
+// `pub use anomaly::OwnedAnomaly` (0.13) — frequently-imported
+// enum surfaced at the crate root.
+#[cfg(feature = "icmp")]
+pub use icmp::DestUnreachableKind;
 #[cfg(feature = "pcap")]
 pub mod pcap;
 #[cfg(feature = "tls")]

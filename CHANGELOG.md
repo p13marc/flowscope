@@ -7,6 +7,23 @@ The **operations-layer ergonomics** cycle. Driven by netring
 
 ### Added
 
+- **`flowscope::icmp::DestUnreachableKind`** enum + 
+  **`IcmpType::dest_unreachable_kind() -> Option<DestUnreachableKind>`**
+  (plan 162). Unified v4/v6 vocabulary for the ~17 ICMPv4 and
+  ~8 ICMPv6 Destination Unreachable codes. Replaces the
+  ~30-line classifier consumers were writing per-pipeline.
+  `as_str()` returns a stable metric-label slug. Re-exported
+  at the crate root (`flowscope::DestUnreachableKind`) and in
+  the prelude. **Match on the v4/v6 code enums directly when
+  you need the exact code or the v4 `FragmentationNeeded` MTU.**
+- **`flowscope::icmp::types` is now `pub mod`** (plan 162;
+  absorbs the wishlist's plan 166). The canonical short path
+  (`flowscope::icmp::DestUnreachableKind` via the existing
+  `pub use types::*;` glob) is unchanged; the new
+  `flowscope::icmp::types::Icmpv6DestUnreachCode` long path
+  now also resolves. Pre-fix, rustdoc + autocomplete
+  suggested the long path but it failed to compile (private
+  module).
 - **`KeyIndexed::drain_expired(now) -> Vec<(K, V)>`** + 
   **`drain_expired_into(now, &mut Vec<(K, V)>) -> usize`**
   (plan 160). Sibling to `evict_expired` (which discards) —

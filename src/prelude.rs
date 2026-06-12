@@ -48,3 +48,8 @@ pub use crate::layers::{Layer, LayerKind, LayerParser, LayerStack, Layers};
 
 #[cfg(feature = "pcap")]
 pub use crate::pcap::PcapFlowSource;
+
+// Plan 162 (0.14): ICMP error classification — frequently
+// imported by `on_icmp_error` consumers.
+#[cfg(feature = "icmp")]
+pub use crate::icmp::DestUnreachableKind;

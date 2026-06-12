@@ -389,6 +389,115 @@ impl IcmpType {
             },
         }
     }
+
+    /// Classify a Destination Unreachable into the unified
+    /// v4/v6 [`DestUnreachableKind`] vocabulary. Returns
+    /// `None` for non-DU types (Echo, TimeExceeded,
+    /// ParameterProblem, Redirect, PacketTooBig, etc.).
+    ///
+    /// Use this when a consumer wants a single match arm
+    /// covering both ICMPv4 and ICMPv6 unreachable codes.
+    /// Match on the concrete `Icmpv4DestUnreachCode` /
+    /// `Icmpv6DestUnreachCode` instead if you need the exact
+    /// code or, for v4 `FragmentationNeeded`, the MTU.
+    ///
+    /// Plan 162 (0.14).
+    pub fn dest_unreachable_kind(&self) -> Option<DestUnreachableKind> {
+        use DestUnreachableKind::*;
+        match self {
+            IcmpType::V4(Icmpv4Type::DestinationUnreachable { code, .. }) => Some(match code {
+                Icmpv4DestUnreachCode::Host
+                | Icmpv4DestUnreachCode::DestHostUnknown
+                | Icmpv4DestUnreachCode::SourceHostIsolated => Host,
+                Icmpv4DestUnreachCode::Port => Port,
+                Icmpv4DestUnreachCode::Net | Icmpv4DestUnreachCode::DestNetworkUnknown => Network,
+                Icmpv4DestUnreachCode::Protocol => Protocol,
+                Icmpv4DestUnreachCode::NetworkProhibited
+                | Icmpv4DestUnreachCode::HostProhibited
+                | Icmpv4DestUnreachCode::CommunicationProhibited
+                | Icmpv4DestUnreachCode::PrecedenceCutoffInEffect => AdministrativelyProhibited,
+                Icmpv4DestUnreachCode::FragmentationNeeded { .. } => FragmentationNeeded,
+                _ => Other,
+            }),
+            IcmpType::V6(Icmpv6Type::DestinationUnreachable { code, .. }) => Some(match code {
+                Icmpv6DestUnreachCode::AddressUnreachable => Host,
+                Icmpv6DestUnreachCode::PortUnreachable => Port,
+                Icmpv6DestUnreachCode::NoRoute => Network,
+                Icmpv6DestUnreachCode::AdminProhibited
+                | Icmpv6DestUnreachCode::RejectRouteToDestination
+                | Icmpv6DestUnreachCode::SourceAddressFailedIngressPolicy => {
+                    AdministrativelyProhibited
+                }
+                _ => Other,
+            }),
+            _ => None,
+        }
+    }
+}
+
+/// Unified v4/v6 vocabulary for ICMP Destination Unreachable
+/// codes. Maps the ~17 v4 [`Icmpv4DestUnreachCode`] variants
+/// and the ~8 v6 [`Icmpv6DestUnreachCode`] variants down to
+/// the operationally-distinguishable set.
+///
+/// Match on the concrete v4 / v6 code enums instead if you
+/// need the exact code or, for v4 [`Icmpv4DestUnreachCode::FragmentationNeeded`],
+/// the MTU.
+///
+/// Plan 162 (0.14).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
+#[non_exhaustive]
+pub enum DestUnreachableKind {
+    /// v4: `Host` / `DestHostUnknown` / `SourceHostIsolated`.
+    /// v6: `AddressUnreachable`.
+    Host,
+    /// v4: `Port`. v6: `PortUnreachable`.
+    Port,
+    /// v4: `Net` / `DestNetworkUnknown`. v6: `NoRoute`.
+    Network,
+    /// v4: `Protocol`. v6: no equivalent.
+    Protocol,
+    /// v4: `NetworkProhibited` / `HostProhibited` /
+    /// `CommunicationProhibited` / `PrecedenceCutoffInEffect`.
+    /// v6: `AdminProhibited` / `RejectRouteToDestination` /
+    /// `SourceAddressFailedIngressPolicy`.
+    AdministrativelyProhibited,
+    /// v4: `FragmentationNeeded { mtu }` (MTU lost in the
+    /// canonical mapping — match `Icmpv4Type` directly when you
+    /// need the MTU). v6: no exact equivalent (`PacketTooBig`
+    /// is ICMPv6 type 2, not a code under DU).
+    FragmentationNeeded,
+    /// Anything else (v4 `SourceRouteFailed`, `NetworkTos`,
+    /// `HostTos`, `HostPrecedenceViolation`, `Other`;
+    /// v6 `BeyondScopeOfSource`, `Other`).
+    Other,
+}
+
+impl DestUnreachableKind {
+    /// Stable short slug suitable as a metric label.
+    ///
+    /// | Variant | Slug |
+    /// |---------|------|
+    /// | `Host` | `"host_unreachable"` |
+    /// | `Port` | `"port_unreachable"` |
+    /// | `Network` | `"network_unreachable"` |
+    /// | `Protocol` | `"protocol_unreachable"` |
+    /// | `AdministrativelyProhibited` | `"administratively_prohibited"` |
+    /// | `FragmentationNeeded` | `"fragmentation_needed"` |
+    /// | `Other` | `"dest_unreachable_other"` |
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            DestUnreachableKind::Host => "host_unreachable",
+            DestUnreachableKind::Port => "port_unreachable",
+            DestUnreachableKind::Network => "network_unreachable",
+            DestUnreachableKind::Protocol => "protocol_unreachable",
+            DestUnreachableKind::AdministrativelyProhibited => "administratively_prohibited",
+            DestUnreachableKind::FragmentationNeeded => "fragmentation_needed",
+            DestUnreachableKind::Other => "dest_unreachable_other",
+        }
+    }
 }
 
 impl IcmpMessage {
@@ -405,5 +514,212 @@ impl IcmpMessage {
     /// See [`IcmpType::short_kind`].
     pub fn short_kind(&self) -> &'static str {
         self.ty.short_kind()
+    }
+
+    /// See [`IcmpType::dest_unreachable_kind`].
+    pub fn dest_unreachable_kind(&self) -> Option<DestUnreachableKind> {
+        self.ty.dest_unreachable_kind()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn du_v4(code: Icmpv4DestUnreachCode) -> IcmpType {
+        IcmpType::V4(Icmpv4Type::DestinationUnreachable { code, inner: None })
+    }
+
+    fn du_v6(code: Icmpv6DestUnreachCode) -> IcmpType {
+        IcmpType::V6(Icmpv6Type::DestinationUnreachable { code, inner: None })
+    }
+
+    // ── Plan 162 (0.14) — DestUnreachableKind tests ────────
+
+    #[test]
+    fn dest_unreachable_kind_returns_none_for_echo_request() {
+        let t = IcmpType::V4(Icmpv4Type::EchoRequest { id: 1, seq: 1 });
+        assert_eq!(t.dest_unreachable_kind(), None);
+    }
+
+    #[test]
+    fn dest_unreachable_kind_returns_none_for_time_exceeded() {
+        let t = IcmpType::V4(Icmpv4Type::TimeExceeded {
+            code: Icmpv4TimeExceededCode::HopLimitExceeded,
+            inner: None,
+        });
+        assert_eq!(t.dest_unreachable_kind(), None);
+    }
+
+    #[test]
+    fn dest_unreachable_kind_returns_none_for_v6_packet_too_big() {
+        // v6 PacketTooBig is type 2, not a code under DU.
+        let t = IcmpType::V6(Icmpv6Type::PacketTooBig {
+            mtu: 1500,
+            inner: None,
+        });
+        assert_eq!(t.dest_unreachable_kind(), None);
+    }
+
+    #[test]
+    fn v4_host_codes_map_to_host_kind() {
+        for code in [
+            Icmpv4DestUnreachCode::Host,
+            Icmpv4DestUnreachCode::DestHostUnknown,
+            Icmpv4DestUnreachCode::SourceHostIsolated,
+        ] {
+            assert_eq!(
+                du_v4(code).dest_unreachable_kind(),
+                Some(DestUnreachableKind::Host),
+            );
+        }
+    }
+
+    #[test]
+    fn v4_port_maps_to_port_kind() {
+        assert_eq!(
+            du_v4(Icmpv4DestUnreachCode::Port).dest_unreachable_kind(),
+            Some(DestUnreachableKind::Port),
+        );
+    }
+
+    #[test]
+    fn v4_network_codes_map_to_network_kind() {
+        for code in [
+            Icmpv4DestUnreachCode::Net,
+            Icmpv4DestUnreachCode::DestNetworkUnknown,
+        ] {
+            assert_eq!(
+                du_v4(code).dest_unreachable_kind(),
+                Some(DestUnreachableKind::Network),
+            );
+        }
+    }
+
+    #[test]
+    fn v4_protocol_maps_to_protocol_kind() {
+        assert_eq!(
+            du_v4(Icmpv4DestUnreachCode::Protocol).dest_unreachable_kind(),
+            Some(DestUnreachableKind::Protocol),
+        );
+    }
+
+    #[test]
+    fn v4_prohibited_codes_map_to_administratively_prohibited() {
+        for code in [
+            Icmpv4DestUnreachCode::NetworkProhibited,
+            Icmpv4DestUnreachCode::HostProhibited,
+            Icmpv4DestUnreachCode::CommunicationProhibited,
+            Icmpv4DestUnreachCode::PrecedenceCutoffInEffect,
+        ] {
+            assert_eq!(
+                du_v4(code).dest_unreachable_kind(),
+                Some(DestUnreachableKind::AdministrativelyProhibited),
+            );
+        }
+    }
+
+    #[test]
+    fn v4_fragmentation_needed_maps_to_fragmentation_needed_kind() {
+        let code = Icmpv4DestUnreachCode::FragmentationNeeded { mtu: Some(1400) };
+        assert_eq!(
+            du_v4(code).dest_unreachable_kind(),
+            Some(DestUnreachableKind::FragmentationNeeded),
+        );
+    }
+
+    #[test]
+    fn v4_other_codes_map_to_other_kind() {
+        for code in [
+            Icmpv4DestUnreachCode::SourceRouteFailed,
+            Icmpv4DestUnreachCode::NetworkTos,
+            Icmpv4DestUnreachCode::HostTos,
+            Icmpv4DestUnreachCode::HostPrecedenceViolation,
+            Icmpv4DestUnreachCode::Other(42),
+        ] {
+            assert_eq!(
+                du_v4(code).dest_unreachable_kind(),
+                Some(DestUnreachableKind::Other),
+            );
+        }
+    }
+
+    #[test]
+    fn v6_address_unreachable_maps_to_host_kind() {
+        assert_eq!(
+            du_v6(Icmpv6DestUnreachCode::AddressUnreachable).dest_unreachable_kind(),
+            Some(DestUnreachableKind::Host),
+        );
+    }
+
+    #[test]
+    fn v6_port_unreachable_maps_to_port_kind() {
+        assert_eq!(
+            du_v6(Icmpv6DestUnreachCode::PortUnreachable).dest_unreachable_kind(),
+            Some(DestUnreachableKind::Port),
+        );
+    }
+
+    #[test]
+    fn v6_no_route_maps_to_network_kind() {
+        assert_eq!(
+            du_v6(Icmpv6DestUnreachCode::NoRoute).dest_unreachable_kind(),
+            Some(DestUnreachableKind::Network),
+        );
+    }
+
+    #[test]
+    fn v6_prohibited_codes_map_to_administratively_prohibited() {
+        for code in [
+            Icmpv6DestUnreachCode::AdminProhibited,
+            Icmpv6DestUnreachCode::RejectRouteToDestination,
+            Icmpv6DestUnreachCode::SourceAddressFailedIngressPolicy,
+        ] {
+            assert_eq!(
+                du_v6(code).dest_unreachable_kind(),
+                Some(DestUnreachableKind::AdministrativelyProhibited),
+            );
+        }
+    }
+
+    #[test]
+    fn v6_beyond_scope_maps_to_other_kind() {
+        assert_eq!(
+            du_v6(Icmpv6DestUnreachCode::BeyondScopeOfSource).dest_unreachable_kind(),
+            Some(DestUnreachableKind::Other),
+        );
+    }
+
+    #[test]
+    fn as_str_returns_stable_slugs() {
+        // Regression-pin the slugs — downstream metric pipelines depend on them.
+        assert_eq!(DestUnreachableKind::Host.as_str(), "host_unreachable");
+        assert_eq!(DestUnreachableKind::Port.as_str(), "port_unreachable");
+        assert_eq!(DestUnreachableKind::Network.as_str(), "network_unreachable");
+        assert_eq!(
+            DestUnreachableKind::Protocol.as_str(),
+            "protocol_unreachable"
+        );
+        assert_eq!(
+            DestUnreachableKind::AdministrativelyProhibited.as_str(),
+            "administratively_prohibited",
+        );
+        assert_eq!(
+            DestUnreachableKind::FragmentationNeeded.as_str(),
+            "fragmentation_needed",
+        );
+        assert_eq!(
+            DestUnreachableKind::Other.as_str(),
+            "dest_unreachable_other"
+        );
+    }
+
+    #[test]
+    fn types_module_is_publicly_reachable() {
+        // Plan 166 (folded into 162): verify `mod types` is now `pub`.
+        // Construct a value via the explicit `types::` path —
+        // pre-fix this would fail with "private module".
+        let _: crate::icmp::types::Icmpv6DestUnreachCode =
+            crate::icmp::types::Icmpv6DestUnreachCode::NoRoute;
     }
 }

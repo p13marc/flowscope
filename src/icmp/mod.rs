@@ -70,7 +70,13 @@
 
 mod datagram;
 mod parser;
-mod types;
+// Plan 162 (0.14): promoted `mod types` to `pub mod types`
+// so `use flowscope::icmp::types::Icmpv6DestUnreachCode`
+// resolves (rustdoc + autocomplete previously suggested the
+// path but it was private). The `pub use types::*;` shim
+// below preserves the canonical short path
+// (`flowscope::icmp::Icmpv6DestUnreachCode`).
+pub mod types;
 
 pub use datagram::IcmpParser;
 pub use parser::{parse_v4, parse_v6};
