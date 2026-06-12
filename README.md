@@ -133,7 +133,7 @@ Plus always-on modules that don't need a feature flag:
 
 ```toml
 [dependencies]
-flowscope = { version = "0.13", features = ["full"] }
+flowscope = { version = "0.14", features = ["full"] }
 ```
 
 MSRV is Rust 1.88.
@@ -239,6 +239,60 @@ while let Some(evt) = s.next().await { /* ... */ }
 ```
 
 ## Status
+
+0.14.0 — netring-0.22 adoption cycle: operations-layer
+ergonomics. ICMP error → live-flow join, generic bandwidth-by-
+app primitives, site-custom port labels, per-flow inspection
+patterns, and a discoverability sweep across the prelude +
+docs.
+
+Headlines (0.14):
+
+- **`FlowTracker<FiveTuple, S>::lookup_inner(&IcmpInner)`**
+  (plan 161). Joins an ICMP error's embedded inner 5-tuple
+  back to a live flow with one method call. Direction-
+  agnostic via `FiveTupleKey::from_inner_canonical`. Replaces
+  the hand-rolled `HashMap<FlowKey, FlowStats>` mirror cache
+  every L4 monitor was rebuilding. The wishlist's claim that
+  `FlowTracker` was "mutate-only" was verified wrong — the
+  read API (`get`, `snapshot_stats`, `flows`, `iter_active`)
+  already existed.
+- **`DestUnreachableKind`** (plan 162) — unified v4/v6
+  vocabulary for the ~17 ICMPv4 + ~8 ICMPv6 Destination
+  Unreachable codes. Plus `IcmpType::dest_unreachable_kind`
+  accessor. Re-exported at the crate root and in the
+  prelude. Promotes `icmp::types` from private to `pub mod`
+  (rustdoc + IDE autocomplete bait-and-switch fix; absorbs
+  wishlist plan 166).
+- **`flowscope::correlate::RollingRate<K, V>`** (plan 164) —
+  per-key per-second rate over a sliding window. Sibling to
+  `TimeBucketedCounter` but generic over the value type (`V
+  = u64` for bytes/sec, `V = f64` for latency-sum). Bucket-
+  reuse zero-alloc per `record` call. Plus the `RateValue`
+  trait.
+- **`flowscope::well_known::LabelTable`** (plan 165) — site-
+  custom port label extensibility. `Send + Sync + Clone`.
+  Plus `FiveTupleKey::protocol_label_with` / `app_label_with`
+  companions.
+- **`L4Proto::canonical_name`** + **`FiveTupleKey::app_label`**
+  (plan 163) — lowercase always-Some siblings to the
+  uppercase `proto_str` (EVE/Suricata) and `Option`-returning
+  `protocol_label`. Removes the `is_tcp: bool` workaround
+  from bandwidth-by-app reports.
+- **`KeyIndexed::drain_expired`** + **`drain_expired_into`**
+  (plan 160) — returns expired entries as owned `(K, V)`
+  pairs for inspection. Sibling to `evict_expired` (which
+  discards).
+- **`FlowStats` per-side accessors** (plan 168) —
+  `bytes_for(side)` / `pkts_for(side)` /
+  `mean_pkt_size_for(side)` / `direction_skew()`.
+- **Discoverability sweep** (plan 167) — prelude expanded
+  with ~13 `correlate` + ICMP + `well_known` re-exports;
+  new [`docs/discoverability.md`](docs/discoverability.md)
+  one-page tour grouped by use case.
+
+See [`docs/migration-0.13-to-0.14.md`](docs/migration-0.13-to-0.14.md)
+for the (strictly additive) 0.13 → 0.14 cheat sheet.
 
 0.13.0 — netring-0.21 adoption cycle: fully `Send + Sync`
 driver + canonical anomaly value type + broadcast delivery +

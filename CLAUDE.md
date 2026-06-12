@@ -21,6 +21,92 @@ the core.
 
 ## Implementation Status
 
+**0.14.0 cycle** (netring 0.22 adoption — operations-layer
+ergonomics: ICMP error correlation + bandwidth-by-app
+primitives + site-custom labels + discoverability,
+shipped 2026-06-12).
+
+Plans 160 / 161 / 162 / 163 / 164 / 165 / 167 / 168.
+Triggered by the netring 0.22 adoption wishlist
+(`plans/0.14-wishlist-from-netring.md`).
+
+Headlines:
+
+- **Plan 161 — `FlowTracker<FiveTuple, S>::lookup_inner`**.
+  Specialised impl block (not generic — `IcmpInner` is
+  FiveTupleKey-shaped) that joins an ICMP error's embedded
+  inner 5-tuple back to a live flow. Plus
+  `FiveTupleKey::from_inner_canonical` + `from_inner_literal`
+  public constructors (the canonicalisation logic was private
+  inside `extract_from_parsed` pre-0.14). The wishlist's
+  caveat claiming `FlowTracker` was "mutate-only" was
+  verified wrong — `FlowTracker<E, S>` already exposes `get`,
+  `snapshot_stats`, `flows`, `iter_active`. No refactor; the
+  specialised impl calls them directly.
+- **Plan 162 — `DestUnreachableKind`** unified v4/v6 vocabulary
+  for the ~17 ICMPv4 + ~8 ICMPv6 Destination Unreachable
+  codes. Maps down to 7 operationally-distinguishable
+  variants (Host / Port / Network / Protocol /
+  AdministrativelyProhibited / FragmentationNeeded / Other).
+  Plus `IcmpType::dest_unreachable_kind` + `as_str` (stable
+  metric-label slug). Plus the wishlist's plan 166 absorbed:
+  `icmp::types` was promoted from private to `pub mod` so
+  `flowscope::icmp::types::Icmpv6DestUnreachCode` resolves
+  (was a rustdoc + autocomplete bait-and-switch).
+  `DestUnreachableKind` re-exported at the crate root and in
+  the prelude.
+- **Plan 164 — `flowscope::correlate::RollingRate<K, V>`**.
+  Per-key per-second rate over a sliding window. Sibling to
+  `TimeBucketedCounter` but generic over `V` (bytes/sec,
+  request count, latency-sum). Same bucket-reuse zero-alloc
+  discipline. Plus the small sealed-style `RateValue` trait
+  implemented for `u64` / `u32` / `i64` / `i32` / `f64` /
+  `f32` (custom newtype wrappers can implement it for
+  semantic distinction). Drops the wishlist's incorrect
+  `V: From<u64> + Into<f64>` bound (doesn't hold for `u64`).
+- **Plan 165 — `flowscope::well_known::LabelTable`**. Site-
+  custom port label extensibility. `new()` inherits the
+  built-in ~80-entry table; `standalone()` is whitelist-only.
+  `Send + Sync + Clone`. Labels are `&'static str` (use
+  `Box::leak` for runtime-loaded strings). Plus
+  `FiveTupleKey::protocol_label_with` / `app_label_with`
+  companions.
+- **Plan 163 — `L4Proto::canonical_name`** lowercase always-
+  Some sibling to the existing uppercase `proto_str` (which
+  is EVE/Suricata schema-shaped + `Option`). Plus
+  `FiveTupleKey::app_label` always-Some companion to
+  `protocol_label()` with L4 fallback. Removes the
+  `is_tcp: bool` workaround from netring's bandwidth-by-app
+  primitive.
+- **Plan 160 — `KeyIndexed::drain_expired` + `drain_expired_into`**.
+  Returns expired entries as owned `(K, V)` pairs for
+  inspection. Sibling to `evict_expired` (which discards).
+  Honest allocation contract: ships `Vec<(K, V)>` return +
+  reusable-`&mut Vec` variant rather than the wishlist's
+  misleading `impl Iterator + '_` (the `lru::LruCache` has
+  no `drain()`, so a Vec is unavoidable).
+- **Plan 168 — `FlowStats` per-`FlowSide` accessors**.
+  `bytes_for` / `pkts_for` / `mean_pkt_size_for` /
+  `direction_skew` methods. `direction_skew` is
+  `(bytes_init - bytes_resp) / total_bytes`, clamped to
+  `[-1, 1]` — positive = initiator-heavy (uploads), negative
+  = responder-heavy (downloads).
+- **Plan 167 — discoverability sweep**. Pure DX. Prelude
+  expanded with `TimeBucketedCounter`, `TimeBucketedSet`,
+  `KeyIndexed`, `BurstDetector`, `Ewma`, `TopK`, `RollingRate`,
+  `FlowStateMap`, `IcmpType`, `IcmpMessage`, `IcmpInner`,
+  `DestUnreachableKind`, `LabelTable` (~13 new exports). New
+  `docs/discoverability.md` one-page tour grouped by use
+  case ("count things per key over time" / "react to ICMP
+  errors" / "emit structured anomalies" / …).
+
+Test count after the 0.14 cycle: **884 passing** (up from 809
+at 0.13.0 release, +75 new), zero clippy warnings under
+`--all-features --all-targets -D warnings`, zero rustdoc
+warnings. All 13 CI feature-matrix combinations build clean.
+
+New module registered: `src/correlate/rolling_rate.rs`.
+
 **0.13.0 cycle** (netring 0.21 adoption — Send+Sync driver +
 canonical anomaly value + broadcast + DX, shipped 2026-06).
 
@@ -398,7 +484,8 @@ src/
 │   ├── burst.rs                 # BurstDetector<K, E> + BurstHit<K>             (plan 102 sub-A, 0.10)
 │   ├── ewma.rs                  # Ewma<K>                                       (plan 102 sub-A, 0.10)
 │   ├── flow_state_map.rs        # FlowStateMap<T, K> per-flow typed state       (plan 154, 0.13.0)
-│   ├── indexed.rs               # KeyIndexed<K, V>  (.peek 0.10; .get_mut + new_unbounded fix in plan 154, 0.13.0)
+│   ├── indexed.rs               # KeyIndexed<K, V>  (.peek 0.10; .get_mut + new_unbounded fix plan 154, 0.13.0; .drain_expired + .drain_expired_into plan 160, 0.14.0)
+│   ├── rolling_rate.rs          # RollingRate<K, V> + RateValue trait — per-key per-second rate (plan 164, 0.14.0)
 │   ├── sequence.rs              # SequencePattern + KeylessSequencePattern
 │   ├── set.rs                   # TimeBucketedSet<K, V>                         (plan 102 sub-A, 0.10)
 │   └── topk.rs                  # TopK<K> (Misra-Gries)                         (plan 102 sub-A, 0.10)
@@ -426,7 +513,7 @@ src/
 │   ├── ndjson.rs                # FlowEventNdjsonWriter + NdjsonOptions (gated on `emit-ndjson`; .write_owned_anomaly plan 147, 0.13.0)
 │   └── zeek.rs                  # ZeekConnLogWriter + ZeekOptions
 ├── well_known/                  # flowscope::well_known (plan 102 sub-D, 0.10)
-│   └── mod.rs                   # protocol_label / entries / curated table
+│   └── mod.rs                   # protocol_label / entries / curated table + LabelTable site-custom overrides (plan 165, 0.14.0)
 ├── layers/fast.rs               # LayerParser + LayerStack zero-alloc (plan 94 Tier 3 fast path, 0.9.0)
 ├── driver/                      # flowscope::driver — typed Driver<E> + SlotHandle<M, K> (plan 121, 0.11.0; Send+Sync since plan 156, 0.13.0)
 │   ├── mod.rs                   # public re-exports (Driver / DriverBuilder / DeferredDriverBuilder / Event / SlotHandle / SlotMessage / BroadcastSlotHandle)
@@ -455,6 +542,7 @@ src/
 ├── tracker.rs                   # FlowTracker<E, S>     (manual_tick alias added in 50.4)
 │                                # hot-cache fast path   (plan 41, 0.2.0)
 │                                # snapshot_stats / snapshot_history / forget (0.2.0)
+│                                # specialised impl<S> FlowTracker<FiveTuple, S>: lookup_inner + stats_for_inner (plan 161, 0.14.0)
 ├── reassembler.rs               # Reassembler trait + BufferedReassembler
 │                                # buffer cap + OverflowPolicy (plan 42 §1, 0.2.0)
 ├── driver.rs                    # FlowDriver<E, F, S = ()> (sync wrapper)
@@ -489,10 +577,10 @@ src/
 │   ├── exchange.rs              # DnsExchangeParser + DnsExchange + DnsOutcome   (plan 107, 0.10)
 │   ├── session.rs               # DnsTcpParser (SessionParser, RFC 1035 §4.2.2 framing)
 │   └── types.rs                 # DnsQuery / DnsResponse / DnsRdata / DnsConfig
-├── icmp/                        # `icmp` feature
+├── icmp/                        # `icmp` feature (`mod types` promoted to `pub mod` in plan 162, 0.14.0)
 │   ├── parser.rs                # parse_v4 / parse_v6 stateless decoders
 │   ├── datagram.rs              # IcmpParser (DatagramParser, plan 76, 0.7.0)
-│   └── types.rs                 # IcmpMessage / IcmpType variants
+│   └── types.rs                 # IcmpMessage / IcmpType variants + DestUnreachableKind + IcmpType::dest_unreachable_kind (plan 162, 0.14.0)
 └── pcap/                        # `pcap` feature
     └── source.rs                # PcapFlowSource — offline replay
 ```

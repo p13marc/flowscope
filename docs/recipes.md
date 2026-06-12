@@ -927,8 +927,184 @@ For the full set of migration recipes from prior versions, see:
 - [`docs/migration-0.12-to-0.13.md`](migration-0.12-to-0.13.md)
   — `Driver<E>: Send + Sync`, `OwnedAnomaly` + `DetectorScore`,
   `BroadcastSlotHandle`, `drain_n`, `FlowStateMap`.
+- [`docs/migration-0.13-to-0.14.md`](migration-0.13-to-0.14.md)
+  — `FlowTracker::lookup_inner`, `DestUnreachableKind`,
+  `RollingRate`, `LabelTable`, `app_label` / `canonical_name`,
+  `drain_expired`, per-side `FlowStats` accessors. Strictly
+  additive.
 
-## 0.13 patterns
+## 0.14 patterns
+
+### Joining ICMP errors back to live flows
+
+Every L4 monitor that watches for "why did this flow die"
+asks the same question: an ICMPv4 Destination Unreachable
+arrives carrying the original packet's headers — does it
+correlate to a live flow in the tracker? `FlowTracker<FiveTuple, S>::lookup_inner`
+answers this in one method call. Direction-agnostic via the
+shared canonicalisation helper.
+
+```rust,ignore
+use flowscope::extract::FiveTuple;
+use flowscope::icmp::IcmpType;
+use flowscope::FlowTracker;
+use flowscope::DestUnreachableKind;
+
+let mut tracker: FlowTracker<FiveTuple, ()> = FlowTracker::new(
+    FiveTuple::bidirectional());
+
+// In your ICMP handler:
+fn on_icmp_message<S>(
+    tracker: &FlowTracker<FiveTuple, S>,
+    icmp_type: &IcmpType,
+) where S: Send + 'static {
+    if !icmp_type.is_error() {
+        return;
+    }
+    let Some((_label, inner)) = icmp_type.error_inner() else {
+        return; // truncated embed
+    };
+
+    if let Some((flow_key, stats)) = tracker.stats_for_inner(inner) {
+        let kind = icmp_type.dest_unreachable_kind()
+            .map(|k| k.as_str())
+            .unwrap_or_else(|| icmp_type.short_kind());
+        eprintln!(
+            "Flow {flow_key:?} reported {kind}: {} bytes in flight",
+            stats.total_bytes()
+        );
+    }
+}
+```
+
+For unidirectional trackers (`FiveTuple::directional()`), use
+`FiveTupleKey::from_inner_literal` + `tracker.get(&key)`
+directly — `lookup_inner` is bidirectional-specific.
+
+### Bandwidth-by-app with `RollingRate` + `app_label`
+
+The operationally-most-common monitor pattern: per-app
+bytes/sec over a sliding window, ranked top-N. `RollingRate`
+is the new primitive; `app_label` is the always-Some label
+key.
+
+```rust,ignore
+use std::time::Duration;
+use flowscope::correlate::RollingRate;
+use flowscope::driver::Event;
+
+let mut bw: RollingRate<&'static str, u64> =
+    RollingRate::new_unbounded(Duration::from_secs(60), Duration::from_secs(1));
+
+for event in driver_events {
+    if let Event::FlowPacket { key, len, ts, .. } = event {
+        // app_label is always-Some; falls back to L4 name
+        // ("tcp" / "udp" / "sctp") for unknown ports.
+        bw.record(key.app_label(), len as u64, ts);
+    }
+}
+
+// In your tick handler — top-10 talkers:
+let mut snap: Vec<_> = bw.snapshot(now).collect();
+snap.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+for (label, rate) in snap.iter().take(10) {
+    println!("{label:<12} {rate:>10.0} B/s");
+}
+```
+
+`RollingRate` is generic over the value type. For request-
+rate, use `record(k, 1, now)` and the same `RollingRate<K, u64>`
+shape:
+
+```rust,ignore
+let mut rps: RollingRate<&'static str, u64> =
+    RollingRate::new_unbounded(Duration::from_secs(60), Duration::from_secs(1));
+// On each Established event:
+rps.record(key.app_label(), 1, ts);
+```
+
+### Site-custom port labels with `LabelTable`
+
+Every real deployment has internal services on non-standard
+ports. `LabelTable` lets you layer overrides on top of (or
+replacing) the built-in well-known table.
+
+```rust,ignore
+use flowscope::well_known::LabelTable;
+use flowscope::extractor::L4Proto;
+
+// Build once at startup:
+let mut table = LabelTable::new();  // inherits the built-in ~80 entries
+table.extend([
+    (L4Proto::Tcp, 8765,  "grpc-internal"),
+    (L4Proto::Tcp, 9101,  "metrics-scrape"),
+    (L4Proto::Tcp, 30443, "legacy-app"),
+    (L4Proto::Udp, 5683,  "coap-iot"),
+]);
+
+// In your monitor handler:
+let label = flow_key.app_label_with(&table);
+// "grpc-internal" if proto=TCP and port=8765,
+// "http" if proto=TCP and port=80 (built-in fallback),
+// "tcp" if proto=TCP and ports are ephemeral (L4 fallback).
+```
+
+For runtime-loaded labels (YAML/JSON config), use `Box::leak`
+to bridge owned `String` into `&'static str`:
+
+```rust,ignore
+let label_from_config: String = read_from_config();
+let leaked: &'static str = Box::leak(label_from_config.into_boxed_str());
+table.set(L4Proto::Tcp, port, leaked);
+```
+
+`LabelTable` is `Clone + Send + Sync` — share via `Arc` across
+threads.
+
+### Inspection patterns with `drain_expired`
+
+When you're using `KeyIndexed` for request/response
+correlation (DNS, ICMP-to-flow, custom RPC), you usually want
+to ask "what timed out without a response?" `drain_expired`
+returns the expired `(K, V)` pairs so you can emit anomalies.
+
+```rust,ignore
+use std::time::Duration;
+use flowscope::correlate::KeyIndexed;
+use flowscope::Timestamp;
+
+let mut pending_dns: KeyIndexed<u16 /* txid */, String /* qname */> =
+    KeyIndexed::new_unbounded(Duration::from_secs(5));
+
+// On every DNS query:
+pending_dns.insert(txid, qname, ts);
+
+// On every DNS response: remove (correlate).
+let _ = pending_dns.remove(&txid);
+
+// Periodic tick — emit anomalies for unanswered queries:
+let unanswered = pending_dns.drain_expired(now);
+for (txid, qname) in unanswered {
+    println!("DNS qname={qname} txid={txid} timed out");
+}
+```
+
+Reusable-buffer variant for hot loops:
+
+```rust,ignore
+let mut out: Vec<(u16, String)> = Vec::with_capacity(64);
+loop {
+    let n = pending_dns.drain_expired_into(now, &mut out);
+    if n == 0 { break; }
+    for (txid, qname) in out.drain(..) {
+        emit_timeout_anomaly(txid, qname);
+    }
+}
+```
+
+Honest allocation contract: the underlying `lru::LruCache` has
+no `drain()` method, so a `Vec` is unavoidable. The `_into`
+variant amortizes across calls.
 
 ### Emitting detector-shaped anomalies via `OwnedAnomaly`
 

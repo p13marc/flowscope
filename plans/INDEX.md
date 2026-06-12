@@ -15,9 +15,11 @@ record; `plans/` is the working backlog.
 
 ## Active
 
-### 0.14.0 cycle — netring-0.22 driven (drafted 2026-06-12)
+### 0.14.0 cycle — netring-0.22 driven (shipped 2026-06-12)
 
-**Status:** plan-of-record drafted; no code shipped.
+**Status:** all 8 implementation plans shipped to master
+(`1392dbd` → `5f5c88d`). Phase E release gated on per-release
+consent per `feedback_release_consent.md`.
 
 Umbrella: [`169-cycle-0-14-umbrella.md`](./169-cycle-0-14-umbrella.md).
 
@@ -28,22 +30,46 @@ source surfaced one major finding — Plan 161's caveat about
 (`get`, `snapshot_stats`, `flows`, `iter_active`) already
 exists; no refactor needed. See umbrella §1.1.
 
-**Plans (after consolidation pass):**
+**Shipped (all 8 implementation plans + umbrella):**
 
-| Plan | Title | Priority |
-|------|-------|----------|
-| [160](./160-keyindexed-drain-expired.md) | `KeyIndexed::drain_expired` + `drain_expired_into` (honest allocation contract) | P0 |
-| [161](./161-flowtracker-lookup-inner.md) | `FlowTracker<FiveTuple, S>::lookup_inner` + `FiveTupleKey::from_inner_canonical` (specialised, not generic) | P0 |
-| [162](./162-dest-unreachable-kind.md) | `DestUnreachableKind` enum + ICMP module hygiene (absorbs wishlist 166) | P0 |
-| [163](./163-app-label-canonical-name.md) | `FiveTupleKey::app_label` + `L4Proto::canonical_name` (lowercase sibling to `proto_str`) | P1 |
-| [164](./164-correlate-rolling-rate.md) | `correlate::RollingRate<K, V>` primitive | P1 |
-| [165](./165-protocol-label-extensibility.md) | `well_known::LabelTable` + `protocol_label_with` / `app_label_with` | P1 |
-| [167](./167-discoverability-sweep.md) | Prelude expansion + `docs/discoverability.md` + rustdoc "see also" links | P2 |
-| [168](./168-flowside-byte-split.md) | `FlowStats::bytes_for` / `pkts_for` / `mean_pkt_size_for` / `direction_skew` | P3 |
+| Plan | Commit | Title |
+|------|--------|-------|
+| 160 | `1392dbd` | `KeyIndexed::drain_expired` + `drain_expired_into` — honest allocation contract (Vec return + reusable-buffer variant; `lru::LruCache` has no `drain()`) |
+| 168 | `1392dbd` | `FlowStats::bytes_for` / `pkts_for` / `mean_pkt_size_for` / `direction_skew` per-side accessors |
+| 162 | `ffd31cb` | `DestUnreachableKind` unified v4/v6 enum + `IcmpType::dest_unreachable_kind` accessor + promoted `icmp::types` from private to `pub mod` (absorbs wishlist 166) |
+| 161 | `17eba9c` | `FiveTupleKey::from_inner_canonical` + `from_inner_literal` + specialised `impl<S> FlowTracker<FiveTuple, S>` with `lookup_inner` / `stats_for_inner` (no refactor needed) |
+| 163 | `17eba9c` | `L4Proto::canonical_name` lowercase-always-Some + `FiveTupleKey::app_label` always-Some fallback (siblings to `proto_str` / `protocol_label`) |
+| 164 | `5f5c88d` | `flowscope::correlate::RollingRate<K, V>` + `RateValue` trait (generic-V per-key rate primitive with same bucket-reuse zero-alloc discipline as `TimeBucketedCounter`) |
+| 165 | `5f5c88d` | `flowscope::well_known::LabelTable` value type + `FiveTupleKey::protocol_label_with` / `app_label_with` (site-custom port label extensibility) |
+| 167 | `5f5c88d` | Discoverability sweep — prelude expanded with ~10 `correlate` + ICMP + `well_known` re-exports + new `docs/discoverability.md` one-page tour |
 
-Total effort: ~6.5 days (wishlist estimated 8). P0 alone
-(160, 161, 162): ~3 days. P0+P1 (160-165): ~6 days. Phasing
-in 4 PRs — see umbrella §6.
+**Phase E — Release mechanics (pending consent):**
+
+| Step | Status |
+|------|--------|
+| Final bench gate + clippy + docs sweep | ✅ clean |
+| `cargo publish` dry-run | pending |
+| Per-release consent | pending |
+| Tag + push (`0.14.0`) | pending |
+
+**Test counts:** 884 passing (up from 809 at 0.13.0 release —
++75 new), zero clippy warnings under `--all-features
+--all-targets -D warnings`, zero rustdoc warnings. All 13 CI
+feature-matrix combinations build clean.
+
+**Cycle theme:** operations-layer ergonomics — ICMP error
+correlation (lookup_inner + DestUnreachableKind), bandwidth-
+by-app primitives (app_label + RollingRate), site-custom
+labels (LabelTable), inspection patterns (drain_expired),
+discoverability (prelude expansion + docs/discoverability.md).
+
+**Headline finding:** the wishlist's Plan 161 caveat asserted
+`FlowTracker` was "mutate-only" and warned of a possible
+refactor. Direct verification: `FlowTracker<E, S>` already
+exposes `get`, `snapshot_stats`, `flows`, `iter_active`. No
+refactor; the specialised `impl<S> FlowTracker<FiveTuple, S>`
+block calls them directly. Effort dropped from "may need
+refactor" to "small additive method".
 
 **Strictly additive cycle** — every plan extends an existing
 public surface or adds a new type. No existing API breaks.
@@ -351,7 +377,8 @@ Plan numbers retired (implementation shipped, file removed):
 93, 94, 96, 97, 99, 100, 101, 102, 106, 107, 110, 112, 113,
 115, 116, 118, 119, 120, 121, 122, 123, 124, 126, 127, 128,
 130, 131, 132, 143, 144, 146, 147, 149, 150, 152, 153, 154,
-155, 156. Subsumed by consolidation:
+155, 156, 160, 161, 162, 163, 164, 165, 167, 168. Subsumed by
+consolidation:
 - 103, 104, 105 → rolled into plan 102 (utility modules)
 - 111 → rolled into plan 110 (DX polish)
 - 114 → rolled into plan 113 (dynamic dispatch)
@@ -362,16 +389,20 @@ Plan numbers retired (implementation shipped, file removed):
   collapsed into `DetectorScore` on the output side; the
   separate `OwnedAnomaly` plan merged with EVE writer
   integration into one coherent ship)
+- 166 → absorbed into 162 (0.14 cycle: `icmp::types` re-export
+  hygiene folded into the `DestUnreachableKind` ship — both
+  touch `src/icmp/mod.rs`)
 
 Active: 21 (stale-deferred), 151 (0.12 expanded-cycle
-umbrella — kept until 0.12 release ships), 157 (0.13 cycle
-umbrella — kept until 0.13 release ships).
-Implementation plans 147, 149, 150, 152, 153, 154, 155, 156
-shipped to master in the 0.13 cycle; plan files retired per
+umbrella — durable record), 157 (0.13 cycle umbrella —
+durable record), 169 (0.14 cycle umbrella — kept until 0.14
+release ships).
+Implementation plans 160, 161, 162, 163, 164, 165, 167, 168
+shipped to master in the 0.14 cycle; plan files retired per
 convention.
 
-The next free number for a new plan is 158+. (158-200 reserved
-for the post-0.13 cycle / 1.0-prep audits; see umbrella
+The next free number for a new plan is 170+. (170-200 reserved
+for the post-0.14 cycle / 1.0-prep audits; see umbrella
 157 §13 for the 1.0 stability-audit sketch.)
 
 ---

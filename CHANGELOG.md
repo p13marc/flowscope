@@ -1,9 +1,21 @@
 # Changelog
 
-## 0.14.0 (in progress)
+## 0.14.0
 
 The **operations-layer ergonomics** cycle. Driven by netring
 0.22 adoption; see `plans/0.14-wishlist-from-netring.md`.
+
+This is a **strictly additive** cycle — every plan extends an
+existing public surface or adds a new type. No existing API
+breaks, no bound tightening, no deprecations. `cargo update -p
+flowscope` against existing 0.13 code compiles unchanged.
+
+Test count after the 0.14 cycle: **884 passing** (up from 809
+at 0.13.0 release, +75 new), zero clippy warnings under
+`--all-features --all-targets -D warnings`, zero rustdoc
+warnings. All 13 CI feature-matrix combinations clean.
+
+Migration: [`docs/migration-0.13-to-0.14.md`](docs/migration-0.13-to-0.14.md).
 
 ### Added
 
@@ -103,7 +115,7 @@ The **operations-layer ergonomics** cycle. Driven by netring
   to `[-1, 1]`. Useful for one-sided-flow detection (DoS,
   scans, CDN downloads).
 
-## 0.13.0 (in progress)
+## 0.13.0
 
 The **fully `Send + Sync` driver** + **canonical anomaly value type**
 + **detector-output uniformity** cycle. Driven by netring 0.21
