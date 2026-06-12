@@ -291,6 +291,54 @@ impl FlowStats {
         let resp = self.bytes_responder as f64;
         (init - resp) / total as f64
     }
+
+    /// Average bytes/second over the flow's lifetime. Returns
+    /// `0.0` (not NaN / Infinity) for zero-duration flows
+    /// (single-packet or instantaneous). Sibling to
+    /// [`Self::total_bytes`] + [`Self::duration_secs`].
+    ///
+    /// Plan 173 (0.14).
+    pub fn throughput_bps(&self) -> f64 {
+        safe_div_u64(self.total_bytes(), self.duration_secs())
+    }
+
+    /// Average packets/second over the flow's lifetime. Returns
+    /// `0.0` for zero-duration flows.
+    ///
+    /// Plan 173 (0.14).
+    pub fn throughput_pps(&self) -> f64 {
+        safe_div_u64(self.total_packets(), self.duration_secs())
+    }
+
+    /// Average bytes/second attributed to the given side over
+    /// the flow's lifetime. Returns `0.0` for zero-duration
+    /// flows. Sibling to [`Self::bytes_for`].
+    ///
+    /// Plan 173 (0.14).
+    pub fn throughput_bps_for(&self, side: FlowSide) -> f64 {
+        safe_div_u64(self.bytes_for(side), self.duration_secs())
+    }
+
+    /// Average packets/second attributed to the given side
+    /// over the flow's lifetime. Returns `0.0` for
+    /// zero-duration flows. Sibling to [`Self::pkts_for`].
+    ///
+    /// Plan 173 (0.14).
+    pub fn throughput_pps_for(&self, side: FlowSide) -> f64 {
+        safe_div_u64(self.pkts_for(side), self.duration_secs())
+    }
+}
+
+/// Safe division: `num as f64 / den`, returning `0.0` instead
+/// of NaN / Infinity when `den <= 0.0` (covers zero-duration
+/// flows and time-machine-stamps).
+#[inline]
+fn safe_div_u64(num: u64, den: f64) -> f64 {
+    if den > 0.0 {
+        num as f64 / den
+    } else {
+        0.0
+    }
 }
 
 /// Lifecycle state of a flow as tracked by [`crate::FlowTracker`].
@@ -805,5 +853,90 @@ mod tests {
                 "skew {skew} out of [-1, 1] for ({init}, {resp})"
             );
         }
+    }
+
+    // ── Plan 173 (0.14) — throughput accessors ────────────
+
+    fn stats_with_duration(
+        init_bytes: u64,
+        init_pkts: u64,
+        resp_bytes: u64,
+        resp_pkts: u64,
+        secs: u32,
+    ) -> FlowStats {
+        FlowStats {
+            packets_initiator: init_pkts,
+            packets_responder: resp_pkts,
+            bytes_initiator: init_bytes,
+            bytes_responder: resp_bytes,
+            started: crate::Timestamp::new(0, 0),
+            last_seen: crate::Timestamp::new(secs, 0),
+            ..FlowStats::default()
+        }
+    }
+
+    #[test]
+    fn throughput_bps_lifetime_avg() {
+        // 1000 bytes init + 500 bytes resp over 10 s = 150 B/s.
+        let s = stats_with_duration(1000, 5, 500, 5, 10);
+        let bps = s.throughput_bps();
+        assert!(
+            (bps - 150.0).abs() < 1e-9,
+            "expected 150.0 B/s, got {bps}"
+        );
+    }
+
+    #[test]
+    fn throughput_pps_lifetime_avg() {
+        // 5 + 5 = 10 packets over 10 s = 1 pps.
+        let s = stats_with_duration(1000, 5, 500, 5, 10);
+        assert!((s.throughput_pps() - 1.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn throughput_bps_for_split_by_side() {
+        // 1000 init / 10s = 100 B/s init; 500 resp / 10s = 50 B/s resp.
+        let s = stats_with_duration(1000, 5, 500, 5, 10);
+        assert!((s.throughput_bps_for(FlowSide::Initiator) - 100.0).abs() < 1e-9);
+        assert!((s.throughput_bps_for(FlowSide::Responder) - 50.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn throughput_pps_for_split_by_side() {
+        let s = stats_with_duration(1000, 5, 500, 8, 10);
+        assert!((s.throughput_pps_for(FlowSide::Initiator) - 0.5).abs() < 1e-9);
+        assert!((s.throughput_pps_for(FlowSide::Responder) - 0.8).abs() < 1e-9);
+    }
+
+    #[test]
+    fn throughput_zero_duration_flow_returns_zero_not_nan() {
+        // started == last_seen → duration_secs() == 0.
+        // All four throughput accessors must return 0.0, NOT
+        // NaN or Infinity.
+        let s = FlowStats {
+            packets_initiator: 1,
+            bytes_initiator: 1500,
+            started: crate::Timestamp::new(0, 0),
+            last_seen: crate::Timestamp::new(0, 0),
+            ..FlowStats::default()
+        };
+        for v in [
+            s.throughput_bps(),
+            s.throughput_pps(),
+            s.throughput_bps_for(FlowSide::Initiator),
+            s.throughput_pps_for(FlowSide::Responder),
+        ] {
+            assert!(v.is_finite(), "value {v} is not finite");
+            assert_eq!(v, 0.0);
+        }
+    }
+
+    #[test]
+    fn throughput_sides_sum_to_total() {
+        let s = stats_with_duration(1000, 5, 500, 5, 10);
+        let total = s.throughput_bps();
+        let by_side =
+            s.throughput_bps_for(FlowSide::Initiator) + s.throughput_bps_for(FlowSide::Responder);
+        assert!((total - by_side).abs() < 1e-9);
     }
 }

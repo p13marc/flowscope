@@ -447,7 +447,35 @@ keys observed within the active sliding window. A
 
 ## §14 `FlowStats::throughput_bps*` accessors (plan 173)
 
-(Coming in plan 173 implementation — pending.)
+Four new methods on `FlowStats` for lifetime-average
+throughput. Safe-divide built in — zero-duration flows return
+`0.0` instead of NaN / Infinity.
+
+```rust
+use flowscope::FlowSide;
+
+// Overall lifetime throughput:
+let bps = stats.throughput_bps();   // bytes/sec
+let pps = stats.throughput_pps();   // packets/sec
+
+// Per-side:
+let init_bps = stats.throughput_bps_for(FlowSide::Initiator);
+let resp_bps = stats.throughput_bps_for(FlowSide::Responder);
+let init_pps = stats.throughput_pps_for(FlowSide::Initiator);
+let resp_pps = stats.throughput_pps_for(FlowSide::Responder);
+
+// Sanity: sides sum to total.
+assert!((bps - (init_bps + resp_bps)).abs() < 1e-9);
+```
+
+These replace the manual divide-by-`duration_secs()` pattern
+at every call site — easy to forget the
+`max(EPSILON)` guard, which is why the project ships the
+safe-divide once and exposes it through these accessors.
+
+For sliding-window throughput (last-N-seconds rate, not
+lifetime average), use `RollingRate` instead — `FlowStats`
+gives you the flow's lifetime aggregate.
 
 For wider migration context, see:
 
