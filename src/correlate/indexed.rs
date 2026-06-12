@@ -153,6 +153,54 @@ where
             self.inner.pop(&k);
         }
     }
+
+    /// Drain entries whose TTL has elapsed at `now` and return
+    /// them as owned `(K, V)` pairs in arbitrary order. Non-
+    /// expired entries stay in the index.
+    ///
+    /// Companion to [`Self::evict_expired`] — use this when the
+    /// caller needs to *inspect* expired entries (e.g. "DNS
+    /// resolved but no connection followed", "ICMP didn't
+    /// explain a flow death" patterns).
+    ///
+    /// Allocation: the underlying [`lru::LruCache`] exposes no
+    /// `drain()`, so this method must collect expired keys
+    /// into an intermediate `Vec` before popping. The resulting
+    /// `Vec<(K, V)>` is the only externally-visible allocation.
+    /// For amortized-allocation hot loops, use
+    /// [`Self::drain_expired_into`] with a reusable buffer.
+    ///
+    /// Plan 160 (0.14).
+    pub fn drain_expired(&mut self, now: Timestamp) -> Vec<(K, V)> {
+        let mut out = Vec::new();
+        self.drain_expired_into(now, &mut out);
+        out
+    }
+
+    /// Append every entry whose TTL has elapsed at `now` to
+    /// `out` (as owned `(K, V)` pairs) and return the number
+    /// appended. Non-expired entries stay in the index.
+    ///
+    /// Mirrors the `track_into` / `drain_n` idiom (plans 119 +
+    /// 149): preallocate `out` once, reuse it in the hot loop.
+    ///
+    /// Plan 160 (0.14).
+    pub fn drain_expired_into(&mut self, now: Timestamp, out: &mut Vec<(K, V)>) -> usize {
+        let start = out.len();
+        let now_dur = now.to_duration();
+        let expired_keys: Vec<K> = self
+            .inner
+            .iter()
+            .filter(|(_, (_, ts))| now_dur.saturating_sub(ts.to_duration()) > self.ttl)
+            .map(|(k, _)| k.clone())
+            .collect();
+        for k in expired_keys {
+            if let Some((v, _ts)) = self.inner.pop(&k) {
+                out.push((k, v));
+            }
+        }
+        out.len() - start
+    }
 }
 
 #[cfg(test)]
@@ -205,5 +253,93 @@ mod tests {
         assert!(q.get(&1, Timestamp::new(1, 0)).is_none());
         assert!(q.get(&2, Timestamp::new(1, 0)).is_some());
         assert!(q.get(&3, Timestamp::new(1, 0)).is_some());
+    }
+
+    // ── Plan 160 (0.14) — drain_expired tests ────────────────
+
+    #[test]
+    fn drain_expired_returns_empty_on_no_expiry() {
+        let mut q: KeyIndexed<u16, String> = KeyIndexed::new(Duration::from_secs(60), 16);
+        q.insert(1, "a".into(), Timestamp::new(0, 0));
+        let drained = q.drain_expired(Timestamp::new(5, 0));
+        assert!(drained.is_empty());
+        assert!(q.get(&1, Timestamp::new(5, 0)).is_some());
+    }
+
+    #[test]
+    fn drain_expired_returns_owned_pairs_on_full_expiry() {
+        let mut q: KeyIndexed<u16, String> = KeyIndexed::new(Duration::from_secs(5), 16);
+        q.insert(1, "a".into(), Timestamp::new(0, 0));
+        q.insert(2, "b".into(), Timestamp::new(0, 0));
+        let mut drained = q.drain_expired(Timestamp::new(20, 0));
+        drained.sort_by_key(|(k, _)| *k);
+        assert_eq!(drained, vec![(1, "a".into()), (2, "b".into())]);
+        assert!(q.is_empty());
+    }
+
+    #[test]
+    fn drain_expired_returns_partial_on_mixed_expiry() {
+        let mut q: KeyIndexed<u16, String> = KeyIndexed::new(Duration::from_secs(5), 16);
+        q.insert(1, "old".into(), Timestamp::new(0, 0));
+        q.insert(2, "new".into(), Timestamp::new(15, 0));
+        let drained = q.drain_expired(Timestamp::new(20, 0));
+        assert_eq!(drained, vec![(1, "old".into())]);
+        // The non-expired entry is still there.
+        assert!(q.get(&2, Timestamp::new(20, 0)).is_some());
+        assert_eq!(q.len(), 1);
+    }
+
+    #[test]
+    fn drain_expired_after_drain_returns_empty() {
+        let mut q: KeyIndexed<u16, String> = KeyIndexed::new(Duration::from_secs(5), 16);
+        q.insert(1, "a".into(), Timestamp::new(0, 0));
+        let first = q.drain_expired(Timestamp::new(20, 0));
+        assert_eq!(first.len(), 1);
+        let second = q.drain_expired(Timestamp::new(30, 0));
+        assert!(second.is_empty(), "idempotent on second call");
+    }
+
+    #[test]
+    fn drain_expired_into_appends_to_existing_vec() {
+        let mut q: KeyIndexed<u16, String> = KeyIndexed::new(Duration::from_secs(5), 16);
+        q.insert(1, "a".into(), Timestamp::new(0, 0));
+        let mut out: Vec<(u16, String)> = vec![(99, "preexisting".into())];
+        let appended = q.drain_expired_into(Timestamp::new(20, 0), &mut out);
+        assert_eq!(appended, 1);
+        assert_eq!(out.len(), 2);
+        assert_eq!(out[0], (99, "preexisting".into()));
+        assert_eq!(out[1], (1, "a".into()));
+    }
+
+    #[test]
+    fn drain_expired_into_returns_correct_count() {
+        let mut q: KeyIndexed<u16, String> = KeyIndexed::new(Duration::from_secs(5), 16);
+        q.insert(1, "a".into(), Timestamp::new(0, 0));
+        q.insert(2, "b".into(), Timestamp::new(0, 0));
+        q.insert(3, "c".into(), Timestamp::new(0, 0));
+        let mut out = Vec::new();
+        let n = q.drain_expired_into(Timestamp::new(20, 0), &mut out);
+        assert_eq!(n, 3);
+        assert_eq!(out.len(), 3);
+    }
+
+    #[test]
+    fn drain_expired_leaves_non_expired_entries_intact() {
+        let mut q: KeyIndexed<u16, String> = KeyIndexed::new(Duration::from_secs(5), 16);
+        q.insert(1, "expired".into(), Timestamp::new(0, 0));
+        q.insert(2, "fresh".into(), Timestamp::new(18, 0));
+        let _ = q.drain_expired(Timestamp::new(20, 0));
+        // Fresh entry's TTL is 18 → 20+5 = still valid at 20.
+        assert!(q.get(&2, Timestamp::new(20, 0)).is_some());
+        // And we can still drain it after another evict.
+        let drained = q.drain_expired(Timestamp::new(40, 0));
+        assert_eq!(drained, vec![(2, "fresh".into())]);
+    }
+
+    #[test]
+    fn drain_expired_with_empty_cache_returns_empty() {
+        let mut q: KeyIndexed<u16, String> = KeyIndexed::new(Duration::from_secs(5), 16);
+        let drained = q.drain_expired(Timestamp::new(100, 0));
+        assert!(drained.is_empty());
     }
 }

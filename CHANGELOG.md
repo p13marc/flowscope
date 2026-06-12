@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.14.0 (in progress)
+
+The **operations-layer ergonomics** cycle. Driven by netring
+0.22 adoption; see `plans/0.14-wishlist-from-netring.md`.
+
+### Added
+
+- **`KeyIndexed::drain_expired(now) -> Vec<(K, V)>`** + 
+  **`drain_expired_into(now, &mut Vec<(K, V)>) -> usize`**
+  (plan 160). Sibling to `evict_expired` (which discards) —
+  returns the expired entries as owned `(K, V)` pairs so the
+  caller can inspect them. Typical for "DNS resolved but no
+  connection followed", "ICMP didn't explain a flow death"
+  patterns. The `_into` variant amortises allocation across
+  calls. Honest allocation contract: the underlying
+  `lru::LruCache` has no `drain()`, so a `Vec` is unavoidable.
+- **`FlowStats::bytes_for(side)`** / **`pkts_for(side)`** /
+  **`mean_pkt_size_for(side)`** / **`direction_skew()`** (plan
+  168). Pure sugar over the existing `bytes_initiator` /
+  `bytes_responder` / `packets_*` fields. `direction_skew` is
+  `(bytes_initiator - bytes_responder) / total_bytes`, clamped
+  to `[-1, 1]`. Useful for one-sided-flow detection (DoS,
+  scans, CDN downloads).
+
 ## 0.13.0 (in progress)
 
 The **fully `Send + Sync` driver** + **canonical anomaly value type**

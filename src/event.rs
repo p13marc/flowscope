@@ -234,6 +234,63 @@ impl FlowStats {
     pub fn duration_secs(&self) -> f64 {
         self.duration().as_secs_f64()
     }
+
+    /// Bytes attributed to the given side. Sugar over the
+    /// `bytes_initiator` / `bytes_responder` fields for
+    /// `FlowSide`-keyed report code.
+    ///
+    /// Plan 168 (0.14).
+    #[inline]
+    pub fn bytes_for(&self, side: FlowSide) -> u64 {
+        match side {
+            FlowSide::Initiator => self.bytes_initiator,
+            FlowSide::Responder => self.bytes_responder,
+        }
+    }
+
+    /// Packets attributed to the given side.
+    ///
+    /// Plan 168 (0.14).
+    #[inline]
+    pub fn pkts_for(&self, side: FlowSide) -> u64 {
+        match side {
+            FlowSide::Initiator => self.packets_initiator,
+            FlowSide::Responder => self.packets_responder,
+        }
+    }
+
+    /// Mean packet size for the given side, in bytes. Returns
+    /// `0.0` when the side has zero packets.
+    ///
+    /// Plan 168 (0.14).
+    pub fn mean_pkt_size_for(&self, side: FlowSide) -> f64 {
+        let pkts = self.pkts_for(side);
+        if pkts == 0 {
+            return 0.0;
+        }
+        self.bytes_for(side) as f64 / pkts as f64
+    }
+
+    /// Direction skew. `(bytes_initiator - bytes_responder) /
+    /// total_bytes`, clamped to `[-1.0, 1.0]`. Returns `0.0`
+    /// for empty flows.
+    ///
+    /// Positive → initiator-heavy (uploads); negative →
+    /// responder-heavy (downloads); zero → balanced.
+    ///
+    /// Useful for detecting one-sided flows (DoS, scans, CDN
+    /// downloads).
+    ///
+    /// Plan 168 (0.14).
+    pub fn direction_skew(&self) -> f64 {
+        let total = self.total_bytes();
+        if total == 0 {
+            return 0.0;
+        }
+        let init = self.bytes_initiator as f64;
+        let resp = self.bytes_responder as f64;
+        (init - resp) / total as f64
+    }
 }
 
 /// Lifecycle state of a flow as tracked by [`crate::FlowTracker`].
@@ -665,5 +722,88 @@ mod tests {
             ts: Timestamp::default(),
         };
         assert_eq!(evt.key().copied(), Some(7));
+    }
+
+    // ── Plan 168 (0.14) — FlowSide-aware accessors ─────────
+
+    fn skewed_stats(init_bytes: u64, init_pkts: u64, resp_bytes: u64, resp_pkts: u64) -> FlowStats {
+        FlowStats {
+            packets_initiator: init_pkts,
+            packets_responder: resp_pkts,
+            bytes_initiator: init_bytes,
+            bytes_responder: resp_bytes,
+            ..FlowStats::default()
+        }
+    }
+
+    #[test]
+    fn bytes_for_returns_per_side_count() {
+        let s = skewed_stats(100, 5, 200, 8);
+        assert_eq!(s.bytes_for(FlowSide::Initiator), 100);
+        assert_eq!(s.bytes_for(FlowSide::Responder), 200);
+    }
+
+    #[test]
+    fn pkts_for_returns_per_side_count() {
+        let s = skewed_stats(100, 5, 200, 8);
+        assert_eq!(s.pkts_for(FlowSide::Initiator), 5);
+        assert_eq!(s.pkts_for(FlowSide::Responder), 8);
+    }
+
+    #[test]
+    fn mean_pkt_size_for_zero_packets_returns_zero() {
+        let s = skewed_stats(0, 0, 200, 8);
+        assert_eq!(s.mean_pkt_size_for(FlowSide::Initiator), 0.0);
+        assert_eq!(s.mean_pkt_size_for(FlowSide::Responder), 25.0);
+    }
+
+    #[test]
+    fn mean_pkt_size_for_balanced_flow() {
+        let s = skewed_stats(100, 5, 200, 10);
+        assert_eq!(s.mean_pkt_size_for(FlowSide::Initiator), 20.0);
+        assert_eq!(s.mean_pkt_size_for(FlowSide::Responder), 20.0);
+    }
+
+    #[test]
+    fn direction_skew_empty_flow_returns_zero() {
+        let s = FlowStats::default();
+        assert_eq!(s.direction_skew(), 0.0);
+    }
+
+    #[test]
+    fn direction_skew_initiator_only_returns_one() {
+        let s = skewed_stats(100, 5, 0, 0);
+        assert_eq!(s.direction_skew(), 1.0);
+    }
+
+    #[test]
+    fn direction_skew_responder_only_returns_negative_one() {
+        let s = skewed_stats(0, 0, 200, 8);
+        assert_eq!(s.direction_skew(), -1.0);
+    }
+
+    #[test]
+    fn direction_skew_balanced_returns_zero() {
+        let s = skewed_stats(100, 5, 100, 5);
+        assert_eq!(s.direction_skew(), 0.0);
+    }
+
+    #[test]
+    fn direction_skew_two_to_one_initiator_heavy() {
+        // 200 initiator vs 100 responder; total 300; skew = 100/300 = 0.333…
+        let s = skewed_stats(200, 5, 100, 5);
+        assert!((s.direction_skew() - 1.0 / 3.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn direction_skew_within_unit_range() {
+        for (init, resp) in [(1u64, 0u64), (0, 1), (1, 1), (1_000_000, 1), (1, 1_000_000)] {
+            let s = skewed_stats(init, 1, resp, 1);
+            let skew = s.direction_skew();
+            assert!(
+                (-1.0..=1.0).contains(&skew),
+                "skew {skew} out of [-1, 1] for ({init}, {resp})"
+            );
+        }
     }
 }
