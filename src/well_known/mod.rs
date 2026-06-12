@@ -270,9 +270,43 @@ impl LabelTable {
         self.inherit_builtin
     }
 
-    /// Number of overrides currently registered.
-    pub fn override_count(&self) -> usize {
+    /// Remove the override for `(proto, port)`. Returns the
+    /// previously-set label if any. After removal, [`Self::lookup`]
+    /// falls back to the built-in table if
+    /// [`Self::inherit_builtin`] is `true`, otherwise returns
+    /// `None`.
+    ///
+    /// Plan 172 (0.14).
+    pub fn remove(&mut self, proto: L4Proto, port: u16) -> Option<&'static str> {
+        self.overrides.remove(&(proto, port))
+    }
+
+    /// `true` if this table has an override for `(proto, port)`.
+    /// Does **not** consult the built-in fallback — use
+    /// [`Self::lookup`] for that.
+    ///
+    /// Plan 172 (0.14).
+    pub fn contains(&self, proto: L4Proto, port: u16) -> bool {
+        self.overrides.contains_key(&(proto, port))
+    }
+
+    /// Number of overrides currently registered. Independent
+    /// of [`Self::inherit_builtin`].
+    ///
+    /// Plan 172 (0.14) — replaces the removed `override_count`
+    /// method.
+    pub fn len(&self) -> usize {
         self.overrides.len()
+    }
+
+    /// `true` if no overrides have been registered. Independent
+    /// of [`Self::inherit_builtin`] — a [`Self::new`] table is
+    /// "empty of overrides" but still resolves built-in labels
+    /// via [`Self::lookup`].
+    ///
+    /// Plan 172 (0.14).
+    pub fn is_empty(&self) -> bool {
+        self.overrides.is_empty()
     }
 }
 
@@ -372,7 +406,7 @@ mod tests {
     fn label_table_new_starts_empty_inheriting_builtin() {
         let t = LabelTable::new();
         assert!(t.inherit_builtin());
-        assert_eq!(t.override_count(), 0);
+        assert_eq!(t.len(), 0);
     }
 
     #[test]
@@ -409,7 +443,7 @@ mod tests {
             (L4Proto::Tcp, 8765, "grpc-internal"),
             (L4Proto::Tcp, 9101, "metrics-scrape"),
         ]);
-        assert_eq!(t.override_count(), 2);
+        assert_eq!(t.len(), 2);
         assert_eq!(t.lookup(L4Proto::Tcp, 8765, 0), Some("grpc-internal"));
         assert_eq!(t.lookup(L4Proto::Tcp, 9101, 0), Some("metrics-scrape"));
     }
@@ -420,7 +454,7 @@ mod tests {
         t.set(L4Proto::Tcp, 8765, "old");
         t.set(L4Proto::Tcp, 8765, "new");
         assert_eq!(t.lookup(L4Proto::Tcp, 8765, 0), Some("new"));
-        assert_eq!(t.override_count(), 1);
+        assert_eq!(t.len(), 1);
     }
 
     #[test]
@@ -437,5 +471,77 @@ mod tests {
     fn label_table_is_send_and_sync() {
         fn assert_send_sync<T: Send + Sync>() {}
         assert_send_sync::<LabelTable>();
+    }
+
+    // ── Plan 172 (0.14) — completeness sweep tests ───────────
+
+    #[test]
+    fn label_table_remove_returns_previous_label() {
+        let mut t = LabelTable::new();
+        t.set(L4Proto::Tcp, 8765, "grpc-internal");
+        assert_eq!(t.remove(L4Proto::Tcp, 8765), Some("grpc-internal"));
+    }
+
+    #[test]
+    fn label_table_remove_absent_returns_none() {
+        let mut t = LabelTable::new();
+        assert_eq!(t.remove(L4Proto::Tcp, 8765), None);
+    }
+
+    #[test]
+    fn label_table_remove_falls_back_to_builtin_when_inherit() {
+        let mut t = LabelTable::new();
+        t.set(L4Proto::Tcp, 80, "internal-proxy");
+        // Override shadows the built-in "http".
+        assert_eq!(t.lookup(L4Proto::Tcp, 80, 33000), Some("internal-proxy"));
+        t.remove(L4Proto::Tcp, 80);
+        // After removal, falls back to built-in "http".
+        assert_eq!(t.lookup(L4Proto::Tcp, 80, 33000), Some("http"));
+    }
+
+    #[test]
+    fn label_table_remove_standalone_returns_none_after() {
+        let mut t = LabelTable::standalone();
+        t.set(L4Proto::Tcp, 8765, "grpc-internal");
+        assert_eq!(t.lookup(L4Proto::Tcp, 8765, 0), Some("grpc-internal"));
+        t.remove(L4Proto::Tcp, 8765);
+        // Standalone — no builtin fallback.
+        assert_eq!(t.lookup(L4Proto::Tcp, 8765, 0), None);
+    }
+
+    #[test]
+    fn label_table_contains_reflects_set_remove() {
+        let mut t = LabelTable::new();
+        assert!(!t.contains(L4Proto::Tcp, 8765));
+        t.set(L4Proto::Tcp, 8765, "grpc-internal");
+        assert!(t.contains(L4Proto::Tcp, 8765));
+        t.remove(L4Proto::Tcp, 8765);
+        assert!(!t.contains(L4Proto::Tcp, 8765));
+    }
+
+    #[test]
+    fn label_table_contains_does_not_consult_builtin() {
+        // Port 80 is a built-in "http" entry — but the OVERRIDE
+        // table has nothing for it. contains() should reflect
+        // overrides only.
+        let t = LabelTable::new();
+        assert!(!t.contains(L4Proto::Tcp, 80));
+        // Confirm lookup still works:
+        assert_eq!(t.lookup(L4Proto::Tcp, 80, 33000), Some("http"));
+    }
+
+    #[test]
+    fn label_table_is_empty_on_new() {
+        assert!(LabelTable::new().is_empty());
+        assert!(LabelTable::standalone().is_empty());
+    }
+
+    #[test]
+    fn label_table_is_empty_after_set_then_remove() {
+        let mut t = LabelTable::new();
+        t.set(L4Proto::Tcp, 8765, "grpc");
+        assert!(!t.is_empty());
+        t.remove(L4Proto::Tcp, 8765);
+        assert!(t.is_empty());
     }
 }

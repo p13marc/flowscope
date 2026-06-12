@@ -329,12 +329,125 @@ etc. See it for the full taxonomy.
 
 Likely failure modes after `cargo update -p flowscope`:
 
-1. **None expected.** This is an additive cycle. File a
-   regression if something stops compiling.
+1. **`LabelTable::override_count` is gone** — renamed to
+   `LabelTable::len` (plan 172). Find/replace:
+
+   ```rust,ignore
+   // before
+   table.override_count()
+   // after
+   table.len()
+   ```
+
+   This is the **only breaking removal in the 0.14 cycle**.
+   Safe because `override_count` only ever shipped on master
+   for hours, never on crates.io.
 2. **`use flowscope::prelude::*;` brings in new names that
    shadow your local types.** Switch to qualified
    `flowscope::correlate::RollingRate` etc., or move your
    local types out of scope.
+
+## §11 `IcmpType::mtu_signal()` + `MtuSignalKind` (plan 170)
+
+Plan 162 (`DestUnreachableKind`) deliberately scoped to
+Destination Unreachable codes only. Plan 170 adds the parallel
+PMTU-mismatch signal that covers ICMPv4 DU code 4
+(Fragmentation Needed) AND ICMPv6 type 2 (Packet Too Big) —
+which v6 splits out of DU entirely.
+
+```rust
+use flowscope::{DestUnreachableKind, MtuSignalKind};
+// Also re-exported via prelude.
+
+match icmp_type.mtu_signal() {
+    Some(MtuSignalKind::FragmentationNeeded { next_hop_mtu }) => {
+        // v4: next_hop_mtu may be None for RFC 1191
+        // non-conformant senders.
+        if let Some(mtu) = next_hop_mtu {
+            eprintln!("v4 PMTUD: next hop wants <= {mtu}");
+        }
+    }
+    Some(MtuSignalKind::PacketTooBig { next_hop_mtu }) => {
+        // v6: next_hop_mtu is mandatory.
+        eprintln!("v6 PacketTooBig: next hop wants <= {next_hop_mtu}");
+    }
+    None => {}
+}
+
+// Stable metric label slug:
+metrics::counter!("icmp_mtu_total", "kind" => kind.as_str())
+    .increment(1);
+
+// Unified accessor:
+let mtu: Option<u32> = kind.next_hop_mtu();
+```
+
+`MtuSignalKind` is `Send + Sync + Copy`, re-exported at the
+crate root and in the prelude.
+
+## §12 `LabelTable` completeness (plan 172)
+
+Four new operations on `LabelTable`:
+
+```rust
+let mut table = LabelTable::new();
+table.set(L4Proto::Tcp, 8765, "grpc-internal");
+
+// Inverse of set():
+let prev = table.remove(L4Proto::Tcp, 8765);
+assert_eq!(prev, Some("grpc-internal"));
+
+// Override-only membership check (does NOT consult built-in):
+assert!(!table.contains(L4Proto::Tcp, 8765));
+
+// Standard collection idioms:
+assert!(table.is_empty());
+assert_eq!(table.len(), 0);
+```
+
+Plus `override_count` removed (see §10 above).
+
+## §13 `RollingRate` completeness (plan 171)
+
+Four new methods on `RollingRate<K, V>`:
+
+```rust
+use std::time::Duration;
+use flowscope::correlate::RollingRate;
+use flowscope::Timestamp;
+
+let mut bw: RollingRate<&'static str, u64> =
+    RollingRate::new_unbounded(Duration::from_secs(60), Duration::from_secs(1));
+bw.record("http", 1000, ts1);
+bw.record("tls", 500, ts1);
+
+// Raw sum without per-second divide — for "bytes-in-last-minute":
+let bytes_last_window: u64 = bw.sum(&"http", now);
+
+// Sorted top-N, descending; ties by snapshot insertion order:
+let top10 = bw.top_k(10, now);
+for (label, rate) in top10 {
+    println!("{label:<12} {rate:>10.0} B/s");
+}
+
+// Reset for tests:
+bw.clear();
+assert!(bw.is_empty());
+
+// Count unique in-window keys:
+let active_apps = bw.len(now);
+```
+
+**Note on `is_empty` vs `len(now)`**: `is_empty()` is a
+storage-state query (no `now` arg) — true when no buckets are
+tracked. `len(now)` is the in-window analog — counts unique
+keys observed within the active sliding window. A
+`RollingRate` with stale unevicted buckets can have
+`is_empty()==false` while `len(now)==0`.
+
+## §14 `FlowStats::throughput_bps*` accessors (plan 173)
+
+(Coming in plan 173 implementation — pending.)
 
 For wider migration context, see:
 
