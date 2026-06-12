@@ -5,19 +5,64 @@
 The **operations-layer ergonomics** cycle. Driven by netring
 0.22 adoption; see `plans/0.14-wishlist-from-netring.md`.
 
-This is a **strictly additive** cycle — every plan extends an
-existing public surface or adds a new type. No existing API
-breaks, no bound tightening, no deprecations. `cargo update -p
-flowscope` against existing 0.13 code compiles unchanged.
+Mostly additive — one **breaking removal** in the post-audit
+polish round: `LabelTable::override_count` renamed to
+`LabelTable::len`. Safe because `override_count` only ever
+shipped on master, never on crates.io. Find/replace migration
+in `docs/migration-0.13-to-0.14.md` §10.
 
-Test count after the 0.14 cycle: **884 passing** (up from 809
-at 0.13.0 release, +75 new), zero clippy warnings under
+Test count after the cycle: **915 passing** (up from 809 at
+0.13.0 release, +106 new). Zero clippy warnings under
 `--all-features --all-targets -D warnings`, zero rustdoc
 warnings. All 13 CI feature-matrix combinations clean.
 
 Migration: [`docs/migration-0.13-to-0.14.md`](docs/migration-0.13-to-0.14.md).
 
-### Added
+### Removed (breaking, pre-1.0)
+
+- **`LabelTable::override_count`** (plan 172) — replaced by
+  the idiomatic `LabelTable::len()` (same semantics). Pre-1.0,
+  only on master, never on crates.io.
+
+### Added — pre-release polish round (plans 170-174)
+
+- **`flowscope::icmp::MtuSignalKind`** + **`IcmpType::mtu_signal()`**
+  + **`IcmpMessage::mtu_signal()`** + **`MtuSignalKind::next_hop_mtu()`**
+  + **`MtuSignalKind::as_str()`** (plan 170). Unified v4
+  `FragmentationNeeded` + v6 `PacketTooBig` PMTU-mismatch
+  signal. Sibling to `DestUnreachableKind` for non-DU
+  classification. Re-exported at crate root + in prelude.
+- **`RollingRate::sum(k, now)`** + **`top_k(n, now)`** +
+  **`clear()`** + **`len(now)`** (plan 171). `sum` is the
+  raw window sum (sibling to `rate`); `top_k` is the built-in
+  sorted top-N (no manual `snapshot().collect().sort()`
+  dance); `clear` drops all buckets; `len` counts unique
+  in-window keys.
+- **`LabelTable::remove`** + **`contains`** + **`is_empty`**
+  + **`len`** (plan 172). Inverse + introspection ops for
+  hot-reload config without restart. `len` replaces the
+  removed `override_count`.
+- **`FlowStats::throughput_bps`** + **`throughput_pps`** +
+  **`throughput_bps_for(side)`** + **`throughput_pps_for(side)`**
+  (plan 173). Lifetime-average throughput with safe-divide
+  built in — zero-duration flows return `0.0`, not NaN /
+  Infinity.
+- **Three runnable examples** for the 0.14 surface (plan 174):
+  - `examples/04-observability/bandwidth_by_app.rs` — `RollingRate`
+    + `top_k` + `LabelTable` + `app_label_with`.
+  - `examples/04-observability/icmp_explained_drops.rs` —
+    `FlowTracker::lookup_inner` + `stats_for_inner` +
+    `DestUnreachableKind` + `MtuSignalKind`.
+  - `examples/04-observability/direction_skew_anomaly.rs` —
+    `FlowStats::direction_skew` + `bytes_for` +
+    `throughput_bps_for`.
+- **Rustdoc cross-links** (plan 174) — `RollingRate` ↔
+  `TimeBucketedCounter` / `TopK` / `Ewma` / `BurstDetector`;
+  `DestUnreachableKind` ↔ `MtuSignalKind`; `app_label` ↔
+  `app_label_with`; `evict_expired` ↔ `drain_expired`; per-
+  side throughput accessors ↔ their non-`_for` siblings.
+
+### Added — base round (plans 160-168)
 
 - **`flowscope::correlate::RollingRate<K, V>`** + 
   **`flowscope::correlate::RateValue`** (plan 164). Per-key

@@ -141,6 +141,10 @@ where
     /// `ttl`. Safe to call frequently; bounded by the number of
     /// expired entries. Requires `K: Clone` because we collect
     /// keys before removing.
+    ///
+    /// Inspecting variant: [`Self::drain_expired`] returns the
+    /// expired entries as owned `(K, V)` pairs instead of
+    /// discarding them.
     pub fn evict_expired(&mut self, now: Timestamp) {
         let now_dur = now.to_duration();
         let expired: Vec<K> = self

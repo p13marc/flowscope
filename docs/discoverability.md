@@ -126,7 +126,27 @@ For the conceptual layer-by-layer reference, see
 **`pcap`:** `PcapFlowSource`.
 
 **`icmp`:** `DestUnreachableKind` *(0.14)*, `IcmpInner` *(0.14)*,
-`IcmpMessage` *(0.14)*, `IcmpType` *(0.14)*.
+`IcmpMessage` *(0.14)*, `IcmpType` *(0.14)*, `MtuSignalKind`
+*(0.14)*.
+
+## Worked examples
+
+Three runnable examples under `examples/04-observability/`
+demonstrate the 0.14 surface end-to-end. Run any of them
+against the bundled `tests/data/mixed_short.pcap` fixture (or
+pass your own pcap path).
+
+| Example | Demonstrates | Primary 0.14 APIs |
+|---------|--------------|-------------------|
+| `bandwidth_by_app` | Per-app bytes/sec with top-N report | `RollingRate`, `RollingRate::top_k`, `LabelTable`, `FiveTupleKey::app_label_with` |
+| `icmp_explained_drops` | Join ICMP errors back to live flows + classify v4/v6 unreachable + MTU events | `FlowTracker::lookup_inner` / `stats_for_inner`, `DestUnreachableKind`, `MtuSignalKind` |
+| `direction_skew_anomaly` | One-sided flow detection at end-of-life | `FlowStats::direction_skew`, `bytes_for`, `throughput_bps_for` |
+
+```bash
+cargo run --features pcap,extractors,tracker --example bandwidth_by_app
+cargo run --features pcap,icmp,extractors,tracker --example icmp_explained_drops
+cargo run --features pcap,extractors,tracker --example direction_skew_anomaly
+```
 
 ## Convention notes
 

@@ -183,7 +183,9 @@ impl FiveTupleKey {
     /// Use this for bandwidth-by-app and metric-label reports
     /// where "we don't know the L7 app, but we know the L4" is
     /// the right fallback. Use `protocol_label()` directly when
-    /// an L7 label is the *only* acceptable answer.
+    /// an L7 label is the *only* acceptable answer. Use
+    /// [`Self::app_label_with`] for site-custom port overrides
+    /// via [`crate::well_known::LabelTable`].
     ///
     /// Examples:
     /// - `(TCP, 80, 33000)` → `"http"` (well-known port match)
@@ -216,6 +218,9 @@ impl FiveTupleKey {
     /// Falls back to [`crate::L4Proto::canonical_name`] when
     /// neither the table override nor (if inherited) the
     /// built-in dispatch matches.
+    ///
+    /// Use [`Self::app_label`] (no `_with`) when no site-custom
+    /// overrides are needed.
     ///
     /// Plan 165 (0.14).
     #[inline]

@@ -100,10 +100,52 @@ Headlines:
   case ("count things per key over time" / "react to ICMP
   errors" / "emit structured anomalies" / …).
 
-Test count after the 0.14 cycle: **884 passing** (up from 809
-at 0.13.0 release, +75 new), zero clippy warnings under
-`--all-features --all-targets -D warnings`, zero rustdoc
-warnings. All 13 CI feature-matrix combinations build clean.
+Pre-release polish extension (plans 170-174, scope-extended
+after the audit pass per user instruction "do not defer
+features if you think they have values"):
+
+- **Plan 170 — `IcmpType::mtu_signal()` + `MtuSignalKind`.**
+  Reverses wishlist §13's defer-to-0.15. Unified v4
+  `FragmentationNeeded` + v6 `PacketTooBig` signal with
+  preserved next-hop MTU (`Option<u16>` for v4 RFC 1191,
+  `u32` for v6). Sibling to `DestUnreachableKind`. Re-exported
+  at crate root + in prelude.
+- **Plan 171 — `RollingRate` completeness.** Adds `sum(k, now)
+  -> V` (raw window sum without per-sec divide),
+  `top_k(n, now) -> Vec<(K, f64)>` (sorted top-N built-in),
+  `clear()` (reset), `len(now)` (in-window key count). `is_empty`
+  doc clarified as storage-state vs `len`'s in-window-state.
+  `with_capacity` LRU variant deferred — storage shape
+  (`VecDeque<(Timestamp, HashMap<K, V>)>`) is per-time-bucket
+  not per-key, ~80 LoC of cross-bucket bookkeeping to bound;
+  `evict_expired` already bounds memory to "K cardinality per
+  window".
+- **Plan 172 — `LabelTable` completeness + `override_count`
+  removal.** `remove`, `contains`, `len`, `is_empty`. **Only
+  breaking change in 0.14**: `override_count` removed in
+  favor of idiomatic `len()`. Safe — method shipped on master
+  ~hours ago, never on crates.io.
+- **Plan 173 — `FlowStats::throughput_bps*` accessors.**
+  Lifetime-average overall + per-side throughput with
+  safe-divide built in. Replaces the `as f64 /
+  duration_secs().max(EPSILON)` pattern at every monitor call
+  site. Zero-duration flows return `0.0`, not NaN.
+- **Plan 174 — DX sweep.** Three runnable examples under
+  `examples/04-observability/`: `bandwidth_by_app.rs`
+  (RollingRate + top_k + LabelTable + app_label_with),
+  `icmp_explained_drops.rs` (lookup_inner +
+  DestUnreachableKind + MtuSignalKind), `direction_skew_anomaly.rs`
+  (direction_skew + bytes_for + throughput_bps_for). Plus
+  rustdoc "see also" cross-links across sibling primitives
+  (`RollingRate` ↔ `TimeBucketedCounter`/`TopK`/`Ewma`;
+  `DestUnreachableKind` ↔ `MtuSignalKind`; `app_label` ↔
+  `app_label_with`; `evict_expired` ↔ `drain_expired`).
+
+Test count after the polish round: **915 passing** (up from
+884 mid-cycle, +31 polish; up from 809 at 0.13.0 release,
++106 cycle-wide). Zero clippy warnings under `--all-features
+--all-targets -D warnings`, zero rustdoc warnings. All 13 CI
+feature-matrix combinations build clean.
 
 New module registered: `src/correlate/rolling_rate.rs`.
 

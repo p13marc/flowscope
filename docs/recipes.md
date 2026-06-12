@@ -1106,6 +1106,51 @@ Honest allocation contract: the underlying `lru::LruCache` has
 no `drain()` method, so a `Vec` is unavoidable. The `_into`
 variant amortizes across calls.
 
+### MTU-mismatch detection across v4/v6 with `mtu_signal`
+
+Path-MTU discovery is non-optional in IPv6, and v6's
+`PacketTooBig` is type 2 (not under `DestUnreachable`).
+`IcmpType::mtu_signal()` folds both protocol versions into a
+single classification, preserving the next-hop MTU:
+
+```rust,ignore
+use flowscope::{DestUnreachableKind, MtuSignalKind};
+use flowscope::icmp::IcmpType;
+
+fn classify_icmp(t: &IcmpType) -> &'static str {
+    if let Some(kind) = t.dest_unreachable_kind() {
+        return kind.as_str();
+    }
+    if let Some(mtu) = t.mtu_signal() {
+        // mtu_signal covers v4 DU code 4 AND v6 type 2.
+        return mtu.as_str();  // "fragmentation_needed" / "packet_too_big"
+    }
+    t.short_kind()
+}
+
+// Surfacing the next-hop MTU for PMTUD blackhole reports:
+if let Some(mtu) = icmp_type.mtu_signal() {
+    match mtu.next_hop_mtu() {
+        Some(mtu_val) => {
+            eprintln!("PMTU shrink: {} → {mtu_val}", mtu.as_str());
+        }
+        None => {
+            // v4-only: RFC 1191 non-conformant sender.
+            eprintln!("PMTU shrink: {} (MTU unknown)", mtu.as_str());
+        }
+    }
+}
+```
+
+`MtuSignalKind::next_hop_mtu()` returns `Option<u32>` — `None`
+only happens on v4 with a non-RFC-1191-conformant sender; v6
+always carries the MTU. Pair with `FlowTracker::stats_for_inner`
+(plan 161) to join the MTU event back to the flow it concerns.
+
+The `examples/04-observability/icmp_explained_drops.rs` example
+shows the full pattern with both `DestUnreachableKind` and
+`MtuSignalKind` classification + flow correlation in one match.
+
 ### Emitting detector-shaped anomalies via `OwnedAnomaly`
 
 Every shipped detector's score (`ScanScore<K>`, `BeaconScore<K>`,

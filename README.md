@@ -291,8 +291,30 @@ Headlines (0.14):
   new [`docs/discoverability.md`](docs/discoverability.md)
   one-page tour grouped by use case.
 
+Pre-release polish (plans 170-174):
+
+- **`IcmpType::mtu_signal()`** + **`MtuSignalKind`** (plan 170)
+  — unified v4 `FragmentationNeeded` + v6 `PacketTooBig`
+  signal with preserved next-hop MTU. Sibling to
+  `DestUnreachableKind` for non-DU classification.
+- **`RollingRate` completeness** (plan 171) — `sum(k, now)`,
+  `top_k(n, now)`, `clear()`, `len(now)`. Built-in sorted
+  top-N — no manual `snapshot().collect().sort()` dance.
+- **`LabelTable` completeness** (plan 172) — `remove`,
+  `contains`, `len`, `is_empty`. Plus the only **breaking**
+  removal in 0.14: `override_count` → `len` (rename to
+  idiomatic name; method shipped on master hours ago, never
+  on crates.io).
+- **`FlowStats::throughput_bps*`** (plan 173) — overall +
+  per-side lifetime-average throughput with safe-divide
+  built in (zero-duration flows return `0.0`, not NaN).
+- **DX sweep** (plan 174) — three runnable examples for the
+  0.14 surface (`bandwidth_by_app`, `icmp_explained_drops`,
+  `direction_skew_anomaly`); rustdoc "see also" cross-links
+  across sibling primitives.
+
 See [`docs/migration-0.13-to-0.14.md`](docs/migration-0.13-to-0.14.md)
-for the (strictly additive) 0.13 → 0.14 cheat sheet.
+for the 0.13 → 0.14 cheat sheet.
 
 0.13.0 — netring-0.21 adoption cycle: fully `Send + Sync`
 driver + canonical anomaly value type + broadcast delivery +

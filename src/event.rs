@@ -297,13 +297,18 @@ impl FlowStats {
     /// (single-packet or instantaneous). Sibling to
     /// [`Self::total_bytes`] + [`Self::duration_secs`].
     ///
+    /// For per-side throughput, see [`Self::throughput_bps_for`].
+    /// For sliding-window throughput (last-N-seconds rate, not
+    /// flow lifetime), use [`crate::correlate::RollingRate`].
+    ///
     /// Plan 173 (0.14).
     pub fn throughput_bps(&self) -> f64 {
         safe_div_u64(self.total_bytes(), self.duration_secs())
     }
 
     /// Average packets/second over the flow's lifetime. Returns
-    /// `0.0` for zero-duration flows.
+    /// `0.0` for zero-duration flows. See
+    /// [`Self::throughput_pps_for`] for the per-side split.
     ///
     /// Plan 173 (0.14).
     pub fn throughput_pps(&self) -> f64 {
@@ -312,7 +317,8 @@ impl FlowStats {
 
     /// Average bytes/second attributed to the given side over
     /// the flow's lifetime. Returns `0.0` for zero-duration
-    /// flows. Sibling to [`Self::bytes_for`].
+    /// flows. Sibling to [`Self::bytes_for`] (raw bytes) and
+    /// [`Self::throughput_bps`] (whole-flow throughput).
     ///
     /// Plan 173 (0.14).
     pub fn throughput_bps_for(&self, side: FlowSide) -> f64 {
@@ -321,7 +327,8 @@ impl FlowStats {
 
     /// Average packets/second attributed to the given side
     /// over the flow's lifetime. Returns `0.0` for
-    /// zero-duration flows. Sibling to [`Self::pkts_for`].
+    /// zero-duration flows. Sibling to [`Self::pkts_for`] (raw
+    /// packets) and [`Self::throughput_pps`] (whole-flow rate).
     ///
     /// Plan 173 (0.14).
     pub fn throughput_pps_for(&self, side: FlowSide) -> f64 {

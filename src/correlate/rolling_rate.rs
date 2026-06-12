@@ -15,6 +15,16 @@
 //! `record(k, 1, now)` for request-rate, or
 //! `RollingRate<K, f64>` for latency-sum-per-sec.
 //!
+//! See also:
+//! - [`crate::correlate::TimeBucketedCounter`] — `u64`
+//!   counter-only sibling.
+//! - [`crate::correlate::TopK`] — Misra-Gries heavy-hitter
+//!   tracker with per-update sorting.
+//! - [`crate::correlate::Ewma`] — smoothed (exponential)
+//!   moving average for the same data shape.
+//! - [`crate::correlate::BurstDetector`] — z-score spike
+//!   detection over `TimeBucketedCounter`.
+//!
 //! Plan 164 (0.14).
 
 use std::collections::{HashMap, VecDeque};

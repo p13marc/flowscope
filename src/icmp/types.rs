@@ -401,6 +401,10 @@ impl IcmpType {
     /// `Icmpv6DestUnreachCode` instead if you need the exact
     /// code or, for v4 `FragmentationNeeded`, the MTU.
     ///
+    /// **MTU events**: v4 `FragmentationNeeded` and v6
+    /// `PacketTooBig` (the latter is type 2, not a DU code)
+    /// are unified under [`Self::mtu_signal`].
+    ///
     /// Plan 162 (0.14).
     pub fn dest_unreachable_kind(&self) -> Option<DestUnreachableKind> {
         use DestUnreachableKind::*;
@@ -442,7 +446,9 @@ impl IcmpType {
 ///
 /// Match on the concrete v4 / v6 code enums instead if you
 /// need the exact code or, for v4 [`Icmpv4DestUnreachCode::FragmentationNeeded`],
-/// the MTU.
+/// the MTU. For the v4/v6 unified MTU signal, see
+/// [`MtuSignalKind`] (which folds v4 FragNeeded and v6
+/// PacketTooBig into one classification).
 ///
 /// Plan 162 (0.14).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
