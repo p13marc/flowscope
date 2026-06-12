@@ -43,19 +43,41 @@ exists; no refactor needed. See umbrella §1.1.
 | 165 | `5f5c88d` | `flowscope::well_known::LabelTable` value type + `FiveTupleKey::protocol_label_with` / `app_label_with` (site-custom port label extensibility) |
 | 167 | `5f5c88d` | Discoverability sweep — prelude expanded with ~10 `correlate` + ICMP + `well_known` re-exports + new `docs/discoverability.md` one-page tour |
 
+**Phase D-bis — Pre-release polish (drafted, awaiting implementation):**
+
+The 0.14 cycle scope was extended after the audit pass. Five
+small additions before crates.io publish (consolidation of the
+post-audit "feature gaps" review).
+
+| Plan | Title | Effort | Breaking? |
+|------|-------|--------|-----------|
+| [170](./170-icmp-mtu-signal.md) | `IcmpType::mtu_signal()` + `MtuSignalKind` (PMTUD signal across v4/v6) | ½ day | no |
+| [171](./171-rolling-rate-completeness.md) | `RollingRate` completeness: `sum`, `top_k`, `clear`, `len` | ½ day | no |
+| [172](./172-label-table-completeness.md) | `LabelTable` completeness: `remove`, `contains`, `is_empty`, `len`; remove `override_count` | ¼ day | **YES** — drop `override_count` (shipped to master `5f5c88d`, never on crates.io) |
+| [173](./173-flowstats-throughput.md) | `FlowStats::throughput_bps*` accessors (safe-divide over duration) | ¼ day | no |
+| [174](./174-dx-sweep.md) | DX sweep: 3 runnable examples + rustdoc cross-links + README/CLAUDE/discoverability/recipes/CHANGELOG | 1 day | no |
+
+Total ~3 days. Strictly additive *except* plan 172's
+`override_count` removal — safe because the method has only
+been on master for hours, never released. Dependency order:
+170 / 171 / 172 / 173 in any order, then 174 (which references
+the others).
+
 **Phase E — Release mechanics (pending consent):**
 
 | Step | Status |
 |------|--------|
-| Final bench gate + clippy + docs sweep | ✅ clean |
+| Pre-release polish plans 170-174 | drafted |
+| Final bench gate + clippy + docs sweep | ✅ clean (pre-polish) |
 | `cargo publish` dry-run | pending |
 | Per-release consent | pending |
 | Tag + push (`0.14.0`) | pending |
 
-**Test counts:** 884 passing (up from 809 at 0.13.0 release —
-+75 new), zero clippy warnings under `--all-features
---all-targets -D warnings`, zero rustdoc warnings. All 13 CI
-feature-matrix combinations build clean.
+**Test counts (pre-polish):** 884 passing (up from 809 at
+0.13.0 release — +75 new), zero clippy warnings under
+`--all-features --all-targets -D warnings`, zero rustdoc
+warnings. All 13 CI feature-matrix combinations build clean.
+Polish round expected to add ~25-30 tests.
 
 **Cycle theme:** operations-layer ergonomics — ICMP error
 correlation (lookup_inner + DestUnreachableKind), bandwidth-
@@ -396,12 +418,13 @@ consolidation:
 Active: 21 (stale-deferred), 151 (0.12 expanded-cycle
 umbrella — durable record), 157 (0.13 cycle umbrella —
 durable record), 169 (0.14 cycle umbrella — kept until 0.14
-release ships).
+release ships), 170-174 (0.14 pre-release polish — drafted,
+implementation pending).
 Implementation plans 160, 161, 162, 163, 164, 165, 167, 168
 shipped to master in the 0.14 cycle; plan files retired per
 convention.
 
-The next free number for a new plan is 170+. (170-200 reserved
+The next free number for a new plan is 175+. (175-200 reserved
 for the post-0.14 cycle / 1.0-prep audits; see umbrella
 157 §13 for the 1.0 stability-audit sketch.)
 

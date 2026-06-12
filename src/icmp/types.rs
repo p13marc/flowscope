@@ -500,6 +500,84 @@ impl DestUnreachableKind {
     }
 }
 
+/// Unified v4/v6 PMTU-mismatch signal. Folds ICMPv4
+/// Destination Unreachable code 4 (Fragmentation Needed) and
+/// ICMPv6 type 2 (Packet Too Big) into one operationally-
+/// equivalent vocabulary.
+///
+/// Sibling to [`DestUnreachableKind`] — covers the MTU signal
+/// that [`DestUnreachableKind::FragmentationNeeded`] loses
+/// (and that v6 splits into a separate type).
+///
+/// Plan 170 (0.14).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(
+    feature = "serde",
+    serde(tag = "kind", content = "value", rename_all = "snake_case")
+)]
+#[non_exhaustive]
+pub enum MtuSignalKind {
+    /// ICMPv4 Destination Unreachable, code 4
+    /// ("Fragmentation needed and DF set"). The `next_hop_mtu`
+    /// field carries RFC 1191 / RFC 1981 next-hop MTU when the
+    /// sender is RFC 1191-conformant; older senders may omit
+    /// it (`None`).
+    FragmentationNeeded { next_hop_mtu: Option<u16> },
+    /// ICMPv6 type 2 (Packet Too Big). The MTU field is
+    /// mandatory in v6 — never 0, never `None`.
+    PacketTooBig { next_hop_mtu: u32 },
+}
+
+impl MtuSignalKind {
+    /// Stable short slug suitable as a metric label.
+    ///
+    /// | Variant | Slug |
+    /// |---------|------|
+    /// | `FragmentationNeeded` | `"fragmentation_needed"` |
+    /// | `PacketTooBig` | `"packet_too_big"` |
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            MtuSignalKind::FragmentationNeeded { .. } => "fragmentation_needed",
+            MtuSignalKind::PacketTooBig { .. } => "packet_too_big",
+        }
+    }
+
+    /// Unified MTU accessor — returns the next-hop MTU as `u32`
+    /// for both v4 (when present) and v6 (always). `None` for
+    /// v4 senders that omit the RFC 1191 field.
+    pub fn next_hop_mtu(&self) -> Option<u32> {
+        match self {
+            MtuSignalKind::FragmentationNeeded { next_hop_mtu } => next_hop_mtu.map(u32::from),
+            MtuSignalKind::PacketTooBig { next_hop_mtu } => Some(*next_hop_mtu),
+        }
+    }
+}
+
+impl IcmpType {
+    /// Classify a PMTU signal across v4/v6 boundaries. Returns
+    /// `Some` for ICMPv4 Destination Unreachable code 4 and for
+    /// ICMPv6 type 2 (Packet Too Big). Returns `None` for any
+    /// other type.
+    ///
+    /// Sibling to [`Self::dest_unreachable_kind`] for non-MTU
+    /// classification.
+    ///
+    /// Plan 170 (0.14).
+    pub fn mtu_signal(&self) -> Option<MtuSignalKind> {
+        match self {
+            IcmpType::V4(Icmpv4Type::DestinationUnreachable {
+                code: Icmpv4DestUnreachCode::FragmentationNeeded { mtu },
+                ..
+            }) => Some(MtuSignalKind::FragmentationNeeded { next_hop_mtu: *mtu }),
+            IcmpType::V6(Icmpv6Type::PacketTooBig { mtu, .. }) => Some(MtuSignalKind::PacketTooBig {
+                next_hop_mtu: *mtu,
+            }),
+            _ => None,
+        }
+    }
+}
+
 impl IcmpMessage {
     /// See [`IcmpType::is_error`].
     pub fn is_error(&self) -> bool {
@@ -519,6 +597,11 @@ impl IcmpMessage {
     /// See [`IcmpType::dest_unreachable_kind`].
     pub fn dest_unreachable_kind(&self) -> Option<DestUnreachableKind> {
         self.ty.dest_unreachable_kind()
+    }
+
+    /// See [`IcmpType::mtu_signal`].
+    pub fn mtu_signal(&self) -> Option<MtuSignalKind> {
+        self.ty.mtu_signal()
     }
 }
 
@@ -721,5 +804,101 @@ mod tests {
         // pre-fix this would fail with "private module".
         let _: crate::icmp::types::Icmpv6DestUnreachCode =
             crate::icmp::types::Icmpv6DestUnreachCode::NoRoute;
+    }
+
+    // ── Plan 170 (0.14) — MtuSignalKind tests ──────────────
+
+    #[test]
+    fn mtu_signal_returns_none_for_echo() {
+        let t = IcmpType::V4(Icmpv4Type::EchoRequest { id: 1, seq: 1 });
+        assert_eq!(t.mtu_signal(), None);
+    }
+
+    #[test]
+    fn mtu_signal_returns_none_for_non_fragneeded_du() {
+        for code in [
+            Icmpv4DestUnreachCode::Host,
+            Icmpv4DestUnreachCode::Port,
+            Icmpv4DestUnreachCode::Net,
+        ] {
+            assert_eq!(du_v4(code).mtu_signal(), None);
+        }
+        for code in [
+            Icmpv6DestUnreachCode::AddressUnreachable,
+            Icmpv6DestUnreachCode::PortUnreachable,
+            Icmpv6DestUnreachCode::NoRoute,
+        ] {
+            assert_eq!(du_v6(code).mtu_signal(), None);
+        }
+    }
+
+    #[test]
+    fn mtu_signal_v4_fragneeded_with_mtu() {
+        let t = du_v4(Icmpv4DestUnreachCode::FragmentationNeeded { mtu: Some(1492) });
+        assert_eq!(
+            t.mtu_signal(),
+            Some(MtuSignalKind::FragmentationNeeded {
+                next_hop_mtu: Some(1492)
+            }),
+        );
+        assert_eq!(t.mtu_signal().unwrap().next_hop_mtu(), Some(1492));
+    }
+
+    #[test]
+    fn mtu_signal_v4_fragneeded_without_mtu() {
+        // RFC 1191 non-conformant sender — mtu field is 0/absent.
+        let t = du_v4(Icmpv4DestUnreachCode::FragmentationNeeded { mtu: None });
+        assert_eq!(
+            t.mtu_signal(),
+            Some(MtuSignalKind::FragmentationNeeded { next_hop_mtu: None }),
+        );
+        assert_eq!(t.mtu_signal().unwrap().next_hop_mtu(), None);
+    }
+
+    #[test]
+    fn mtu_signal_v6_packet_too_big() {
+        let t = IcmpType::V6(Icmpv6Type::PacketTooBig {
+            mtu: 1500,
+            inner: None,
+        });
+        assert_eq!(
+            t.mtu_signal(),
+            Some(MtuSignalKind::PacketTooBig { next_hop_mtu: 1500 }),
+        );
+        assert_eq!(t.mtu_signal().unwrap().next_hop_mtu(), Some(1500));
+    }
+
+    #[test]
+    fn mtu_signal_as_str_stable_slugs() {
+        assert_eq!(
+            MtuSignalKind::FragmentationNeeded {
+                next_hop_mtu: Some(1492)
+            }
+            .as_str(),
+            "fragmentation_needed",
+        );
+        assert_eq!(
+            MtuSignalKind::FragmentationNeeded { next_hop_mtu: None }.as_str(),
+            "fragmentation_needed",
+        );
+        assert_eq!(
+            MtuSignalKind::PacketTooBig { next_hop_mtu: 1280 }.as_str(),
+            "packet_too_big",
+        );
+    }
+
+    #[test]
+    fn mtu_signal_proxies_via_icmp_message() {
+        // Verify the IcmpMessage proxy method.
+        let msg = IcmpMessage {
+            family: IcmpFamily::V4,
+            ty: du_v4(Icmpv4DestUnreachCode::FragmentationNeeded { mtu: Some(576) }),
+        };
+        assert_eq!(
+            msg.mtu_signal(),
+            Some(MtuSignalKind::FragmentationNeeded {
+                next_hop_mtu: Some(576)
+            }),
+        );
     }
 }

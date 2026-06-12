@@ -155,7 +155,7 @@ pub mod icmp;
 // `pub use anomaly::OwnedAnomaly` (0.13) — frequently-imported
 // enum surfaced at the crate root.
 #[cfg(feature = "icmp")]
-pub use icmp::DestUnreachableKind;
+pub use icmp::{DestUnreachableKind, MtuSignalKind};
 #[cfg(feature = "pcap")]
 pub mod pcap;
 #[cfg(feature = "tls")]

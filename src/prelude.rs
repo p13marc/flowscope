@@ -61,8 +61,9 @@ pub use crate::pcap::PcapFlowSource;
 
 // Plan 162 (0.14): ICMP error classification — frequently
 // imported by `on_icmp_error` consumers.
+// Plan 170 (0.14): `MtuSignalKind` added for PMTU events.
 #[cfg(feature = "icmp")]
-pub use crate::icmp::{DestUnreachableKind, IcmpInner, IcmpMessage, IcmpType};
+pub use crate::icmp::{DestUnreachableKind, IcmpInner, IcmpMessage, IcmpType, MtuSignalKind};
 
 // Plan 165 (0.14): site-custom port label table.
 #[cfg(feature = "extractors")]
