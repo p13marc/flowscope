@@ -15,11 +15,46 @@ record; `plans/` is the working backlog.
 
 ## Active
 
+### 0.14.0 cycle — netring-0.22 driven (drafted 2026-06-12)
+
+**Status:** plan-of-record drafted; no code shipped.
+
+Umbrella: [`169-cycle-0-14-umbrella.md`](./169-cycle-0-14-umbrella.md).
+
+Triggered by [`0.14-wishlist-from-netring.md`](./0.14-wishlist-from-netring.md)
+(netring 0.22 adoption). Verification pass against the 0.13.0
+source surfaced one major finding — Plan 161's caveat about
+`FlowTracker` being "mutate-only" is wrong. The read API
+(`get`, `snapshot_stats`, `flows`, `iter_active`) already
+exists; no refactor needed. See umbrella §1.1.
+
+**Plans (after consolidation pass):**
+
+| Plan | Title | Priority |
+|------|-------|----------|
+| [160](./160-keyindexed-drain-expired.md) | `KeyIndexed::drain_expired` + `drain_expired_into` (honest allocation contract) | P0 |
+| [161](./161-flowtracker-lookup-inner.md) | `FlowTracker<FiveTuple, S>::lookup_inner` + `FiveTupleKey::from_inner_canonical` (specialised, not generic) | P0 |
+| [162](./162-dest-unreachable-kind.md) | `DestUnreachableKind` enum + ICMP module hygiene (absorbs wishlist 166) | P0 |
+| [163](./163-app-label-canonical-name.md) | `FiveTupleKey::app_label` + `L4Proto::canonical_name` (lowercase sibling to `proto_str`) | P1 |
+| [164](./164-correlate-rolling-rate.md) | `correlate::RollingRate<K, V>` primitive | P1 |
+| [165](./165-protocol-label-extensibility.md) | `well_known::LabelTable` + `protocol_label_with` / `app_label_with` | P1 |
+| [167](./167-discoverability-sweep.md) | Prelude expansion + `docs/discoverability.md` + rustdoc "see also" links | P2 |
+| [168](./168-flowside-byte-split.md) | `FlowStats::bytes_for` / `pkts_for` / `mean_pkt_size_for` / `direction_skew` | P3 |
+
+Total effort: ~6.5 days (wishlist estimated 8). P0 alone
+(160, 161, 162): ~3 days. P0+P1 (160-165): ~6 days. Phasing
+in 4 PRs — see umbrella §6.
+
+**Strictly additive cycle** — every plan extends an existing
+public surface or adds a new type. No existing API breaks.
+
+---
+
 ### 0.13.0 cycle — netring-0.21 driven (shipped 2026-06-11)
 
 **Status:** all 8 implementation plans shipped to master
-(`2095f28` → `7735587`). Phase E release gated on per-release
-consent per `feedback_release_consent.md`.
+(`2095f28` → `7735587`); released to crates.io as 0.13.0 on
+2026-06-12. Cycle closed.
 
 Umbrella: [`157-cycle-0-13-umbrella.md`](./157-cycle-0-13-umbrella.md).
 
