@@ -482,7 +482,7 @@ where
                 }
                 FlowEvent::Packet { key, side, ts, .. } => {
                     let Some(payload) = udp_payload else {
-                        // Non-UDP packet or no payload — skip silently.
+                        // Non-datagram packet or no payload — skip silently.
                         continue;
                     };
                     let Some(parser) = self.parsers.get_mut(key) else {
@@ -613,12 +613,21 @@ where
     }
 }
 
-/// Extract the UDP payload from an Ethernet-framed view. Returns
-/// `None` if the frame isn't UDP or can't be parsed.
+/// Extract the datagram payload a [`DatagramParser`] should see from an
+/// Ethernet-framed view. Returns `None` if the frame can't be parsed or
+/// isn't a datagram-shaped transport.
+///
+/// - **UDP** → the UDP payload (after the 8-byte UDP header).
+/// - **ICMPv4 / ICMPv6** → the *full* ICMP message bytes (type + code +
+///   rest), which is what [`crate::icmp::IcmpParser`] parses. Without
+///   this, `datagram_broadcast(IcmpParser::new())` silently delivered
+///   nothing (the ICMP datagram path was UDP-only before 0.14.1).
 fn extract_udp_payload(view: PacketView<'_>) -> Option<&[u8]> {
     let sp = etherparse::SlicedPacket::from_ethernet(view.frame).ok()?;
     match sp.transport? {
         etherparse::TransportSlice::Udp(udp) => Some(udp.payload()),
+        etherparse::TransportSlice::Icmpv4(icmp) => Some(icmp.slice()),
+        etherparse::TransportSlice::Icmpv6(icmp) => Some(icmp.slice()),
         _ => None,
     }
 }

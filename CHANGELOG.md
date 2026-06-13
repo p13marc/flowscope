@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.14.1
+
+Bug fix found during netring 0.22 adoption.
+
+### Fixed
+
+- **ICMP datagram routing.** `datagram_broadcast(IcmpParser::new())`
+  silently delivered nothing: the datagram driver's payload extractor
+  matched only `TransportSlice::Udp`, so ICMPv4/ICMPv6 frames were
+  skipped and the ICMP parser never ran. `extract_udp_payload` now also
+  returns the full ICMP message bytes for `TransportSlice::Icmpv4` /
+  `Icmpv6`. This unblocks ICMP-error correlation
+  (`datagram_broadcast(IcmpParser)` → `IcmpMessage` → `error_inner` →
+  `FlowTracker::stats_for_inner`). Regression test:
+  `tests/icmp_datagram_routing.rs`. The path was previously untested at
+  the driver level (only `parse_v4`/`parse_v6` were unit-tested).
+
 ## 0.14.0
 
 The **operations-layer ergonomics** cycle. Driven by netring
