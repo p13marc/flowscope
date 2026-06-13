@@ -5,317 +5,72 @@ concrete plans for features that haven't shipped yet.
 
 Reference material that informs the plans (design rationale,
 research, consumer feedback) lives in [`../docs/`](../docs/),
-which is published as part of the crates.io package.
+which is published as part of the crates.io package. The
+historical record of what's shipped lives in
+[`../CHANGELOG.md`](../CHANGELOG.md) and `git log`.
 
 **Convention**: when an implementation plan ships, **delete the
-plan file** in the same PR series. `git log` is the historical
-record; `plans/` is the working backlog.
+plan file** in the same PR series. Cycle wishlists and
+umbrellas are deleted too once the cycle releases.
 
 ---
 
 ## Active
 
-### 0.14.0 cycle — netring-0.22 driven (shipped 2026-06-12)
+### 0.14.0 cycle — pending release
 
-**Status:** all 8 implementation plans shipped to master
-(`1392dbd` → `5f5c88d`). Phase E release gated on per-release
-consent per `feedback_release_consent.md`.
+Implementation complete on `master`. Awaiting per-release
+consent (see `feedback_release_consent.md`) for `cargo publish`
++ tag.
 
-Umbrella: [`169-cycle-0-14-umbrella.md`](./169-cycle-0-14-umbrella.md).
+Umbrella with the full per-plan record:
+[`169-cycle-0-14-umbrella.md`](./169-cycle-0-14-umbrella.md)
+(retired after `0.14.0` ships to crates.io).
 
-Triggered by [`0.14-wishlist-from-netring.md`](./0.14-wishlist-from-netring.md)
-(netring 0.22 adoption). Verification pass against the 0.13.0
-source surfaced one major finding — Plan 161's caveat about
-`FlowTracker` being "mutate-only" is wrong. The read API
-(`get`, `snapshot_stats`, `flows`, `iter_active`) already
-exists; no refactor needed. See umbrella §1.1.
-
-**Shipped (all 8 implementation plans + umbrella):**
-
-| Plan | Commit | Title |
-|------|--------|-------|
-| 160 | `1392dbd` | `KeyIndexed::drain_expired` + `drain_expired_into` — honest allocation contract (Vec return + reusable-buffer variant; `lru::LruCache` has no `drain()`) |
-| 168 | `1392dbd` | `FlowStats::bytes_for` / `pkts_for` / `mean_pkt_size_for` / `direction_skew` per-side accessors |
-| 162 | `ffd31cb` | `DestUnreachableKind` unified v4/v6 enum + `IcmpType::dest_unreachable_kind` accessor + promoted `icmp::types` from private to `pub mod` (absorbs wishlist 166) |
-| 161 | `17eba9c` | `FiveTupleKey::from_inner_canonical` + `from_inner_literal` + specialised `impl<S> FlowTracker<FiveTuple, S>` with `lookup_inner` / `stats_for_inner` (no refactor needed) |
-| 163 | `17eba9c` | `L4Proto::canonical_name` lowercase-always-Some + `FiveTupleKey::app_label` always-Some fallback (siblings to `proto_str` / `protocol_label`) |
-| 164 | `5f5c88d` | `flowscope::correlate::RollingRate<K, V>` + `RateValue` trait (generic-V per-key rate primitive with same bucket-reuse zero-alloc discipline as `TimeBucketedCounter`) |
-| 165 | `5f5c88d` | `flowscope::well_known::LabelTable` value type + `FiveTupleKey::protocol_label_with` / `app_label_with` (site-custom port label extensibility) |
-| 167 | `5f5c88d` | Discoverability sweep — prelude expanded with ~10 `correlate` + ICMP + `well_known` re-exports + new `docs/discoverability.md` one-page tour |
-
-**Phase D-bis — Pre-release polish (shipped):**
-
-The 0.14 cycle scope was extended after the audit pass per
-user instruction "do not defer features if you think they
-have values". All five plans shipped to master.
-
-| Plan | Commit | Title |
-|------|--------|-------|
-| 170 | `f5251c3` | `IcmpType::mtu_signal()` + `MtuSignalKind` (unified v4 FragNeeded + v6 PacketTooBig with preserved next-hop MTU) |
-| 171 | `0bf68c0` | `RollingRate` completeness — `sum(k, now)` + `top_k(n, now)` + `clear()` + `len(now)` + `is_empty` doc clarification |
-| 172 | `14e467a` | `LabelTable` completeness — `remove`, `contains`, `is_empty`, `len`. **Breaking**: removed `override_count` in favor of idiomatic `len()` (safe; never on crates.io). |
-| 173 | `cf1202d` | `FlowStats::throughput_bps*` accessors — overall + per-side lifetime-average throughput with safe-divide built in |
-| 174 | `ddf40bc` | DX sweep — 3 runnable examples (`bandwidth_by_app` / `icmp_explained_drops` / `direction_skew_anomaly`) + rustdoc cross-links + README/CLAUDE/CHANGELOG/discoverability/recipes updates |
-
-Strictly additive except plan 172's `override_count` removal
-(only breaking change in the 0.14 cycle). Test count after
-polish: **920 passing** (up from 884 mid-cycle, +36 polish).
-
-**Phase E — Release mechanics (pending consent):**
-
-| Step | Status |
-|------|--------|
-| Pre-release polish plans 170-174 | drafted |
-| Final bench gate + clippy + docs sweep | ✅ clean (pre-polish) |
-| `cargo publish` dry-run | pending |
-| Per-release consent | pending |
-| Tag + push (`0.14.0`) | pending |
-
-**Test counts (pre-polish):** 884 passing (up from 809 at
-0.13.0 release — +75 new), zero clippy warnings under
+Test count: **920 passing**, zero clippy warnings under
 `--all-features --all-targets -D warnings`, zero rustdoc
-warnings. All 13 CI feature-matrix combinations build clean.
-Polish round expected to add ~25-30 tests.
-
-**Cycle theme:** operations-layer ergonomics — ICMP error
-correlation (lookup_inner + DestUnreachableKind), bandwidth-
-by-app primitives (app_label + RollingRate), site-custom
-labels (LabelTable), inspection patterns (drain_expired),
-discoverability (prelude expansion + docs/discoverability.md).
-
-**Headline finding:** the wishlist's Plan 161 caveat asserted
-`FlowTracker` was "mutate-only" and warned of a possible
-refactor. Direct verification: `FlowTracker<E, S>` already
-exposes `get`, `snapshot_stats`, `flows`, `iter_active`. No
-refactor; the specialised `impl<S> FlowTracker<FiveTuple, S>`
-block calls them directly. Effort dropped from "may need
-refactor" to "small additive method".
-
-**Strictly additive cycle** — every plan extends an existing
-public surface or adds a new type. No existing API breaks.
-
----
-
-### 0.13.0 cycle — netring-0.21 driven (shipped 2026-06-11)
-
-**Status:** all 8 implementation plans shipped to master
-(`2095f28` → `7735587`); released to crates.io as 0.13.0 on
-2026-06-12. Cycle closed.
-
-Umbrella: [`157-cycle-0-13-umbrella.md`](./157-cycle-0-13-umbrella.md).
-
-Triggered by [`0.13-wishlist-from-netring.md`](./0.13-wishlist-from-netring.md)
-(netring 0.21 adoption). Verification pass against the 0.12.0
-source surfaced one major finding — Plan 156's premise was
-wrong, the !Send root cause is structural (one missing `+ Send`
-on a trait object), not interior-mutability. See umbrella §1.
-
-**Shipped (all 8 implementation plans + umbrella):**
-
-| Plan | Commit | Title |
-|------|--------|-------|
-| 156 | `2095f28` | `Driver<E>: Send + Sync` unconditionally — structural 1-line fix (no `unsafe`); cleaned up stale `Rc<RefCell>` doc comments at 5 sites |
-| 147 | `6e3fdfa` | `OwnedAnomaly` + `DetectorScore` trait + per-score `into_anomaly` + `EveJsonWriter::write_owned_anomaly` + `FlowEventNdjsonWriter::write_owned_anomaly` + `EveOptions::custom_anomaly_type`. Absorbs wishlist 147 + 148 + 151 |
-| 149 | `02ddcfc` | `SlotHandle::drain_n(out, max) -> usize` bounded drain (`swap`/`SlotBuf` deferred to 0.14) |
-| 150 | `bbf673c` | `BroadcastSlotHandle<M, K>` + `DriverBuilder::session_on_ports_broadcast_each` fan-out delivery |
-| 152 | `650ac34` | `PcapFlowSource::with_speed_factor(f64)` — tokio-blocking caveat documented |
-| 153 | `be02971` | `flowscope::test_helpers::events` synthetic-event constructors |
-| 154 | `be02971` | `FlowStateMap<T, K>` per-flow typed state (layered over `KeyIndexed`) + `KeyIndexed::get_mut` + fix `KeyIndexed::new_unbounded` hashbrown overflow |
-| 155 | `7735587` | `examples/00-getting-started/sharded_capture.rs` + `docs/sharded.md` recipe |
-
-**Phase E — Release mechanics (pending consent):**
-
-| Step | Status |
-|------|--------|
-| Final bench gate + clippy + docs sweep | ✅ clean |
-| `cargo publish` dry-run | pending |
-| Per-release consent | pending |
-| Tag + push (`0.13.0`) | pending |
-
-**Test counts:** 809 passing (up from 772 in 0.12.0 — +37 new),
-zero clippy warnings under `--all-features --all-targets -D warnings`,
-zero rustdoc warnings.
-
-**Cycle theme:** netring-0.21 adoption ergonomics — `Driver<E>:
-Send + Sync` to unblock tokio multi-thread runtime, OwnedAnomaly
-+ DetectorScore for canonical detector output, BroadcastSlotHandle
-for fan-out subscribers, drain_n for bounded back-pressure,
-FlowStateMap for per-flow typed state, pcap pacing for demos +
-behaviour-realistic offline replay.
-
-**Headline finding:** the wishlist's Plan 156 claimed
-`Driver<E>: !Send` because `FlowTracker` held `Rc<RefCell>`
-state, requiring an `unsafe SendCell<T>` newtype + opt-in
-`SendMode` enum (~3–4 days work + Miri audit). Direct
-verification: zero `Rc<RefCell>` in the live tree (only stale
-doc comments). Real cause: `Vec<Box<dyn ErasedSlot<E::Key>>>`
-missing a `+ Send` bound. Fix was structural: 1-line trait-
-object bound + matching `P: Send + Sync` audit. No `unsafe`,
-no opt-in knob, no runtime overhead. Dropped Plan 156 effort
-from 3–4 days to ~3 hours.
-
----
-
-### 0.12.0 expanded cycle — pre-1.0 maximally complete release
-
-**Status:** all 11 implementation plans shipped to master
-(`781595f` → `1ed1228`); release shipped to crates.io as
-0.12.0 on 2026-06-11. Cycle closed.
-
-Umbrella: [`151-cycle-0-12-expanded.md`](./151-cycle-0-12-expanded.md).
-
-**Base (shipped to master, awaiting publish consent):**
-
-| Plan | Status |
-|------|--------|
-| 127 — `Timestamp` ISO 8601 + chrono interop | ✅ shipped (`781595f`) |
-| 126 — `AnomalyFields` trait + impls | ✅ shipped (`c7d8e18`) |
-| 122 — `SlotHandle: Send + Sync` (Arc<SegQueue>) | ✅ shipped (`44e68e8`) — pre-1.0 break |
-| 124 — `DeferredDriverBuilder<E>` | ✅ shipped (`3723b6a`) |
-| 123 — `EveJsonWriter` (Suricata EVE) | ✅ shipped (`99be89d`) |
-| 128 §Phase 7 — `correlate::*::new_unbounded` ctors (3 of 5) | ✅ shipped (`f300750`) |
-
-**Expansion (shipped to master, awaiting Phase E release consent):**
-
-| Plan | Commit(s) | Title |
-|------|-----------|-------|
-| 130 | `7778c8e` → `0c5ece5` (5 commits) | KeyFields/AnomalyFields trait split + emit writers generic over K + Event::tcp() + chrono From + DriverBuilder Send-bound parity + TopK/Burst `new_unbounded` |
-| 131 | `4332da7` → `a1bbd11` (3 commits) | Error::Module Pipeline removal + 5 new variants; `ja3+ja4 → tls-fingerprints`; `tracing-messages` always-on under `tracing` |
-| 132 | `1c16a9d` | Docs: migration §7-§12 + README + CLAUDE.md scope updates |
-| 143 | `7c09bcd` (2 commits) | `flowscope::detect::patterns::{BeaconDetector, PortScanDetector, DgaScorer}` + 2 examples + docs |
-| 144 | `0f800e4` + `61011ca` | ECH signal on `TlsClientHello` / `TlsServerHello` / `TlsHandshake` + EchOutcome aggregate + docs |
-| 146 | `1ed1228` | `flowscope::detect::file::{Sha256Sink, Md5Sink, FileHashSink}` + 16-format `FileType` MIME classifier + docs |
-
-**Phase E — Release mechanics (pending consent):**
-
-| Step | Status |
-|------|--------|
-| Final bench gate + clippy + docs sweep | ✅ clean |
-| `cargo publish` dry-run | ✅ packages clean (211 files, 1.7 MiB) |
-| Per-release consent | pending |
-| Tag + push (`0.12.0`) | pending |
-
-**Deferred to a future cycle** (drafted then deferred per user judgement to keep 0.12 shippable; designs captured in `git log` for resurrection when a specific consumer ask lands):
-
-- JA4+ family completion (JA4S/JA4H/JA4T/JA4L/JA4X) — spec-drift + `x509-parser` dep + per-flow tracker state.
-- IPFIX/NetFlow v9 exporter — `netgauze` dep maturity + ntop PEN-6871 IE verification. Future home: `flowscope-export` sister crate per `docs/design.md`.
-- HTTP/2 passive parser + Akamai fingerprint — `httlib-hpack` maintenance risk + per-direction dynamic-table cost + significant LoC.
-- QUIC Initial parser + JA4-QUIC — `quinn-proto` API churn + ~2 MB compiled size.
-
-**Strategic justification** (from the 0.12 strategic-review pass):
-- flowscope's niche is genuinely uncontested in published Rust crates.
-- 5 of the 0.12 audit's 7 rough edges are public-trait-shape debt; landing them pre-community-adoption is cheaper than post-adoption.
-- Detection patterns (BeaconDetector / PortScanDetector / DgaScorer) package the FAQ recipes consumers keep rebuilding — high ROI per LoC.
-- ECH + file hashes are surgical additions (small surface, obvious consumer): TLS modernisation + DFIR/IR pipelines.
-- The heavy feature additions (JA4+ / IPFIX / HTTP/2 / QUIC) each carry substantial dep / spec / maintenance risk. Deferred until specific consumer demand surfaces.
-
-**Cycle theme:** pre-1.0 debt retirement + small wins
-(detection patterns / ECH signal / file hashes). The heavier
-feature additions surveyed during the strategic review are
-deferred (see Stale / deferred below). 0.12 base work (Send
-slot handles, EVE writer, AnomalyFields trait, Timestamp
-ISO 8601, deferred driver builder) already shipped to master
-under commits `781595f` → `3a96cfa`; durable record is in
-CHANGELOG and `git log`.
-
-### Stale / deferred
-
-| Plan | Goal | Status |
-|------|------|--------|
-| [`21-flow-protolens.md`](./21-flow-protolens.md) | `flowscope-protolens` — protolens bridge as a sister crate | 🛑 stale, deferred (no consumer ask) |
-| (was 140) | JA4+ family completion — JA4S/JA4H/JA4T/JA4L/JA4X | 🛑 deferred from 0.12 expanded cycle (spec drift + x509-parser dep); design in `git log` at commit `cee5577` |
-| (was 141) | IPFIX/NetFlow v9 exporter — `flowscope::emit::ipfix` | 🛑 deferred from 0.12 expanded cycle (netgauze maturity + enterprise IE verification); design in `git log` at commit `cee5577`. Future home: `flowscope-export` sister crate. |
-| (was 142) | HTTP/2 passive parser + Akamai fingerprint | 🛑 deferred from 0.12 expanded cycle (httlib-hpack maintenance + LoC); design in `git log` at commit `cee5577` |
-| (was 145) | QUIC Initial parser + JA4-QUIC | 🛑 deferred from 0.12 expanded cycle (quinn-proto churn + 2 MB compiled size); design in `git log` at commit `cee5577` |
-
----
-
-## Recently shipped
-
-### 0.11.0 cycle — zero-allocation cycle (2026-06)
-
-Shipped to crates.io as `flowscope 0.11.0` (tag `0.11.0`). The
-plan files are retired per convention; durable record is in
-`CHANGELOG.md`, `docs/migration-0.10-to-0.11.md`, and the
-commit history (`git log 0.10.1..0.11.0`).
-
-Highlights:
-
-- **Plan 118** — umbrella + Phase 0 bench gate
-  (`benches/zero_alloc.rs` + `benches/support/counting_allocator.rs`)
-  + Phase 4 small wins (`parser_kinds::TLS_HANDSHAKE` + dropped
-  `Event::FlowPacket::frame`) + Phase 5 release mechanics.
-- **Plan 119** — `Driver::track_into` + `SessionParser` /
-  `DatagramParser` API break (`&mut Vec<Self::Message>` sink,
-  `httparse`-style). `Driver::track_into` with 5 HTTP slots:
-  **0.000 allocs/packet** in steady state.
-- **Plan 120** — HTTP / DNS / TLS payload-type Bytes audit.
-  HTTP/1.1 GET parse: **28 → 7 allocs** (zero-copy `Bytes::slice`
-  over one Arc-backed header arena).
-- **Plan 121** — typed `Driver<E>` + `SlotHandle<M, K>` drain
-  handles replace closed-`M` `Driver<E, M>` + lift closures.
-  Deletes `FlowMultiSessionDriver`, legacy `Pipeline`, legacy
-  builders. `flowscope::driver_unified` renamed to
-  `flowscope::driver` at the crate root.
-
-Deviations from the plan files worth noting (now durable
-record):
-
-- **`FlowDriver` / `FlowSessionDriver` / `FlowDatagramDriver`
-  kept public** as raw sync primitives (plan 121 spec'd
-  deleting them; doing so cleanly would have required inlining
-  their logic into the typed `Driver`'s slot impls — substantial
-  extra work for marginal API-surface benefit). The 0.9-era
-  `FlowMultiSessionDriver` / `FlowSessionDriverBuilder` /
-  `FlowDatagramDriverBuilder` / top-level `Pipeline` are gone.
-- **`OutBuf<'_, M>` newtype dropped** in favour of plain
-  `&mut Vec<Self::Message>` — same idiom as `httparse`, simpler
-  API.
-- **`HttpMethod` enum dropped** in favour of `Bytes` everywhere
-  — interned `Bytes::from_static(b"GET")` covers the zero-alloc
-  case for the 8 standard methods without an enum.
-- **`seq: u64` cross-slot ordering field dropped** — per-
-  `track_into` drain provides packet-level ordering; longer
-  spans use the existing `Timestamp`.
-- **Typestate-tuple builder dropped** — simple `&mut self`
-  builder returning `SlotHandle<P::Message, E::Key>` per
-  registration call. Far friendlier error messages; composes
-  with cfg-feature-gated parser registration.
-- **Plan 117 absorbed** — the legacy deletion sweep originally
-  queued for a separate next-major release was rolled into
-  plan 121 to avoid asking consumers to migrate twice.
-
-### 0.10.0 cycle — DX polish (2026-06)
-
-Triggered by the 0.9 examples-writing postmortem. Plans 101 /
-102 / 106 / 107 / 110 / 113 / 116 (PR 1-4) all shipped in 0.10.
-Plan 117 (legacy deletion sweep, originally PR 5 of 116)
-absorbed into plan 121 and shipped in 0.11. Plan files retired
-per convention.
-
-### 0.9.0 cycle — ergonomics + breaks
-
-Every implementation plan shipped; every plan file retired. The
-umbrella audit's durable record (38 driver constructors, two
-duplicated L7 API shapes, five error enums, no high-level
-entry, no per-packet layered view) is absorbed into the 0.9.0
-CHANGELOG header.
+warnings, all 13 CI feature-matrix combinations clean.
 
 ---
 
 ## Deferred items recorded so a future ask doesn't get re-litigated
 
+Items below have been considered and explicitly left out of
+the current cycle. Listed so a future consumer ask can find
+the prior reasoning instead of re-litigating.
+
+### Capability gaps without active plans
+
+- **JA4+ family completion (JA4S / JA4H / JA4T / JA4L / JA4X /
+  JA4SSH)** — JA4 family variants beyond the client TLS
+  fingerprint shipped by plan 97. Ship one variant at a time
+  when a consumer asks. Caveats: spec drift, `x509-parser`
+  dep for cert-side variants, per-flow tracker state.
+- **IPFIX / NetFlow v9 / sFlow export** — emit
+  `flowscope::FlowStats` as IPFIX records. Future home:
+  `flowscope-export` sister crate per `docs/design.md`.
+  Caveats: `netgauze-flow-pkt` maturity + enterprise IE
+  verification.
+- **HTTP/2 passive parser** + Akamai fingerprint — caveats:
+  `httlib-hpack` maintenance risk, per-direction dynamic-table
+  cost, significant LoC. Defer until a consumer asks.
+- **Passive QUIC parser** + JA4-QUIC — no Rust passive QUIC
+  parser exists today (every QUIC crate is an active endpoint
+  implementation). Greenfield opportunity; caveats:
+  `quinn-proto` API churn, ~2 MB compiled size. Defer.
+
+### Smaller deferred items
+
 - **Parser `&mut S` API change** — addressed via the
-  `docs/concepts.md` consumer-loop pattern instead of plumbing
-  a generic through every shipped parser.
+  `docs/concepts.md` consumer-loop pattern instead.
 - **Lazy iterator return type on parser `feed_*` / `parse`** —
   declined twice; reconsider only with a third consumer +
   reproducer.
-- **Built-in RTP / RTCP / HTTP/2 / RTPS parsers** — accept
-  consumer-led upstream PRs after their parsers stabilise;
-  don't ship without an out-of-tree maintainer commitment.
+- **Built-in RTP / RTCP / RTPS parsers** — accept consumer-led
+  upstream PRs after their parsers stabilise; don't ship
+  without an out-of-tree maintainer commitment.
 - **TLS 1.3 0-RTT classification surface** — small follow-up
-  if a consumer asks; not blocking anyone today.
+  if a consumer asks.
 - **IPv4 / IPv6 fragment reassembly** — deferred indefinitely
   per `docs/concepts.md` known-limitations section.
 - **`FlowTrackerConfig::with_event_filter(SUPPRESS_PACKET)`** —
@@ -323,57 +78,45 @@ CHANGELOG header.
   Perf-only optimisation; revisit if a profile shows
   `FlowEvent::Packet` allocation as a hot path.
 - **`extract::HostPair` / `extract::AppliedFilter`** —
-  additional extractor adapters. Add when a consumer asks for
-  one specifically; the existing `FiveTuple` / `IpPair` /
-  `MacPair` set covers most cases.
+  additional extractor adapters. Add when a consumer asks;
+  the existing `FiveTuple` / `IpPair` / `MacPair` set covers
+  most cases.
 - **Pageable reassembler** — writes excess to disk / a
   side-channel on `BufferedReassembler` overflow, preserving
   evidence for forensics. Niche; revisit when a forensics-
   focused consumer asks.
-- **`SyntheticFlowDriver` / `pcap_macro!` test fixtures** —
-  programmatic `FlowEvent` vec construction + frame-builder
-  macro. Useful as `test_helpers` extensions; revisit when a
-  downstream consumer asks.
 - **Tracker pause/resume for load-shedding** — accept packets
-  but don't emit events without losing flow state. Niche;
-  revisit when a consumer asks.
-- **JA4S / JA4H / JA4L / JA4T / JA4X / JA4SSH** — JA4 family
-  variants beyond the client TLS fingerprint shipped by plan
-  97. Ship one variant at a time when a consumer asks.
+  without emitting events. Niche; revisit when asked.
 - **`FlowExtractor::extract_batch` for SIMD-shaped parsers** —
-  speculative; only matters at 40+ Gbps line rates. No current
-  consumer at that scale.
-- **IPFIX / NetFlow v9 / sFlow export** — emit
-  `flowscope::FlowStats` as IPFIX records to feed the
-  `netgauze-flow-pkt` / `netflow_generator` / `rustflow`
-  collector ecosystem. Belongs in a sister crate
-  (`flowscope-export`) per `docs/design.md`.
-- **Passive QUIC parser** — no Rust passive QUIC parser
-  exists today (every QUIC crate — `quinn`, `s2n-quic`,
-  `quiche`, `tokio-quiche` — is an active endpoint
-  implementation). Greenfield opportunity; defer until a
-  consumer asks.
-- **HTTP/2 passive parser** — same shape as QUIC; smaller
-  surface. Defer until a consumer asks.
-- **`#[derive(SessionParser)]` macro** — wsdf-style
-  declarative dissector generator. Defer to post-1.0; the
-  trait shape needs to stabilise before locking a macro API.
+  speculative; only matters at 40+ Gbps line rates.
+- **`#[derive(SessionParser)]` macro** — wsdf-style declarative
+  dissector generator. Defer to post-1.0; the trait shape
+  needs to stabilise before locking a macro API.
 - **Composite multi-layer fingerprint** — nDPI 5.0's FPC
   pattern. Interesting but mature/niche; defer.
 - **Wirefilter expression filter** — Cloudflare's
   `wirefilter-engine` could plug in as a flow filter. Useful
-  for the future CLI sister crate; defer.
-- **Per-protocol DNS / TLS decoder rewrite** — at 0.11.0 the
-  DNS / TLS bench rows didn't move (28 / 14 allocs/parse)
-  because the bulk of the allocator pressure lives inside
-  `simple-dns` / `tls-parser`. Custom decoders or pre-parse
-  `Bytes` slicing would land more allocations. Defer until a
-  consumer profiles and asks.
-- **Per-slot `Arc<Mutex<…>>` slot bufs (Send slot handles)** —
-  the typed `SlotHandle<M, K>` is `Rc<RefCell>`-backed and
-  intentionally `!Send`. Cross-task delivery is netring's job
-  (drain inside the event loop, post over channels). Revisit
-  if a consumer needs a Send variant.
+  for a future CLI sister crate; defer.
+- **Per-protocol DNS / TLS decoder rewrite** — bulk of the
+  allocator pressure lives inside `simple-dns` /
+  `tls-parser`. Defer until a consumer profiles and asks.
+- **`flowscope::correlate::RollingRate::with_capacity` LRU
+  bound** — current storage shape is per-time-bucket; LRU
+  bounding requires ~80 LoC of cross-bucket bookkeeping.
+  `evict_expired` already bounds memory to "K cardinality per
+  window". Revisit if profiling shows the unbounded-K case
+  hits memory.
+- **`RollingRate::merge(other)` for sharded aggregation** —
+  wait for `ShardedRunner::merge_state` in netring 0.22+ to
+  settle first; merge contract should match.
+- **`flowscope::correlate::BandwidthByApp` ready-made wrapper**
+  around `RollingRate<&'static str, u64>` + `LabelTable` —
+  premature; let netring 0.22's `bandwidth_by_app()` primitive
+  prove the shape first.
+- **`FlowTracker::with_label_table(table)`** — propagate
+  `LabelTable` through the tracker. Wait for a real consumer
+  ask; the `app_label_with(&table)` call-site pattern is
+  workable today.
 
 ---
 
@@ -387,119 +130,33 @@ CHANGELOG header.
 | 40–49 | Observability + performance |
 | 50–59 | Deferred-feature catchup |
 | 60–69 | Tooling (CLIs) |
-| 70–79 | 0.5.0 production-hardening v2 (simple-nms wishlist) |
-| 90–99 | 0.9.0 ergonomics cycle (umbrella + breaks + additions) |
-| 100–199 | 0.10.0 DX-polish cycle (postmortem-driven) |
-| 118+ | 0.11.0 zero-allocation cycle (netring 0.19 driven) |
+| 70–79 | 0.5.0 production-hardening v2 |
+| 90–99 | 0.9.0 ergonomics cycle |
+| 100–129 | 0.10.0 DX-polish cycle (postmortem-driven) |
+| 118+ | 0.11.0 zero-allocation cycle |
+| 122–146 | 0.12.0 cross-thread + structured-output cycle |
+| 147–156 | 0.13.0 Send+Sync driver + canonical anomaly cycle |
+| 160–174 | 0.14.0 operations-layer ergonomics cycle |
+| 175+ | post-0.14 / 1.0-prep |
 
-Plan numbers retired (implementation shipped, file removed):
-00–04, 12, 20, 22–25, 30–61, 62, 70–73, 74, 75, 76–82, 83–91,
-93, 94, 96, 97, 99, 100, 101, 102, 106, 107, 110, 112, 113,
-115, 116, 118, 119, 120, 121, 122, 123, 124, 126, 127, 128,
-130, 131, 132, 143, 144, 146, 147, 149, 150, 152, 153, 154,
-155, 156, 160, 161, 162, 163, 164, 165, 167, 168, 170, 171,
-172, 173, 174. Subsumed by consolidation:
-- 103, 104, 105 → rolled into plan 102 (utility modules)
-- 111 → rolled into plan 110 (DX polish)
-- 114 → rolled into plan 113 (dynamic dispatch)
-- 108, 109 → rolled into plan 116 (driver+event unification)
-- 117 → absorbed into 121 (legacy deletion + slot refactor
-  overlap; one wider migration window beats two)
-- 148, 151 → absorbed into 147 (0.13 cycle: detector trait
-  collapsed into `DetectorScore` on the output side; the
-  separate `OwnedAnomaly` plan merged with EVE writer
-  integration into one coherent ship)
-- 166 → absorbed into 162 (0.14 cycle: `icmp::types` re-export
-  hygiene folded into the `DestUnreachableKind` ship — both
-  touch `src/icmp/mod.rs`)
+The next free number for a new plan is **175**.
 
-Active: 21 (stale-deferred), 151 (0.12 expanded-cycle
-umbrella — durable record), 157 (0.13 cycle umbrella —
-durable record), 169 (0.14 cycle umbrella — kept until 0.14
-release ships).
-Implementation plans 160, 161, 162, 163, 164, 165, 167, 168
-(base) + 170, 171, 172, 173, 174 (pre-release polish) all
-shipped to master in the 0.14 cycle; plan files retired per
-convention.
-
-The next free number for a new plan is 175+. (175-200 reserved
-for the post-0.14 cycle / 1.0-prep audits; see umbrella
-157 §13 for the 1.0 stability-audit sketch.)
-
----
-
-## Conventions
-
-These apply to every new plan in this directory.
-
-### `#[non_exhaustive]` on every public struct/enum
-
-Applied project-wide in 0.2.0; future additions are
-unconditionally non-breaking. Construct via `::default()` and
-mutate; do not rely on struct-literal construction from outside
-the crate.
-
-### Pre-1.0 backward-compatibility policy
-
-Pre-1.0, flowscope optimises for the best possible design over
-preserving compatibility. When a sharper API shape is better,
-we ship it and migrate consumers — `netring` and the known
-external consumers update in lockstep. The CHANGELOG documents
-every break with a migration recipe. Post-1.0 the trade-off
-flips.
-
-### Trait-method overrides for diagnostics
-
-When a trait grows a diagnostic method (e.g.
-`Reassembler::high_watermark`), it ships with a default-zero /
-default-`None` implementation so existing third-party impls
-don't break. A default return means "this implementation doesn't
-track that," not "the value is zero / absent."
-
-### Single vocabulary across event stream and metrics
-
-The `AnomalyKind` enum is the single source of truth for both
-the `FlowEvent::FlowAnomaly` / `TrackerAnomaly` carriers and
-the `flowscope_anomalies_total` metric labels. Adding a new
-variant requires a corresponding label arm in
-`src/obs.rs::anomaly_label` in the same change.
-
-### Sync / async parity
-
-flowscope is runtime-free. Every async helper in `netring`
-(`flow_stream`, `session_stream`, `datagram_stream`) has a sync
-mirror in flowscope (`FlowDriver`, `FlowSessionDriver`,
-`FlowDatagramDriver`). The async path is the ergonomic one; the
-sync path is what offline-pcap consumers and embedded users
-get.
-
-### No `tokio` in flowscope's deps
-
-Hard rule (also stated in CLAUDE.md). Async lives in `netring`,
-which depends on flowscope. PRs adding tokio to flowscope are
-wrong-shaped.
+Per the convention, plan files are deleted in the same PR
+series that ships them. Cycle wishlists and umbrellas are
+deleted once the cycle releases. CHANGELOG entries and
+`git log` are the durable record.
 
 ---
 
 ## Plan structure for new plans
 
-Each `NN-*.md` plan has these sections:
+A new plan file should include:
 
-1. **Summary** — one paragraph
-2. **Status** — Not started / In progress / Done
-3. **Prerequisites** — which prior plans must be complete
-4. **Out of scope** — what this plan does NOT do
-5. **Files** — exact paths to create/modify
-6. **API** — concrete type/function signatures to ship
-7. **Implementation steps** — numbered, mechanical
-8. **Tests** — unit + integration coverage
-9. **Acceptance criteria** — what "done" looks like
-10. **Risks** — known unknowns specific to this phase
-11. **Effort** — LOC and time estimate
-12. **Provenance** (when applicable) — context that shaped
-    this plan
-
-Update Status as you go. When a plan ships, **delete the file
-in the same PR series** that lands the implementation (or in a
-follow-up cleanup commit). The CHANGELOG entry plus the
-`plan NN: …` commit subject are the durable record.
+1. **Cycle / priority / effort / status** — one-line meta
+2. **Motivation** — what consumer / friction triggered this
+3. **Proposed shape** — concrete API sketch
+4. **Files touched** — list
+5. **Tests** — coverage plan
+6. **Acceptance criteria** — what passes "done"
+7. **Non-goals / explicitly deferred** — close the door on
+   scope creep

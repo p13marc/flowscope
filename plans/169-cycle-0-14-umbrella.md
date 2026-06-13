@@ -1,10 +1,11 @@
 # Plan 169 — 0.14 cycle umbrella
 
-**Status:** drafting, 2026-06-12. Triggered by the netring-side
-[`0.14-wishlist-from-netring.md`](./0.14-wishlist-from-netring.md)
-(9 asks: plans 160–168). This umbrella synthesises my own
-verification pass against the shipped 0.13.0 source, confirms
-each ask's premise, and lays out the implementation plan set.
+**Status:** shipped to master, pending release. Triggered by
+the netring-side 0.14 wishlist (9 asks: plans 160–168;
+wishlist file retired after the cycle's release). This umbrella
+synthesises the verification pass against the shipped 0.13.0
+source, confirms each ask's premise, and lays out the
+implementation plan set.
 
 The user has explicitly authorised breaking-change cycles to
 land the best designs, but this cycle is **strictly additive** —
@@ -354,16 +355,11 @@ Plus my own additions:
 
 ## §8 References
 
-- Source wishlist: [`0.14-wishlist-from-netring.md`](./0.14-wishlist-from-netring.md)
-- Plan files:
-  [160](./160-keyindexed-drain-expired.md) ·
-  [161](./161-flowtracker-lookup-inner.md) ·
-  [162](./162-dest-unreachable-kind.md) (absorbs 166) ·
-  [163](./163-app-label-canonical-name.md) ·
-  [164](./164-correlate-rolling-rate.md) ·
-  [165](./165-protocol-label-extensibility.md) ·
-  [167](./167-discoverability-sweep.md) ·
-  [168](./168-flowside-byte-split.md)
+- Source wishlist: retired after cycle release (durable record
+  in `CHANGELOG.md` 0.14.0 entry).
+- Per-plan files (160-168 base + 170-174 polish): retired
+  after implementation shipped; commit-by-commit record in
+  `git log` under subjects `plan NNN: …`.
 - Verification source-anchors:
   `src/tracker.rs:690-810` (FlowTracker read API) ·
   `src/correlate/indexed.rs` (KeyIndexed evict_expired

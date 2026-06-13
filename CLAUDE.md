@@ -27,8 +27,9 @@ primitives + site-custom labels + discoverability,
 shipped 2026-06-12).
 
 Plans 160 / 161 / 162 / 163 / 164 / 165 / 167 / 168.
-Triggered by the netring 0.22 adoption wishlist
-(`plans/0.14-wishlist-from-netring.md`).
+Triggered by the netring 0.22 adoption wishlist (wishlist
+file retired after cycle completion; durable record in
+`CHANGELOG.md` and `git log`).
 
 Headlines:
 
@@ -153,8 +154,8 @@ New module registered: `src/correlate/rolling_rate.rs`.
 canonical anomaly value + broadcast + DX, shipped 2026-06).
 
 Plans 147 / 149 / 150 / 152 / 153 / 154 / 155 / 156. Triggered
-by the netring 0.21 adoption wishlist
-(`plans/0.13-wishlist-from-netring.md`).
+by the netring 0.21 adoption wishlist (wishlist file retired
+after cycle release).
 
 Headlines:
 
@@ -856,35 +857,17 @@ RFC notes.
 
 ### `plans/` (active backlog)
 
-- `INDEX.md` — backlog index, project conventions, and the
-  "Considered but not in the backlog" footnote listing known
-  capability gaps without active plans.
-- `21-flow-protolens.md` — protolens bridge sister crate
-  (STALE pre-consolidation draft, pending real consumer ask).
-- `100-examples-postmortem.md` — umbrella audit + cycle
-  rationale for 0.10 (the postmortem from writing 17 examples
-  in 0.9).
-- `112-dynamic-lazy-analysis.md` — analysis doc motivating
-  plan 113.
-- `113-dynamic-dispatch.md` — `flowscope::detect::signatures`
-  (sub-A: LANDED) + `Routing::Heuristic` on the unified
-  `Driver` (sub-B: blocked on plan 116).
-- `115-strategic-review.md` — strategic review motivating the
-  driver+event unification (replaces prior plans 108 + 109).
-- `116-driver-event-unification.md` — `Driver<E, M>` +
-  `Event<K, M>` collapsing the 6 driver / 4 event types into
-  one of each. 5-PR series, NOT YET STARTED. The user-priority
-  centerpiece of the 0.10 cycle.
+- `INDEX.md` — backlog index, project conventions, deferred
+  items list (capability gaps without active plans), and the
+  numbering scheme.
+- `169-cycle-0-14-umbrella.md` — 0.14 cycle umbrella; retired
+  once `0.14.0` ships to crates.io.
 
-Plans whose implementation has shipped in the 0.10 cycle
-(file kept until the cycle releases, then retired per
-convention): 101, 102, 106, 107, 110.
-
-Plan numbers retired (implementation shipped, file removed):
-00–04, 12, 20, 22–25, 30–61, 62, 70–73, 74, 75, 76–82,
-83–91, 93, 94, 96, 97, 99. See
-[`plans/INDEX.md`](plans/INDEX.md) for the numbering scheme
-used by new plans.
+Shipped cycle wishlists / umbrellas / per-plan files are
+deleted after the cycle releases — the durable record is in
+`CHANGELOG.md`, the `docs/migration-*.md` series, and
+`git log`. See [`plans/INDEX.md`](plans/INDEX.md) for the
+numbering scheme used by new plans.
 
 ## Pre-publish checklist
 

@@ -3,7 +3,8 @@
 ## 0.14.0
 
 The **operations-layer ergonomics** cycle. Driven by netring
-0.22 adoption; see `plans/0.14-wishlist-from-netring.md`.
+0.22 adoption (wishlist file retired after cycle release —
+durable record in this changelog + `git log`).
 
 Mostly additive — one **breaking removal** in the post-audit
 polish round: `LabelTable::override_count` renamed to
@@ -164,7 +165,7 @@ Migration: [`docs/migration-0.13-to-0.14.md`](docs/migration-0.13-to-0.14.md).
 
 The **fully `Send + Sync` driver** + **canonical anomaly value type**
 + **detector-output uniformity** cycle. Driven by netring 0.21
-adoption friction; see `plans/0.13-wishlist-from-netring.md`.
+adoption friction (wishlist file retired after cycle release).
 
 ### Added
 
