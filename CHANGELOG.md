@@ -11,8 +11,8 @@ polish round: `LabelTable::override_count` renamed to
 shipped on master, never on crates.io. Find/replace migration
 in `docs/migration-0.13-to-0.14.md` §10.
 
-Test count after the cycle: **915 passing** (up from 809 at
-0.13.0 release, +106 new). Zero clippy warnings under
+Test count after the cycle: **920 passing** (up from 809 at
+0.13.0 release, +111 new). Zero clippy warnings under
 `--all-features --all-targets -D warnings`, zero rustdoc
 warnings. All 13 CI feature-matrix combinations clean.
 

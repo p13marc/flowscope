@@ -59,7 +59,7 @@ have values". All five plans shipped to master.
 
 Strictly additive except plan 172's `override_count` removal
 (only breaking change in the 0.14 cycle). Test count after
-polish: **915 passing** (up from 884 mid-cycle, +31 polish).
+polish: **920 passing** (up from 884 mid-cycle, +36 polish).
 
 **Phase E — Release mechanics (pending consent):**
 

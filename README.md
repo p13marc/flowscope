@@ -316,6 +316,11 @@ Pre-release polish (plans 170-174):
 See [`docs/migration-0.13-to-0.14.md`](docs/migration-0.13-to-0.14.md)
 for the 0.13 → 0.14 cheat sheet.
 
+**920 tests passing** (up from 809 at 0.13.0 release — +111
+new), zero clippy warnings under `--all-features --all-targets
+-D warnings`, zero rustdoc warnings, all 13 CI feature-matrix
+combinations clean.
+
 0.13.0 — netring-0.21 adoption cycle: fully `Send + Sync`
 driver + canonical anomaly value type + broadcast delivery +
 bounded back-pressure + per-flow typed state.

@@ -544,4 +544,57 @@ mod tests {
         t.remove(L4Proto::Tcp, 8765);
         assert!(t.is_empty());
     }
+
+    // ── Plan 165 (0.14) — `FiveTupleKey` *_with companions ──
+    //
+    // Direct tests on the LabelTable lookup path are covered
+    // above; these exercise the FiveTupleKey wrappers
+    // (`protocol_label_with` / `app_label_with`) end-to-end.
+
+    fn key(src_port: u16, dst_port: u16) -> crate::extract::FiveTupleKey {
+        use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+        crate::extract::FiveTupleKey {
+            proto: L4Proto::Tcp,
+            a: SocketAddr::new(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)), src_port),
+            b: SocketAddr::new(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 2)), dst_port),
+        }
+    }
+
+    #[test]
+    fn protocol_label_with_override_wins_over_builtin() {
+        let mut t = LabelTable::new();
+        t.set(L4Proto::Tcp, 80, "internal-proxy");
+        // Port 80 hits the override before the built-in "http".
+        assert_eq!(
+            key(80, 33000).protocol_label_with(&t),
+            Some("internal-proxy"),
+        );
+    }
+
+    #[test]
+    fn protocol_label_with_falls_back_to_builtin_when_inheriting() {
+        let t = LabelTable::new(); // empty overrides, inherits built-in.
+        assert_eq!(key(80, 33000).protocol_label_with(&t), Some("http"));
+    }
+
+    #[test]
+    fn protocol_label_with_standalone_returns_none_for_unmapped() {
+        let t = LabelTable::standalone(); // strict whitelist.
+        assert_eq!(key(80, 33000).protocol_label_with(&t), None);
+    }
+
+    #[test]
+    fn app_label_with_falls_back_to_canonical_name() {
+        let t = LabelTable::standalone();
+        // Standalone + ephemeral ports → no L7 label → fall
+        // back to L4 canonical_name() = "tcp".
+        assert_eq!(key(33000, 33001).app_label_with(&t), "tcp");
+    }
+
+    #[test]
+    fn app_label_with_override_wins() {
+        let mut t = LabelTable::new();
+        t.set(L4Proto::Tcp, 8765, "grpc-internal");
+        assert_eq!(key(8765, 33000).app_label_with(&t), "grpc-internal");
+    }
 }

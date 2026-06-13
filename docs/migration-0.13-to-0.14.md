@@ -127,9 +127,9 @@ metrics::counter!("icmp_du_total", "kind" => kind.as_str()).increment(1);
 
 The v4 `FragmentationNeeded` variant loses the `mtu` value in
 the unified mapping. Match on `Icmpv4DestUnreachCode` directly
-if you need it. (v6 `PacketTooBig` is type 2, not under DU; a
-separate `IcmpType::mtu_signal()` accessor is possible in 0.15
-if a consumer asks.)
+if you need it — or use [`IcmpType::mtu_signal()`](#§11-icmptype mtu_signal--mtusignalkind-plan-170)
+(§11 below) which preserves the MTU across both v4 FragNeeded
+**and** v6 PacketTooBig (type 2, not a DU code).
 
 ## §3 `RollingRate<K, V>` (plan 164)
 

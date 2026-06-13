@@ -141,9 +141,9 @@ features if you think they have values"):
   `DestUnreachableKind` ↔ `MtuSignalKind`; `app_label` ↔
   `app_label_with`; `evict_expired` ↔ `drain_expired`).
 
-Test count after the polish round: **915 passing** (up from
-884 mid-cycle, +31 polish; up from 809 at 0.13.0 release,
-+106 cycle-wide). Zero clippy warnings under `--all-features
+Test count after the polish round: **920 passing** (up from
+884 mid-cycle, +36 polish; up from 809 at 0.13.0 release,
++111 cycle-wide). Zero clippy warnings under `--all-features
 --all-targets -D warnings`, zero rustdoc warnings. All 13 CI
 feature-matrix combinations build clean.
 
@@ -579,6 +579,8 @@ src/
 │   └── flow_label.rs            # FlowLabel<E>           (plan 50.2)
 ├── event.rs                     # FlowEvent / FlowSide / EndReason / FlowStats
 │                                # AnomalyKind / OverflowPolicy   (0.2.0)
+│                                # FlowStats::{bytes_for,pkts_for,mean_pkt_size_for,direction_skew} (plan 168, 0.14.0)
+│                                # FlowStats::throughput_bps{,_pps,_for,_pps_for} safe-divide accessors (plan 173, 0.14.0)
 ├── history.rs                   # HistoryString (Zeek-style ShAdaFf)
 ├── tcp_state.rs                 # TCP state machine (transitions + idle policy)
 ├── tracker.rs                   # FlowTracker<E, S>     (manual_tick alias added in 50.4)
@@ -622,7 +624,7 @@ src/
 ├── icmp/                        # `icmp` feature (`mod types` promoted to `pub mod` in plan 162, 0.14.0)
 │   ├── parser.rs                # parse_v4 / parse_v6 stateless decoders
 │   ├── datagram.rs              # IcmpParser (DatagramParser, plan 76, 0.7.0)
-│   └── types.rs                 # IcmpMessage / IcmpType variants + DestUnreachableKind + IcmpType::dest_unreachable_kind (plan 162, 0.14.0)
+│   └── types.rs                 # IcmpMessage / IcmpType variants + DestUnreachableKind + IcmpType::dest_unreachable_kind (plan 162, 0.14.0) + MtuSignalKind + IcmpType::mtu_signal (plan 170, 0.14.0)
 └── pcap/                        # `pcap` feature
     └── source.rs                # PcapFlowSource — offline replay
 ```
