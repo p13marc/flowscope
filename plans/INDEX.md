@@ -17,19 +17,11 @@ umbrellas are deleted too once the cycle releases.
 
 ## Active
 
-### 0.14.0 cycle — pending release
+No cycle currently in flight. The 0.14.0 cycle shipped to
+crates.io on 2026-06-13 (tag `0.14.0`). Durable record in
+`CHANGELOG.md` and `git log 0.13.0..0.14.0`.
 
-Implementation complete on `master`. Awaiting per-release
-consent (see `feedback_release_consent.md`) for `cargo publish`
-+ tag.
-
-Umbrella with the full per-plan record:
-[`169-cycle-0-14-umbrella.md`](./169-cycle-0-14-umbrella.md)
-(retired after `0.14.0` ships to crates.io).
-
-Test count: **920 passing**, zero clippy warnings under
-`--all-features --all-targets -D warnings`, zero rustdoc
-warnings, all 13 CI feature-matrix combinations clean.
+Next cycle will accrue here as plans land.
 
 ---
 
