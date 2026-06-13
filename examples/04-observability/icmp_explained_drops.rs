@@ -61,20 +61,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             errors_observed += 1;
 
             // Classify across v4 + v6.
-            let kind_label: String = match (
-                m.message.dest_unreachable_kind(),
-                m.message.mtu_signal(),
-            ) {
-                (Some(du), _) => format!("DU/{}", du.as_str()),
-                (_, Some(mtu)) => {
-                    let mtu_val = mtu
-                        .next_hop_mtu()
-                        .map(|m| format!(" mtu={m}"))
-                        .unwrap_or_default();
-                    format!("{}{mtu_val}", mtu.as_str())
-                }
-                _ => m.message.short_kind().to_string(),
-            };
+            let kind_label: String =
+                match (m.message.dest_unreachable_kind(), m.message.mtu_signal()) {
+                    (Some(du), _) => format!("DU/{}", du.as_str()),
+                    (_, Some(mtu)) => {
+                        let mtu_val = mtu
+                            .next_hop_mtu()
+                            .map(|m| format!(" mtu={m}"))
+                            .unwrap_or_default();
+                        format!("{}{mtu_val}", mtu.as_str())
+                    }
+                    _ => m.message.short_kind().to_string(),
+                };
 
             // Join back to the live flow — direction-agnostic.
             let Some((_label, inner)) = m.message.error_inner() else {

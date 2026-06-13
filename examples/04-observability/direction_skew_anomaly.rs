@@ -53,7 +53,11 @@ fn main() -> flowscope::Result<()> {
                 let skew = stats.direction_skew();
                 if skew.abs() > THRESH {
                     flagged += 1;
-                    let direction = if skew > 0.0 { "↑ upload-heavy" } else { "↓ download-heavy" };
+                    let direction = if skew > 0.0 {
+                        "↑ upload-heavy"
+                    } else {
+                        "↓ download-heavy"
+                    };
                     println!(
                         "{direction:<18} flow {key:?} \
                          skew={skew:+.2} \
@@ -74,7 +78,11 @@ fn main() -> flowscope::Result<()> {
             let skew = stats.direction_skew();
             if skew.abs() > THRESH {
                 flagged += 1;
-                let direction = if skew > 0.0 { "↑ upload-heavy" } else { "↓ download-heavy" };
+                let direction = if skew > 0.0 {
+                    "↑ upload-heavy"
+                } else {
+                    "↓ download-heavy"
+                };
                 println!(
                     "{direction:<18} flow {key:?} \
                      skew={skew:+.2} \

@@ -341,11 +341,7 @@ impl FlowStats {
 /// flows and time-machine-stamps).
 #[inline]
 fn safe_div_u64(num: u64, den: f64) -> f64 {
-    if den > 0.0 {
-        num as f64 / den
-    } else {
-        0.0
-    }
+    if den > 0.0 { num as f64 / den } else { 0.0 }
 }
 
 /// Lifecycle state of a flow as tracked by [`crate::FlowTracker`].
@@ -887,10 +883,7 @@ mod tests {
         // 1000 bytes init + 500 bytes resp over 10 s = 150 B/s.
         let s = stats_with_duration(1000, 5, 500, 5, 10);
         let bps = s.throughput_bps();
-        assert!(
-            (bps - 150.0).abs() < 1e-9,
-            "expected 150.0 B/s, got {bps}"
-        );
+        assert!((bps - 150.0).abs() < 1e-9, "expected 150.0 B/s, got {bps}");
     }
 
     #[test]

@@ -576,9 +576,9 @@ impl IcmpType {
                 code: Icmpv4DestUnreachCode::FragmentationNeeded { mtu },
                 ..
             }) => Some(MtuSignalKind::FragmentationNeeded { next_hop_mtu: *mtu }),
-            IcmpType::V6(Icmpv6Type::PacketTooBig { mtu, .. }) => Some(MtuSignalKind::PacketTooBig {
-                next_hop_mtu: *mtu,
-            }),
+            IcmpType::V6(Icmpv6Type::PacketTooBig { mtu, .. }) => {
+                Some(MtuSignalKind::PacketTooBig { next_hop_mtu: *mtu })
+            }
             _ => None,
         }
     }
