@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.15.0 — JA4S server fingerprinting
+
+Additive (0 new deps). Adds the ServerHello half of JA4 fingerprinting,
+so the TLS observer can fingerprint both ends of a handshake.
+
+### Added
+
+- **JA4S** (`tls::ja4s`, feature `tls-fingerprints`) — `ja4s(&TlsServerHello)`
+  / `ja4s_parts` / `Ja4sParts`, the FoxIO ServerHello fingerprint
+  (`[t|q][version][ext_count][alpn]_[cipher]_[ext_hash]`). The extension
+  list is hashed in observed order (servers don't shuffle), GREASE
+  removed.
+- `TlsServerHello::extension_types: Vec<u16>` — the ServerHello extension
+  order, populated by the parser (feeds JA4S).
+- `TlsMessage::Ja4s { fingerprint }` — emitted by `TlsParser` after each
+  ServerHello when `TlsConfig::ja4` is set.
+- `TlsHandshake::ja4s: Option<String>` — the aggregator surfaces JA4S
+  alongside the existing `ja4` (client) field.
+
+### Changed
+
+- **JA4/JA4S ALPN encoding fixed to the FoxIO spec** (first + last char of
+  the ALPN, e.g. `http/1.1` → `h1`). The client JA4 previously used the
+  first two chars; single/two-char ALPNs like `h2` are unaffected, but
+  multi-char ALPNs now match reference JA4 databases.
+
 ## 0.14.1
 
 Bug fix found during netring 0.22 adoption.

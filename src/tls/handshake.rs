@@ -53,6 +53,10 @@ pub struct TlsHandshake {
     pub ja3: Option<String>,
     /// JA4 fingerprint (FoxIO format). Set when `ja4` feature on.
     pub ja4: Option<String>,
+    /// JA4S server fingerprint (FoxIO format), from the ServerHello.
+    /// Set when the `ja4` config + `tls-fingerprints` feature are on.
+    /// New in 0.15.0.
+    pub ja4s: Option<String>,
     /// Negotiated TLS version (from ServerHello supported_versions
     /// if present, else legacy_version).
     pub version: Option<TlsVersion>,
@@ -104,6 +108,7 @@ impl Default for TlsHandshake {
             server_alpn: None,
             ja3: None,
             ja4: None,
+            ja4s: None,
             version: None,
             cipher_suite: None,
             resumption_attempted: false,
@@ -226,6 +231,13 @@ impl TlsHandshakeParser {
                 TlsMessage::Ja4 { fingerprint } => {
                     self.accumulator.ja4 = Some(fingerprint);
                 }
+                // Ja4s is emitted right before its ServerHello, so it
+                // lands in the accumulator before the ServerHello arm
+                // takes it.
+                #[cfg(feature = "tls-fingerprints")]
+                TlsMessage::Ja4s { fingerprint } => {
+                    self.accumulator.ja4s = Some(fingerprint);
+                }
             }
         }
     }
@@ -284,5 +296,33 @@ mod tests {
     fn parser_kind_label() {
         let p = TlsHandshakeParser::default();
         assert_eq!(p.parser_kind(), "tls-handshake");
+    }
+
+    #[cfg(feature = "tls-fingerprints")]
+    #[test]
+    fn aggregator_captures_ja4s_onto_the_handshake() {
+        use super::super::TlsMessage;
+        use super::super::types::TlsServerHello;
+
+        let mut p = TlsHandshakeParser::default();
+        let mut out = Vec::new();
+        // Ja4s is emitted right before its ServerHello (the session
+        // parser's ordering), so it lands in the accumulator that the
+        // ServerHello arm then takes.
+        let sh = TlsServerHello {
+            cipher_suite: 0x1301,
+            ..Default::default()
+        };
+        p.process(
+            vec![
+                TlsMessage::Ja4s {
+                    fingerprint: "t130100_1301_deadbeefcafe".to_string(),
+                },
+                TlsMessage::ServerHello(Box::new(sh)),
+            ],
+            &mut out,
+        );
+        assert_eq!(out.len(), 1, "expected one completed handshake");
+        assert_eq!(out[0].ja4s.as_deref(), Some("t130100_1301_deadbeefcafe"));
     }
 }

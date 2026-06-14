@@ -80,6 +80,10 @@ pub struct TlsServerHello {
     /// `supported_versions` extension — present in TLS 1.3 to
     /// signal the actual negotiated version.
     pub supported_version: Option<TlsVersion>,
+    /// Extension types in the order they appear in the ServerHello —
+    /// used by [JA4S](super::ja4s). New in 0.15.0. (The order is
+    /// meaningful: servers don't shuffle, so JA4S hashes them as-seen.)
+    pub extension_types: Vec<u16>,
 
     // ── ECH — plan 144, 0.12.0 ───────────────────────────
     /// Best-effort signal that the server returned

@@ -62,6 +62,7 @@
 //! | `cipher_suite` | `u16` | the chosen cipher |
 //! | `alpn` | `Option<String>` | negotiated ALPN protocol |
 //! | `supported_version` | `Option<TlsVersion>` | actual TLS 1.3 version |
+//! | `extension_types` | `Vec<u16>` | extension order — used by JA4S |
 //!
 //! ## [`TlsHandshakeParser`] + [`TlsHandshake`]
 //!
@@ -75,6 +76,8 @@ mod fingerprint;
 pub mod handshake;
 #[cfg(feature = "tls-fingerprints")]
 pub mod ja4;
+#[cfg(feature = "tls-fingerprints")]
+pub mod ja4s;
 mod parser;
 mod session;
 mod types;
@@ -85,6 +88,8 @@ pub use types::*;
 
 #[cfg(feature = "tls-fingerprints")]
 pub use ja4::{Ja4Parts, ja4 as ja4_fingerprint, ja4_parts};
+#[cfg(feature = "tls-fingerprints")]
+pub use ja4s::{Ja4sParts, ja4s as ja4s_fingerprint, ja4s_parts};
 
 /// Slug returned by [`TlsParser`]'s `parser_kind()`. See
 /// `flowscope::parser_kinds::TLS`.

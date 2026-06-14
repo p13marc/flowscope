@@ -223,11 +223,14 @@ fn build_server_hello(
 
     let mut alpn: Option<String> = None;
     let mut supported_version: Option<TlsVersion> = None;
+    // Extension order as seen on the wire (JA4S hashes them as-is).
+    let mut extension_types: Vec<u16> = Vec::new();
 
     if let Some(ext_bytes) = sh.ext
         && let Ok((_, exts)) = parse_tls_extensions(ext_bytes)
     {
         for ext in &exts {
+            extension_types.push(extension_id(ext));
             match ext {
                 TlsExtension::ALPN(protos) => {
                     if let Some(p) = protos.first()
@@ -255,6 +258,7 @@ fn build_server_hello(
         compression,
         alpn,
         supported_version,
+        extension_types,
         // ECH retry_configs sit inside the encrypted
         // EncryptedExtensions; the plaintext-only observer can't
         // see them. Best-effort default `false` — consumers

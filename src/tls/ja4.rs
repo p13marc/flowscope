@@ -90,17 +90,8 @@ fn build_header(ch: &TlsClientHello) -> String {
     let cipher_count = count_non_grease(ch.cipher_suites.iter().copied()).min(99);
     let ext_count = count_non_grease(ch.extension_types.iter().copied()).min(99);
 
-    // ALPN: first 2 chars of the first ALPN value, or "00".
-    let alpn = ch
-        .alpn
-        .first()
-        .map(|s| {
-            let mut it = s.chars();
-            let a = it.next().unwrap_or('0');
-            let b = it.next().unwrap_or('0');
-            format!("{a}{b}")
-        })
-        .unwrap_or_else(|| "00".to_string());
+    // ALPN: first + last char of the first ALPN value, or "00".
+    let alpn = alpn_code(ch.alpn.first().map(String::as_str));
 
     format!("{transport}{version_code}{sni_flag}{cipher_count:02}{ext_count:02}{alpn}")
 }
@@ -125,7 +116,8 @@ fn version_rank(v: &TlsVersion) -> u8 {
     }
 }
 
-fn version_to_two_digits(v: TlsVersion) -> &'static str {
+/// Two-digit JA4 version code. Shared with [JA4S](super::ja4s).
+pub(super) fn version_to_two_digits(v: TlsVersion) -> &'static str {
     match v {
         TlsVersion::Ssl3_0 => "s3",
         TlsVersion::Tls1_0 => "10",
@@ -136,34 +128,53 @@ fn version_to_two_digits(v: TlsVersion) -> &'static str {
     }
 }
 
-fn is_grease_version(v: TlsVersion) -> bool {
+pub(super) fn is_grease_version(v: TlsVersion) -> bool {
     is_grease_u16(v.to_raw())
 }
 
 /// RFC 8701 — GREASE values for cipher suites / extensions:
 /// 16 reserved values 0x0a0a, 0x1a1a, 0x2a2a, ..., 0xfafa
 /// where both bytes match a 4-bit pattern.
-fn is_grease_u16(v: u16) -> bool {
+pub(super) fn is_grease_u16(v: u16) -> bool {
     let hi = (v >> 8) & 0xff;
     let lo = v & 0xff;
     hi == lo && (lo & 0x0f) == 0x0a
 }
 
-fn count_non_grease<I: Iterator<Item = u16>>(iter: I) -> usize {
+pub(super) fn count_non_grease<I: Iterator<Item = u16>>(iter: I) -> usize {
     iter.filter(|v| !is_grease_u16(*v)).count()
 }
 
 fn sorted_non_grease_hex<I: Iterator<Item = u16>>(iter: I) -> String {
     let mut items: Vec<u16> = iter.filter(|v| !is_grease_u16(*v)).collect();
     items.sort_unstable();
-    items
-        .iter()
+    non_grease_hex_joined(items.into_iter())
+}
+
+/// Comma-join `04x`-formatted values that survive GREASE filtering, in
+/// the iterator's order (no sort). JA4 sorts ciphers/extensions; JA4S
+/// keeps the server's order, so it uses this directly.
+pub(super) fn non_grease_hex_joined<I: Iterator<Item = u16>>(iter: I) -> String {
+    iter.filter(|v| !is_grease_u16(*v))
         .map(|v| format!("{v:04x}"))
         .collect::<Vec<_>>()
         .join(",")
 }
 
-fn sha256_prefix(input: &str) -> String {
+/// JA4/JA4S ALPN code: the first and last character of the chosen ALPN
+/// (FoxIO spec — `http/1.1` → `h1`, `h2` → `h2`), or `00` if none.
+pub(super) fn alpn_code(alpn: Option<&str>) -> String {
+    match alpn.filter(|s| !s.is_empty()) {
+        Some(s) => {
+            let first = s.chars().next().unwrap_or('0');
+            let last = s.chars().next_back().unwrap_or('0');
+            format!("{first}{last}")
+        }
+        None => "00".to_string(),
+    }
+}
+
+pub(super) fn sha256_prefix(input: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(input.as_bytes());
     let digest = hasher.finalize();

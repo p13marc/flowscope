@@ -39,7 +39,7 @@ Protocol parsers + analysis modules (each behind its own feature):
 |---------|--------------|
 | `http`  | HTTP/1.x request/response parsing via `HttpParser` (`SessionParser`); `HttpExchangeParser` aggregates a request/response pair into one `HttpExchange` event |
 | `tls`   | TLS handshake observer (ClientHello/ServerHello/Alert) via `TlsParser` (`SessionParser`) — passive only, no decryption; `TlsHandshakeParser` aggregates a handshake into one event |
-| `tls-fingerprints` | [JA3](https://github.com/salesforce/ja3) + [JA4](https://github.com/FoxIO-LLC/ja4) client TLS fingerprinting (sub-feature of `tls`) |
+| `tls-fingerprints` | [JA3](https://github.com/salesforce/ja3) + [JA4](https://github.com/FoxIO-LLC/ja4) client + JA4S server TLS fingerprinting (sub-feature of `tls`) |
 | `dns`   | DNS message parser, per-flow query/response correlator. UDP via `DnsUdpParser` (`DatagramParser`); TCP via `DnsTcpParser` (`SessionParser`, RFC 1035 §4.2.2 length-framed); `DnsExchangeParser` aggregates query+response into one `DnsExchange` event |
 | `icmp`  | ICMPv4/v6 message parser (`IcmpParser` — `DatagramParser`) |
 | `pcap`  | pcap file source for offline replay |

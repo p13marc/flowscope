@@ -44,6 +44,15 @@ pub enum TlsMessage {
         /// `t13d1516h2_8daaf6152771_b186095e22b6`).
         fingerprint: String,
     },
+    /// JA4S server fingerprint computed from a [`Self::ServerHello`].
+    /// Emitted alongside the ServerHello when [`TlsConfig::ja4`] is true
+    /// (and the `tls-fingerprints` feature is on). New in 0.15.0.
+    #[cfg(feature = "tls-fingerprints")]
+    Ja4s {
+        /// Underscore-joined fingerprint (e.g.
+        /// `t130200_1301_a56c5b993250`).
+        fingerprint: String,
+    },
 }
 
 /// Per-flow TLS handshake parser. Holds independent state for the
@@ -116,7 +125,14 @@ impl TlsParser {
                 }
                 out.push(TlsMessage::ClientHello(ch));
             }
-            ParseOutput::ServerHello(sh) => out.push(TlsMessage::ServerHello(sh)),
+            ParseOutput::ServerHello(sh) => {
+                #[cfg(feature = "tls-fingerprints")]
+                if cfg.ja4 {
+                    let fingerprint = super::ja4s::ja4s(&sh);
+                    out.push(TlsMessage::Ja4s { fingerprint });
+                }
+                out.push(TlsMessage::ServerHello(sh));
+            }
             ParseOutput::Alert(a) => out.push(TlsMessage::Alert(a)),
         }
     }
@@ -202,6 +218,72 @@ mod tests {
         record.extend_from_slice(&(handshake.len() as u16).to_be_bytes());
         record.extend_from_slice(&handshake);
         record
+    }
+
+    /// Synthetic TLS 1.3 ServerHello record: legacy version 1.2, one
+    /// cipher (0x1301), no compression, a single `supported_versions`
+    /// extension (type 43) selecting TLS 1.3.
+    fn build_server_hello_record() -> Vec<u8> {
+        let mut sh_body = Vec::new();
+        sh_body.extend_from_slice(&[0x03, 0x03]); // legacy version TLS 1.2
+        sh_body.extend_from_slice(&[0u8; 32]); // random
+        sh_body.push(0); // session_id length
+        sh_body.extend_from_slice(&[0x13, 0x01]); // chosen cipher suite
+        sh_body.push(0); // compression = null
+        // Extensions: supported_versions (43) selecting 0x0304 (TLS 1.3).
+        let ext = [0x00, 0x2b, 0x00, 0x02, 0x03, 0x04];
+        sh_body.extend_from_slice(&(ext.len() as u16).to_be_bytes());
+        sh_body.extend_from_slice(&ext);
+
+        // Handshake header: type=2 (ServerHello), 3-byte length + body.
+        let mut handshake = Vec::new();
+        handshake.push(0x02);
+        let len = sh_body.len();
+        handshake.push(((len >> 16) & 0xff) as u8);
+        handshake.push(((len >> 8) & 0xff) as u8);
+        handshake.push((len & 0xff) as u8);
+        handshake.extend_from_slice(&sh_body);
+
+        // TLS record header: type=22 (handshake), version 0x0303.
+        let mut record = Vec::new();
+        record.push(0x16);
+        record.extend_from_slice(&[0x03, 0x03]);
+        record.extend_from_slice(&(handshake.len() as u16).to_be_bytes());
+        record.extend_from_slice(&handshake);
+        record
+    }
+
+    #[test]
+    fn emits_ja4s_and_extension_types_for_server_hello() {
+        // JA4/JA4S are opt-in (default config has ja4 = false).
+        let mut p = TlsParser::with_config(TlsConfig {
+            ja4: true,
+            ..TlsConfig::default()
+        });
+        let messages = feed_resp(&mut p, &build_server_hello_record());
+
+        // The ServerHello carries the parsed extension list (43 =
+        // supported_versions).
+        let sh = messages.iter().find_map(|m| match m {
+            TlsMessage::ServerHello(sh) => Some(sh),
+            _ => None,
+        });
+        let sh = sh.expect("expected a ServerHello message");
+        assert!(
+            sh.extension_types.contains(&43),
+            "extension_types = {:?}",
+            sh.extension_types
+        );
+
+        // A JA4S fingerprint rode alongside it (default config has ja4 on
+        // when tls-fingerprints is built).
+        let ja4s = messages.iter().find_map(|m| match m {
+            TlsMessage::Ja4s { fingerprint } => Some(fingerprint),
+            _ => None,
+        });
+        let fp = ja4s.expect("expected a Ja4s message");
+        // t = TCP, 13 = negotiated TLS 1.3, 01 = one extension, 00 = no alpn.
+        assert!(fp.starts_with("t130100_1301_"), "ja4s = {fp}");
     }
 
     fn feed_init(p: &mut TlsParser, bytes: &[u8]) -> Vec<TlsMessage> {
