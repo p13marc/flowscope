@@ -1,0 +1,33 @@
+flowscope
+Copyright (c) 2026 flowscope contributors
+
+This product is licensed under MIT OR Apache-2.0 (see LICENSE-MIT and
+LICENSE-APACHE), WITH ONE EXCEPTION described below.
+
+================================================================================
+JA4S — FoxIO License 1.1 (opt-in `ja4plus` feature)
+================================================================================
+
+The JA4S server-side TLS fingerprint implementation in
+`src/tls/ja4s.rs` is part of the JA4+ suite and is licensed under the
+**FoxIO License 1.1** (see LICENSE-FoxIO-1.1), NOT under flowscope's
+MIT/Apache-2.0 terms. JA4+ methods are **patent pending**. "JA4+" is a
+trademark of FoxIO, LLC.
+
+This code is compiled **only** when the off-by-default `ja4plus` cargo
+feature is enabled. It is, however, present in the published source
+distribution regardless of features — so per the FoxIO License 1.1, this
+notice and the license text travel with every copy.
+
+The FoxIO License 1.1 permits **non-commercial** use, modification, and
+distribution (personal, academic, internal evaluation, and internal
+business use where JA4S is not monetized). **Commercial use** — selling
+JA4+ fingerprinting as part of a product or service, or otherwise
+monetizing it directly or indirectly — requires a separate **OEM license
+from FoxIO, LLC**. See https://github.com/FoxIO-LLC/ja4 and
+https://github.com/FoxIO-LLC/ja4/blob/main/License%20FAQ.md
+
+The default flowscope build, and the `tls-fingerprints` feature
+(JA3 + JA4 TLS *client* fingerprints), are **BSD-3-Clause-equivalent /
+royalty-free** — JA3 (Salesforce) and JA4 client are open-source. Only
+`ja4plus` (JA4S) carries the FoxIO terms.

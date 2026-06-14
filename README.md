@@ -39,7 +39,8 @@ Protocol parsers + analysis modules (each behind its own feature):
 |---------|--------------|
 | `http`  | HTTP/1.x request/response parsing via `HttpParser` (`SessionParser`); `HttpExchangeParser` aggregates a request/response pair into one `HttpExchange` event |
 | `tls`   | TLS handshake observer (ClientHello/ServerHello/Alert) via `TlsParser` (`SessionParser`) — passive only, no decryption; `TlsHandshakeParser` aggregates a handshake into one event |
-| `tls-fingerprints` | [JA3](https://github.com/salesforce/ja3) + [JA4](https://github.com/FoxIO-LLC/ja4) client + JA4S server TLS fingerprinting (sub-feature of `tls`) |
+| `tls-fingerprints` | [JA3](https://github.com/salesforce/ja3) + [JA4](https://github.com/FoxIO-LLC/ja4) **client** TLS fingerprinting (royalty-free / BSD; sub-feature of `tls`) |
+| `ja4plus` ⚠️ | [JA4S](https://github.com/FoxIO-LLC/ja4) **server** fingerprint — **FoxIO License 1.1** (non-commercial; patent pending), NOT MIT/Apache. Off by default; excluded from `l7`/`full`. Commercial use needs a FoxIO OEM license. See [NOTICE](NOTICE) + [LICENSE-FoxIO-1.1](LICENSE-FoxIO-1.1) |
 | `dns`   | DNS message parser, per-flow query/response correlator. UDP via `DnsUdpParser` (`DatagramParser`); TCP via `DnsTcpParser` (`SessionParser`, RFC 1035 §4.2.2 length-framed); `DnsExchangeParser` aggregates query+response into one `DnsExchange` event |
 | `icmp`  | ICMPv4/v6 message parser (`IcmpParser` — `DatagramParser`) |
 | `pcap`  | pcap file source for offline replay |
@@ -453,4 +454,13 @@ list and migration recipes.
 
 ## License
 
-MIT OR Apache-2.0, your choice.
+MIT OR Apache-2.0, your choice — **with one exception**: the optional,
+off-by-default `ja4plus` feature compiles JA4S (`src/tls/ja4s.rs`), which is
+part of the JA4+ suite and is licensed under the **FoxIO License 1.1**
+(source-available, non-commercial; patent pending), not MIT/Apache. The default
+build and the `tls-fingerprints` feature (JA3 + JA4 client) are royalty-free.
+
+Commercial use of `ja4plus` requires a FoxIO OEM license. The FoxIO License 1.1
+text + notices ship with every copy of the source (a cargo feature only gates
+compilation). See [NOTICE](NOTICE) and [LICENSE-FoxIO-1.1](LICENSE-FoxIO-1.1).
+"JA4+" is a trademark of FoxIO, LLC.

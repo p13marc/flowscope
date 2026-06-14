@@ -46,8 +46,9 @@ pub enum TlsMessage {
     },
     /// JA4S server fingerprint computed from a [`Self::ServerHello`].
     /// Emitted alongside the ServerHello when [`TlsConfig::ja4`] is true
-    /// (and the `tls-fingerprints` feature is on). New in 0.15.0.
-    #[cfg(feature = "tls-fingerprints")]
+    /// (and the opt-in `ja4plus` feature is on). New in 0.15.0; moved behind
+    /// `ja4plus` in 0.16.0 (FoxIO License 1.1 — see NOTICE).
+    #[cfg(feature = "ja4plus")]
     Ja4s {
         /// Underscore-joined fingerprint (e.g.
         /// `t130200_1301_a56c5b993250`).
@@ -126,7 +127,9 @@ impl TlsParser {
                 out.push(TlsMessage::ClientHello(ch));
             }
             ParseOutput::ServerHello(sh) => {
-                #[cfg(feature = "tls-fingerprints")]
+                // JA4S is FoxIO-licensed (opt-in `ja4plus`); the BSD JA4/JA3
+                // client fingerprints stay under `tls-fingerprints`.
+                #[cfg(feature = "ja4plus")]
                 if cfg.ja4 {
                     let fingerprint = super::ja4s::ja4s(&sh);
                     out.push(TlsMessage::Ja4s { fingerprint });
@@ -253,17 +256,17 @@ mod tests {
         record
     }
 
+    #[cfg(feature = "tls-fingerprints")]
     #[test]
-    fn emits_ja4s_and_extension_types_for_server_hello() {
-        // JA4/JA4S are opt-in (default config has ja4 = false).
+    fn emits_extension_types_for_server_hello() {
+        // The ServerHello carries the parsed extension list (43 =
+        // supported_versions). This is generic observed data, NOT the
+        // FoxIO-licensed JA4S algorithm, so it stays under `tls-fingerprints`.
         let mut p = TlsParser::with_config(TlsConfig {
             ja4: true,
             ..TlsConfig::default()
         });
         let messages = feed_resp(&mut p, &build_server_hello_record());
-
-        // The ServerHello carries the parsed extension list (43 =
-        // supported_versions).
         let sh = messages.iter().find_map(|m| match m {
             TlsMessage::ServerHello(sh) => Some(sh),
             _ => None,
@@ -274,9 +277,18 @@ mod tests {
             "extension_types = {:?}",
             sh.extension_types
         );
+    }
 
-        // A JA4S fingerprint rode alongside it (default config has ja4 on
-        // when tls-fingerprints is built).
+    #[cfg(feature = "ja4plus")]
+    #[test]
+    fn emits_ja4s_for_server_hello() {
+        // JA4S (FoxIO License 1.1, opt-in `ja4plus`) rides alongside the
+        // ServerHello when `ja4` config is on.
+        let mut p = TlsParser::with_config(TlsConfig {
+            ja4: true,
+            ..TlsConfig::default()
+        });
+        let messages = feed_resp(&mut p, &build_server_hello_record());
         let ja4s = messages.iter().find_map(|m| match m {
             TlsMessage::Ja4s { fingerprint } => Some(fingerprint),
             _ => None,

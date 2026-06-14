@@ -1,5 +1,37 @@
 # Changelog
 
+## 0.16.0 — JA4S behind opt-in `ja4plus` (FoxIO License)
+
+**Licensing correction (breaking for JA4S users).** JA4S is part of the JA4+
+suite and is licensed under the **FoxIO License 1.1** (source-available,
+non-commercial; patent pending) — *not* MIT/Apache like the rest of flowscope.
+In 0.15 it shipped under `tls-fingerprints` alongside the BSD JA3 + JA4-client
+fingerprints, which inadvertently put FoxIO-licensed code in the royalty-free
+surface.
+
+### Changed (breaking)
+
+- **JA4S moved to a new opt-in `ja4plus` feature** (off by default, and
+  deliberately excluded from `l7` / `full`). The default build and
+  `tls-fingerprints` now contain **only** the royalty-free JA3 + JA4 *client*
+  fingerprints. To get JA4S, enable `ja4plus` explicitly.
+  - Gated behind `ja4plus`: `tls::ja4s` module (`ja4s` / `ja4s_parts` /
+    `Ja4sParts`), `TlsMessage::Ja4s`, `TlsHandshake.ja4s`.
+  - `TlsServerHello.extension_types` stays ungated — it's generic observed
+    data, not the FoxIO algorithm.
+- **`LICENSE-FoxIO-1.1` + `NOTICE`** added at the crate root and shipped in the
+  published package. Per the FoxIO License, the license text + notices travel
+  with every copy of the source (a cargo feature gates *compilation*, not what's
+  in the `.crate` tarball). `src/tls/ja4s.rs` carries an
+  `SPDX-License-Identifier: LicenseRef-FoxIO-1.1` header.
+
+### Migration
+
+- Using JA4S? Add `features = ["ja4plus"]` (it implies `tls-fingerprints`).
+- **Commercial use of JA4S requires a FoxIO OEM license** — see NOTICE.
+- Code reading `TlsHandshake.ja4s` or matching `TlsMessage::Ja4s` must be
+  `#[cfg(feature = "ja4plus")]`.
+
 ## 0.15.0 — JA4S server fingerprinting
 
 Additive (0 new deps). Adds the ServerHello half of JA4 fingerprinting,

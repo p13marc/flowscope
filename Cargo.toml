@@ -1,6 +1,6 @@
 [package]
 name = "flowscope"
-version = "0.15.0"
+version = "0.16.0"
 edition = "2024"
 rust-version = "1.88"
 license = "MIT OR Apache-2.0"
@@ -99,10 +99,16 @@ test-helpers = ["extractors"]
 # Protocol parsers. Each is a self-contained module gated by its feature.
 http = ["reassembler", "session", "dep:httparse", "dep:bytes"]
 tls = ["reassembler", "session", "dep:tls-parser", "dep:bytes"]
-# TLS fingerprint family (plan 131) — replaces the former
-# `ja3` + `ja4` two-flag split. Both fingerprints now ship under
-# one gate.
+# TLS fingerprint family (plan 131) — JA3 + JA4 TLS *client* fingerprints.
+# Royalty-free / BSD-3-Clause-equivalent (JA3 = Salesforce, JA4 client =
+# FoxIO BSD). JA4S is NOT here — it's FoxIO-licensed, see `ja4plus`.
 tls-fingerprints = ["tls", "dep:md-5", "dep:sha2", "dep:hex"]
+# JA4S server fingerprint (part of the JA4+ suite). Licensed under the
+# **FoxIO License 1.1** (source-available, non-commercial; patent pending) —
+# NOT MIT/Apache like the rest of flowscope. OFF BY DEFAULT and deliberately
+# excluded from `l7` / `full` so the default build stays royalty-free.
+# Commercial use requires a FoxIO OEM license. See LICENSE-FoxIO-1.1 + NOTICE.
+ja4plus = ["tls-fingerprints"]
 dns = ["extractors", "tracker", "session", "dep:simple-dns", "dep:bytes"]
 icmp = ["extractors", "tracker", "session", "dep:bytes"]
 

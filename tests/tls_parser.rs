@@ -27,7 +27,7 @@ impl Captured {
                 TlsMessage::Ja3 { hash, canonical } => self.ja3s.push((hash, canonical)),
                 #[cfg(feature = "tls-fingerprints")]
                 TlsMessage::Ja4 { .. } => {}
-                #[cfg(feature = "tls-fingerprints")]
+                #[cfg(feature = "ja4plus")]
                 TlsMessage::Ja4s { .. } => {}
             }
         }

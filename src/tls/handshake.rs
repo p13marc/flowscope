@@ -54,8 +54,10 @@ pub struct TlsHandshake {
     /// JA4 fingerprint (FoxIO format). Set when `ja4` feature on.
     pub ja4: Option<String>,
     /// JA4S server fingerprint (FoxIO format), from the ServerHello.
-    /// Set when the `ja4` config + `tls-fingerprints` feature are on.
-    /// New in 0.15.0.
+    /// Set when the `ja4` config + opt-in `ja4plus` feature are on.
+    /// New in 0.15.0; moved behind `ja4plus` in 0.16.0 (FoxIO License 1.1 —
+    /// see NOTICE).
+    #[cfg(feature = "ja4plus")]
     pub ja4s: Option<String>,
     /// Negotiated TLS version (from ServerHello supported_versions
     /// if present, else legacy_version).
@@ -108,6 +110,7 @@ impl Default for TlsHandshake {
             server_alpn: None,
             ja3: None,
             ja4: None,
+            #[cfg(feature = "ja4plus")]
             ja4s: None,
             version: None,
             cipher_suite: None,
@@ -233,8 +236,8 @@ impl TlsHandshakeParser {
                 }
                 // Ja4s is emitted right before its ServerHello, so it
                 // lands in the accumulator before the ServerHello arm
-                // takes it.
-                #[cfg(feature = "tls-fingerprints")]
+                // takes it. FoxIO-licensed → opt-in `ja4plus`.
+                #[cfg(feature = "ja4plus")]
                 TlsMessage::Ja4s { fingerprint } => {
                     self.accumulator.ja4s = Some(fingerprint);
                 }
@@ -298,7 +301,7 @@ mod tests {
         assert_eq!(p.parser_kind(), "tls-handshake");
     }
 
-    #[cfg(feature = "tls-fingerprints")]
+    #[cfg(feature = "ja4plus")]
     #[test]
     fn aggregator_captures_ja4s_onto_the_handshake() {
         use super::super::TlsMessage;

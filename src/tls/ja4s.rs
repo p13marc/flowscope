@@ -1,3 +1,11 @@
+// SPDX-License-Identifier: LicenseRef-FoxIO-1.1
+//
+// JA4S is part of the JA4+ suite, (c) FoxIO, LLC, licensed under the FoxIO
+// License 1.1 (see LICENSE-FoxIO-1.1 and NOTICE at the crate root) — NOT under
+// flowscope's MIT/Apache-2.0 terms. JA4+ methods are patent pending. "JA4+" is
+// a trademark of FoxIO, LLC. This file compiles only under the opt-in
+// `ja4plus` feature; commercial use requires a FoxIO OEM license.
+
 //! JA4S server fingerprint (FoxIO, 2023).
 //!
 //! The ServerHello counterpart to [JA4](super::ja4): a fingerprint of

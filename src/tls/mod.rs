@@ -76,7 +76,9 @@ mod fingerprint;
 pub mod handshake;
 #[cfg(feature = "tls-fingerprints")]
 pub mod ja4;
-#[cfg(feature = "tls-fingerprints")]
+// JA4S is FoxIO License 1.1 (patent pending), NOT BSD like JA4/JA3 — gated
+// behind the opt-in `ja4plus` feature. See LICENSE-FoxIO-1.1 + NOTICE.
+#[cfg(feature = "ja4plus")]
 pub mod ja4s;
 mod parser;
 mod session;
@@ -88,7 +90,7 @@ pub use types::*;
 
 #[cfg(feature = "tls-fingerprints")]
 pub use ja4::{Ja4Parts, ja4 as ja4_fingerprint, ja4_parts};
-#[cfg(feature = "tls-fingerprints")]
+#[cfg(feature = "ja4plus")]
 pub use ja4s::{Ja4sParts, ja4s as ja4s_fingerprint, ja4s_parts};
 
 /// Slug returned by [`TlsParser`]'s `parser_kind()`. See
