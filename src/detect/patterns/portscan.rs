@@ -28,8 +28,7 @@
 //! Consumers wanting persistent classification keep their own
 //! map.
 
-use std::collections::HashMap;
-use std::hash::Hash;
+use std::{collections::HashMap, hash::Hash};
 
 /// Per-source scanner-likelihood detector.
 pub struct PortScanDetector<K>

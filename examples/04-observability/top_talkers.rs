@@ -10,12 +10,9 @@
 //! cargo run --features pcap,extractors,tracker --example top_talkers
 //! ```
 
-use std::collections::HashMap;
-use std::net::IpAddr;
+use std::{collections::HashMap, net::IpAddr};
 
-use flowscope::extract::FiveTuple;
-use flowscope::pcap::PcapFlowSource;
-use flowscope::{FlowEvent, FlowTracker};
+use flowscope::{extract::FiveTuple, pcap::PcapFlowSource, FlowEvent, FlowTracker};
 
 #[derive(Default, Clone, Copy)]
 struct Rollup {

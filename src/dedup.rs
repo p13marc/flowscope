@@ -32,12 +32,13 @@
 //! (~100 ns for 256 entries; cache-friendly). Total well below
 //! 1 µs/packet — negligible against typical capture latency.
 
-use std::collections::VecDeque;
-use std::hash::{BuildHasher, Hasher};
-use std::time::Duration;
+use std::{
+    collections::VecDeque,
+    hash::{BuildHasher, Hasher},
+    time::Duration,
+};
 
-use crate::Timestamp;
-use crate::view::PacketView;
+use crate::{view::PacketView, Timestamp};
 
 /// Bounded content-hash dedup. Cheap to construct; cheap per
 /// packet.

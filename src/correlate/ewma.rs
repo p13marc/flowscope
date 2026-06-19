@@ -1,8 +1,6 @@
 //! [`Ewma`] — per-key exponentially weighted moving average.
 
-use std::collections::HashMap;
-use std::hash::Hash;
-use std::time::Duration;
+use std::{collections::HashMap, hash::Hash, time::Duration};
 
 use crate::Timestamp;
 

@@ -15,16 +15,19 @@
 //! cargo run --features pcap,http,tls,tls-fingerprints,dns,extractors --example extract_iocs
 //! ```
 
-use std::collections::{BTreeSet, HashMap};
-use std::net::IpAddr;
+use std::{
+    collections::{BTreeSet, HashMap},
+    net::IpAddr,
+};
 
-use flowscope::dns::{DnsMessage, DnsUdpParser};
-use flowscope::driver::SlotMessage;
-use flowscope::driver::{Driver, Event};
-use flowscope::extract::{FiveTuple, FiveTupleKey};
-use flowscope::http::{HttpMessage, HttpParser};
-use flowscope::pcap::PcapFlowSource;
-use flowscope::tls::{TlsHandshake, TlsHandshakeParser};
+use flowscope::{
+    dns::{DnsMessage, DnsUdpParser},
+    driver::{Driver, Event, SlotMessage},
+    extract::{FiveTuple, FiveTupleKey},
+    http::{HttpMessage, HttpParser},
+    pcap::PcapFlowSource,
+    tls::{TlsHandshake, TlsHandshakeParser},
+};
 
 #[derive(Default)]
 struct Iocs {

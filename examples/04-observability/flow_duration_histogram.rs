@@ -13,10 +13,9 @@
 //! cargo run --features pcap,aggregate --example flow_duration_histogram
 //! ```
 
-use flowscope::aggregate::Histogram;
-use flowscope::extract::FiveTuple;
-use flowscope::pcap::PcapFlowSource;
-use flowscope::{FlowEvent, FlowTracker};
+use flowscope::{
+    aggregate::Histogram, extract::FiveTuple, pcap::PcapFlowSource, FlowEvent, FlowTracker,
+};
 
 const LABELS: &[&str] = &[
     "<100ms", "100ms-1s", "1s-10s", "10s-1min", "1-10min", "10-60min", ">1h",

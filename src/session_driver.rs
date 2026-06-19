@@ -40,19 +40,20 @@
 //! # Ok(()) }
 //! ```
 
-use std::collections::HashMap;
-use std::hash::Hash;
+use std::{collections::HashMap, hash::Hash};
 
 use ahash::RandomState;
 
-use crate::Timestamp;
-use crate::event::{AnomalyKind, EndReason, FlowEvent, FlowSide};
-use crate::extractor::FlowExtractor;
-use crate::flow_driver::FlowDriver;
-use crate::reassembler::BufferedReassemblerFactory;
-use crate::session::{SessionEvent, SessionParser};
-use crate::tracker::{FlowTracker, FlowTrackerConfig};
-use crate::view::PacketView;
+use crate::{
+    event::{AnomalyKind, EndReason, FlowEvent, FlowSide},
+    extractor::FlowExtractor,
+    flow_driver::FlowDriver,
+    reassembler::BufferedReassemblerFactory,
+    session::{SessionEvent, SessionParser},
+    tracker::{FlowTracker, FlowTrackerConfig},
+    view::PacketView,
+    Timestamp,
+};
 
 /// Cap on the size of `poison_reason()` strings carried through
 /// [`AnomalyKind::SessionParseError`]. Bounds anomaly event size
@@ -729,7 +730,7 @@ where
         out: &mut Vec<SessionEvent<E::Key, P::Message>>,
     ) {
         let _ = ts; // No anomaly event needed; ts only matters if we
-        // re-emit an anomaly here in the future.
+                    // re-emit an anomaly here in the future.
         let stats = self
             .driver
             .tracker()
@@ -752,8 +753,10 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::AnomalyKind;
-    use crate::extract::{FiveTuple, parse::test_frames::ipv4_tcp};
+    use crate::{
+        extract::{parse::test_frames::ipv4_tcp, FiveTuple},
+        AnomalyKind,
+    };
 
     fn view(frame: &[u8], sec: u32) -> PacketView<'_> {
         PacketView::new(frame, Timestamp::new(sec, 0))
@@ -1582,10 +1585,12 @@ mod tests {
     #[cfg(all(feature = "http", feature = "tls", feature = "dns"))]
     #[test]
     fn shipped_http_tls_dns_parser_kinds() {
-        use crate::DatagramParser as _;
-        use crate::dns::{DnsTcpParser, DnsUdpParser};
-        use crate::http::HttpParser;
-        use crate::tls::TlsParser;
+        use crate::{
+            dns::{DnsTcpParser, DnsUdpParser},
+            http::HttpParser,
+            tls::TlsParser,
+            DatagramParser as _,
+        };
         assert_eq!(HttpParser::default().parser_kind(), "http/1");
         assert_eq!(TlsParser::default().parser_kind(), "tls");
         assert_eq!(DnsTcpParser::default().parser_kind(), "dns-tcp");

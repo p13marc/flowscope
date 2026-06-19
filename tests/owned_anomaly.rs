@@ -14,12 +14,14 @@
 
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
-use flowscope::detect::patterns::{BeaconDetector, DgaScorer, PortScanDetector};
-use flowscope::emit::{EveJsonWriter, FlowEventNdjsonWriter};
-use flowscope::event::Severity;
-use flowscope::extract::FiveTupleKey;
-use flowscope::extractor::L4Proto;
-use flowscope::{DetectorScore, OwnedAnomaly, Timestamp};
+use flowscope::{
+    detect::patterns::{BeaconDetector, DgaScorer, PortScanDetector},
+    emit::{EveJsonWriter, FlowEventNdjsonWriter},
+    event::Severity,
+    extract::FiveTupleKey,
+    extractor::L4Proto,
+    DetectorScore, OwnedAnomaly, Timestamp,
+};
 
 fn sample_key() -> FiveTupleKey {
     FiveTupleKey {
@@ -87,12 +89,10 @@ fn beacon_score_into_anomaly_carries_window_metrics() {
     assert_eq!(anomaly.severity, Severity::Warning);
     assert!(anomaly.metrics.iter().any(|(l, _)| *l == "score"));
     assert!(anomaly.metrics.iter().any(|(l, _)| *l == "cv_dt"));
-    assert!(
-        anomaly
-            .metrics
-            .iter()
-            .any(|(l, _)| *l == "mean_interval_secs")
-    );
+    assert!(anomaly
+        .metrics
+        .iter()
+        .any(|(l, _)| *l == "mean_interval_secs"));
 }
 
 #[test]

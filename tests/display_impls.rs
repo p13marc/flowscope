@@ -6,8 +6,7 @@
 
 #![cfg(feature = "tracker")]
 
-use flowscope::event::EndReason;
-use flowscope::extractor::L4Proto;
+use flowscope::{event::EndReason, extractor::L4Proto};
 
 #[test]
 fn display_l4proto_renders_every_variant() {

@@ -11,9 +11,7 @@
 
 use std::collections::HashMap;
 
-use flowscope::extract::FiveTuple;
-use flowscope::pcap::PcapFlowSource;
-use flowscope::{FlowEvent, FlowTracker, L4Proto};
+use flowscope::{extract::FiveTuple, pcap::PcapFlowSource, FlowEvent, FlowTracker, L4Proto};
 
 fn label_for(proto: L4Proto, src_port: u16, dst_port: u16) -> &'static str {
     let port = src_port.min(dst_port).max(1024_u16.saturating_sub(1));

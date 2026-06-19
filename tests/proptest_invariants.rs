@@ -7,13 +7,12 @@
 //! coverage:
 //!     PROPTEST_CASES=10000 cargo test -p netring-flow --test proptest_invariants
 
-use proptest::prelude::*;
-
-use flowscope::extract::FiveTuple;
-use flowscope::extract::parse::test_frames;
 use flowscope::{
-    FlowEvent, FlowSide, FlowState, FlowTracker, FlowTrackerConfig, PacketView, TcpFlags, Timestamp,
+    extract::{parse::test_frames, FiveTuple},
+    FlowEvent, FlowSide, FlowState, FlowTracker, FlowTrackerConfig, PacketView, TcpFlags,
+    Timestamp,
 };
+use proptest::prelude::*;
 
 // ── strategies ─────────────────────────────────────────────────────
 

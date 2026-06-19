@@ -7,8 +7,10 @@
 
 #![cfg(all(feature = "extractors", feature = "tracker"))]
 
-use flowscope::AnomalyFields;
-use flowscope::event::{AnomalyKind, FlowSide, OverflowPolicy};
+use flowscope::{
+    event::{AnomalyKind, FlowSide, OverflowPolicy},
+    AnomalyFields,
+};
 
 #[test]
 fn anomaly_kind_buffer_overflow_classifies_as_stream() {

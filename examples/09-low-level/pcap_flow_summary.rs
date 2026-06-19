@@ -8,13 +8,9 @@
 //! Usage:
 //!     cargo run -p netring-flow --example pcap_flow_summary -- trace.pcap
 
-use std::env;
-use std::fs::File;
-use std::io::BufReader;
+use std::{env, fs::File, io::BufReader};
 
-use flowscope::extract::FiveTuple;
-use flowscope::{FlowEvent, FlowTracker, PacketView, Timestamp};
-
+use flowscope::{extract::FiveTuple, FlowEvent, FlowTracker, PacketView, Timestamp};
 use pcap_file::pcap::PcapReader;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {

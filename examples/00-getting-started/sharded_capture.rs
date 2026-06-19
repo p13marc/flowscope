@@ -43,16 +43,21 @@
 //!   thread dispatch overhead exceeds the parser cost. Stick
 //!   with a single-thread dispatcher.
 
-use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::mpsc;
-use std::thread;
+use std::{
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        mpsc, Arc,
+    },
+    thread,
+};
 
-use flowscope::driver::{Driver, Event, SlotMessage};
-use flowscope::extract::{FiveTuple, FiveTupleKey};
-use flowscope::http::{HttpMessage, HttpParser};
-use flowscope::pcap::PcapFlowSource;
-use flowscope::{OwnedPacketView, PacketView};
+use flowscope::{
+    driver::{Driver, Event, SlotMessage},
+    extract::{FiveTuple, FiveTupleKey},
+    http::{HttpMessage, HttpParser},
+    pcap::PcapFlowSource,
+    OwnedPacketView, PacketView,
+};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut args = std::env::args().skip(1);

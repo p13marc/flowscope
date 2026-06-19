@@ -85,13 +85,12 @@ mod session;
 mod types;
 
 pub use handshake::{EchOutcome, HandshakeOutcome, TlsHandshake, TlsHandshakeParser};
+#[cfg(feature = "tls-fingerprints")]
+pub use ja4::{ja4 as ja4_fingerprint, ja4_parts, Ja4Parts};
+#[cfg(feature = "ja4plus")]
+pub use ja4s::{ja4s as ja4s_fingerprint, ja4s_parts, Ja4sParts};
 pub use session::{TlsMessage, TlsParser};
 pub use types::*;
-
-#[cfg(feature = "tls-fingerprints")]
-pub use ja4::{Ja4Parts, ja4 as ja4_fingerprint, ja4_parts};
-#[cfg(feature = "ja4plus")]
-pub use ja4s::{Ja4sParts, ja4s as ja4s_fingerprint, ja4s_parts};
 
 /// Slug returned by [`TlsParser`]'s `parser_kind()`. See
 /// `flowscope::parser_kinds::TLS`.

@@ -45,10 +45,10 @@ pub mod signatures;
 
 // Issue #4 (0.17): short-path re-exports for the most-imported
 // fingerprint types.
+use std::collections::HashMap;
+
 #[cfg(feature = "fingerprint")]
 pub use fingerprint::{FingerprintBuilder, FlowFingerprint};
-
-use std::collections::HashMap;
 
 /// Shannon entropy in bits per byte. Returns `0.0` for empty
 /// input. Range: `[0.0, 8.0]`.

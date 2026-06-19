@@ -9,13 +9,13 @@
 //! `FlowLabel<E>` wraps another extractor and appends the inner
 //! IPv6 flow label to its key. IPv4 packets get `label = 0`.
 
-use std::hash::Hash;
-use std::net::IpAddr;
-
-use crate::extractor::{Extracted, FlowExtractor};
-use crate::view::PacketView;
+use std::{hash::Hash, net::IpAddr};
 
 use super::parse;
+use crate::{
+    extractor::{Extracted, FlowExtractor},
+    view::PacketView,
+};
 
 /// Wraps an inner key with a 20-bit IPv6 flow label.
 #[derive(Debug, Clone, Copy, Hash, Eq, PartialEq)]
@@ -87,11 +87,13 @@ fn read_flow_label(frame: &[u8]) -> Option<u32> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::Timestamp;
-    use crate::extract::FiveTuple;
-    use crate::extract::parse::test_frames::ipv4_tcp;
     use etherparse::{Ethernet2Header, IpNumber, Ipv6FlowLabel, Ipv6Header, TcpHeader};
+
+    use super::*;
+    use crate::{
+        extract::{parse::test_frames::ipv4_tcp, FiveTuple},
+        Timestamp,
+    };
 
     fn build_ipv6_tcp(label: u32) -> Vec<u8> {
         let mut tcp = TcpHeader::new(1234, 80, 0, 8192);

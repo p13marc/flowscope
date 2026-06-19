@@ -15,12 +15,14 @@
 //! cat eve.json | jq 'select(.event_type=="flow") | .flow_hash'
 //! ```
 
-use std::io::{BufWriter, stdout};
+use std::io::{stdout, BufWriter};
 
-use flowscope::FlowTracker;
-use flowscope::emit::{EveJsonWriter, EveOptions};
-use flowscope::extract::FiveTuple;
-use flowscope::pcap::PcapFlowSource;
+use flowscope::{
+    emit::{EveJsonWriter, EveOptions},
+    extract::FiveTuple,
+    pcap::PcapFlowSource,
+    FlowTracker,
+};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let path = std::env::args()

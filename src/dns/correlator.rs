@@ -5,14 +5,12 @@
 //! don't mis-correlate. `scope` is opaque — typically the flow
 //! key, or `()` for a coarse "global" correlator.
 
-use std::collections::HashMap;
-use std::hash::Hash;
-use std::time::Duration;
+use std::{collections::HashMap, hash::Hash, time::Duration};
 
-use crate::Timestamp;
 use ahash::RandomState;
 
 use super::types::{DnsConfig, DnsQuery};
+use crate::Timestamp;
 
 /// Correlator state for query/response matching.
 ///

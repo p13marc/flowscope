@@ -25,9 +25,11 @@
 //! Reference: <https://github.com/activecm/rita> (beacon CV
 //! formula and thresholds).
 
-use std::collections::{HashMap, VecDeque};
-use std::hash::Hash;
-use std::time::Duration;
+use std::{
+    collections::{HashMap, VecDeque},
+    hash::Hash,
+    time::Duration,
+};
 
 use crate::Timestamp;
 

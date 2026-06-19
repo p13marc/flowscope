@@ -18,8 +18,7 @@
 //!
 //! Issue #1 (0.17).
 
-use std::fmt;
-use std::str::FromStr;
+use std::{fmt, str::FromStr};
 
 /// 48-bit Ethernet hardware address.
 ///

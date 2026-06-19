@@ -46,16 +46,14 @@ pub mod auto_detect;
 pub mod flow_label;
 pub mod tagged;
 
-pub use five_tuple::{FiveTuple, FiveTupleKey};
-pub use ip_pair::{IpPair, IpPairKey};
-pub use mac_pair::{MacPair, MacPairKey};
-
+pub use auto_detect::{AutoDetectEncap, AutoEncapVariants};
 pub use encap_gre::InnerGre;
 pub use encap_gtp::InnerGtpU;
 pub use encap_mpls::StripMpls;
 pub use encap_vlan::StripVlan;
 pub use encap_vxlan::InnerVxlan;
-
-pub use auto_detect::{AutoDetectEncap, AutoEncapVariants};
+pub use five_tuple::{FiveTuple, FiveTupleKey};
 pub use flow_label::{FlowLabel, FlowLabelKey};
+pub use ip_pair::{IpPair, IpPairKey};
+pub use mac_pair::{MacPair, MacPairKey};
 pub use tagged::{Tagged, TaggedKey, Tagger};

@@ -1,8 +1,12 @@
-use crate::Timestamp;
+use std::{
+    net::{Ipv4Addr, Ipv6Addr},
+    time::Duration,
+};
+
 use bytes::Bytes;
 use smallvec::SmallVec;
-use std::net::{Ipv4Addr, Ipv6Addr};
-use std::time::Duration;
+
+use crate::Timestamp;
 
 /// Parsed DNS query observed on the wire.
 #[derive(Debug, Clone)]

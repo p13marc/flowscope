@@ -30,11 +30,13 @@
 //!
 //! Source: <https://github.com/FoxIO-LLC/ja4>
 
-use super::ja4::{
-    alpn_code, count_non_grease, is_grease_version, non_grease_hex_joined, sha256_prefix,
-    version_to_two_digits,
+use super::{
+    ja4::{
+        alpn_code, count_non_grease, is_grease_version, non_grease_hex_joined, sha256_prefix,
+        version_to_two_digits,
+    },
+    types::{TlsServerHello, TlsVersion},
 };
-use super::types::{TlsServerHello, TlsVersion};
 
 /// Parts of a JA4S fingerprint, before assembly into the
 /// underscore-joined string.
@@ -97,8 +99,9 @@ fn pick_version(sh: &TlsServerHello) -> TlsVersion {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use bytes::Bytes;
+
+    use super::*;
 
     fn sample_sh() -> TlsServerHello {
         TlsServerHello {

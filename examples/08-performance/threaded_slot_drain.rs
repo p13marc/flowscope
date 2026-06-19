@@ -20,17 +20,22 @@
 //! equals total pushed. For broadcast semantics, drain into a
 //! channel and fan out.
 
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc;
-use std::thread;
-use std::time::Duration;
+use std::{
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        mpsc, Arc,
+    },
+    thread,
+    time::Duration,
+};
 
-use flowscope::PacketView;
-use flowscope::driver::{Driver, Event, SlotMessage};
-use flowscope::extract::{FiveTuple, FiveTupleKey};
-use flowscope::http::{HttpMessage, HttpParser};
-use flowscope::pcap::PcapFlowSource;
+use flowscope::{
+    driver::{Driver, Event, SlotMessage},
+    extract::{FiveTuple, FiveTupleKey},
+    http::{HttpMessage, HttpParser},
+    pcap::PcapFlowSource,
+    PacketView,
+};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let path = std::env::args()

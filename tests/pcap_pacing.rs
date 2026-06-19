@@ -2,8 +2,9 @@
 
 #![cfg(feature = "pcap")]
 
-use flowscope::pcap::PcapFlowSource;
 use std::time::Instant;
+
+use flowscope::pcap::PcapFlowSource;
 
 const FIXTURE: &str = "tests/data/mixed_short.pcap";
 

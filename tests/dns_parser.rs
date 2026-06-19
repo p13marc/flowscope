@@ -1,6 +1,6 @@
 //! Parser tests using hand-crafted DNS messages.
 
-use flowscope::dns::{DnsParseResult, DnsRcode, parse_message};
+use flowscope::dns::{parse_message, DnsParseResult, DnsRcode};
 
 /// Wire-format DNS A query for `example.com`, transaction ID 0x1234.
 fn build_a_query(tx_id: u16, qname: &str) -> Vec<u8> {
@@ -116,8 +116,7 @@ fn malformed_returns_error() {
 
 #[test]
 fn correlator_matches_query_response() {
-    use flowscope::Timestamp;
-    use flowscope::dns::Correlator;
+    use flowscope::{dns::Correlator, Timestamp};
     let mut c = Correlator::<u32>::new();
 
     // Record query at t=0
@@ -140,8 +139,7 @@ fn correlator_matches_query_response() {
 
 #[test]
 fn correlator_orphan_response() {
-    use flowscope::Timestamp;
-    use flowscope::dns::Correlator;
+    use flowscope::{dns::Correlator, Timestamp};
     let mut c = Correlator::<u32>::new();
     let matched = c.match_response(&7u32, 999, Timestamp::new(0, 0));
     assert!(matched.is_none());
@@ -149,8 +147,7 @@ fn correlator_orphan_response() {
 
 #[test]
 fn correlator_sweep_flags_unanswered() {
-    use flowscope::Timestamp;
-    use flowscope::dns::Correlator;
+    use flowscope::{dns::Correlator, Timestamp};
     let mut c = Correlator::<u32>::new();
     let q_bytes = build_a_query(99, "slow.example");
     let q = match flowscope::dns::parse_message_at(&q_bytes, Timestamp::new(0, 0)).unwrap() {

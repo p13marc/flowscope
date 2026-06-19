@@ -13,11 +13,12 @@
 
 use std::collections::HashMap;
 
-use flowscope::driver::SlotMessage;
-use flowscope::driver::{Driver, Event};
-use flowscope::extract::{FiveTuple, FiveTupleKey};
-use flowscope::pcap::PcapFlowSource;
-use flowscope::tls::{HandshakeOutcome, TlsHandshake, TlsHandshakeParser};
+use flowscope::{
+    driver::{Driver, Event, SlotMessage},
+    extract::{FiveTuple, FiveTupleKey},
+    pcap::PcapFlowSource,
+    tls::{HandshakeOutcome, TlsHandshake, TlsHandshakeParser},
+};
 
 fn main() -> flowscope::Result<()> {
     let path = std::env::args()

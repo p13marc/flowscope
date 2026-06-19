@@ -6,9 +6,9 @@
 
 #![cfg(feature = "extractors")]
 
-use flowscope::extract::FiveTupleKey;
-use flowscope::extractor::L4Proto;
 use std::net::SocketAddr;
+
+use flowscope::{extract::FiveTupleKey, extractor::L4Proto};
 
 fn key(a: &str, b: &str, proto: L4Proto) -> FiveTupleKey {
     let a: SocketAddr = a.parse().expect("parse a");
@@ -63,14 +63,10 @@ fn five_tuple_protocol_label_kafka() {
 #[test]
 fn entries_iterates_known_rows() {
     let entries: Vec<_> = flowscope::well_known::entries().collect();
-    assert!(
-        entries
-            .iter()
-            .any(|(p, port, l)| *p == L4Proto::Tcp && *port == 80 && *l == "http")
-    );
-    assert!(
-        entries
-            .iter()
-            .any(|(p, port, l)| *p == L4Proto::Udp && *port == 4789 && *l == "vxlan")
-    );
+    assert!(entries
+        .iter()
+        .any(|(p, port, l)| *p == L4Proto::Tcp && *port == 80 && *l == "http"));
+    assert!(entries
+        .iter()
+        .any(|(p, port, l)| *p == L4Proto::Udp && *port == 4789 && *l == "vxlan"));
 }

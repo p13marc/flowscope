@@ -299,8 +299,9 @@ pub mod test_frames {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use test_frames::*;
+
+    use super::*;
 
     #[test]
     fn parse_ipv4_tcp_basic() {
@@ -409,7 +410,7 @@ mod tests {
         f[0..6].copy_from_slice(&[0xff; 6]); // dst MAC
         f[6..12].copy_from_slice(&[0; 6]);
         f[12..14].copy_from_slice(&0x0806u16.to_be_bytes()); // ARP ethertype
-        // ARP header (HTYPE=1, PTYPE=0x0800, HLEN=6, PLEN=4, OPER=1)
+                                                             // ARP header (HTYPE=1, PTYPE=0x0800, HLEN=6, PLEN=4, OPER=1)
         f[14..16].copy_from_slice(&1u16.to_be_bytes());
         f[16..18].copy_from_slice(&0x0800u16.to_be_bytes());
         f[18] = 6;

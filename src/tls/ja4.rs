@@ -183,8 +183,9 @@ pub(super) fn sha256_prefix(input: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use bytes::Bytes;
+
+    use super::*;
 
     fn sample_ch() -> TlsClientHello {
         TlsClientHello {

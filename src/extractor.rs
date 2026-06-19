@@ -4,8 +4,9 @@
 //! tracker, the reassembler hook) what counts as a flow in your
 //! domain. Built-in implementations live in [`crate::extract`].
 
-use crate::view::PacketView;
 use bitflags::bitflags;
+
+use crate::view::PacketView;
 
 /// Extract a flow descriptor from one packet.
 ///

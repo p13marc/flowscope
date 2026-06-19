@@ -140,9 +140,11 @@ mod tests {
 ///
 /// Plan 153 (0.13).
 pub mod events {
-    use crate::Timestamp;
-    use crate::event::{AnomalyKind, EndReason, FlowEvent, FlowSide, FlowStats};
-    use crate::extractor::L4Proto;
+    use crate::{
+        event::{AnomalyKind, EndReason, FlowEvent, FlowSide, FlowStats},
+        extractor::L4Proto,
+        Timestamp,
+    };
 
     /// `FlowEvent::Started` with `l4 = None` and `Initiator` side.
     pub fn started<K>(key: K, ts: Timestamp) -> FlowEvent<K> {
@@ -232,10 +234,12 @@ pub mod events {
 
     /// Typed `driver::Event<K>` constructors.
     pub mod driver {
-        use crate::Timestamp;
-        use crate::driver::Event;
-        use crate::event::{AnomalyKind, EndReason, FlowSide, FlowStats};
-        use crate::extractor::{L4Proto, TcpInfo};
+        use crate::{
+            driver::Event,
+            event::{AnomalyKind, EndReason, FlowSide, FlowStats},
+            extractor::{L4Proto, TcpInfo},
+            Timestamp,
+        };
 
         /// `Event::FlowStarted` with `l4 = None`.
         pub fn flow_started<K>(key: K, ts: Timestamp) -> Event<K> {

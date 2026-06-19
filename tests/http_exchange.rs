@@ -2,8 +2,10 @@
 
 #![cfg(feature = "http")]
 
-use flowscope::http::{HttpExchangeParser, HttpOutcome};
-use flowscope::{SessionParser, Timestamp};
+use flowscope::{
+    http::{HttpExchangeParser, HttpOutcome},
+    SessionParser, Timestamp,
+};
 
 fn req(host: &str) -> Vec<u8> {
     format!("GET / HTTP/1.1\r\nHost: {host}\r\n\r\n").into_bytes()

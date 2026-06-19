@@ -21,12 +21,9 @@
 //!
 //! Issue #1 (0.17).
 
-use std::hash::Hash;
-use std::num::NonZeroUsize;
-use std::time::Duration;
+use std::{hash::Hash, num::NonZeroUsize, time::Duration};
 
-use crate::Timestamp;
-use crate::correlate::KeyIndexed;
+use crate::{correlate::KeyIndexed, Timestamp};
 
 /// Per-binding state stored in a [`NeighborTable`].
 ///
@@ -174,9 +171,9 @@ pub type ArpTable = NeighborTable<std::net::Ipv4Addr, crate::MacAddr>;
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::net::Ipv4Addr;
 
+    use super::*;
     use crate::MacAddr;
 
     fn ts(secs: u32) -> Timestamp {
@@ -259,10 +256,8 @@ mod tests {
 
     #[test]
     fn lru_bound_evicts_oldest() {
-        let mut table: NeighborTable<Ipv4Addr, MacAddr> = NeighborTable::new(
-            Duration::from_secs(60),
-            NonZeroUsize::new(2).unwrap(),
-        );
+        let mut table: NeighborTable<Ipv4Addr, MacAddr> =
+            NeighborTable::new(Duration::from_secs(60), NonZeroUsize::new(2).unwrap());
         table.observe(Ipv4Addr::new(10, 0, 0, 1), MacAddr([1; 6]), ts(0));
         table.observe(Ipv4Addr::new(10, 0, 0, 2), MacAddr([2; 6]), ts(1));
         // Third insert evicts the LRU entry.

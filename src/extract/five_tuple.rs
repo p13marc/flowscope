@@ -2,10 +2,11 @@
 
 use std::net::SocketAddr;
 
-use crate::extractor::{Extracted, FlowExtractor, L4Proto, Orientation, TcpInfo};
-use crate::view::PacketView;
-
 use super::parse::{self, ParsedL4};
+use crate::{
+    extractor::{Extracted, FlowExtractor, L4Proto, Orientation, TcpInfo},
+    view::PacketView,
+};
 
 /// Standard 5-tuple flow extractor: protocol + source + destination
 /// IP/port. Bidirectional by default — A→B and B→A merge into one
@@ -316,9 +317,7 @@ pub(crate) fn extract_from_parsed(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::Timestamp;
-    use crate::extract::parse::test_frames::*;
-    use crate::extractor::TcpFlags;
+    use crate::{extract::parse::test_frames::*, extractor::TcpFlags, Timestamp};
 
     #[test]
     fn syn_packet_forward() {
@@ -448,11 +447,9 @@ mod tests {
     #[test]
     fn malformed_returns_none() {
         let f = [0u8; 4];
-        assert!(
-            FiveTuple::bidirectional()
-                .extract(PacketView::new(&f, Timestamp::default()))
-                .is_none()
-        );
+        assert!(FiveTuple::bidirectional()
+            .extract(PacketView::new(&f, Timestamp::default()))
+            .is_none());
     }
 
     #[test]

@@ -24,11 +24,10 @@
 
 use std::time::Duration;
 
-use flowscope::correlate::RollingRate;
-use flowscope::extract::FiveTuple;
-use flowscope::pcap::PcapFlowSource;
-use flowscope::well_known::LabelTable;
-use flowscope::{FlowEvent, FlowTracker, L4Proto, Timestamp};
+use flowscope::{
+    correlate::RollingRate, extract::FiveTuple, pcap::PcapFlowSource, well_known::LabelTable,
+    FlowEvent, FlowTracker, L4Proto, Timestamp,
+};
 
 fn main() -> flowscope::Result<()> {
     let path = std::env::args()

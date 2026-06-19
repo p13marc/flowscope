@@ -33,14 +33,15 @@
 //! the struct implements `Serialize` + `Deserialize`, suitable
 //! for cross-process retention.
 
-use std::borrow::Cow;
-use std::net::IpAddr;
+use std::{borrow::Cow, net::IpAddr};
 
 use smallvec::SmallVec;
 
-use crate::Timestamp;
-use crate::anomaly_fields::KeyFields;
-use crate::event::{AnomalyKind, Severity};
+use crate::{
+    anomaly_fields::KeyFields,
+    event::{AnomalyKind, Severity},
+    Timestamp,
+};
 
 /// Canonical owned anomaly value.
 ///
@@ -261,9 +262,9 @@ mod tests {
     #[cfg(feature = "extractors")]
     #[test]
     fn with_key_flattens_5tuple_from_fivetuple_key() {
-        use crate::extract::FiveTupleKey;
-        use crate::extractor::L4Proto;
         use std::net::{Ipv4Addr, SocketAddr};
+
+        use crate::{extract::FiveTupleKey, extractor::L4Proto};
         let key = FiveTupleKey {
             proto: L4Proto::Tcp,
             a: SocketAddr::from((Ipv4Addr::new(10, 0, 0, 1), 33000)),
@@ -280,10 +281,13 @@ mod tests {
     #[cfg(feature = "extractors")]
     #[test]
     fn from_flow_anomaly_retains_typed_kind() {
-        use crate::event::{AnomalyKind, FlowSide};
-        use crate::extract::FiveTupleKey;
-        use crate::extractor::L4Proto;
         use std::net::{Ipv4Addr, SocketAddr};
+
+        use crate::{
+            event::{AnomalyKind, FlowSide},
+            extract::FiveTupleKey,
+            extractor::L4Proto,
+        };
         let key = FiveTupleKey {
             proto: L4Proto::Tcp,
             a: SocketAddr::from((Ipv4Addr::new(10, 0, 0, 1), 33000)),

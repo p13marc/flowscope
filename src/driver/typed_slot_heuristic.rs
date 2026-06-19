@@ -6,27 +6,26 @@
 //! parser and pushes typed messages into the slot's
 //! `Arc<SegQueue<SlotMessage<M, K>>>`.
 
-use std::collections::HashMap;
-use std::hash::Hash;
-use std::marker::PhantomData;
-use std::sync::Arc;
+use std::{collections::HashMap, hash::Hash, marker::PhantomData, sync::Arc};
 
 use arrayvec::ArrayVec;
 use crossbeam_queue::SegQueue;
 
-use crate::PacketView;
-use crate::Timestamp;
-use crate::datagram_driver::FlowDatagramDriver;
-use crate::detect::signatures::{SignatureFn, SignatureMatch};
-use crate::extract::parse::{self, ParsedL4};
-use crate::extractor::{Extracted, FlowExtractor, Orientation};
-use crate::session::{DatagramParser, SessionEvent, SessionParser};
-use crate::session_driver::FlowSessionDriver;
-use crate::tracker::FlowTrackerConfig;
-
-use super::slot::{SlotHandle, SlotMessage};
-use super::typed::Event;
-use super::typed_slot::{ErasedSlot, route_session_event_pub};
+use super::{
+    slot::{SlotHandle, SlotMessage},
+    typed::Event,
+    typed_slot::{route_session_event_pub, ErasedSlot},
+};
+use crate::{
+    datagram_driver::FlowDatagramDriver,
+    detect::signatures::{SignatureFn, SignatureMatch},
+    extract::parse::{self, ParsedL4},
+    extractor::{Extracted, FlowExtractor, Orientation},
+    session::{DatagramParser, SessionEvent, SessionParser},
+    session_driver::FlowSessionDriver,
+    tracker::FlowTrackerConfig,
+    PacketView, Timestamp,
+};
 
 /// Buffer cap per side during the probing phase. Every shipped
 /// signature decides within ≤ 64 B.

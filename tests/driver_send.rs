@@ -12,15 +12,20 @@
     feature = "reassembler",
 ))]
 
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::thread;
-use std::time::Duration;
+use std::{
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
+    thread,
+    time::Duration,
+};
 
-use flowscope::driver::{Driver, SlotHandle, SlotMessage};
-use flowscope::extract::parse::test_frames::ipv4_tcp;
-use flowscope::extract::{FiveTuple, FiveTupleKey};
-use flowscope::{PacketView, SessionParser, Timestamp};
+use flowscope::{
+    driver::{Driver, SlotHandle, SlotMessage},
+    extract::{parse::test_frames::ipv4_tcp, FiveTuple, FiveTupleKey},
+    PacketView, SessionParser, Timestamp,
+};
 
 #[derive(Default, Clone)]
 struct CountParser;

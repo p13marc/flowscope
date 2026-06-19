@@ -8,8 +8,10 @@
 //! For tokio users with backpressure needs, see `netring`'s
 //! `AsyncReassembler` and `channel_factory`.
 
-use crate::Timestamp;
-use crate::event::{FlowSide, OverflowPolicy};
+use crate::{
+    event::{FlowSide, OverflowPolicy},
+    Timestamp,
+};
 
 /// Receives TCP segments for one direction of one session. Sync —
 /// implementors don't await; for blocking consumers (Vec buffer,

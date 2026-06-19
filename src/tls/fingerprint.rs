@@ -97,8 +97,9 @@ mod tests {
         // Hand-build a ClientHello with known fields and verify
         // the canonical string starts with the expected version
         // and cipher list shape.
-        use crate::tls::types::TlsVersion;
         use bytes::Bytes;
+
+        use crate::tls::types::TlsVersion;
         let ch = TlsClientHello {
             record_version: TlsVersion::Tls1_2,
             legacy_version: TlsVersion::Tls1_2,

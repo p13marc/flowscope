@@ -167,11 +167,19 @@ impl Histogram {
     }
 
     pub fn min(&self) -> f64 {
-        if self.samples == 0 { 0.0 } else { self.min }
+        if self.samples == 0 {
+            0.0
+        } else {
+            self.min
+        }
     }
 
     pub fn max(&self) -> f64 {
-        if self.samples == 0 { 0.0 } else { self.max }
+        if self.samples == 0 {
+            0.0
+        } else {
+            self.max
+        }
     }
 
     /// Merge `other` into `self`. Both histograms must have

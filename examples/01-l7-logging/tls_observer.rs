@@ -7,11 +7,12 @@
 
 use std::env;
 
-use flowscope::driver::SlotMessage;
-use flowscope::driver::{Driver, Event};
-use flowscope::extract::{FiveTuple, FiveTupleKey};
-use flowscope::pcap::PcapFlowSource;
-use flowscope::tls::{TlsMessage, TlsParser};
+use flowscope::{
+    driver::{Driver, Event, SlotMessage},
+    extract::{FiveTuple, FiveTupleKey},
+    pcap::PcapFlowSource,
+    tls::{TlsMessage, TlsParser},
+};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let path = env::args()

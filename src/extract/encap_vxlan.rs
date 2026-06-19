@@ -4,10 +4,11 @@
 //! 4789. Header is 8 bytes: 8-bit flags, 24-bit reserved, 24-bit
 //! VNI, 8-bit reserved.
 
-use crate::extractor::{Extracted, FlowExtractor};
-use crate::view::PacketView;
-
 use super::parse;
+use crate::{
+    extractor::{Extracted, FlowExtractor},
+    view::PacketView,
+};
 
 /// VXLAN default UDP destination port (RFC 7348).
 pub const DEFAULT_VXLAN_PORT: u16 = 4789;
@@ -89,10 +90,10 @@ fn peel_vxlan(frame: &[u8], expected_port: u16) -> Option<&[u8]> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::Timestamp;
-    use crate::extract::FiveTuple;
     use etherparse::{Ethernet2Header, IpNumber, Ipv4Header, TcpHeader, UdpHeader};
+
+    use super::*;
+    use crate::{extract::FiveTuple, Timestamp};
 
     /// Build outer Eth/IPv4/UDP/VXLAN/inner-Eth/IPv4/TCP frame.
     fn vxlan_ipv4_tcp(vni: u32, vxlan_port: u16) -> Vec<u8> {
@@ -175,11 +176,9 @@ mod tests {
     #[test]
     fn wrong_port_returns_none() {
         let f = vxlan_ipv4_tcp(1, 9999);
-        assert!(
-            InnerVxlan::new(FiveTuple::bidirectional())
-                .extract(PacketView::new(&f, Timestamp::default()))
-                .is_none()
-        );
+        assert!(InnerVxlan::new(FiveTuple::bidirectional())
+            .extract(PacketView::new(&f, Timestamp::default()))
+            .is_none());
     }
 
     #[test]
@@ -207,10 +206,8 @@ mod tests {
             0x02,
             b"",
         );
-        assert!(
-            InnerVxlan::new(FiveTuple::bidirectional())
-                .extract(PacketView::new(&f, Timestamp::default()))
-                .is_none()
-        );
+        assert!(InnerVxlan::new(FiveTuple::bidirectional())
+            .extract(PacketView::new(&f, Timestamp::default()))
+            .is_none());
     }
 }

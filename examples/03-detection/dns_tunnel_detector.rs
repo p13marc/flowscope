@@ -16,17 +16,16 @@
 //! cargo run --features pcap,dns,extractors --example dns_tunnel_detector
 //! ```
 
-use std::collections::HashMap;
-use std::net::IpAddr;
-use std::time::Duration;
+use std::{collections::HashMap, net::IpAddr, time::Duration};
 
-use flowscope::correlate::TimeBucketedCounter;
-use flowscope::detect::shannon_entropy;
-use flowscope::dns::{DnsMessage, DnsUdpParser};
-use flowscope::driver::SlotMessage;
-use flowscope::driver::{Driver, Event};
-use flowscope::extract::{FiveTuple, FiveTupleKey};
-use flowscope::pcap::PcapFlowSource;
+use flowscope::{
+    correlate::TimeBucketedCounter,
+    detect::shannon_entropy,
+    dns::{DnsMessage, DnsUdpParser},
+    driver::{Driver, Event, SlotMessage},
+    extract::{FiveTuple, FiveTupleKey},
+    pcap::PcapFlowSource,
+};
 
 const ENTROPY_THRESHOLD: f64 = 4.0;
 const MIN_LABEL_LEN: usize = 30;

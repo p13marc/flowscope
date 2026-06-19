@@ -18,11 +18,12 @@
 //! Demonstrates the custom-protocol pattern: minimal state
 //! machine, splitting-invariant accumulator, no panic on garbage.
 
-use flowscope::driver::SlotMessage;
-use flowscope::driver::{Driver, Event};
-use flowscope::extract::{FiveTuple, FiveTupleKey};
-use flowscope::pcap::PcapFlowSource;
-use flowscope::{FlowSide, SessionParser, Timestamp};
+use flowscope::{
+    driver::{Driver, Event, SlotMessage},
+    extract::{FiveTuple, FiveTupleKey},
+    pcap::PcapFlowSource,
+    FlowSide, SessionParser, Timestamp,
+};
 
 #[derive(Debug, Clone)]
 enum RespValue {

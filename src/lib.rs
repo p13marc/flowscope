@@ -202,42 +202,36 @@ pub mod parser_kinds {
     #[cfg(feature = "icmp")]
     pub use crate::icmp::PARSER_KIND as ICMP;
     #[cfg(feature = "tls")]
-    pub use crate::tls::PARSER_KIND as TLS;
-    #[cfg(feature = "tls")]
     pub use crate::tls::handshake::PARSER_KIND as TLS_HANDSHAKE;
+    #[cfg(feature = "tls")]
+    pub use crate::tls::PARSER_KIND as TLS;
 }
 
+pub use anomaly_fields::{AnomalyFields, KeyFields};
+#[cfg(all(feature = "extractors", feature = "reassembler", feature = "session"))]
+pub use datagram_driver::FlowDatagramDriver;
 #[cfg(feature = "tracker")]
 pub use dedup::Dedup;
-
-pub use anomaly_fields::{AnomalyFields, KeyFields};
-pub use extractor::{Extracted, FlowExtractor, L4Proto, Orientation, TcpFlags, TcpInfo};
-
 #[cfg(feature = "tracker")]
 pub use event::{
     AnomalyKind, EndReason, FlowEvent, FlowSide, FlowState, FlowStats, OverflowPolicy,
 };
-#[cfg(feature = "tracker")]
-pub use history::HistoryString;
-#[cfg(feature = "tracker")]
-pub use tracker::{FlowEntry, FlowEvents, FlowTracker, FlowTrackerConfig, FlowTrackerStats};
-
+pub use extractor::{Extracted, FlowExtractor, L4Proto, Orientation, TcpFlags, TcpInfo};
 #[cfg(feature = "reassembler")]
 pub use flow_driver::FlowDriver;
+#[cfg(feature = "tracker")]
+pub use history::HistoryString;
 #[cfg(feature = "reassembler")]
 pub use reassembler::{
     BufferedReassembler, BufferedReassemblerFactory, NoopReassembler, NoopReassemblerFactory,
     Reassembler, ReassemblerFactory,
 };
-
 #[cfg(feature = "session")]
 pub use session::{
     AccumulatingSessionParser, BufferedFrameDrain, DatagramParser, DatagramParserFactory,
     FrameDrainError, PerDatagramParser, SessionEvent, SessionParser, SessionParserFactory,
 };
-
 #[cfg(all(feature = "reassembler", feature = "session"))]
 pub use session_driver::FlowSessionDriver;
-
-#[cfg(all(feature = "extractors", feature = "reassembler", feature = "session"))]
-pub use datagram_driver::FlowDatagramDriver;
+#[cfg(feature = "tracker")]
+pub use tracker::{FlowEntry, FlowEvents, FlowTracker, FlowTrackerConfig, FlowTrackerStats};

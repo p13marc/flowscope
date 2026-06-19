@@ -6,8 +6,10 @@
 //! stack, the inner protocol is determined by inspecting the first
 //! nibble: 0x4 → IPv4, 0x6 → IPv6.
 
-use crate::extractor::{Extracted, FlowExtractor};
-use crate::view::PacketView;
+use crate::{
+    extractor::{Extracted, FlowExtractor},
+    view::PacketView,
+};
 
 /// Strip an MPLS label stack from an Ethernet frame and run the
 /// inner extractor on the inner IP datagram (synthesizing an
@@ -87,10 +89,10 @@ fn synthesize_eth_for_ip(ip: &[u8]) -> Option<Vec<u8>> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::Timestamp;
-    use crate::extract::FiveTuple;
     use etherparse::{IpNumber, Ipv4Header, TcpHeader};
+
+    use super::*;
+    use crate::{extract::FiveTuple, Timestamp};
 
     /// Build an Ethernet/MPLS/IPv4/TCP frame with a single label.
     fn mpls_ipv4_tcp_single_label(label: u32) -> Vec<u8> {
@@ -170,20 +172,16 @@ mod tests {
     fn non_mpls_returns_none() {
         let f = vec![0u8; 64];
         // ethertype defaults to 0x0000 — not MPLS.
-        assert!(
-            StripMpls(FiveTuple::bidirectional())
-                .extract(PacketView::new(&f, Timestamp::default()))
-                .is_none()
-        );
+        assert!(StripMpls(FiveTuple::bidirectional())
+            .extract(PacketView::new(&f, Timestamp::default()))
+            .is_none());
     }
 
     #[test]
     fn truncated_returns_none() {
         let f = vec![0u8; 5];
-        assert!(
-            StripMpls(FiveTuple::bidirectional())
-                .extract(PacketView::new(&f, Timestamp::default()))
-                .is_none()
-        );
+        assert!(StripMpls(FiveTuple::bidirectional())
+            .extract(PacketView::new(&f, Timestamp::default()))
+            .is_none());
     }
 }

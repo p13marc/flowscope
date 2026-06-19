@@ -1,7 +1,8 @@
 //! Type definitions for parsed ICMPv4 / ICMPv6 messages.
 
-use bytes::Bytes;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+
+use bytes::Bytes;
 
 use crate::extractor::L4Proto;
 

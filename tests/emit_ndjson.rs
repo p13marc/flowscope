@@ -2,12 +2,15 @@
 
 #![cfg(feature = "emit-ndjson")]
 
-use flowscope::emit::{FlowEventNdjsonWriter, NdjsonOptions};
-use flowscope::extract::FiveTupleKey;
-use flowscope::extractor::L4Proto;
-use flowscope::history::HistoryString;
-use flowscope::{EndReason, FlowEvent, FlowSide, FlowStats, Timestamp};
 use std::net::SocketAddr;
+
+use flowscope::{
+    emit::{FlowEventNdjsonWriter, NdjsonOptions},
+    extract::FiveTupleKey,
+    extractor::L4Proto,
+    history::HistoryString,
+    EndReason, FlowEvent, FlowSide, FlowStats, Timestamp,
+};
 
 fn key(a: &str, b: &str, proto: L4Proto) -> FiveTupleKey {
     let a: SocketAddr = a.parse().unwrap();

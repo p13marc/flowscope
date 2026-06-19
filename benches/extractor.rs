@@ -4,11 +4,15 @@
 //!
 //!     cargo bench --bench extractor --features extractors,test-helpers
 
-use criterion::{Criterion, black_box, criterion_group, criterion_main};
-use flowscope::extract::FiveTuple;
-use flowscope::extract::parse::test_frames::{ipv4_tcp, ipv4_udp};
-use flowscope::extractor::FlowExtractor;
-use flowscope::{PacketView, Timestamp};
+use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use flowscope::{
+    extract::{
+        parse::test_frames::{ipv4_tcp, ipv4_udp},
+        FiveTuple,
+    },
+    extractor::FlowExtractor,
+    PacketView, Timestamp,
+};
 
 fn bench_five_tuple_ipv4_tcp(c: &mut Criterion) {
     let extractor = FiveTuple::bidirectional();

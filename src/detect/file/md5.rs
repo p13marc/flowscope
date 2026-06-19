@@ -8,8 +8,10 @@
 
 use md5::{Digest, Md5};
 
-use super::FileHashSink;
-use super::types::{FileHashEvent, FileType, classify};
+use super::{
+    types::{classify, FileHashEvent, FileType},
+    FileHashSink,
+};
 
 /// Streaming MD5 sink.
 pub struct Md5Sink {

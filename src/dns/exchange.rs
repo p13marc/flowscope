@@ -6,13 +6,12 @@
 
 use std::time::Duration;
 
-use crate::Timestamp;
-use crate::event::FlowSide;
-use crate::session::DatagramParser;
-
-use super::DnsUdpParser;
-use super::datagram::DnsMessage;
-use super::types::{DnsConfig, DnsQuestion, DnsRcode, DnsRecord};
+use super::{
+    datagram::DnsMessage,
+    types::{DnsConfig, DnsQuestion, DnsRcode, DnsRecord},
+    DnsUdpParser,
+};
+use crate::{event::FlowSide, session::DatagramParser, Timestamp};
 
 /// Outcome of an observed DNS exchange.
 #[derive(Debug, Clone, PartialEq)]

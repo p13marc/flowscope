@@ -9,13 +9,11 @@
 //! Usage:
 //!     cargo run -p netring-flow --example pcap_buffered_reassembly -- trace.pcap
 
-use std::env;
-use std::fs::File;
-use std::io::BufReader;
+use std::{env, fs::File, io::BufReader};
 
-use flowscope::extract::FiveTuple;
-use flowscope::{BufferedReassemblerFactory, FlowDriver, FlowEvent, PacketView, Timestamp};
-
+use flowscope::{
+    extract::FiveTuple, BufferedReassemblerFactory, FlowDriver, FlowEvent, PacketView, Timestamp,
+};
 use pcap_file::pcap::PcapReader;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {

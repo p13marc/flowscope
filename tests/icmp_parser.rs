@@ -5,8 +5,9 @@
 
 #![cfg(feature = "icmp")]
 
-use flowscope::icmp::*;
 use std::net::Ipv6Addr;
+
+use flowscope::icmp::*;
 
 /// Build an ICMPv4 packet header. Doesn't compute a real
 /// checksum (the parser doesn't verify it).
@@ -92,8 +93,9 @@ fn ipv4_tcp_inner(src: [u8; 4], dst: [u8; 4], sport: u16, dport: u16) -> Vec<u8>
 
 #[test]
 fn v4_dest_unreach_extracts_tcp_inner() {
-    use flowscope::extractor::L4Proto;
     use std::net::IpAddr;
+
+    use flowscope::extractor::L4Proto;
 
     let mut payload = v4_header(3, 3, [0, 0, 0, 0]); // code 3 = port unreach
     payload.extend(ipv4_tcp_inner([10, 0, 0, 1], [10, 0, 0, 2], 12345, 80));

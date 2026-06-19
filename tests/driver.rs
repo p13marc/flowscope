@@ -13,11 +13,14 @@
     feature = "reassembler",
 ))]
 
-use flowscope::driver::SlotMessage;
-use flowscope::driver::{Driver, Event};
-use flowscope::extract::FiveTuple;
-use flowscope::extract::parse::test_frames::{ipv4_tcp, ipv4_udp};
-use flowscope::{DatagramParser, FlowSide, PacketView, SessionParser, Timestamp};
+use flowscope::{
+    driver::{Driver, Event, SlotMessage},
+    extract::{
+        parse::test_frames::{ipv4_tcp, ipv4_udp},
+        FiveTuple,
+    },
+    DatagramParser, FlowSide, PacketView, SessionParser, Timestamp,
+};
 
 #[derive(Default, Clone)]
 struct CountParser;
@@ -107,11 +110,9 @@ fn session_slot_drains_typed_messages() {
 
     // Lifecycle should have FlowStarted + FlowPacket — but NO
     // Message variant (it doesn't exist on Event<K>).
-    assert!(
-        events
-            .iter()
-            .any(|e| matches!(e, Event::FlowStarted { .. }))
-    );
+    assert!(events
+        .iter()
+        .any(|e| matches!(e, Event::FlowStarted { .. })));
     assert!(events.iter().any(|e| matches!(e, Event::FlowPacket { .. })));
 
     // Typed messages drain from the slot handle.
@@ -258,8 +259,7 @@ fn parser_kind_is_propagated_to_handle() {
 
 #[test]
 fn force_close_emits_flow_ended_with_force_closed_reason() {
-    use flowscope::EndReason;
-    use flowscope::FlowExtractor;
+    use flowscope::{EndReason, FlowExtractor};
 
     let mut builder = Driver::builder(FiveTuple::bidirectional());
     let mut slot = builder.session_broadcast(CountParser);
@@ -342,11 +342,9 @@ fn event_tcp_accessor_returns_none_for_non_packet_variants() {
     }
     // At least one FlowStarted must be present so the loop
     // exercised the accessor.
-    assert!(
-        events
-            .iter()
-            .any(|e| matches!(e, Event::FlowStarted { .. }))
-    );
+    assert!(events
+        .iter()
+        .any(|e| matches!(e, Event::FlowStarted { .. })));
 }
 
 #[test]

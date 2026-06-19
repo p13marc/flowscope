@@ -22,10 +22,11 @@
 //!   EDNS(0) option decoding (the OPT pseudo-record falls into
 //!   `Other`).
 
+use super::{
+    datagram::DnsMessage,
+    parser::{parse_message, DnsParseResult},
+};
 use crate::{SessionParser, Timestamp};
-
-use super::datagram::DnsMessage;
-use super::parser::{DnsParseResult, parse_message};
 
 /// Per-flow DNS-over-TCP parser. Holds independent length-framed
 /// buffers for the initiator (queries) and responder (responses).

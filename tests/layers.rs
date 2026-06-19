@@ -2,9 +2,11 @@
 
 #![cfg(all(feature = "extractors", feature = "test-helpers"))]
 
-use flowscope::extract::parse::test_frames::{ipv4_tcp, ipv4_udp, ipv6_tcp};
-use flowscope::layers::{Layer, LayerKind, Layers};
-use flowscope::{PacketView, Timestamp};
+use flowscope::{
+    extract::parse::test_frames::{ipv4_tcp, ipv4_udp, ipv6_tcp},
+    layers::{Layer, LayerKind, Layers},
+    PacketView, Timestamp,
+};
 
 #[test]
 fn pv_layers_accessor() {

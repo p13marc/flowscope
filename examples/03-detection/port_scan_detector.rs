@@ -19,13 +19,14 @@
 //!
 //! Plan 102 sub-A migration.
 
-use std::net::IpAddr;
-use std::time::Duration;
+use std::{net::IpAddr, time::Duration};
 
-use flowscope::correlate::{TimeBucketedCounter, TimeBucketedSet};
-use flowscope::layers::TcpFlagsView;
-use flowscope::pcap::PcapFlowSource;
-use flowscope::{PacketView, Timestamp};
+use flowscope::{
+    correlate::{TimeBucketedCounter, TimeBucketedSet},
+    layers::TcpFlagsView,
+    pcap::PcapFlowSource,
+    PacketView, Timestamp,
+};
 
 const WINDOW: Duration = Duration::from_secs(10);
 const BUCKET: Duration = Duration::from_secs(1);

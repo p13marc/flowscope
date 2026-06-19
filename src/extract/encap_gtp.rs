@@ -8,10 +8,11 @@
 //! synthesizes a 14-byte Ethernet wrapper around it before
 //! delegating, so L2-aware extractors (FiveTuple, etc.) keep working.
 
-use crate::extractor::{Extracted, FlowExtractor};
-use crate::view::PacketView;
-
 use super::parse;
+use crate::{
+    extractor::{Extracted, FlowExtractor},
+    view::PacketView,
+};
 
 /// GTP-U default UDP destination port (3GPP TS 29.281).
 pub const DEFAULT_GTPU_PORT: u16 = 2152;
@@ -139,10 +140,10 @@ fn synthesize_eth_for_ip(ip: &[u8]) -> Option<Vec<u8>> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::Timestamp;
-    use crate::extract::FiveTuple;
     use etherparse::{Ethernet2Header, IpNumber, Ipv4Header, TcpHeader, UdpHeader};
+
+    use super::*;
+    use crate::{extract::FiveTuple, Timestamp};
 
     fn gtpu_ipv4_tcp(teid: u32, port: u16) -> Vec<u8> {
         // Inner IPv4/TCP (no Ethernet)
@@ -216,11 +217,9 @@ mod tests {
     #[test]
     fn wrong_port_returns_none() {
         let f = gtpu_ipv4_tcp(1, 9999);
-        assert!(
-            InnerGtpU::new(FiveTuple::bidirectional())
-                .extract(PacketView::new(&f, Timestamp::default()))
-                .is_none()
-        );
+        assert!(InnerGtpU::new(FiveTuple::bidirectional())
+            .extract(PacketView::new(&f, Timestamp::default()))
+            .is_none());
     }
 
     #[test]
@@ -238,10 +237,8 @@ mod tests {
             0x02,
             b"",
         );
-        assert!(
-            InnerGtpU::new(FiveTuple::bidirectional())
-                .extract(PacketView::new(&f, Timestamp::default()))
-                .is_none()
-        );
+        assert!(InnerGtpU::new(FiveTuple::bidirectional())
+            .extract(PacketView::new(&f, Timestamp::default()))
+            .is_none());
     }
 }

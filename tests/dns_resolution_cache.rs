@@ -3,11 +3,15 @@
 
 #![cfg(feature = "dns")]
 
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
-use std::time::Duration;
+use std::{
+    net::{IpAddr, Ipv4Addr, Ipv6Addr},
+    time::Duration,
+};
 
-use flowscope::Timestamp;
-use flowscope::dns::{DnsFlags, DnsRcode, DnsRdata, DnsRecord, DnsResolutionCache, DnsResponse};
+use flowscope::{
+    dns::{DnsFlags, DnsRcode, DnsRdata, DnsRecord, DnsResolutionCache, DnsResponse},
+    Timestamp,
+};
 
 fn ts(sec: u32) -> Timestamp {
     Timestamp::new(sec, 0)

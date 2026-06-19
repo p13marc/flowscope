@@ -22,9 +22,12 @@ use proptest::prelude::*;
 
 #[cfg(feature = "http")]
 mod http_props {
+    use flowscope::{
+        http::{HttpMessage, HttpParser},
+        SessionParser, Timestamp,
+    };
+
     use super::*;
-    use flowscope::http::{HttpMessage, HttpParser};
-    use flowscope::{SessionParser, Timestamp};
 
     fn build_request(method: &str, path: &str, body: &[u8]) -> Vec<u8> {
         let mut v = Vec::new();
@@ -101,9 +104,12 @@ mod http_props {
 
 #[cfg(feature = "tls")]
 mod tls_props {
+    use flowscope::{
+        tls::{TlsMessage, TlsParser},
+        SessionParser, Timestamp,
+    };
+
     use super::*;
-    use flowscope::tls::{TlsMessage, TlsParser};
-    use flowscope::{SessionParser, Timestamp};
 
     fn build_client_hello() -> Vec<u8> {
         let mut ch_body = Vec::new();
@@ -174,11 +180,12 @@ mod tls_props {
 
 #[cfg(feature = "dns")]
 mod dns_udp_props {
+    use flowscope::{
+        dns::{DnsMessage, DnsUdpParser},
+        DatagramParser, FlowSide, Timestamp,
+    };
+
     use super::*;
-    use flowscope::DatagramParser;
-    use flowscope::FlowSide;
-    use flowscope::Timestamp;
-    use flowscope::dns::{DnsMessage, DnsUdpParser};
 
     fn build_a_query(tx_id: u16, qname: &str) -> Vec<u8> {
         let mut v = Vec::new();
@@ -227,9 +234,12 @@ mod dns_udp_props {
 
 #[cfg(feature = "dns")]
 mod dns_tcp_props {
+    use flowscope::{
+        dns::{DnsMessage, DnsTcpParser},
+        SessionParser, Timestamp,
+    };
+
     use super::*;
-    use flowscope::dns::{DnsMessage, DnsTcpParser};
-    use flowscope::{SessionParser, Timestamp};
 
     fn build_a_query_tcp(tx_id: u16, qname: &str) -> Vec<u8> {
         let mut body = Vec::new();

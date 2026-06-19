@@ -9,11 +9,12 @@
 
 use std::env;
 
-use flowscope::driver::SlotMessage;
-use flowscope::driver::{Driver, Event};
-use flowscope::extract::{FiveTuple, FiveTupleKey};
-use flowscope::http::{HttpMessage, HttpParser};
-use flowscope::pcap::PcapFlowSource;
+use flowscope::{
+    driver::{Driver, Event, SlotMessage},
+    extract::{FiveTuple, FiveTupleKey},
+    http::{HttpMessage, HttpParser},
+    pcap::PcapFlowSource,
+};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let path = env::args().nth(1).ok_or("usage: http_log <trace.pcap>")?;

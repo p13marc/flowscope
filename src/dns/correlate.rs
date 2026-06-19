@@ -1,13 +1,13 @@
 //! Plan 85 — per-client DNS resolution cache with TTL eviction.
 
-use std::net::IpAddr;
-use std::num::NonZeroUsize;
-use std::time::Duration;
+use std::{net::IpAddr, num::NonZeroUsize, time::Duration};
 
 use lru::LruCache;
 
-use crate::Timestamp;
-use crate::dns::{DnsRdata, DnsResponse};
+use crate::{
+    dns::{DnsRdata, DnsResponse},
+    Timestamp,
+};
 
 /// Per-client DNS-resolution cache with TTL eviction.
 ///

@@ -2,9 +2,7 @@
 
 use std::net::{Ipv4Addr, Ipv6Addr};
 
-use simple_dns::Packet;
-use simple_dns::ResourceRecord;
-use simple_dns::rdata::RData;
+use simple_dns::{rdata::RData, Packet, ResourceRecord};
 
 use super::types::{DnsFlags, DnsQuery, DnsQuestion, DnsRcode, DnsRdata, DnsRecord, DnsResponse};
 use crate::Timestamp;

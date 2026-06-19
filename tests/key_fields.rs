@@ -8,8 +8,7 @@
 
 use std::net::IpAddr;
 
-use flowscope::extract::FiveTupleKey;
-use flowscope::{KeyFields, L4Proto};
+use flowscope::{extract::FiveTupleKey, KeyFields, L4Proto};
 
 // ── L4Proto ───────────────────────────────────────────────────
 

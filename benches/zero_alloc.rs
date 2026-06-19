@@ -17,14 +17,18 @@
 mod counting_allocator;
 
 use counting_allocator::CountingAllocator;
-use criterion::{Criterion, black_box, criterion_group, criterion_main};
+use criterion::{black_box, criterion_group, criterion_main, Criterion};
 
 #[global_allocator]
 static GLOBAL: CountingAllocator = CountingAllocator;
 
-use flowscope::extract::FiveTuple;
-use flowscope::extract::parse::test_frames::{ipv4_tcp, ipv4_udp};
-use flowscope::{PacketView, Timestamp};
+use flowscope::{
+    extract::{
+        parse::test_frames::{ipv4_tcp, ipv4_udp},
+        FiveTuple,
+    },
+    PacketView, Timestamp,
+};
 
 const N_PACKETS: usize = 10_000;
 
@@ -55,9 +59,11 @@ fn synth_tcp_stream() -> Vec<Vec<u8>> {
     feature = "http"
 ))]
 fn bench_track_into_with_slots_steady_state(c: &mut Criterion) {
-    use flowscope::driver::{Driver, Event};
-    use flowscope::extract::FiveTupleKey;
-    use flowscope::http::HttpParser;
+    use flowscope::{
+        driver::{Driver, Event},
+        extract::FiveTupleKey,
+        http::HttpParser,
+    };
 
     let mut builder = Driver::builder(FiveTuple::bidirectional());
     let _s1 = builder.session_on_ports(HttpParser::default(), [80]);
@@ -105,8 +111,10 @@ fn bench_track_into_with_slots_steady_state(c: &mut Criterion) {
 
 #[cfg(all(feature = "session", feature = "reassembler", feature = "extractors"))]
 fn bench_track_into_steady_state(c: &mut Criterion) {
-    use flowscope::driver::{Driver, Event};
-    use flowscope::extract::FiveTupleKey;
+    use flowscope::{
+        driver::{Driver, Event},
+        extract::FiveTupleKey,
+    };
 
     let mut driver = Driver::builder(FiveTuple::bidirectional()).build();
     let frames = synth_tcp_stream();
@@ -159,8 +167,10 @@ fn bench_track_into_steady_state(c: &mut Criterion) {
 
 #[cfg(all(feature = "session", feature = "http"))]
 fn bench_parser_feed_steady_state(c: &mut Criterion) {
-    use flowscope::SessionParser;
-    use flowscope::http::{HttpMessage, HttpParser};
+    use flowscope::{
+        http::{HttpMessage, HttpParser},
+        SessionParser,
+    };
 
     let req = b"GET /index.html HTTP/1.1\r\nHost: example.com\r\nUser-Agent: bench\r\nAccept: */*\r\n\r\n";
     let mut parser = HttpParser::default();
@@ -195,8 +205,10 @@ fn bench_parser_feed_steady_state(c: &mut Criterion) {
 
 #[cfg(feature = "http")]
 fn bench_http_request_parse(c: &mut Criterion) {
-    use flowscope::SessionParser;
-    use flowscope::http::{HttpMessage, HttpParser};
+    use flowscope::{
+        http::{HttpMessage, HttpParser},
+        SessionParser,
+    };
 
     let req = b"GET /api/v1/users?id=42 HTTP/1.1\r\n\
                  Host: api.example.com\r\n\
@@ -236,9 +248,10 @@ fn bench_http_request_parse(c: &mut Criterion) {
 
 #[cfg(feature = "dns")]
 fn bench_dns_response_5_txt(c: &mut Criterion) {
-    use flowscope::DatagramParser;
-    use flowscope::FlowSide;
-    use flowscope::dns::{DnsMessage, DnsUdpParser};
+    use flowscope::{
+        dns::{DnsMessage, DnsUdpParser},
+        DatagramParser, FlowSide,
+    };
 
     let mut pkt = vec![
         0, 0, 0x81, 0x80, 0, 1, 0, 5, 0, 0, 0, 0, 7, b'e', b'x', b'a', b'm', b'p', b'l', b'e', 3,
@@ -290,8 +303,10 @@ fn bench_dns_response_5_txt(c: &mut Criterion) {
 
 #[cfg(feature = "tls")]
 fn bench_tls_client_hello(c: &mut Criterion) {
-    use flowscope::SessionParser;
-    use flowscope::tls::{TlsMessage, TlsParser};
+    use flowscope::{
+        tls::{TlsMessage, TlsParser},
+        SessionParser,
+    };
 
     let hello: &[u8] = &[
         0x16, 0x03, 0x01, 0x00, 0x35, 0x01, 0x00, 0x00, 0x31, 0x03, 0x03, 0, 1, 2, 3, 4, 5, 6, 7,

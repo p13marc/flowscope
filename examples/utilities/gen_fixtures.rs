@@ -12,13 +12,17 @@
 //! produces byte-identical files. Re-run only when you want to
 //! change the synthetic traffic shape.
 
-use std::fs::{File, create_dir_all};
-use std::io::BufWriter;
-use std::time::Duration;
+use std::{
+    fs::{create_dir_all, File},
+    io::BufWriter,
+    time::Duration,
+};
 
 use flowscope::extract::parse::test_frames::{ipv4_tcp, ipv4_udp};
-use pcap_file::DataLink;
-use pcap_file::pcap::{PcapHeader, PcapPacket, PcapWriter};
+use pcap_file::{
+    pcap::{PcapHeader, PcapPacket, PcapWriter},
+    DataLink,
+};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let dir = std::path::Path::new("netring-flow/tests/data");

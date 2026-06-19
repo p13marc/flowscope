@@ -18,14 +18,15 @@
 
 use std::env;
 
-use flowscope::dns::{DnsMessage, DnsUdpParser};
-use flowscope::driver::SlotMessage;
-use flowscope::driver::{Driver, Event};
-use flowscope::extract::{FiveTuple, FiveTupleKey};
-use flowscope::http::{HttpMessage, HttpParser};
-use flowscope::icmp::{IcmpMessage, IcmpParser};
-use flowscope::pcap::PcapFlowSource;
-use flowscope::tls::{TlsMessage, TlsParser};
+use flowscope::{
+    dns::{DnsMessage, DnsUdpParser},
+    driver::{Driver, Event, SlotMessage},
+    extract::{FiveTuple, FiveTupleKey},
+    http::{HttpMessage, HttpParser},
+    icmp::{IcmpMessage, IcmpParser},
+    pcap::PcapFlowSource,
+    tls::{TlsMessage, TlsParser},
+};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let path = env::args()

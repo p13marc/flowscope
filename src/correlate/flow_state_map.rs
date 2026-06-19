@@ -26,13 +26,10 @@
 //! state.sweep(now);
 //! ```
 
-use std::hash::Hash;
-use std::time::Duration;
-
-use crate::Timestamp;
-use crate::event::FlowEvent;
+use std::{hash::Hash, time::Duration};
 
 use super::indexed::KeyIndexed;
+use crate::{event::FlowEvent, Timestamp};
 
 /// Per-flow typed state, keyed by `FiveTupleKey` (default) or
 /// any `K: Hash + Eq + Clone`.

@@ -15,11 +15,12 @@
 //! cargo run --features http,pcap --example http_exchanges
 //! ```
 
-use flowscope::driver::SlotMessage;
-use flowscope::driver::{Driver, Event};
-use flowscope::extract::{FiveTuple, FiveTupleKey};
-use flowscope::http::{HttpExchange, HttpExchangeParser, HttpOutcome};
-use flowscope::pcap::PcapFlowSource;
+use flowscope::{
+    driver::{Driver, Event, SlotMessage},
+    extract::{FiveTuple, FiveTupleKey},
+    http::{HttpExchange, HttpExchangeParser, HttpOutcome},
+    pcap::PcapFlowSource,
+};
 
 fn main() -> flowscope::Result<()> {
     let path = std::env::args()

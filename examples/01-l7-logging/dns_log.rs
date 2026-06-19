@@ -12,10 +12,12 @@
 
 use std::env;
 
-use flowscope::SessionEvent;
-use flowscope::dns::{DnsMessage, DnsQuery, DnsRdata, DnsResponse, DnsUdpParser};
-use flowscope::extract::FiveTuple;
-use flowscope::pcap::PcapFlowSource;
+use flowscope::{
+    dns::{DnsMessage, DnsQuery, DnsRdata, DnsResponse, DnsUdpParser},
+    extract::FiveTuple,
+    pcap::PcapFlowSource,
+    SessionEvent,
+};
 
 fn log_query(q: &DnsQuery) {
     let names: Vec<&str> = q.questions.iter().map(|q| q.name.as_str()).collect();

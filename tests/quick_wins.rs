@@ -12,8 +12,9 @@
 //! - `LayerStack::depth` / `iter_kinds`
 //! - `KeyIndexed::peek`
 
-use flowscope::{EndReason, FlowStats, Timestamp};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+use flowscope::{EndReason, FlowStats, Timestamp};
 
 // ── Timestamp ──────────────────────────────────────────────────────
 
@@ -273,11 +274,9 @@ mod layers {
         let lines: Vec<String> = layers.iter().map(|l| l.to_string()).collect();
         assert!(lines.iter().any(|s| s.starts_with("ethernet")));
         assert!(lines.iter().any(|s| s.starts_with("ipv4 src=10.0.0.1")));
-        assert!(
-            lines
-                .iter()
-                .any(|s| s.starts_with("tcp src_port=12345 dst_port=80")),
-        );
+        assert!(lines
+            .iter()
+            .any(|s| s.starts_with("tcp src_port=12345 dst_port=80")),);
         assert!(lines.iter().any(|s| s.contains("flags=[S]")));
     }
 

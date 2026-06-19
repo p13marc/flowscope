@@ -18,11 +18,13 @@
 
 use std::env;
 
-use flowscope::PacketView;
-use flowscope::driver::{Driver, Event};
-use flowscope::extract::{FiveTuple, FiveTupleKey};
-use flowscope::http::HttpParser;
-use flowscope::pcap::PcapFlowSource;
+use flowscope::{
+    driver::{Driver, Event},
+    extract::{FiveTuple, FiveTupleKey},
+    http::HttpParser,
+    pcap::PcapFlowSource,
+    PacketView,
+};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let path = env::args()

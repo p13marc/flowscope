@@ -2,12 +2,15 @@
 
 #![cfg(feature = "emit")]
 
-use flowscope::emit::{ZeekConnLogWriter, ZeekOptions};
-use flowscope::extract::FiveTupleKey;
-use flowscope::extractor::L4Proto;
-use flowscope::history::HistoryString;
-use flowscope::{EndReason, FlowEvent, FlowStats, Timestamp};
 use std::net::SocketAddr;
+
+use flowscope::{
+    emit::{ZeekConnLogWriter, ZeekOptions},
+    extract::FiveTupleKey,
+    extractor::L4Proto,
+    history::HistoryString,
+    EndReason, FlowEvent, FlowStats, Timestamp,
+};
 
 fn key(a: &str, b: &str, proto: L4Proto) -> FiveTupleKey {
     let a: SocketAddr = a.parse().unwrap();

@@ -1,8 +1,10 @@
 //! Unit-style tests for the HTTP parser, driven via the
 //! `SessionParser` API.
 
-use flowscope::http::{HttpMessage, HttpParser, HttpRequest, HttpResponse};
-use flowscope::{SessionParser, Timestamp};
+use flowscope::{
+    http::{HttpMessage, HttpParser, HttpRequest, HttpResponse},
+    SessionParser, Timestamp,
+};
 
 #[derive(Default)]
 struct Captured {

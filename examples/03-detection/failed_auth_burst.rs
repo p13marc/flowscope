@@ -13,15 +13,15 @@
 //!
 //! Plan 102 sub-A migration.
 
-use std::net::IpAddr;
-use std::time::Duration;
+use std::{net::IpAddr, time::Duration};
 
-use flowscope::correlate::{BurstDetector, KeyIndexed};
-use flowscope::driver::SlotMessage;
-use flowscope::driver::{Driver, Event};
-use flowscope::extract::{FiveTuple, FiveTupleKey};
-use flowscope::http::{HttpMessage, HttpParser};
-use flowscope::pcap::PcapFlowSource;
+use flowscope::{
+    correlate::{BurstDetector, KeyIndexed},
+    driver::{Driver, Event, SlotMessage},
+    extract::{FiveTuple, FiveTupleKey},
+    http::{HttpMessage, HttpParser},
+    pcap::PcapFlowSource,
+};
 
 const WINDOW: Duration = Duration::from_secs(60);
 const FAIL_THRESHOLD: u32 = 5;

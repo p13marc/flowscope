@@ -10,8 +10,10 @@
 //! if a custom extractor needs an explicit "I'm operating after
 //! VLAN" marker, this combinator is the way to spell that intent.
 
-use crate::extractor::{Extracted, FlowExtractor};
-use crate::view::PacketView;
+use crate::{
+    extractor::{Extracted, FlowExtractor},
+    view::PacketView,
+};
 
 /// Pass-through wrapper indicating the inner extractor should
 /// handle VLAN-tagged frames. Currently a no-op because the
@@ -29,10 +31,10 @@ impl<E: FlowExtractor> FlowExtractor for StripVlan<E> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::Timestamp;
-    use crate::extract::FiveTuple;
     use etherparse::{Ethernet2Header, IpNumber, Ipv4Header, SingleVlanHeader, TcpHeader, VlanId};
+
+    use super::*;
+    use crate::{extract::FiveTuple, Timestamp};
 
     /// Build a VLAN-tagged Ethernet/IPv4/TCP frame.
     fn vlan_ipv4_tcp(vlan_id: u16) -> Vec<u8> {

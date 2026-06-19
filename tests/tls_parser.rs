@@ -4,8 +4,10 @@
 //! / `feed_responder`) and collects emitted `TlsMessage`
 //! variants.
 
-use flowscope::tls::{TlsAlert, TlsClientHello, TlsMessage, TlsParser, TlsServerHello, TlsVersion};
-use flowscope::{SessionParser, Timestamp};
+use flowscope::{
+    tls::{TlsAlert, TlsClientHello, TlsMessage, TlsParser, TlsServerHello, TlsVersion},
+    SessionParser, Timestamp,
+};
 
 #[derive(Default)]
 struct Captured {

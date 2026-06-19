@@ -3,9 +3,7 @@
 
 use std::io::Cursor;
 
-use flowscope::extract::FiveTuple;
-use flowscope::pcap::PcapFlowSource;
-use flowscope::{EndReason, FlowEvent};
+use flowscope::{extract::FiveTuple, pcap::PcapFlowSource, EndReason, FlowEvent};
 
 const HTTP_SESSION: &[u8] = include_bytes!("data/http_session.pcap");
 const DNS_QUERIES: &[u8] = include_bytes!("data/dns_queries.pcap");

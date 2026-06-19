@@ -5,8 +5,10 @@
 //! perspective, just enough to recognize "open", "closing", and
 //! "closed" states for lifecycle event emission.
 
-use crate::event::{FlowSide, FlowState};
-use crate::extractor::TcpFlags;
+use crate::{
+    event::{FlowSide, FlowState},
+    extractor::TcpFlags,
+};
 
 /// Outcome of one TCP-flag transition.
 pub struct Transition {

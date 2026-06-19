@@ -13,9 +13,8 @@
 
 use std::net::Ipv4Addr;
 
-use crate::MacAddr;
-
 use super::types::{ArpMessage, ArpOp};
+use crate::MacAddr;
 
 /// EtherType for ARP.
 pub const ARP_ETHERTYPE: u16 = 0x0806;
@@ -159,10 +158,7 @@ mod tests {
         );
         let msg = parse(&p).unwrap();
         assert!(matches!(msg.oper, ArpOp::Request));
-        assert_eq!(
-            msg.sender,
-            MacAddr([0x11, 0x22, 0x33, 0x44, 0x55, 0x66])
-        );
+        assert_eq!(msg.sender, MacAddr([0x11, 0x22, 0x33, 0x44, 0x55, 0x66]));
         assert_eq!(msg.sender_ip, Ipv4Addr::new(10, 0, 0, 1));
         assert_eq!(msg.target, MacAddr::ZERO);
         assert_eq!(msg.target_ip, Ipv4Addr::new(10, 0, 0, 2));
@@ -170,13 +166,7 @@ mod tests {
 
     #[test]
     fn parses_reply() {
-        let p = build_payload(
-            2,
-            [0xaa; 6],
-            [10, 0, 0, 1],
-            [0xbb; 6],
-            [10, 0, 0, 2],
-        );
+        let p = build_payload(2, [0xaa; 6], [10, 0, 0, 1], [0xbb; 6], [10, 0, 0, 2]);
         let msg = parse(&p).unwrap();
         assert!(matches!(msg.oper, ArpOp::Reply));
     }

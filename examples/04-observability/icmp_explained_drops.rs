@@ -26,10 +26,12 @@
 //! [`DestUnreachableKind`]: flowscope::DestUnreachableKind
 //! [`MtuSignalKind`]: flowscope::MtuSignalKind
 
-use flowscope::driver::{Driver, Event, SlotMessage};
-use flowscope::extract::{FiveTuple, FiveTupleKey};
-use flowscope::icmp::{IcmpMessage, IcmpParser};
-use flowscope::pcap::PcapFlowSource;
+use flowscope::{
+    driver::{Driver, Event, SlotMessage},
+    extract::{FiveTuple, FiveTupleKey},
+    icmp::{IcmpMessage, IcmpParser},
+    pcap::PcapFlowSource,
+};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let path = std::env::args()

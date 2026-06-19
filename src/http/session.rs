@@ -6,10 +6,11 @@
 //! get an async iterator of HTTP messages instead of a callback
 //! handler.
 
+use super::{
+    parser::{self, DirState, ParseOutput},
+    types::{HttpConfig, HttpRequest, HttpResponse},
+};
 use crate::{SessionParser, Timestamp};
-
-use super::parser::{self, DirState, ParseOutput};
-use super::types::{HttpConfig, HttpRequest, HttpResponse};
 
 /// Unified message type emitted by [`HttpParser`].
 #[derive(Debug, Clone)]

@@ -7,13 +7,18 @@
 
 #![cfg(all(feature = "metrics", feature = "extractors", feature = "reassembler"))]
 
-use flowscope::extract::{FiveTuple, parse::test_frames::ipv4_tcp};
-use flowscope::obs::{
-    METRIC_ANOMALIES, METRIC_BYTES, METRIC_FLOWS_CREATED, METRIC_FLOWS_ENDED, METRIC_RETRANSMITS,
+use flowscope::{
+    extract::{parse::test_frames::ipv4_tcp, FiveTuple},
+    obs::{
+        METRIC_ANOMALIES, METRIC_BYTES, METRIC_FLOWS_CREATED, METRIC_FLOWS_ENDED,
+        METRIC_RETRANSMITS,
+    },
+    BufferedReassemblerFactory, FlowDriver, OverflowPolicy, PacketView, Timestamp,
 };
-use flowscope::{BufferedReassemblerFactory, FlowDriver, OverflowPolicy, PacketView, Timestamp};
-use metrics_util::MetricKind;
-use metrics_util::debugging::{DebugValue, DebuggingRecorder, Snapshotter};
+use metrics_util::{
+    debugging::{DebugValue, DebuggingRecorder, Snapshotter},
+    MetricKind,
+};
 
 fn install() -> Snapshotter {
     let recorder = DebuggingRecorder::new();

@@ -34,8 +34,10 @@
 //! All label values are `&'static str` enums. **Never** pass a flow
 //! key as a label value — that creates one time series per flow.
 
-use crate::event::{AnomalyKind, EndReason, FlowStats};
-use crate::extractor::L4Proto;
+use crate::{
+    event::{AnomalyKind, EndReason, FlowStats},
+    extractor::L4Proto,
+};
 
 /// `flowscope_flows_created_total` — incremented on every new flow.
 pub const METRIC_FLOWS_CREATED: &str = "flowscope_flows_created_total";

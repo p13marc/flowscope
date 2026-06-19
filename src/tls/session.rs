@@ -6,10 +6,11 @@
 //! to get an async iterator of TLS events instead of a callback
 //! handler.
 
+use super::{
+    parser::{self, DirState, ParseOutput},
+    types::{TlsAlert, TlsClientHello, TlsConfig, TlsServerHello},
+};
 use crate::{SessionParser, Timestamp};
-
-use super::parser::{self, DirState, ParseOutput};
-use super::types::{TlsAlert, TlsClientHello, TlsConfig, TlsServerHello};
 
 /// Unified message type emitted by [`TlsParser`].
 #[derive(Debug, Clone)]
@@ -198,7 +199,7 @@ mod tests {
         ch_body.extend_from_slice(&[0x03, 0x03]); // legacy version 0x0303 (TLS 1.2)
         ch_body.extend_from_slice(&[0u8; 32]); // random
         ch_body.push(0); // session_id length
-        // cipher suites: [TLS_AES_128_GCM_SHA256]
+                         // cipher suites: [TLS_AES_128_GCM_SHA256]
         ch_body.extend_from_slice(&[0, 2, 0x13, 0x01]);
         // compression methods: [null]
         ch_body.extend_from_slice(&[1, 0]);
@@ -233,7 +234,7 @@ mod tests {
         sh_body.push(0); // session_id length
         sh_body.extend_from_slice(&[0x13, 0x01]); // chosen cipher suite
         sh_body.push(0); // compression = null
-        // Extensions: supported_versions (43) selecting 0x0304 (TLS 1.3).
+                         // Extensions: supported_versions (43) selecting 0x0304 (TLS 1.3).
         let ext = [0x00, 0x2b, 0x00, 0x02, 0x03, 0x04];
         sh_body.extend_from_slice(&(ext.len() as u16).to_be_bytes());
         sh_body.extend_from_slice(&ext);

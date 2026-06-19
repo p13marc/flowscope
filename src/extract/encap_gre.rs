@@ -27,10 +27,11 @@
 //!
 //! Version must be 0 (PPTP uses version 1; not handled here).
 
-use crate::extractor::{Extracted, FlowExtractor};
-use crate::view::PacketView;
-
 use super::parse;
+use crate::{
+    extractor::{Extracted, FlowExtractor},
+    view::PacketView,
+};
 
 /// IP protocol number for GRE (RFC 2784).
 pub const GRE_IP_PROTO: u8 = 47;
@@ -135,10 +136,10 @@ fn synthesize_eth(ethertype: u16, inner: &[u8]) -> Option<Vec<u8>> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::Timestamp;
-    use crate::extract::FiveTuple;
     use etherparse::{Ethernet2Header, IpNumber, Ipv4Header, TcpHeader};
+
+    use super::*;
+    use crate::{extract::FiveTuple, Timestamp};
 
     /// Build an Ethernet+IPv4(GRE)+IPv4+TCP synthetic frame.
     fn build_ipv4_in_gre(gre_flags: u8, gre_extra: usize) -> Vec<u8> {

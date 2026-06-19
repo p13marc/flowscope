@@ -4,7 +4,7 @@
 //!
 //!     cargo bench --bench reassembler --features reassembler
 
-use criterion::{Criterion, black_box, criterion_group, criterion_main};
+use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use flowscope::{BufferedReassembler, OverflowPolicy, Reassembler, Timestamp};
 
 fn bench_in_order_1500_uncapped(c: &mut Criterion) {

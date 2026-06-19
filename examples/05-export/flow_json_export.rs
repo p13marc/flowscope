@@ -11,12 +11,11 @@
 //!     --example flow_json_export -- trace.pcap > flows.ndjson
 //! ```
 
-use std::io::{BufWriter, stdout};
+use std::io::{stdout, BufWriter};
 
-use flowscope::FlowTracker;
-use flowscope::emit::FlowEventNdjsonWriter;
-use flowscope::extract::FiveTuple;
-use flowscope::pcap::PcapFlowSource;
+use flowscope::{
+    emit::FlowEventNdjsonWriter, extract::FiveTuple, pcap::PcapFlowSource, FlowTracker,
+};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let path = std::env::args()

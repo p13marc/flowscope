@@ -2,9 +2,12 @@
 
 #![cfg(feature = "dns")]
 
-use flowscope::dns::{DnsExchangeParser, DnsOutcome};
-use flowscope::{DatagramParser, FlowSide, Timestamp};
 use std::time::Duration;
+
+use flowscope::{
+    dns::{DnsExchangeParser, DnsOutcome},
+    DatagramParser, FlowSide, Timestamp,
+};
 
 fn build_msg(tx_id: u16, qname: &str, flags: u16, rcode_lo: u8) -> Vec<u8> {
     let mut v = Vec::new();

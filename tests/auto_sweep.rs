@@ -13,9 +13,10 @@
 
 use std::time::Duration;
 
-use flowscope::extract::FiveTuple;
-use flowscope::extract::parse::test_frames::ipv4_tcp;
-use flowscope::{FlowEvent, FlowTracker, FlowTrackerConfig, PacketView, Timestamp};
+use flowscope::{
+    extract::{parse::test_frames::ipv4_tcp, FiveTuple},
+    FlowEvent, FlowTracker, FlowTrackerConfig, PacketView, Timestamp,
+};
 
 fn view(frame: &[u8], sec: u32) -> PacketView<'_> {
     PacketView::new(frame, Timestamp::new(sec, 0))

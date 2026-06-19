@@ -12,27 +12,9 @@
 //! let mut driver = builder.build();
 //! ```
 
-pub use crate::{
-    AnomalyFields, AsPacketView, ChecksumStatus, Error, ErrorCode, ErrorKind, KeyFields, MacAddr,
-    Module, PacketView, Result, RssHashType, RxHash, RxMetadata, Timestamp, VlanProto, VlanTag,
-};
-
 // Issue #1 (0.17): ARP visibility surface.
 #[cfg(feature = "arp")]
 pub use crate::arp::{ArpMessage, ArpOp};
-
-#[cfg(feature = "extractors")]
-pub use crate::extract::{FiveTuple, Tagged, TaggedKey};
-
-#[cfg(feature = "extractors")]
-pub use crate::extractor::{Extracted, FlowExtractor, L4Proto, Orientation, TcpFlags, TcpInfo};
-
-#[cfg(feature = "tracker")]
-pub use crate::event::{AnomalyKind, EndReason, FlowEvent, FlowSide, FlowStats};
-
-#[cfg(feature = "tracker")]
-pub use crate::tracker::{FlowTracker, FlowTrackerConfig};
-
 // Plan 167 (0.14): discoverability sweep — surface the
 // `correlate::*` primitives in the prelude so users don't
 // have to know the module path to find them.
@@ -42,41 +24,43 @@ pub use crate::correlate::FlowStateMap;
 pub use crate::correlate::{
     BurstDetector, Ewma, KeyIndexed, RollingRate, TimeBucketedCounter, TimeBucketedSet, TopK,
 };
-
-#[cfg(feature = "session")]
-pub use crate::session::{DatagramParser, SessionEvent, SessionParser};
-
-#[cfg(all(feature = "reassembler", feature = "session"))]
-pub use crate::FlowSessionDriver;
-
-#[cfg(all(feature = "extractors", feature = "reassembler", feature = "session"))]
-pub use crate::FlowDatagramDriver;
-
+// Issue #1 (0.17): NeighborTable IP→link-layer binding tracker.
+#[cfg(feature = "tracker")]
+pub use crate::correlate::{NeighborBinding, NeighborEvent, NeighborTable};
+// Issue #4 (0.17): behavioural-fingerprint primitives.
+#[cfg(feature = "fingerprint")]
+pub use crate::detect::fingerprint::{FingerprintBuilder, FlowFingerprint};
 /// The typed [`crate::driver::Driver`] +
 /// [`crate::driver::SlotHandle`] shape (plan 121).
 #[cfg(all(feature = "extractors", feature = "reassembler", feature = "session"))]
 pub use crate::driver::{Driver, DriverBuilder, Event, SlotHandle, SlotMessage};
-
+#[cfg(feature = "tracker")]
+pub use crate::event::{AnomalyKind, EndReason, FlowEvent, FlowSide, FlowStats};
 #[cfg(feature = "extractors")]
-pub use crate::layers::{Layer, LayerKind, LayerParser, LayerStack, Layers};
-
-#[cfg(feature = "pcap")]
-pub use crate::pcap::PcapFlowSource;
-
+pub use crate::extract::{FiveTuple, Tagged, TaggedKey};
+#[cfg(feature = "extractors")]
+pub use crate::extractor::{Extracted, FlowExtractor, L4Proto, Orientation, TcpFlags, TcpInfo};
 // Plan 162 (0.14): ICMP error classification — frequently
 // imported by `on_icmp_error` consumers.
 // Plan 170 (0.14): `MtuSignalKind` added for PMTU events.
 #[cfg(feature = "icmp")]
 pub use crate::icmp::{DestUnreachableKind, IcmpInner, IcmpMessage, IcmpType, MtuSignalKind};
-
+#[cfg(feature = "extractors")]
+pub use crate::layers::{Layer, LayerKind, LayerParser, LayerStack, Layers};
+#[cfg(feature = "pcap")]
+pub use crate::pcap::PcapFlowSource;
+#[cfg(feature = "session")]
+pub use crate::session::{DatagramParser, SessionEvent, SessionParser};
+#[cfg(feature = "tracker")]
+pub use crate::tracker::{FlowTracker, FlowTrackerConfig};
 // Plan 165 (0.14): site-custom port label table.
 #[cfg(feature = "extractors")]
 pub use crate::well_known::LabelTable;
-
-// Issue #1 (0.17): NeighborTable IP→link-layer binding tracker.
-#[cfg(feature = "tracker")]
-pub use crate::correlate::{NeighborBinding, NeighborEvent, NeighborTable};
-
-// Issue #4 (0.17): behavioural-fingerprint primitives.
-#[cfg(feature = "fingerprint")]
-pub use crate::detect::fingerprint::{FingerprintBuilder, FlowFingerprint};
+#[cfg(all(feature = "extractors", feature = "reassembler", feature = "session"))]
+pub use crate::FlowDatagramDriver;
+#[cfg(all(feature = "reassembler", feature = "session"))]
+pub use crate::FlowSessionDriver;
+pub use crate::{
+    AnomalyFields, AsPacketView, ChecksumStatus, Error, ErrorCode, ErrorKind, KeyFields, MacAddr,
+    Module, PacketView, Result, RssHashType, RxHash, RxMetadata, Timestamp, VlanProto, VlanTag,
+};

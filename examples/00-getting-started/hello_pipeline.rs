@@ -5,11 +5,12 @@
 //! Reads a pcap, registers an echo `SessionParser` that returns
 //! every payload chunk verbatim, and prints each event to stdout.
 
-use flowscope::driver::SlotMessage;
-use flowscope::driver::{Driver, Event};
-use flowscope::extract::{FiveTuple, FiveTupleKey};
-use flowscope::pcap::PcapFlowSource;
-use flowscope::{SessionParser, Timestamp};
+use flowscope::{
+    driver::{Driver, Event, SlotMessage},
+    extract::{FiveTuple, FiveTupleKey},
+    pcap::PcapFlowSource,
+    SessionParser, Timestamp,
+};
 
 #[derive(Default, Clone)]
 struct EchoParser;

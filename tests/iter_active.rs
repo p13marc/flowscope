@@ -2,9 +2,13 @@
 
 #![cfg(all(feature = "tracker", feature = "extractors"))]
 
-use flowscope::extract::FiveTuple;
-use flowscope::extract::parse::test_frames::{ipv4_tcp, ipv4_udp};
-use flowscope::{FlowState, FlowTracker, L4Proto, PacketView, Timestamp};
+use flowscope::{
+    extract::{
+        parse::test_frames::{ipv4_tcp, ipv4_udp},
+        FiveTuple,
+    },
+    FlowState, FlowTracker, L4Proto, PacketView, Timestamp,
+};
 
 fn view(frame: &[u8], sec: u32) -> PacketView<'_> {
     PacketView::new(frame, Timestamp::new(sec, 0))

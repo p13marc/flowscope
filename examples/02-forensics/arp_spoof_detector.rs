@@ -16,15 +16,14 @@
 //! cargo run --features arp,pcap --example arp_spoof_detector -- trace.pcap
 //! ```
 
-use std::net::Ipv4Addr;
-use std::time::Duration;
+use std::{net::Ipv4Addr, time::Duration};
 
-use flowscope::ArpMessage;
-use flowscope::MacAddr;
-use flowscope::Timestamp;
-use flowscope::arp;
-use flowscope::correlate::{NeighborEvent, NeighborTable};
-use flowscope::pcap::PcapFlowSource;
+use flowscope::{
+    arp,
+    correlate::{NeighborEvent, NeighborTable},
+    pcap::PcapFlowSource,
+    ArpMessage, MacAddr, Timestamp,
+};
 
 fn main() -> flowscope::Result<()> {
     let path = std::env::args()
@@ -55,7 +54,8 @@ fn main() -> flowscope::Result<()> {
             spoof_count += 1;
         }
 
-        if let NeighborEvent::Changed { prior, new } = table.observe(msg.sender_ip, msg.sender, ts) {
+        if let NeighborEvent::Changed { prior, new } = table.observe(msg.sender_ip, msg.sender, ts)
+        {
             rebind_count += 1;
             println!(
                 "rebind  {} : {prior} -> {new}  (sender_op = {})",

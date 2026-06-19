@@ -17,18 +17,18 @@
     feature = "test-helpers"
 ))]
 
-use std::io::Cursor;
-use std::time::Duration;
+use std::{io::Cursor, time::Duration};
 
-use flowscope::driver::SlotMessage;
-use flowscope::driver::{Driver, Event};
-use flowscope::extract::parse::test_frames::ipv4_tcp;
-use flowscope::extract::{FiveTuple, FiveTupleKey};
-use flowscope::pcap::PcapFlowSource;
-use flowscope::{FlowSide, SessionParser, Timestamp};
-
-use pcap_file::DataLink;
-use pcap_file::pcap::{PcapHeader, PcapPacket, PcapWriter};
+use flowscope::{
+    driver::{Driver, Event, SlotMessage},
+    extract::{parse::test_frames::ipv4_tcp, FiveTuple, FiveTupleKey},
+    pcap::PcapFlowSource,
+    FlowSide, SessionParser, Timestamp,
+};
+use pcap_file::{
+    pcap::{PcapHeader, PcapPacket, PcapWriter},
+    DataLink,
+};
 
 /// Passthrough parser: yields one Vec<u8> per fed chunk, tagged with
 /// the side. The full byte stream is recovered by concatenating the
@@ -221,8 +221,9 @@ fn passthrough_interleaved_round_trip() {
 }
 
 mod proptest_round_trip {
-    use super::*;
     use proptest::prelude::*;
+
+    use super::*;
 
     proptest! {
         #![proptest_config(ProptestConfig::with_cases(64))]

@@ -35,19 +35,20 @@
 //! # Ok(()) }
 //! ```
 
-use std::collections::HashMap;
-use std::hash::Hash;
+use std::{collections::HashMap, hash::Hash};
 
 use ahash::RandomState;
 
-use crate::Timestamp;
-use crate::event::{AnomalyKind, EndReason, FlowEvent, FlowSide};
-use crate::extractor::FlowExtractor;
-use crate::flow_driver::FlowDriver;
-use crate::reassembler::{Reassembler, ReassemblerFactory};
-use crate::session::{DatagramParser, SessionEvent};
-use crate::tracker::{FlowTracker, FlowTrackerConfig};
-use crate::view::PacketView;
+use crate::{
+    event::{AnomalyKind, EndReason, FlowEvent, FlowSide},
+    extractor::FlowExtractor,
+    flow_driver::FlowDriver,
+    reassembler::{Reassembler, ReassemblerFactory},
+    session::{DatagramParser, SessionEvent},
+    tracker::{FlowTracker, FlowTrackerConfig},
+    view::PacketView,
+    Timestamp,
+};
 
 /// Boxed per-flow parser factory closure. Each new flow gets its
 /// parser by calling this on the flow's key.
@@ -635,7 +636,7 @@ fn extract_udp_payload(view: PacketView<'_>) -> Option<&[u8]> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::extract::{FiveTuple, parse::test_frames::*};
+    use crate::extract::{parse::test_frames::*, FiveTuple};
 
     fn view(frame: &[u8], sec: u32) -> PacketView<'_> {
         PacketView::new(frame, Timestamp::new(sec, 0))
@@ -723,11 +724,9 @@ mod tests {
         let mut d = FlowDatagramDriver::new(FiveTuple::bidirectional(), EchoUdp);
         let f = ipv4_udp([10, 0, 0, 1], [10, 0, 0, 2], 1, 53, b"query");
         let events = d.track(view(&f, 0));
-        assert!(
-            events
-                .iter()
-                .any(|e| matches!(e, SessionEvent::Started { .. }))
-        );
+        assert!(events
+            .iter()
+            .any(|e| matches!(e, SessionEvent::Started { .. })));
         let app = events.iter().find_map(|e| match e {
             SessionEvent::Application {
                 message: (s, b), ..
@@ -747,11 +746,9 @@ mod tests {
         let f = ipv4_udp([10, 0, 0, 1], [10, 0, 0, 2], 1, 53, b"q");
         d.track(view(&f, 0));
         let ended = d.sweep(Timestamp::new(10, 0));
-        assert!(
-            ended
-                .iter()
-                .any(|e| matches!(e, SessionEvent::Closed { .. }))
-        );
+        assert!(ended
+            .iter()
+            .any(|e| matches!(e, SessionEvent::Closed { .. })));
     }
 
     #[test]
@@ -770,11 +767,9 @@ mod tests {
             b"",
         );
         let events = d.track(view(&syn, 0));
-        assert!(
-            events
-                .iter()
-                .any(|e| matches!(e, SessionEvent::Started { .. }))
-        );
+        assert!(events
+            .iter()
+            .any(|e| matches!(e, SessionEvent::Started { .. })));
         assert!(
             !events
                 .iter()

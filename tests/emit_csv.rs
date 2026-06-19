@@ -5,12 +5,15 @@
 
 #![cfg(feature = "emit")]
 
-use flowscope::emit::{CsvOptions, FlowEventCsvWriter};
-use flowscope::extract::FiveTupleKey;
-use flowscope::extractor::L4Proto;
-use flowscope::history::HistoryString;
-use flowscope::{EndReason, FlowEvent, FlowStats, Timestamp};
 use std::net::SocketAddr;
+
+use flowscope::{
+    emit::{CsvOptions, FlowEventCsvWriter},
+    extract::FiveTupleKey,
+    extractor::L4Proto,
+    history::HistoryString,
+    EndReason, FlowEvent, FlowStats, Timestamp,
+};
 
 fn key(a: &str, b: &str, proto: L4Proto) -> FiveTupleKey {
     let a: SocketAddr = a.parse().unwrap();
@@ -109,8 +112,9 @@ fn emit_started_adds_kind_column() {
 // implements `KeyFields` flows through the writer end-to-end.
 #[test]
 fn custom_key_with_partial_keyfields_writes_columns() {
-    use flowscope::KeyFields;
     use std::net::IpAddr;
+
+    use flowscope::KeyFields;
 
     #[derive(Debug, Clone, Copy)]
     struct OnlyIpKey(IpAddr, IpAddr);

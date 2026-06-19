@@ -112,7 +112,13 @@ impl From<u16> for ArpOp {
 mod tests {
     use super::*;
 
-    fn make(oper: ArpOp, sender: [u8; 6], target: [u8; 6], sip: [u8; 4], tip: [u8; 4]) -> ArpMessage {
+    fn make(
+        oper: ArpOp,
+        sender: [u8; 6],
+        target: [u8; 6],
+        sip: [u8; 4],
+        tip: [u8; 4],
+    ) -> ArpMessage {
         ArpMessage {
             oper,
             sender: MacAddr(sender),
@@ -151,13 +157,7 @@ mod tests {
         );
         assert!(msg.is_gratuitous());
 
-        let msg = make(
-            ArpOp::Request,
-            [1; 6],
-            [0; 6],
-            [10, 0, 0, 1],
-            [10, 0, 0, 2],
-        );
+        let msg = make(ArpOp::Request, [1; 6], [0; 6], [10, 0, 0, 1], [10, 0, 0, 2]);
         assert!(!msg.is_gratuitous());
     }
 
@@ -185,13 +185,7 @@ mod tests {
         assert!(msg.is_likely_spoof());
 
         // Requests aren't spoof signals even when gratuitous.
-        let msg = make(
-            ArpOp::Request,
-            [1; 6],
-            [2; 6],
-            [10, 0, 0, 1],
-            [10, 0, 0, 1],
-        );
+        let msg = make(ArpOp::Request, [1; 6], [2; 6], [10, 0, 0, 1], [10, 0, 0, 1]);
         assert!(!msg.is_likely_spoof());
     }
 

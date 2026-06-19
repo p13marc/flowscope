@@ -12,13 +12,14 @@
 //! cargo run --features pcap,http,dns,test-helpers --example unified_driver_demo
 //! ```
 
-use flowscope::detect::signatures::http_request;
-use flowscope::dns::{DnsMessage, DnsUdpParser};
-use flowscope::driver::SlotMessage;
-use flowscope::driver::{Driver, Event};
-use flowscope::extract::{FiveTuple, FiveTupleKey};
-use flowscope::http::{HttpMessage, HttpParser};
-use flowscope::pcap::PcapFlowSource;
+use flowscope::{
+    detect::signatures::http_request,
+    dns::{DnsMessage, DnsUdpParser},
+    driver::{Driver, Event, SlotMessage},
+    extract::{FiveTuple, FiveTupleKey},
+    http::{HttpMessage, HttpParser},
+    pcap::PcapFlowSource,
+};
 
 fn http_label(m: &HttpMessage) -> String {
     match m {

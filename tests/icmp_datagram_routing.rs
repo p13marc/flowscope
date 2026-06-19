@@ -7,10 +7,7 @@
 
 #![cfg(all(feature = "icmp", feature = "extractors", feature = "tracker"))]
 
-use flowscope::driver::Driver;
-use flowscope::extract::FiveTuple;
-use flowscope::icmp::IcmpParser;
-use flowscope::{PacketView, Timestamp};
+use flowscope::{driver::Driver, extract::FiveTuple, icmp::IcmpParser, PacketView, Timestamp};
 
 /// Build an Ethernet/IPv4/ICMPv4 Port-Unreachable frame carrying an
 /// inner IPv4+TCP header (the original 5-tuple).

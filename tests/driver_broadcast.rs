@@ -7,10 +7,11 @@
     feature = "reassembler",
 ))]
 
-use flowscope::driver::{BroadcastSlotHandle, Driver};
-use flowscope::extract::FiveTuple;
-use flowscope::extract::parse::test_frames::ipv4_tcp;
-use flowscope::{PacketView, SessionParser, Timestamp};
+use flowscope::{
+    driver::{BroadcastSlotHandle, Driver},
+    extract::{parse::test_frames::ipv4_tcp, FiveTuple},
+    PacketView, SessionParser, Timestamp,
+};
 use static_assertions::assert_impl_all;
 
 #[derive(Default, Clone)]

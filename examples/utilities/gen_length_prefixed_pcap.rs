@@ -8,15 +8,19 @@
 //! Output is deterministic — re-running produces a byte-identical
 //! file unless the wire format below is changed.
 
-use std::env;
-use std::fs::{File, create_dir_all};
-use std::io::BufWriter;
-use std::path::PathBuf;
-use std::time::Duration;
+use std::{
+    env,
+    fs::{create_dir_all, File},
+    io::BufWriter,
+    path::PathBuf,
+    time::Duration,
+};
 
 use flowscope::extract::parse::test_frames::ipv4_tcp;
-use pcap_file::DataLink;
-use pcap_file::pcap::{PcapHeader, PcapPacket, PcapWriter};
+use pcap_file::{
+    pcap::{PcapHeader, PcapPacket, PcapWriter},
+    DataLink,
+};
 
 const MAC: [u8; 6] = [0; 6];
 const IP_A: [u8; 4] = [10, 0, 0, 1];

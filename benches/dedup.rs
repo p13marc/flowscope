@@ -4,7 +4,7 @@
 //!
 //!     cargo bench --bench dedup --features tracker
 
-use criterion::{Criterion, Throughput, black_box, criterion_group, criterion_main};
+use criterion::{black_box, criterion_group, criterion_main, Criterion, Throughput};
 use flowscope::{Dedup, PacketView, Timestamp};
 
 fn bench_unique_1500(c: &mut Criterion) {

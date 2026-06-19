@@ -66,8 +66,10 @@
 
 use std::hash::Hash;
 
-use crate::extractor::{Extracted, FlowExtractor};
-use crate::view::PacketView;
+use crate::{
+    extractor::{Extracted, FlowExtractor},
+    view::PacketView,
+};
 
 /// Trait that produces a tag from a [`PacketView`]. Implemented
 /// for `fn(PacketView<'_>) -> T` automatically; consumers with
@@ -159,9 +161,10 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::Timestamp;
-    use crate::extract::FiveTuple;
-    use crate::extract::parse::test_frames::ipv4_tcp;
+    use crate::{
+        extract::{parse::test_frames::ipv4_tcp, FiveTuple},
+        Timestamp,
+    };
 
     fn build_v4_frame(src_port: u16) -> Vec<u8> {
         ipv4_tcp(

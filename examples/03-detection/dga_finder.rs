@@ -15,14 +15,14 @@
 
 use std::collections::HashMap;
 
-use flowscope::DatagramParser;
-use flowscope::Timestamp;
-use flowscope::detect::patterns::{DgaScore, DgaScorer};
-use flowscope::dns::{DnsMessage, DnsUdpParser};
-use flowscope::extract::FiveTuple;
-use flowscope::extractor::FlowExtractor;
-use flowscope::pcap::PcapFlowSource;
-use flowscope::{AsPacketView, PacketView};
+use flowscope::{
+    detect::patterns::{DgaScore, DgaScorer},
+    dns::{DnsMessage, DnsUdpParser},
+    extract::FiveTuple,
+    extractor::FlowExtractor,
+    pcap::PcapFlowSource,
+    AsPacketView, DatagramParser, PacketView, Timestamp,
+};
 
 fn extract_sld(qname: &str) -> Option<String> {
     // Strip trailing dot, split, take the last two labels, drop

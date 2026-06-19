@@ -5,9 +5,9 @@
 
 use std::io::Cursor;
 
-use flowscope::extract::FiveTuple;
-use flowscope::{EndReason, FlowEvent, FlowTracker, L4Proto, PacketView, Timestamp};
-
+use flowscope::{
+    extract::FiveTuple, EndReason, FlowEvent, FlowTracker, L4Proto, PacketView, Timestamp,
+};
 use pcap_file::pcap::PcapReader;
 
 const HTTP_SESSION: &[u8] = include_bytes!("data/http_session.pcap");

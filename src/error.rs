@@ -52,8 +52,7 @@
 //! }
 //! ```
 
-use std::error::Error as StdError;
-use std::fmt;
+use std::{error::Error as StdError, fmt};
 
 /// Subsystem identifier for [`Error`].
 ///

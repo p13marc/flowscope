@@ -17,8 +17,10 @@
 //! let n = CountingAllocator::allocs();
 //! ```
 
-use std::alloc::{GlobalAlloc, Layout, System};
-use std::sync::atomic::{AtomicUsize, Ordering::Relaxed};
+use std::{
+    alloc::{GlobalAlloc, Layout, System},
+    sync::atomic::{AtomicUsize, Ordering::Relaxed},
+};
 
 pub struct CountingAllocator;
 

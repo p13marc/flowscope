@@ -13,11 +13,12 @@
 //! Falls back to `tests/fixtures/length_prefixed/sample.pcap`
 //! if no path is provided.
 
-use flowscope::driver::SlotMessage;
-use flowscope::driver::{Driver, Event};
-use flowscope::extract::{FiveTuple, FiveTupleKey};
-use flowscope::pcap::PcapFlowSource;
-use flowscope::{FlowSide, SessionParser, Timestamp};
+use flowscope::{
+    driver::{Driver, Event, SlotMessage},
+    extract::{FiveTuple, FiveTupleKey},
+    pcap::PcapFlowSource,
+    FlowSide, SessionParser, Timestamp,
+};
 
 /// Synthetic "parser A" — first byte → message.
 #[derive(Default, Clone)]

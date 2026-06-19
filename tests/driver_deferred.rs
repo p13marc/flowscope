@@ -10,10 +10,14 @@
 
 use std::time::Duration;
 
-use flowscope::driver::{DeferredDriverBuilder, Driver, Event};
-use flowscope::extract::FiveTuple;
-use flowscope::extract::parse::test_frames::{ipv4_tcp, ipv4_udp};
-use flowscope::{DatagramParser, FlowSide, PacketView, SessionParser, Timestamp};
+use flowscope::{
+    driver::{DeferredDriverBuilder, Driver, Event},
+    extract::{
+        parse::test_frames::{ipv4_tcp, ipv4_udp},
+        FiveTuple,
+    },
+    DatagramParser, FlowSide, PacketView, SessionParser, Timestamp,
+};
 
 #[derive(Default, Clone)]
 struct CountParser;

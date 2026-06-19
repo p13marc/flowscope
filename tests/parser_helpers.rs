@@ -126,7 +126,11 @@ fn per_datagram_parser_emits_one_per_packet() {
     let mut parser = PerDatagramParser::new(
         "len",
         |b: &[u8]| {
-            if b.is_empty() { None } else { Some(b.len()) }
+            if b.is_empty() {
+                None
+            } else {
+                Some(b.len())
+            }
         },
     );
     let mut msgs = Vec::new();

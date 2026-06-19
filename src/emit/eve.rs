@@ -17,13 +17,17 @@
 //! `"tls"`) are out of scope for 0.12 — add per-protocol EVE
 //! shapes when a consumer asks.
 
-use std::io::{self, Write};
-use std::net::IpAddr;
+use std::{
+    io::{self, Write},
+    net::IpAddr,
+};
 
 use serde_json::json;
 
-use crate::event::{AnomalyKind, EndReason, FlowEvent, FlowStats, Severity};
-use crate::{AnomalyFields, KeyFields};
+use crate::{
+    event::{AnomalyKind, EndReason, FlowEvent, FlowStats, Severity},
+    AnomalyFields, KeyFields,
+};
 
 /// Suricata EVE JSON writer. One JSON object per line.
 ///
@@ -459,8 +463,7 @@ mod tests {
 
     #[test]
     fn flow_hash_direction_invariant() {
-        use crate::L4Proto;
-        use crate::extract::FiveTupleKey;
+        use crate::{extract::FiveTupleKey, L4Proto};
         let a = FiveTupleKey {
             proto: L4Proto::Tcp,
             a: "10.0.0.1:33000".parse().unwrap(),

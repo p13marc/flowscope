@@ -33,28 +33,28 @@
 //! // http_slot.drain(&mut http_msgs);
 //! ```
 
-use std::hash::Hash;
-use std::sync::Arc;
-use std::time::Duration;
+use std::{hash::Hash, sync::Arc, time::Duration};
 
 use crossbeam_queue::SegQueue;
 
-use crate::PacketView;
-use crate::Timestamp;
-use crate::dedup::Dedup;
-use crate::detect::signatures::SignatureFn;
-use crate::event::{AnomalyKind, EndReason, FlowEvent, FlowSide, FlowStats};
-use crate::extractor::{FlowExtractor, L4Proto, TcpInfo};
-use crate::flow_driver::FlowDriver;
-use crate::history::HistoryString;
-use crate::reassembler::NoopReassemblerFactory;
-use crate::session::{DatagramParser, SessionParser};
-use crate::tracker::{FlowTracker, FlowTrackerConfig};
-
-use super::BroadcastSlotHandle;
-use super::slot::{SlotHandle, SlotMessage};
-use super::typed_slot::{ErasedSlot, TypedConcreteDatagramSlot, TypedConcreteSlot};
-use super::typed_slot_heuristic::{TypedHeuristicDatagramSlot, TypedHeuristicSessionSlot};
+use super::{
+    slot::{SlotHandle, SlotMessage},
+    typed_slot::{ErasedSlot, TypedConcreteDatagramSlot, TypedConcreteSlot},
+    typed_slot_heuristic::{TypedHeuristicDatagramSlot, TypedHeuristicSessionSlot},
+    BroadcastSlotHandle,
+};
+use crate::{
+    dedup::Dedup,
+    detect::signatures::SignatureFn,
+    event::{AnomalyKind, EndReason, FlowEvent, FlowSide, FlowStats},
+    extractor::{FlowExtractor, L4Proto, TcpInfo},
+    flow_driver::FlowDriver,
+    history::HistoryString,
+    reassembler::NoopReassemblerFactory,
+    session::{DatagramParser, SessionParser},
+    tracker::{FlowTracker, FlowTrackerConfig},
+    PacketView, Timestamp,
+};
 
 /// Per-key idle-timeout predicate, boxed.
 type IdleTimeoutFn<K> =

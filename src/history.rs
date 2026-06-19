@@ -5,8 +5,7 @@
 //! sessions fit comfortably; pathological retransmit storms are
 //! truncated rather than ballooning the per-flow memory.
 
-use crate::event::FlowSide;
-use crate::extractor::TcpFlags;
+use crate::{event::FlowSide, extractor::TcpFlags};
 
 /// Inline-stored, fixed-capacity history string.
 ///

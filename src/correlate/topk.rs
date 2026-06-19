@@ -1,7 +1,6 @@
 //! [`TopK`] — bounded top-K counter (Misra-Gries / Space-Saving).
 
-use std::collections::HashMap;
-use std::hash::Hash;
+use std::{collections::HashMap, hash::Hash};
 
 /// Bounded "top K by count" tracker.
 ///

@@ -2,10 +2,11 @@
 
 use std::net::IpAddr;
 
-use crate::extractor::{Extracted, FlowExtractor, L4Proto, Orientation};
-use crate::view::PacketView;
-
 use super::parse;
+use crate::{
+    extractor::{Extracted, FlowExtractor, L4Proto, Orientation},
+    view::PacketView,
+};
 
 /// Extracts an IP-pair flow key (no ports). Useful for ICMP /
 /// ICMPv6 / fragmented flows where ports aren't meaningful, or
@@ -54,8 +55,7 @@ impl FlowExtractor for IpPair {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::Timestamp;
-    use crate::extract::parse::test_frames::*;
+    use crate::{extract::parse::test_frames::*, Timestamp};
 
     #[test]
     fn extracts_ipv4_pair() {

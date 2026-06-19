@@ -12,11 +12,12 @@
 
 #![cfg(all(feature = "pcap", feature = "session", feature = "extractors"))]
 
-use flowscope::driver::SlotMessage;
-use flowscope::driver::{Driver, Event};
-use flowscope::extract::{FiveTuple, FiveTupleKey};
-use flowscope::pcap::PcapFlowSource;
-use flowscope::{FlowSide, SessionParser, Timestamp};
+use flowscope::{
+    driver::{Driver, Event, SlotMessage},
+    extract::{FiveTuple, FiveTupleKey},
+    pcap::PcapFlowSource,
+    FlowSide, SessionParser, Timestamp,
+};
 
 const MARKER_2: &[u8] = b"PFX2,";
 const MARKER_4: &[u8] = b"PFX4,";

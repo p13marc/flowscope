@@ -65,8 +65,10 @@
 //! }
 //! ```
 
-use crate::event::{AnomalyKind, EndReason, FlowSide, FlowStats};
-use crate::timestamp::Timestamp;
+use crate::{
+    event::{AnomalyKind, EndReason, FlowSide, FlowStats},
+    timestamp::Timestamp,
+};
 
 /// Default per-side buffer cap for [`BufferedFrameDrain`] /
 /// [`AccumulatingSessionParser`]. 64 KiB matches the TCP

@@ -1,8 +1,6 @@
 //! [`KeyIndexed`] — TTL'd LRU cache with packet-clock eviction.
 
-use std::hash::Hash;
-use std::num::NonZeroUsize;
-use std::time::Duration;
+use std::{hash::Hash, num::NonZeroUsize, time::Duration};
 
 use lru::LruCache;
 

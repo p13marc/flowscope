@@ -14,8 +14,7 @@
 
 use std::io::{self, Write};
 
-use crate::FlowEvent;
-use crate::KeyFields;
+use crate::{FlowEvent, KeyFields};
 
 /// Tab-separated Zeek `conn.log` writer for
 /// [`FlowEvent`](crate::FlowEvent) streams.

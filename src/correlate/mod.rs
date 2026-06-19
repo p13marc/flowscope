@@ -72,9 +72,9 @@ pub use ewma::Ewma;
 #[cfg(feature = "extractors")]
 pub use flow_state_map::FlowStateMap;
 pub use indexed::KeyIndexed;
-pub use neighbor_table::{NeighborBinding, NeighborEvent, NeighborTable};
 #[cfg(feature = "arp")]
 pub use neighbor_table::ArpTable;
+pub use neighbor_table::{NeighborBinding, NeighborEvent, NeighborTable};
 pub use rolling_rate::{RateValue, RollingRate};
 pub use sequence::{KeylessSequencePattern, SequencePattern};
 pub use set::TimeBucketedSet;

@@ -3,12 +3,15 @@
 //! [`IcmpMessage`] shape. Adds `IcmpInner` extraction (etherparse
 //! doesn't parse the inner header for error messages).
 
-use bytes::Bytes;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
-use crate::error::{Error, Module};
-use crate::extractor::L4Proto;
-use crate::icmp::types::*;
+use bytes::Bytes;
+
+use crate::{
+    error::{Error, Module},
+    extractor::L4Proto,
+    icmp::types::*,
+};
 
 /// Parse a raw ICMPv4 payload into an [`IcmpMessage`].
 pub fn parse_v4(payload: &[u8]) -> crate::Result<IcmpMessage> {

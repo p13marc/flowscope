@@ -7,12 +7,12 @@
 //! does that stitching internally and emits one rich event per
 //! handshake outcome.
 
-use crate::Timestamp;
-use crate::session::SessionParser;
-
-use super::TlsParser;
-use super::session::TlsMessage;
-use super::types::{TlsConfig, TlsVersion};
+use super::{
+    session::TlsMessage,
+    types::{TlsConfig, TlsVersion},
+    TlsParser,
+};
+use crate::{session::SessionParser, Timestamp};
 
 /// Stable identifier for the handshake aggregator. Plan 118 §4 —
 /// makes the slug available via
@@ -304,8 +304,7 @@ mod tests {
     #[cfg(feature = "ja4plus")]
     #[test]
     fn aggregator_captures_ja4s_onto_the_handshake() {
-        use super::super::TlsMessage;
-        use super::super::types::TlsServerHello;
+        use super::super::{types::TlsServerHello, TlsMessage};
 
         let mut p = TlsHandshakeParser::default();
         let mut out = Vec::new();

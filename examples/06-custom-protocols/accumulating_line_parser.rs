@@ -22,11 +22,12 @@
 //!     --example accumulating_line_parser
 //! ```
 
-use flowscope::AccumulatingSessionParser;
-use flowscope::driver::SlotMessage;
-use flowscope::driver::{Driver, Event};
-use flowscope::extract::{FiveTuple, FiveTupleKey};
-use flowscope::pcap::PcapFlowSource;
+use flowscope::{
+    driver::{Driver, Event, SlotMessage},
+    extract::{FiveTuple, FiveTupleKey},
+    pcap::PcapFlowSource,
+    AccumulatingSessionParser,
+};
 
 fn parse_one(buf: &[u8]) -> Option<(String, usize)> {
     let nl = buf.iter().position(|&b| b == b'\n')?;
