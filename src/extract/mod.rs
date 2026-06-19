@@ -44,6 +44,7 @@ pub mod encap_vxlan;
 
 pub mod auto_detect;
 pub mod flow_label;
+pub mod tagged;
 
 pub use five_tuple::{FiveTuple, FiveTupleKey};
 pub use ip_pair::{IpPair, IpPairKey};
@@ -57,3 +58,4 @@ pub use encap_vxlan::InnerVxlan;
 
 pub use auto_detect::{AutoDetectEncap, AutoEncapVariants};
 pub use flow_label::{FlowLabel, FlowLabelKey};
+pub use tagged::{Tagged, TaggedKey, Tagger};
