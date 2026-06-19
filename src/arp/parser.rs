@@ -280,4 +280,37 @@ mod tests {
         assert!(parser.parse(&p).is_some());
         assert!(parser.parse_frame(&frame).is_some());
     }
+
+    #[test]
+    fn parse_frame_rejects_qinq_double_tag() {
+        // parse_frame strips ONE 802.1Q tag; a QinQ outer
+        // 0x88a8 tag is not recognised and the frame must be
+        // rejected. False-negative is fine; the wire shape is
+        // niche and consumers can roll their own QinQ stripper.
+        let p = build_payload(1, [0xaa; 6], [10, 0, 0, 1], [0; 6], [10, 0, 0, 2]);
+        let mut frame = Vec::new();
+        frame.extend_from_slice(&[0xff; 6]); // dst
+        frame.extend_from_slice(&[0x11; 6]); // src
+        frame.extend_from_slice(&[0x88, 0xa8]); // QinQ outer
+        frame.extend_from_slice(&[0x00, 0x64]); // outer TCI
+        frame.extend_from_slice(&[0x81, 0x00]); // inner 802.1Q
+        frame.extend_from_slice(&[0x00, 0x64]); // inner TCI
+        frame.extend_from_slice(&[0x08, 0x06]); // EtherType = ARP
+        frame.extend_from_slice(&p);
+        assert!(parse_frame(&frame).is_none());
+    }
+
+    #[test]
+    fn parse_frame_with_vlan_but_non_arp_inner_returns_none() {
+        // 802.1Q tag wraps an IPv4 frame — should not call
+        // parse() on garbage payload.
+        let mut frame = Vec::new();
+        frame.extend_from_slice(&[0xff; 6]);
+        frame.extend_from_slice(&[0x11; 6]);
+        frame.extend_from_slice(&[0x81, 0x00]); // VLAN
+        frame.extend_from_slice(&[0x00, 0x64]); // TCI
+        frame.extend_from_slice(&[0x08, 0x00]); // EtherType = IPv4
+        frame.extend_from_slice(&[0u8; 28]); // garbage payload
+        assert!(parse_frame(&frame).is_none());
+    }
 }

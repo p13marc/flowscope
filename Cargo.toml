@@ -236,6 +236,11 @@ name = "tls_inventory"
 path = "examples/02-forensics/tls_inventory.rs"
 required-features = ["tls", "tls-fingerprints", "pcap"]
 
+[[example]]
+name = "arp_spoof_detector"
+path = "examples/02-forensics/arp_spoof_detector.rs"
+required-features = ["arp", "pcap"]
+
 # ── 03 security / detection ──────────────────────────
 [[example]]
 name = "port_scan_detector"

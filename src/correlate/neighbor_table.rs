@@ -11,6 +11,14 @@
 //! Layers on [`crate::correlate::KeyIndexed`] for the TTL +
 //! bounded-cardinality discipline.
 //!
+//! The natural producer of bindings is the `arp` feature's
+//! [`crate::arp::ArpMessage`] (gated): take each parsed reply /
+//! gratuitous announcement, call `observe(sender_ip, sender,
+//! now)`, and route the returned [`NeighborEvent`] to your
+//! anomaly emitter. The fast wire-level read path is
+//! [`crate::layers::ArpSlice`] (always-on under the
+//! `extractors` feature).
+//!
 //! Issue #1 (0.17).
 
 use std::hash::Hash;
@@ -21,8 +29,12 @@ use crate::Timestamp;
 use crate::correlate::KeyIndexed;
 
 /// Per-binding state stored in a [`NeighborTable`].
+///
+/// `#[non_exhaustive]` — future fields (per-binding metrics,
+/// debounce counters, source tag, …) will be additive.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[non_exhaustive]
 pub struct NeighborBinding<L4> {
     /// The currently-observed link-layer address.
     pub addr: L4,
@@ -41,9 +53,13 @@ pub struct NeighborBinding<L4> {
 }
 
 /// Result of observing one IP→L4 binding.
+///
+/// `#[non_exhaustive]` — future variants (e.g. `Withdrawn` for
+/// NDP `Unreachable`) will be additive.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(tag = "kind", rename_all = "snake_case"))]
+#[non_exhaustive]
 pub enum NeighborEvent<L4> {
     /// First time this IP has been seen in the table.
     NewBinding { addr: L4 },

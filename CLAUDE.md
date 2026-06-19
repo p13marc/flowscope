@@ -512,7 +512,9 @@ src/
 ├── anomaly_fields.rs            # AnomalyFields trait (plan 126, 0.12.0)
 ├── anomaly.rs                   # OwnedAnomaly value + DetectorScore trait (plan 147, 0.13.0)
 ├── timestamp.rs                 # Timestamp + write_iso8601 + to_iso8601 + chrono interop (plan 127, 0.12.0)
-├── view.rs                      # PacketView<'a> = (frame: &[u8], ts) + .layers() (plan 94, 0.9.0)
+├── view.rs                      # PacketView<'a> #[non_exhaustive] = (frame, ts, rx_metadata) + .layers() + .with_rx_metadata (issue #2, 0.17)
+├── rx_metadata.rs               # RxMetadata + RxHash + RssHashType + VlanTag + VlanProto + ChecksumStatus (issue #2, 0.17)
+├── mac_addr.rs                  # MacAddr #[repr(transparent)] newtype + Display + FromStr + predicates (issue #1, 0.17)
 ├── extractor.rs                 # FlowExtractor trait + Extracted/Orientation + AnomalyFields for L4Proto (0.12.0)
 ├── layers/                      # Per-packet layered view (plan 94 Tier 3, 0.9.0)
 │   ├── mod.rs                   # Layers + Layer + accessors + tunnel walk + dynamic walk
@@ -528,6 +530,7 @@ src/
 │   ├── ewma.rs                  # Ewma<K>                                       (plan 102 sub-A, 0.10)
 │   ├── flow_state_map.rs        # FlowStateMap<T, K> per-flow typed state       (plan 154, 0.13.0)
 │   ├── indexed.rs               # KeyIndexed<K, V>  (.peek 0.10; .get_mut + new_unbounded fix plan 154, 0.13.0; .drain_expired + .drain_expired_into plan 160, 0.14.0)
+│   ├── neighbor_table.rs        # NeighborTable<L3, L4> + NeighborBinding + NeighborEvent + ArpTable alias (issue #1, 0.17)
 │   ├── rolling_rate.rs          # RollingRate<K, V> + RateValue trait — per-key per-second rate (plan 164, 0.14.0)
 │   ├── sequence.rs              # SequencePattern + KeylessSequencePattern
 │   ├── set.rs                   # TimeBucketedSet<K, V>                         (plan 102 sub-A, 0.10)
@@ -540,6 +543,7 @@ src/
 │   │   ├── beacon.rs            # BeaconDetector<K> — RITA CV composite score
 │   │   ├── portscan.rs          # PortScanDetector<K> — TRW (Jung 2004)
 │   │   └── dga.rs               # DgaScorer — bigram log-likelihood + embedded baseline
+│   ├── fingerprint.rs           # FingerprintBuilder + FlowFingerprint (issue #4, 0.17; `fingerprint` feature)
 │   └── file/                    # File hash sinks (plan 146, 0.12.0; `file-hash` feature)
 │       ├── mod.rs               # FileHashSink trait + re-exports
 │       ├── types.rs             # FileHashEvent + FileType + magic-byte classify
@@ -570,14 +574,15 @@ src/
 │   ├── parse.rs                 # internal etherparse wrappers
 │   ├── five_tuple.rs            # FiveTuple { proto, a, b }
 │   ├── ip_pair.rs               # IpPair (proto-agnostic, useful for ICMP)
-│   ├── mac_pair.rs              # MacPair (L2 only)
+│   ├── mac_pair.rs              # MacPair (L2 only; MacAddr-typed since issue #1, 0.17)
 │   ├── encap_vlan.rs            # StripVlan<E>
 │   ├── encap_mpls.rs            # StripMpls<E>
 │   ├── encap_vxlan.rs           # InnerVxlan<E>
 │   ├── encap_gtp.rs             # InnerGtpU<E>
 │   ├── encap_gre.rs             # InnerGre<E>            (plan 50.1)
 │   ├── auto_detect.rs           # AutoDetectEncap<E>     (plan 50.3)
-│   └── flow_label.rs            # FlowLabel<E>           (plan 50.2)
+│   ├── flow_label.rs            # FlowLabel<E>           (plan 50.2)
+│   └── tagged.rs                # Tagged<E, T> + TaggedKey + Tagger trait — per-packet tag prefix (issue #5, 0.17)
 ├── event.rs                     # FlowEvent / FlowSide / EndReason / FlowStats
 │                                # AnomalyKind / OverflowPolicy   (0.2.0)
 │                                # FlowStats::{bytes_for,pkts_for,mean_pkt_size_for,direction_skew} (plan 168, 0.14.0)
@@ -626,6 +631,10 @@ src/
 │   ├── parser.rs                # parse_v4 / parse_v6 stateless decoders
 │   ├── datagram.rs              # IcmpParser (DatagramParser, plan 76, 0.7.0)
 │   └── types.rs                 # IcmpMessage / IcmpType variants + DestUnreachableKind + IcmpType::dest_unreachable_kind (plan 162, 0.14.0) + MtuSignalKind + IcmpType::mtu_signal (plan 170, 0.14.0)
+├── arp/                         # `arp` feature (issue #1, 0.17)
+│   ├── mod.rs                   # public re-exports + module doc
+│   ├── parser.rs                # arp::parse(payload) + arp::parse_frame(frame) + ArpParser marker
+│   └── types.rs                 # ArpMessage + ArpOp + is_gratuitous + is_likely_spoof
 └── pcap/                        # `pcap` feature
     └── source.rs                # PcapFlowSource — offline replay
 ```

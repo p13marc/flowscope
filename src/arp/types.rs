@@ -41,15 +41,24 @@ impl ArpMessage {
 
     /// `true` if this looks like an ARP-spoof announcement: a
     /// gratuitous reply where the target MAC differs from the
-    /// sender's MAC. The legitimate gratuitous pattern uses
-    /// `target == sender`; the spoof pattern asserts ownership
-    /// for a host that isn't the announcer.
+    /// sender's MAC and isn't a placeholder.
+    ///
+    /// Excludes the legitimate "I-just-booted" patterns:
+    /// - `target == sender` (the canonical gratuitous form).
+    /// - `target.is_zero()` (some stacks zero the target hw
+    ///   address on broadcast announcements).
+    /// - `target.is_broadcast()` (broadcast hw address as the
+    ///   target — also a normal announcement).
+    ///
+    /// Returns `false` for requests even when gratuitous; the
+    /// spoof pattern is specifically the gratuitous *reply*.
     #[inline]
     pub fn is_likely_spoof(&self) -> bool {
         matches!(self.oper, ArpOp::Reply)
             && self.is_gratuitous()
             && self.target != self.sender
             && !self.target.is_zero()
+            && !self.target.is_broadcast()
     }
 }
 
@@ -183,6 +192,22 @@ mod tests {
             [10, 0, 0, 1],
             [10, 0, 0, 1],
         );
+        assert!(!msg.is_likely_spoof());
+    }
+
+    #[test]
+    fn broadcast_target_is_not_spoof() {
+        // Broadcast announcement — host saying "I'm here, refresh
+        // your cache." Target hardware address is all-ones; this
+        // is the normal pattern, not a spoof.
+        let msg = make(
+            ArpOp::Reply,
+            [1; 6],
+            [0xff; 6], // broadcast target
+            [10, 0, 0, 1],
+            [10, 0, 0, 1],
+        );
+        assert!(msg.is_gratuitous());
         assert!(!msg.is_likely_spoof());
     }
 }

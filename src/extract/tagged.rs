@@ -4,6 +4,11 @@
 //! `netring` ≥ 0.22's multi-NIC / tap-merge facade — see
 //! [`flowscope` issue #5](https://github.com/p13marc/flowscope/issues/5)).
 //!
+//! The natural tag source on a live capture is
+//! [`crate::RxMetadata::source_idx`] (issue #2). For pcap /
+//! synthetic sources, the tag function can return any
+//! `Hash + Eq + Clone + Send + Sync + 'static` value.
+//!
 //! The classic use case: a network tap that splits a link's TX
 //! and RX across two NICs feeds the **two directions of the
 //! same flow** on two interfaces. With per-source attribution
@@ -254,5 +259,29 @@ mod tests {
         // contract — verify the combinator preserves them.
         fn assert_send_sync<T: Send + Sync + 'static>() {}
         assert_send_sync::<Tagged<FiveTuple, fn(PacketView<'_>) -> u32>>();
+    }
+
+    #[test]
+    fn inner_returns_none_propagates_without_invoking_tagger() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        // The tagger MUST not be invoked when the inner extractor
+        // refuses the frame — saves a hash/clone on the rejection
+        // path, and avoids calling a tagger that may panic on
+        // pre-extraction garbage.
+        static TAGGED_CALLED: AtomicBool = AtomicBool::new(false);
+        TAGGED_CALLED.store(false, Ordering::SeqCst);
+        let extractor = Tagged::new(FiveTuple::bidirectional(), |_: PacketView<'_>| {
+            TAGGED_CALLED.store(true, Ordering::SeqCst);
+            0u32
+        });
+        // Truncated frame: 4 bytes, way too short for an Ethernet
+        // header — FiveTuple::extract returns None.
+        let truncated = [0u8; 4];
+        let view = PacketView::new(&truncated, Timestamp::default());
+        assert!(extractor.extract(view).is_none());
+        assert!(
+            !TAGGED_CALLED.load(Ordering::SeqCst),
+            "tagger must not be called when inner returns None"
+        );
     }
 }

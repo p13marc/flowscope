@@ -16,12 +16,26 @@ pub struct MacPair;
 ///
 /// Issue #1 (0.17): migrated from raw `[u8; 6]` to the
 /// [`MacAddr`] newtype for proper Display, predicates, and
-/// type safety.
+/// type safety. Marked `#[non_exhaustive]` so a future
+/// EtherType / VLAN-context field can be added additively.
 #[derive(Debug, Clone, Copy, Hash, Eq, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[non_exhaustive]
 pub struct MacPairKey {
     pub a: MacAddr,
     pub b: MacAddr,
+}
+
+impl MacPairKey {
+    /// Construct a key from `a` + `b`.
+    ///
+    /// Does NOT enforce canonical ordering — callers that want
+    /// bidirectional equality should sort the pair before
+    /// constructing.
+    #[inline]
+    pub fn new(a: MacAddr, b: MacAddr) -> Self {
+        Self { a, b }
+    }
 }
 
 impl FlowExtractor for MacPair {

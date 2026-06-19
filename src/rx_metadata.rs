@@ -64,24 +64,37 @@ pub struct RxMetadata {
 impl RxMetadata {
     /// `true` if no fields have been populated (every Option is
     /// `None`, checksum is `Unknown`, source_idx is `0`).
+    ///
+    /// Implemented as `*self == Self::default()` so future field
+    /// additions don't silently make this return `true` for
+    /// populated metadata — `Default + PartialEq` keep the check
+    /// honest.
     pub fn is_empty(&self) -> bool {
-        self.hw_timestamp.is_none()
-            && self.rx_hash.is_none()
-            && self.vlan.is_none()
-            && matches!(self.checksum, ChecksumStatus::Unknown)
-            && self.source_idx == 0
+        *self == Self::default()
     }
 }
 
 /// RSS hash plus the type indicating which headers the NIC
 /// hashed.
+///
+/// `#[non_exhaustive]` — future fields (seed, queue index, …)
+/// will be additive.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[non_exhaustive]
 pub struct RxHash {
     /// 32-bit RSS hash value.
     pub value: u32,
     /// Which headers the NIC hashed over.
     pub ty: RssHashType,
+}
+
+impl RxHash {
+    /// Construct an `RxHash` from its value + type.
+    #[inline]
+    pub fn new(value: u32, ty: RssHashType) -> Self {
+        Self { value, ty }
+    }
 }
 
 /// Which header set the NIC's RSS hash covers.
@@ -116,13 +129,25 @@ pub enum RssHashType {
 }
 
 /// VLAN tag stripped by the NIC.
+///
+/// `#[non_exhaustive]` — future fields (inner-tag TCI for QinQ,
+/// drop count, …) will be additive.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[non_exhaustive]
 pub struct VlanTag {
     /// Tag Control Information (16 bits — PCP 3 / DEI 1 / VID 12).
     pub tci: u16,
     /// EtherType / TPID identifying the tag protocol.
     pub proto: VlanProto,
+}
+
+impl VlanTag {
+    /// Construct a `VlanTag` from its raw TCI + protocol.
+    #[inline]
+    pub fn new(tci: u16, proto: VlanProto) -> Self {
+        Self { tci, proto }
+    }
 }
 
 impl VlanTag {
@@ -206,6 +231,44 @@ mod tests {
             ..RxMetadata::default()
         };
         assert!(!m.is_empty());
+    }
+
+    #[test]
+    fn is_empty_flips_for_every_field_independently() {
+        // Guard against the failure mode where is_empty becomes
+        // stale on field addition: any single populated field
+        // must flip is_empty to false. Implemented via
+        // *self == Self::default(), so adding a future field
+        // can't silently leave is_empty returning true.
+        let with_ts = RxMetadata {
+            hw_timestamp: Some(crate::Timestamp::default()),
+            ..RxMetadata::default()
+        };
+        assert!(!with_ts.is_empty());
+
+        let with_hash = RxMetadata {
+            rx_hash: Some(RxHash::new(1, RssHashType::Unknown)),
+            ..RxMetadata::default()
+        };
+        assert!(!with_hash.is_empty());
+
+        let with_vlan = RxMetadata {
+            vlan: Some(VlanTag::new(100, VlanProto::Dot1Q)),
+            ..RxMetadata::default()
+        };
+        assert!(!with_vlan.is_empty());
+
+        let with_chk = RxMetadata {
+            checksum: ChecksumStatus::Unnecessary,
+            ..RxMetadata::default()
+        };
+        assert!(!with_chk.is_empty());
+
+        let with_src = RxMetadata {
+            source_idx: 42,
+            ..RxMetadata::default()
+        };
+        assert!(!with_src.is_empty());
     }
 
     #[test]

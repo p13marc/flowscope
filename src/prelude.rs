@@ -13,12 +13,16 @@
 //! ```
 
 pub use crate::{
-    AnomalyFields, AsPacketView, Error, ErrorCode, ErrorKind, KeyFields, Module, PacketView,
-    Result, Timestamp,
+    AnomalyFields, AsPacketView, ChecksumStatus, Error, ErrorCode, ErrorKind, KeyFields, MacAddr,
+    Module, PacketView, Result, RssHashType, RxHash, RxMetadata, Timestamp, VlanProto, VlanTag,
 };
 
+// Issue #1 (0.17): ARP visibility surface.
+#[cfg(feature = "arp")]
+pub use crate::arp::{ArpMessage, ArpOp};
+
 #[cfg(feature = "extractors")]
-pub use crate::extract::FiveTuple;
+pub use crate::extract::{FiveTuple, Tagged, TaggedKey};
 
 #[cfg(feature = "extractors")]
 pub use crate::extractor::{Extracted, FlowExtractor, L4Proto, Orientation, TcpFlags, TcpInfo};
@@ -68,3 +72,11 @@ pub use crate::icmp::{DestUnreachableKind, IcmpInner, IcmpMessage, IcmpType, Mtu
 // Plan 165 (0.14): site-custom port label table.
 #[cfg(feature = "extractors")]
 pub use crate::well_known::LabelTable;
+
+// Issue #1 (0.17): NeighborTable IP→link-layer binding tracker.
+#[cfg(feature = "tracker")]
+pub use crate::correlate::{NeighborBinding, NeighborEvent, NeighborTable};
+
+// Issue #4 (0.17): behavioural-fingerprint primitives.
+#[cfg(feature = "fingerprint")]
+pub use crate::detect::fingerprint::{FingerprintBuilder, FlowFingerprint};

@@ -19,6 +19,7 @@
 //! Issue #1 (0.17).
 
 use std::fmt;
+use std::str::FromStr;
 
 /// 48-bit Ethernet hardware address.
 ///
@@ -119,6 +120,49 @@ impl From<MacAddr> for [u8; 6] {
     }
 }
 
+/// Error returned by [`MacAddr::from_str`] for unparseable input.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ParseMacAddrError;
+
+impl fmt::Display for ParseMacAddrError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("invalid MAC address (expected six colon- or dash-separated hex bytes)")
+    }
+}
+
+impl std::error::Error for ParseMacAddrError {}
+
+impl FromStr for MacAddr {
+    type Err = ParseMacAddrError;
+
+    /// Parse `aa:bb:cc:dd:ee:ff` or `aa-bb-cc-dd-ee-ff` into a
+    /// `MacAddr`. Accepts both upper- and lower-case hex.
+    /// Rejects any other shape (12-char strings without
+    /// separators, EUI-64, etc.).
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let sep = if s.as_bytes().get(2) == Some(&b':') {
+            ':'
+        } else if s.as_bytes().get(2) == Some(&b'-') {
+            '-'
+        } else {
+            return Err(ParseMacAddrError);
+        };
+        let mut bytes = [0u8; 6];
+        let mut it = s.split(sep);
+        for slot in &mut bytes {
+            let chunk = it.next().ok_or(ParseMacAddrError)?;
+            if chunk.len() != 2 {
+                return Err(ParseMacAddrError);
+            }
+            *slot = u8::from_str_radix(chunk, 16).map_err(|_| ParseMacAddrError)?;
+        }
+        if it.next().is_some() {
+            return Err(ParseMacAddrError);
+        }
+        Ok(MacAddr(bytes))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -215,5 +259,41 @@ mod tests {
         let a = MacAddr([0, 0, 0, 0, 0, 1]);
         let b = MacAddr([0, 0, 0, 0, 0, 2]);
         assert!(a < b);
+    }
+
+    #[test]
+    fn from_str_colon_separated() {
+        let m: MacAddr = "aa:bb:cc:dd:ee:ff".parse().unwrap();
+        assert_eq!(m, MacAddr([0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff]));
+    }
+
+    #[test]
+    fn from_str_dash_separated() {
+        let m: MacAddr = "aa-bb-cc-dd-ee-ff".parse().unwrap();
+        assert_eq!(m, MacAddr([0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff]));
+    }
+
+    #[test]
+    fn from_str_uppercase_accepted() {
+        let m: MacAddr = "AA:BB:CC:DD:EE:FF".parse().unwrap();
+        assert_eq!(m, MacAddr([0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff]));
+    }
+
+    #[test]
+    fn from_str_round_trips_display() {
+        let m = MacAddr([1, 2, 3, 4, 5, 6]);
+        let s = m.to_string();
+        let back: MacAddr = s.parse().unwrap();
+        assert_eq!(m, back);
+    }
+
+    #[test]
+    fn from_str_rejects_malformed() {
+        assert!("aabbccddeeff".parse::<MacAddr>().is_err()); // no separators
+        assert!("aa:bb:cc:dd:ee".parse::<MacAddr>().is_err()); // 5 segments
+        assert!("aa:bb:cc:dd:ee:ff:00".parse::<MacAddr>().is_err()); // 7 segments
+        assert!("aa:bb:cc:dd:ee:gg".parse::<MacAddr>().is_err()); // non-hex
+        assert!("a:bb:cc:dd:ee:ff".parse::<MacAddr>().is_err()); // single-digit
+        assert!("".parse::<MacAddr>().is_err()); // empty
     }
 }
