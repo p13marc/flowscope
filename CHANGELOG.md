@@ -1,5 +1,101 @@
 # Changelog
 
+## 0.17.0 — multi-source / RX-metadata / ARP / fingerprint cycle (in progress)
+
+Driven by the four netring-flagged issues
+([#1](https://github.com/p13marc/flowscope/issues/1) /
+[#2](https://github.com/p13marc/flowscope/issues/2) /
+[#4](https://github.com/p13marc/flowscope/issues/4) /
+[#5](https://github.com/p13marc/flowscope/issues/5)) — the fifth
+([#3 QUIC Initial parser](https://github.com/p13marc/flowscope/issues/3))
+is genuinely a multi-day cycle on its own (crypto + 3 fuzz
+harnesses) and is deferred to its own release.
+
+### Breaking (pre-1.0)
+
+- **`PacketView` and `OwnedPacketView` are `#[non_exhaustive]`**
+  (issue #2). Struct-literal construction from outside the crate
+  no longer compiles. Migration: use `PacketView::new(frame,
+  ts)` (shipped since 0.2) and the new
+  `.with_rx_metadata(rx)` builder. This break unlocks every
+  future `PacketView` field addition being purely additive.
+- **`MacPairKey::a` / `.b` are now `MacAddr` instead of `[u8; 6]`**
+  (issue #1). `MacAddr` is a `#[repr(transparent)]` newtype with
+  `Display` (`aa:bb:cc:dd:ee:ff`), predicates (`is_broadcast` /
+  `is_multicast` / `is_unicast` / `is_locally_administered` /
+  `is_zero`), `ZERO` + `BROADCAST` constants, and
+  `From<[u8; 6]>` / `Into<[u8; 6]>` for wire-format interop.
+
+### Added
+
+#### Issue #5 — `Tagged<E, T>` extractor combinator (tap-merge)
+
+`flowscope::extract::Tagged<E, T>` prefixes any extractor's key
+with a per-packet tag. Per-source attribution becomes
+`Tagged::new(extractor, tag_fn)`; source-merged stays the bare
+extractor. The `FlowTracker` requires no API change — the
+merge knob is purely at extractor registration time. Pairs
+naturally with `RxMetadata::source_idx` (see #2).
+
+#### Issue #2 — `RxMetadata` on `PacketView`
+
+`flowscope::rx_metadata::RxMetadata { hw_timestamp, rx_hash,
+vlan, checksum, source_idx }` — per-packet hardware-provided
+metadata threaded through from the NIC's receive path. Every
+field is independently optional / defaulted, so pcap /
+synthetic sources need no changes. Mirrors Linux's
+`XDP_RX_METADATA_*` enumeration for direct netring translation.
+Re-exported at crate root: `ChecksumStatus`, `RssHashType`,
+`RxHash`, `RxMetadata`, `VlanProto`, `VlanTag`. `VlanTag`
+ships `.vid() / .pcp() / .dei()` accessors.
+
+#### Issue #1 — `MacAddr` + `arp` feature + `NeighborTable`
+
+- Crate-root `MacAddr` newtype (see Breaking above).
+- New opt-in `arp` feature:
+  - `flowscope::arp::ArpMessage { oper, sender, sender_ip,
+    target, target_ip }` — always IPv4-over-Ethernet,
+    non-conforming wire shapes rejected at parse.
+  - `ArpOp::{ Request, Reply, RarpRequest, RarpReply, Other(u16) }`
+    with `as_str()` slugs + `From<u16>`.
+  - `ArpMessage::is_gratuitous()` + `is_likely_spoof()`
+    convenience predicates (spoof = gratuitous reply with
+    `target_mac != sender_mac`).
+  - `arp::parse(payload)` / `arp::parse_frame(frame)` —
+    stateless free-function parser (ARP has no 5-tuple flow
+    concept; consumers integrate by checking EtherType
+    `0x0806`). `parse_frame` strips one 802.1Q VLAN tag
+    transparently.
+- New always-on `flowscope::correlate::NeighborTable<L3, L4>` —
+  generic IP→link-layer binding tracker with TTL + LRU
+  bounds. Generic from day one so the future IPv6 NDP module
+  reuses the same storage without rename. Returns
+  `NeighborEvent::{ NewBinding, Refresh, Changed }` from
+  `.observe(ip, addr, now)`.
+- `correlate::ArpTable` type alias under `arp` feature.
+- `l7` umbrella now includes `arp`.
+
+#### Issue #4 — `flowscope::detect::fingerprint`
+
+New opt-in `fingerprint` feature — encrypted-flow behavioural
+fingerprinting via packet-length + inter-arrival sequences.
+
+- `FingerprintBuilder` — alloc-free per-flow accumulator.
+  `.observe(payload_len, is_initiator, ts_micros)` is the
+  per-packet hook. Backed by `ArrayVec<_, 32>`; further packets
+  past the 32-sample cap silently no-op the sequence push but
+  keep updating aggregate counters.
+- `FlowFingerprint` — finalised form. Hashable + serde. Two
+  consumer surfaces: `fnv1a() -> u64` for IOC equality;
+  `as_features() -> [f64; 8]` for ML-pipeline export.
+- Prior-art citations: Cisco Joy / Mercury (SPLT); FoxIO
+  JA4L / JA4LS; Anderson & McGrew (ACM AISec 2016).
+- Privacy footnote in module rustdoc.
+
+Test count: **994 passing** (+59 over 0.16.0). Zero clippy
+warnings under `--all-features --all-targets -D warnings`,
+zero rustdoc warnings.
+
 ## 0.16.0 — JA4S behind opt-in `ja4plus` (FoxIO License)
 
 **Licensing correction (breaking for JA4S users).** JA4S is part of the JA4+
