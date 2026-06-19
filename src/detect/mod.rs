@@ -38,6 +38,8 @@
 
 #[cfg(feature = "file-hash")]
 pub mod file;
+#[cfg(feature = "fingerprint")]
+pub mod fingerprint;
 pub mod patterns;
 pub mod signatures;
 
