@@ -241,10 +241,7 @@ impl<R: Read> Iterator for ViewIter<R> {
                     self.prev_pcap_ts = Some(p.timestamp);
                 }
                 let ts = Timestamp::new(p.timestamp.as_secs() as u32, p.timestamp.subsec_nanos());
-                Some(Ok(OwnedPacketView {
-                    frame: p.data.into_owned(),
-                    timestamp: ts,
-                }))
+                Some(Ok(OwnedPacketView::new(p.data.into_owned(), ts)))
             }
             Err(e) => Some(Err(Error::parse_with(
                 Module::Pcap,
@@ -424,10 +421,7 @@ mod tests {
     /// can be passed straight to `track()` without `as_view()`.
     #[test]
     fn owned_view_converts_to_packet_view() {
-        let owned = OwnedPacketView {
-            frame: vec![1, 2, 3, 4],
-            timestamp: Timestamp::new(7, 42),
-        };
+        let owned = OwnedPacketView::new(vec![1, 2, 3, 4], Timestamp::new(7, 42));
         let pv: crate::PacketView<'_> = (&owned).into();
         assert_eq!(pv.frame, &[1, 2, 3, 4]);
         assert_eq!(pv.timestamp, Timestamp::new(7, 42));

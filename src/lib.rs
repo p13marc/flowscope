@@ -71,10 +71,12 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
 mod error;
+pub mod rx_metadata;
 mod timestamp;
 mod view;
 
 pub use error::{Error, ErrorCode, ErrorKind, Module, Result};
+pub use rx_metadata::{ChecksumStatus, RssHashType, RxHash, RxMetadata, VlanProto, VlanTag};
 
 pub mod extractor;
 

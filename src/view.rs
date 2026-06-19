@@ -6,16 +6,30 @@
 //! handoff between "any source of bytes" and the extractor pipeline.
 
 use crate::Timestamp;
+use crate::rx_metadata::RxMetadata;
 
 /// What a [`crate::FlowExtractor`] is given.
 ///
-/// Holds a borrowed frame slice and the timestamp it was observed.
-/// Constructed from a `netring::Packet` via `Packet::view()` for live
-/// captures, or built directly for pcap-replay / synthetic / test use.
+/// Holds a borrowed frame slice, the timestamp it was observed,
+/// and optional per-packet hardware metadata (RSS hash, hardware
+/// timestamp, VLAN tag, checksum status, capture-source index).
+///
+/// Constructed from a `netring::Packet` via `Packet::view()` for
+/// live captures, or built directly for pcap-replay / synthetic /
+/// test use. The [`rx_metadata`](Self::rx_metadata) field is
+/// `RxMetadata::default()` (all-absent) when the source doesn't
+/// populate it.
+///
+/// `#[non_exhaustive]` — construct via [`PacketView::new`] /
+/// [`PacketView::with_rx_metadata`] / [`PacketView::with_frame`].
+/// Future fields are additive (capture chain pointer, additional
+/// hardware offloads, …) and won't require new constructors.
 ///
 /// Decap combinators ([`crate::extract::StripVlan`], etc.) construct
-/// new views pointing at inner frames while preserving the timestamp.
+/// new views pointing at inner frames while preserving the timestamp
+/// + rx_metadata.
 #[derive(Debug, Clone, Copy)]
+#[non_exhaustive]
 pub struct PacketView<'a> {
     /// The frame bytes, starting from L2 (Ethernet) or L3 (raw IP)
     /// depending on the source. Built-in extractors expect L2.
@@ -23,13 +37,37 @@ pub struct PacketView<'a> {
 
     /// Timestamp at which this packet was observed.
     pub timestamp: Timestamp,
+
+    /// Per-packet hardware metadata (RSS hash, HW timestamp,
+    /// VLAN, checksum status, source_idx). `RxMetadata::default()`
+    /// is all-absent — sources that don't populate it leave it so.
+    ///
+    /// Issue #2 (0.17).
+    pub rx_metadata: RxMetadata,
 }
 
 impl<'a> PacketView<'a> {
-    /// Construct a view from a frame slice and timestamp.
+    /// Construct a view from a frame slice and timestamp. The
+    /// `rx_metadata` field is `RxMetadata::default()`. Pre-0.17
+    /// callers continue to compile unchanged.
     #[inline]
     pub fn new(frame: &'a [u8], timestamp: Timestamp) -> Self {
-        Self { frame, timestamp }
+        Self {
+            frame,
+            timestamp,
+            rx_metadata: RxMetadata::default(),
+        }
+    }
+
+    /// Builder — attach hardware-provided receive metadata to a
+    /// view. Live-capture sources (netring) call this to thread
+    /// the AF_XDP metadata area through.
+    ///
+    /// Issue #2 (0.17).
+    #[inline]
+    pub fn with_rx_metadata(mut self, rx_metadata: RxMetadata) -> Self {
+        self.rx_metadata = rx_metadata;
+        self
     }
 
     /// Parse the frame into a layered view.
@@ -42,9 +80,9 @@ impl<'a> PacketView<'a> {
         crate::layers::Layers::parse_ethernet(self.frame)
     }
 
-    /// Replace `frame` with a new slice, keep the timestamp. Used by
-    /// decap combinators to delegate to an inner extractor without
-    /// losing context.
+    /// Replace `frame` with a new slice, keep the timestamp +
+    /// rx_metadata. Used by decap combinators to delegate to an
+    /// inner extractor without losing context.
     #[inline]
     pub fn with_frame<'b>(self, frame: &'b [u8]) -> PacketView<'b>
     where
@@ -53,6 +91,7 @@ impl<'a> PacketView<'a> {
         PacketView {
             frame,
             timestamp: self.timestamp,
+            rx_metadata: self.rx_metadata,
         }
     }
 }
@@ -92,22 +131,48 @@ impl<'a, T: AsPacketView + ?Sized> From<&'a T> for PacketView<'a> {
 }
 
 /// An owned [`PacketView`] — frame bytes in a `Vec<u8>` plus
-/// timestamp. Use [`as_view`](Self::as_view) to get a borrowed
-/// `PacketView<'_>`.
+/// timestamp and per-packet hardware metadata. Use
+/// [`as_view`](Self::as_view) to get a borrowed `PacketView<'_>`.
 ///
 /// Lives outside any feature gate so custom packet sources (eBPF
 /// userspace, embedded, synthetic / test fixtures) can produce
 /// the same owned shape the pcap source uses.
+///
+/// `#[non_exhaustive]` — construct via [`OwnedPacketView::new`]
+/// (Issue #2, 0.17).
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct OwnedPacketView {
     pub frame: Vec<u8>,
     pub timestamp: Timestamp,
+    /// Per-packet hardware metadata; defaults to all-absent.
+    /// Issue #2 (0.17).
+    pub rx_metadata: RxMetadata,
 }
 
 impl OwnedPacketView {
-    /// Borrow as a [`PacketView`].
+    /// Construct with default (empty) rx_metadata. Pre-0.17
+    /// callers continue to compile.
+    #[inline]
+    pub fn new(frame: Vec<u8>, timestamp: Timestamp) -> Self {
+        Self {
+            frame,
+            timestamp,
+            rx_metadata: RxMetadata::default(),
+        }
+    }
+
+    /// Builder — attach hardware-provided receive metadata.
+    #[inline]
+    pub fn with_rx_metadata(mut self, rx_metadata: RxMetadata) -> Self {
+        self.rx_metadata = rx_metadata;
+        self
+    }
+
+    /// Borrow as a [`PacketView`]. Carries the rx_metadata
+    /// through.
     pub fn as_view(&self) -> PacketView<'_> {
-        PacketView::new(&self.frame, self.timestamp)
+        PacketView::new(&self.frame, self.timestamp).with_rx_metadata(self.rx_metadata)
     }
 }
 
