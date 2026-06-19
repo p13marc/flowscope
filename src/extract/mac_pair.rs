@@ -1,5 +1,6 @@
 //! [`MacPair`] — L2 MAC pair extractor.
 
+use crate::MacAddr;
 use crate::extractor::{Extracted, FlowExtractor, Orientation};
 use crate::view::PacketView;
 
@@ -11,11 +12,16 @@ use crate::view::PacketView;
 #[derive(Debug, Clone, Copy, Default)]
 pub struct MacPair;
 
+/// Bidirectional MAC pair (canonical ordering: `a < b`).
+///
+/// Issue #1 (0.17): migrated from raw `[u8; 6]` to the
+/// [`MacAddr`] newtype for proper Display, predicates, and
+/// type safety.
 #[derive(Debug, Clone, Copy, Hash, Eq, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct MacPairKey {
-    pub a: [u8; 6],
-    pub b: [u8; 6],
+    pub a: MacAddr,
+    pub b: MacAddr,
 }
 
 impl FlowExtractor for MacPair {
@@ -30,9 +36,9 @@ impl FlowExtractor for MacPair {
         dst.copy_from_slice(&view.frame[0..6]);
         src.copy_from_slice(&view.frame[6..12]);
         let (a, b, orientation) = if src > dst {
-            (dst, src, Orientation::Reverse)
+            (MacAddr(dst), MacAddr(src), Orientation::Reverse)
         } else {
-            (src, dst, Orientation::Forward)
+            (MacAddr(src), MacAddr(dst), Orientation::Forward)
         };
         Some(Extracted {
             key: MacPairKey { a, b },
@@ -57,8 +63,8 @@ mod tests {
             .extract(PacketView::new(&f, Timestamp::default()))
             .unwrap();
         // src < dst so a=src, b=dst, orientation=forward
-        assert_eq!(e.key.a, [0x11, 0x22, 0x33, 0x44, 0x55, 0x66]);
-        assert_eq!(e.key.b, [0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff]);
+        assert_eq!(e.key.a, MacAddr([0x11, 0x22, 0x33, 0x44, 0x55, 0x66]));
+        assert_eq!(e.key.b, MacAddr([0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff]));
         assert_eq!(e.orientation, Orientation::Forward);
     }
 

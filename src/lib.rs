@@ -71,11 +71,13 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
 mod error;
+pub mod mac_addr;
 pub mod rx_metadata;
 mod timestamp;
 mod view;
 
 pub use error::{Error, ErrorCode, ErrorKind, Module, Result};
+pub use mac_addr::MacAddr;
 pub use rx_metadata::{ChecksumStatus, RssHashType, RxHash, RxMetadata, VlanProto, VlanTag};
 
 pub mod extractor;
@@ -158,6 +160,11 @@ pub mod icmp;
 // enum surfaced at the crate root.
 #[cfg(feature = "icmp")]
 pub use icmp::{DestUnreachableKind, MtuSignalKind};
+// Issue #1 (0.17): ARP visibility — opt-in via the `arp` feature.
+#[cfg(feature = "arp")]
+pub mod arp;
+#[cfg(feature = "arp")]
+pub use arp::{ArpMessage, ArpOp};
 #[cfg(feature = "pcap")]
 pub mod pcap;
 #[cfg(feature = "tls")]

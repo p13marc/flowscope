@@ -53,6 +53,7 @@
 mod bucketed;
 mod burst;
 mod ewma;
+mod neighbor_table;
 mod rolling_rate;
 // FlowStateMap defaults its key type to `crate::extract::FiveTupleKey`,
 // which only exists under the `extractors` feature. Gate the module
@@ -71,6 +72,9 @@ pub use ewma::Ewma;
 #[cfg(feature = "extractors")]
 pub use flow_state_map::FlowStateMap;
 pub use indexed::KeyIndexed;
+pub use neighbor_table::{NeighborBinding, NeighborEvent, NeighborTable};
+#[cfg(feature = "arp")]
+pub use neighbor_table::ArpTable;
 pub use rolling_rate::{RateValue, RollingRate};
 pub use sequence::{KeylessSequencePattern, SequencePattern};
 pub use set::TimeBucketedSet;

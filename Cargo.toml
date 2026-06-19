@@ -111,10 +111,14 @@ tls-fingerprints = ["tls", "dep:md-5", "dep:sha2", "dep:hex"]
 ja4plus = ["tls-fingerprints"]
 dns = ["extractors", "tracker", "session", "dep:simple-dns", "dep:bytes"]
 icmp = ["extractors", "tracker", "session", "dep:bytes"]
+# ARP visibility — datagram-style parser for EtherType 0x0806 (Issue #1, 0.17).
+# `MacAddr` is unconditional at the crate root; `arp` adds the message types,
+# parser, and the NeighborTable correlator.
+arp = ["extractors", "tracker", "session", "dep:bytes"]
 
 # Umbrella: enable every shipped L7 protocol parser at once. Strict
 # subset of `full` (no `pcap`, no observability).
-l7 = ["http", "tls", "tls-fingerprints", "dns", "icmp"]
+l7 = ["http", "tls", "tls-fingerprints", "dns", "icmp", "arp"]
 
 # pcap source adapter (offline replay).
 pcap = ["extractors", "tracker", "dep:pcap-file"]
@@ -164,7 +168,7 @@ aggregate = ["dep:tdigest"]
 chrono = ["dep:chrono"]
 
 # Convenience: turn everything on.
-full = ["http", "tls", "tls-fingerprints", "dns", "icmp", "pcap", "metrics", "tracing", "serde", "emit", "emit-ndjson", "emit-eve", "aggregate", "chrono", "file-hash"]
+full = ["http", "tls", "tls-fingerprints", "dns", "icmp", "arp", "pcap", "metrics", "tracing", "serde", "emit", "emit-ndjson", "emit-eve", "aggregate", "chrono", "file-hash"]
 
 [package.metadata.docs.rs]
 all-features = true
