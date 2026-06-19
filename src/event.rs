@@ -1,6 +1,6 @@
 //! Events emitted by [`crate::FlowTracker`] as packets flow through it.
 
-use crate::{extractor::L4Proto, history::HistoryString, Timestamp};
+use crate::{Timestamp, extractor::L4Proto, history::HistoryString};
 
 /// Which side of a flow a packet belongs to.
 ///
@@ -339,11 +339,7 @@ impl FlowStats {
 /// flows and time-machine-stamps).
 #[inline]
 fn safe_div_u64(num: u64, den: f64) -> f64 {
-    if den > 0.0 {
-        num as f64 / den
-    } else {
-        0.0
-    }
+    if den > 0.0 { num as f64 / den } else { 0.0 }
 }
 
 /// Lifecycle state of a flow as tracked by [`crate::FlowTracker`].

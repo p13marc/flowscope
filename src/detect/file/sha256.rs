@@ -3,8 +3,8 @@
 use sha2::{Digest, Sha256};
 
 use super::{
-    types::{classify, FileHashEvent, FileType},
     FileHashSink,
+    types::{FileHashEvent, FileType, classify},
 };
 
 /// Streaming SHA-256 sink.

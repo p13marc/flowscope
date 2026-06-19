@@ -38,7 +38,7 @@ use std::{
     time::Duration,
 };
 
-use crate::{view::PacketView, Timestamp};
+use crate::{Timestamp, view::PacketView};
 
 /// Bounded content-hash dedup. Cheap to construct; cheap per
 /// packet.

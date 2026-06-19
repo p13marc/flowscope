@@ -8,9 +8,9 @@
 ))]
 
 use flowscope::{
-    driver::{BroadcastSlotHandle, Driver},
-    extract::{parse::test_frames::ipv4_tcp, FiveTuple},
     PacketView, SessionParser, Timestamp,
+    driver::{BroadcastSlotHandle, Driver},
+    extract::{FiveTuple, parse::test_frames::ipv4_tcp},
 };
 use static_assertions::assert_impl_all;
 

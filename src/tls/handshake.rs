@@ -8,11 +8,11 @@
 //! handshake outcome.
 
 use super::{
+    TlsParser,
     session::TlsMessage,
     types::{TlsConfig, TlsVersion},
-    TlsParser,
 };
-use crate::{session::SessionParser, Timestamp};
+use crate::{Timestamp, session::SessionParser};
 
 /// Stable identifier for the handshake aggregator. Plan 118 §4 —
 /// makes the slug available via
@@ -304,7 +304,7 @@ mod tests {
     #[cfg(feature = "ja4plus")]
     #[test]
     fn aggregator_captures_ja4s_onto_the_handshake() {
-        use super::super::{types::TlsServerHello, TlsMessage};
+        use super::super::{TlsMessage, types::TlsServerHello};
 
         let mut p = TlsHandshakeParser::default();
         let mut out = Vec::new();

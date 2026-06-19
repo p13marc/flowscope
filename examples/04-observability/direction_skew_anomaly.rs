@@ -27,7 +27,7 @@
 //! [`FlowStats::bytes_for`]: flowscope::FlowStats::bytes_for
 //! [`FlowStats::duration_secs`]: flowscope::FlowStats::duration_secs
 
-use flowscope::{extract::FiveTuple, pcap::PcapFlowSource, FlowEvent, FlowSide, FlowTracker};
+use flowscope::{FlowEvent, FlowSide, FlowTracker, extract::FiveTuple, pcap::PcapFlowSource};
 
 /// Threshold for one-sided detection. |skew| > THRESH triggers
 /// the anomaly. 0.9 means "responder contributes <5% or

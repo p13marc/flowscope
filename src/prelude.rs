@@ -54,12 +54,12 @@ pub use crate::session::{DatagramParser, SessionEvent, SessionParser};
 #[cfg(feature = "tracker")]
 pub use crate::tracker::{FlowTracker, FlowTrackerConfig};
 // Plan 165 (0.14): site-custom port label table.
-#[cfg(feature = "extractors")]
-pub use crate::well_known::LabelTable;
 #[cfg(all(feature = "extractors", feature = "reassembler", feature = "session"))]
 pub use crate::FlowDatagramDriver;
 #[cfg(all(feature = "reassembler", feature = "session"))]
 pub use crate::FlowSessionDriver;
+#[cfg(feature = "extractors")]
+pub use crate::well_known::LabelTable;
 pub use crate::{
     AnomalyFields, AsPacketView, ChecksumStatus, Error, ErrorCode, ErrorKind, KeyFields, MacAddr,
     Module, PacketView, Result, RssHashType, RxHash, RxMetadata, Timestamp, VlanProto, VlanTag,

@@ -14,7 +14,7 @@
 //! ```
 
 use flowscope::{
-    aggregate::Histogram, extract::FiveTuple, pcap::PcapFlowSource, FlowEvent, FlowTracker,
+    FlowEvent, FlowTracker, aggregate::Histogram, extract::FiveTuple, pcap::PcapFlowSource,
 };
 
 const LABELS: &[&str] = &[

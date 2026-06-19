@@ -13,15 +13,15 @@
 //! change the synthetic traffic shape.
 
 use std::{
-    fs::{create_dir_all, File},
+    fs::{File, create_dir_all},
     io::BufWriter,
     time::Duration,
 };
 
 use flowscope::extract::parse::test_frames::{ipv4_tcp, ipv4_udp};
 use pcap_file::{
-    pcap::{PcapHeader, PcapPacket, PcapWriter},
     DataLink,
+    pcap::{PcapHeader, PcapPacket, PcapWriter},
 };
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {

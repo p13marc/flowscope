@@ -14,10 +14,10 @@
 //! if no path is provided.
 
 use flowscope::{
+    FlowSide, SessionParser, Timestamp,
     driver::{Driver, Event, SlotMessage},
     extract::{FiveTuple, FiveTupleKey},
     pcap::PcapFlowSource,
-    FlowSide, SessionParser, Timestamp,
 };
 
 /// Synthetic "parser A" — first byte → message.

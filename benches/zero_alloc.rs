@@ -17,17 +17,17 @@
 mod counting_allocator;
 
 use counting_allocator::CountingAllocator;
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, black_box, criterion_group, criterion_main};
 
 #[global_allocator]
 static GLOBAL: CountingAllocator = CountingAllocator;
 
 use flowscope::{
-    extract::{
-        parse::test_frames::{ipv4_tcp, ipv4_udp},
-        FiveTuple,
-    },
     PacketView, Timestamp,
+    extract::{
+        FiveTuple,
+        parse::test_frames::{ipv4_tcp, ipv4_udp},
+    },
 };
 
 const N_PACKETS: usize = 10_000;
@@ -168,8 +168,8 @@ fn bench_track_into_steady_state(c: &mut Criterion) {
 #[cfg(all(feature = "session", feature = "http"))]
 fn bench_parser_feed_steady_state(c: &mut Criterion) {
     use flowscope::{
-        http::{HttpMessage, HttpParser},
         SessionParser,
+        http::{HttpMessage, HttpParser},
     };
 
     let req = b"GET /index.html HTTP/1.1\r\nHost: example.com\r\nUser-Agent: bench\r\nAccept: */*\r\n\r\n";
@@ -206,8 +206,8 @@ fn bench_parser_feed_steady_state(c: &mut Criterion) {
 #[cfg(feature = "http")]
 fn bench_http_request_parse(c: &mut Criterion) {
     use flowscope::{
-        http::{HttpMessage, HttpParser},
         SessionParser,
+        http::{HttpMessage, HttpParser},
     };
 
     let req = b"GET /api/v1/users?id=42 HTTP/1.1\r\n\
@@ -249,8 +249,8 @@ fn bench_http_request_parse(c: &mut Criterion) {
 #[cfg(feature = "dns")]
 fn bench_dns_response_5_txt(c: &mut Criterion) {
     use flowscope::{
-        dns::{DnsMessage, DnsUdpParser},
         DatagramParser, FlowSide,
+        dns::{DnsMessage, DnsUdpParser},
     };
 
     let mut pkt = vec![
@@ -304,8 +304,8 @@ fn bench_dns_response_5_txt(c: &mut Criterion) {
 #[cfg(feature = "tls")]
 fn bench_tls_client_hello(c: &mut Criterion) {
     use flowscope::{
-        tls::{TlsMessage, TlsParser},
         SessionParser,
+        tls::{TlsMessage, TlsParser},
     };
 
     let hello: &[u8] = &[

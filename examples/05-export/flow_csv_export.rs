@@ -11,9 +11,9 @@
 //!     -- trace.pcap > flows.csv
 //! ```
 
-use std::io::{stdout, BufWriter};
+use std::io::{BufWriter, stdout};
 
-use flowscope::{emit::FlowEventCsvWriter, extract::FiveTuple, pcap::PcapFlowSource, FlowTracker};
+use flowscope::{FlowTracker, emit::FlowEventCsvWriter, extract::FiveTuple, pcap::PcapFlowSource};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let path = std::env::args()

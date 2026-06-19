@@ -15,13 +15,13 @@
 //! cat eve.json | jq 'select(.event_type=="flow") | .flow_hash'
 //! ```
 
-use std::io::{stdout, BufWriter};
+use std::io::{BufWriter, stdout};
 
 use flowscope::{
+    FlowTracker,
     emit::{EveJsonWriter, EveOptions},
     extract::FiveTuple,
     pcap::PcapFlowSource,
-    FlowTracker,
 };
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {

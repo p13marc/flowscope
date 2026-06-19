@@ -7,8 +7,8 @@
 use std::io::Cursor;
 
 use flowscope::{
-    extract::FiveTuple, pcap::PcapFlowSource, DatagramParser, FlowSide, SessionEvent,
-    SessionParser, Timestamp,
+    DatagramParser, FlowSide, SessionEvent, SessionParser, Timestamp, extract::FiveTuple,
+    pcap::PcapFlowSource,
 };
 
 const HTTP_SESSION: &[u8] = include_bytes!("data/http_session.pcap");

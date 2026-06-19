@@ -15,13 +15,13 @@ fn arp_request_frame() -> Vec<u8> {
     f[0..6].copy_from_slice(&[0xff; 6]); // dst MAC = broadcast
     f[6..12].copy_from_slice(&[0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff]);
     f[12..14].copy_from_slice(&0x0806u16.to_be_bytes()); // ARP ethertype
-                                                         // ARP header
+    // ARP header
     f[14..16].copy_from_slice(&1u16.to_be_bytes()); // HTYPE = Ethernet
     f[16..18].copy_from_slice(&0x0800u16.to_be_bytes()); // PTYPE = IPv4
     f[18] = 6; // HLEN
     f[19] = 4; // PLEN
     f[20..22].copy_from_slice(&1u16.to_be_bytes()); // OPER = request
-                                                    // SHA + SPA + THA + TPA
+    // SHA + SPA + THA + TPA
     f[22..28].copy_from_slice(&[0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff]);
     f[28..32].copy_from_slice(&[192, 168, 1, 100]);
     f[32..38].copy_from_slice(&[0; 6]);

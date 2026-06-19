@@ -29,7 +29,7 @@
 use std::{hash::Hash, time::Duration};
 
 use super::indexed::KeyIndexed;
-use crate::{event::FlowEvent, Timestamp};
+use crate::{Timestamp, event::FlowEvent};
 
 /// Per-flow typed state, keyed by `FiveTupleKey` (default) or
 /// any `K: Hash + Eq + Clone`.

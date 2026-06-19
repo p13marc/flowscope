@@ -6,10 +6,10 @@
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
 use flowscope::{
-    extract::{parse::test_frames::ipv4_tcp, FiveTuple, FiveTupleKey},
+    FlowTracker, PacketView, Timestamp,
+    extract::{FiveTuple, FiveTupleKey, parse::test_frames::ipv4_tcp},
     extractor::L4Proto,
     icmp::IcmpInner,
-    FlowTracker, PacketView, Timestamp,
 };
 
 fn synth_tcp_flow(tracker: &mut FlowTracker<FiveTuple, ()>) {

@@ -25,8 +25,8 @@ use std::{
 use serde_json::json;
 
 use crate::{
-    event::{AnomalyKind, EndReason, FlowEvent, FlowStats, Severity},
     AnomalyFields, KeyFields,
+    event::{AnomalyKind, EndReason, FlowEvent, FlowStats, Severity},
 };
 
 /// Suricata EVE JSON writer. One JSON object per line.
@@ -463,7 +463,7 @@ mod tests {
 
     #[test]
     fn flow_hash_direction_invariant() {
-        use crate::{extract::FiveTupleKey, L4Proto};
+        use crate::{L4Proto, extract::FiveTupleKey};
         let a = FiveTupleKey {
             proto: L4Proto::Tcp,
             a: "10.0.0.1:33000".parse().unwrap(),

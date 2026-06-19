@@ -12,7 +12,7 @@
 
 use std::{collections::HashMap, net::IpAddr};
 
-use flowscope::{extract::FiveTuple, pcap::PcapFlowSource, FlowEvent, FlowTracker};
+use flowscope::{FlowEvent, FlowTracker, extract::FiveTuple, pcap::PcapFlowSource};
 
 #[derive(Default, Clone, Copy)]
 struct Rollup {

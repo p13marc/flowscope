@@ -14,9 +14,10 @@ use crossbeam_queue::SegQueue;
 use super::{
     slot::{SlotHandle, SlotMessage},
     typed::Event,
-    typed_slot::{route_session_event_pub, ErasedSlot},
+    typed_slot::{ErasedSlot, route_session_event_pub},
 };
 use crate::{
+    PacketView, Timestamp,
     datagram_driver::FlowDatagramDriver,
     detect::signatures::{SignatureFn, SignatureMatch},
     extract::parse::{self, ParsedL4},
@@ -24,7 +25,6 @@ use crate::{
     session::{DatagramParser, SessionEvent, SessionParser},
     session_driver::FlowSessionDriver,
     tracker::FlowTrackerConfig,
-    PacketView, Timestamp,
 };
 
 /// Buffer cap per side during the probing phase. Every shipped

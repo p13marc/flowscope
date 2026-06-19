@@ -143,7 +143,7 @@ mod tests {
     use etherparse::{Ethernet2Header, IpNumber, Ipv4Header, TcpHeader, UdpHeader};
 
     use super::*;
-    use crate::{extract::FiveTuple, Timestamp};
+    use crate::{Timestamp, extract::FiveTuple};
 
     fn gtpu_ipv4_tcp(teid: u32, port: u16) -> Vec<u8> {
         // Inner IPv4/TCP (no Ethernet)
@@ -217,9 +217,11 @@ mod tests {
     #[test]
     fn wrong_port_returns_none() {
         let f = gtpu_ipv4_tcp(1, 9999);
-        assert!(InnerGtpU::new(FiveTuple::bidirectional())
-            .extract(PacketView::new(&f, Timestamp::default()))
-            .is_none());
+        assert!(
+            InnerGtpU::new(FiveTuple::bidirectional())
+                .extract(PacketView::new(&f, Timestamp::default()))
+                .is_none()
+        );
     }
 
     #[test]
@@ -237,8 +239,10 @@ mod tests {
             0x02,
             b"",
         );
-        assert!(InnerGtpU::new(FiveTuple::bidirectional())
-            .extract(PacketView::new(&f, Timestamp::default()))
-            .is_none());
+        assert!(
+            InnerGtpU::new(FiveTuple::bidirectional())
+                .extract(PacketView::new(&f, Timestamp::default()))
+                .is_none()
+        );
     }
 }

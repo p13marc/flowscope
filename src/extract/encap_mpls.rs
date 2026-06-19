@@ -92,7 +92,7 @@ mod tests {
     use etherparse::{IpNumber, Ipv4Header, TcpHeader};
 
     use super::*;
-    use crate::{extract::FiveTuple, Timestamp};
+    use crate::{Timestamp, extract::FiveTuple};
 
     /// Build an Ethernet/MPLS/IPv4/TCP frame with a single label.
     fn mpls_ipv4_tcp_single_label(label: u32) -> Vec<u8> {
@@ -172,16 +172,20 @@ mod tests {
     fn non_mpls_returns_none() {
         let f = vec![0u8; 64];
         // ethertype defaults to 0x0000 — not MPLS.
-        assert!(StripMpls(FiveTuple::bidirectional())
-            .extract(PacketView::new(&f, Timestamp::default()))
-            .is_none());
+        assert!(
+            StripMpls(FiveTuple::bidirectional())
+                .extract(PacketView::new(&f, Timestamp::default()))
+                .is_none()
+        );
     }
 
     #[test]
     fn truncated_returns_none() {
         let f = vec![0u8; 5];
-        assert!(StripMpls(FiveTuple::bidirectional())
-            .extract(PacketView::new(&f, Timestamp::default()))
-            .is_none());
+        assert!(
+            StripMpls(FiveTuple::bidirectional())
+                .extract(PacketView::new(&f, Timestamp::default()))
+                .is_none()
+        );
     }
 }

@@ -19,10 +19,10 @@
 //! machine, splitting-invariant accumulator, no panic on garbage.
 
 use flowscope::{
+    FlowSide, SessionParser, Timestamp,
     driver::{Driver, Event, SlotMessage},
     extract::{FiveTuple, FiveTupleKey},
     pcap::PcapFlowSource,
-    FlowSide, SessionParser, Timestamp,
 };
 
 #[derive(Debug, Clone)]

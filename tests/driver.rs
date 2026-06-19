@@ -14,12 +14,12 @@
 ))]
 
 use flowscope::{
+    DatagramParser, FlowSide, PacketView, SessionParser, Timestamp,
     driver::{Driver, Event, SlotMessage},
     extract::{
-        parse::test_frames::{ipv4_tcp, ipv4_udp},
         FiveTuple,
+        parse::test_frames::{ipv4_tcp, ipv4_udp},
     },
-    DatagramParser, FlowSide, PacketView, SessionParser, Timestamp,
 };
 
 #[derive(Default, Clone)]
@@ -110,9 +110,11 @@ fn session_slot_drains_typed_messages() {
 
     // Lifecycle should have FlowStarted + FlowPacket — but NO
     // Message variant (it doesn't exist on Event<K>).
-    assert!(events
-        .iter()
-        .any(|e| matches!(e, Event::FlowStarted { .. })));
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, Event::FlowStarted { .. }))
+    );
     assert!(events.iter().any(|e| matches!(e, Event::FlowPacket { .. })));
 
     // Typed messages drain from the slot handle.
@@ -342,9 +344,11 @@ fn event_tcp_accessor_returns_none_for_non_packet_variants() {
     }
     // At least one FlowStarted must be present so the loop
     // exercised the accessor.
-    assert!(events
-        .iter()
-        .any(|e| matches!(e, Event::FlowStarted { .. })));
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, Event::FlowStarted { .. }))
+    );
 }
 
 #[test]

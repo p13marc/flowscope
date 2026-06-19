@@ -11,10 +11,10 @@
 //!     --example flow_json_export -- trace.pcap > flows.ndjson
 //! ```
 
-use std::io::{stdout, BufWriter};
+use std::io::{BufWriter, stdout};
 
 use flowscope::{
-    emit::FlowEventNdjsonWriter, extract::FiveTuple, pcap::PcapFlowSource, FlowTracker,
+    FlowTracker, emit::FlowEventNdjsonWriter, extract::FiveTuple, pcap::PcapFlowSource,
 };
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {

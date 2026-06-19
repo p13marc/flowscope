@@ -20,14 +20,14 @@
 use std::{io::Cursor, time::Duration};
 
 use flowscope::{
-    driver::{Driver, Event, SlotMessage},
-    extract::{parse::test_frames::ipv4_tcp, FiveTuple, FiveTupleKey},
-    pcap::PcapFlowSource,
     FlowSide, SessionParser, Timestamp,
+    driver::{Driver, Event, SlotMessage},
+    extract::{FiveTuple, FiveTupleKey, parse::test_frames::ipv4_tcp},
+    pcap::PcapFlowSource,
 };
 use pcap_file::{
-    pcap::{PcapHeader, PcapPacket, PcapWriter},
     DataLink,
+    pcap::{PcapHeader, PcapPacket, PcapWriter},
 };
 
 /// Passthrough parser: yields one Vec<u8> per fed chunk, tagged with

@@ -10,7 +10,7 @@
 
 use std::{env, fs::File, io::BufReader};
 
-use flowscope::{extract::FiveTuple, FlowExtractor, PacketView, Timestamp};
+use flowscope::{FlowExtractor, PacketView, Timestamp, extract::FiveTuple};
 use pcap_file::pcap::PcapReader;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {

@@ -17,7 +17,7 @@
 use std::net::IpAddr;
 
 use flowscope::{
-    correlate::TopK, extract::FiveTuple, pcap::PcapFlowSource, FlowEvent, FlowTracker,
+    FlowEvent, FlowTracker, correlate::TopK, extract::FiveTuple, pcap::PcapFlowSource,
 };
 
 const K: usize = 32;

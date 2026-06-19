@@ -9,8 +9,8 @@
 #[test]
 fn http_constant_matches_parser_kind() {
     use flowscope::{
-        http::{HttpParser, PARSER_KIND},
         SessionParser,
+        http::{HttpParser, PARSER_KIND},
     };
     let p = HttpParser::default();
     assert_eq!(p.parser_kind(), PARSER_KIND);
@@ -21,8 +21,8 @@ fn http_constant_matches_parser_kind() {
 #[test]
 fn dns_udp_constant_matches_parser_kind() {
     use flowscope::{
-        dns::{DnsUdpParser, PARSER_KIND_UDP},
         DatagramParser,
+        dns::{DnsUdpParser, PARSER_KIND_UDP},
     };
     let p = DnsUdpParser::default();
     assert_eq!(p.parser_kind(), PARSER_KIND_UDP);
@@ -33,8 +33,8 @@ fn dns_udp_constant_matches_parser_kind() {
 #[test]
 fn dns_tcp_constant_matches_parser_kind() {
     use flowscope::{
-        dns::{DnsTcpParser, PARSER_KIND_TCP},
         SessionParser,
+        dns::{DnsTcpParser, PARSER_KIND_TCP},
     };
     let p = DnsTcpParser::default();
     assert_eq!(p.parser_kind(), PARSER_KIND_TCP);
@@ -45,8 +45,8 @@ fn dns_tcp_constant_matches_parser_kind() {
 #[test]
 fn tls_constant_matches_parser_kind() {
     use flowscope::{
-        tls::{TlsParser, PARSER_KIND},
         SessionParser,
+        tls::{PARSER_KIND, TlsParser},
     };
     let p = TlsParser::default();
     assert_eq!(p.parser_kind(), PARSER_KIND);
@@ -57,8 +57,8 @@ fn tls_constant_matches_parser_kind() {
 #[test]
 fn icmp_constant_matches_parser_kind() {
     use flowscope::{
-        icmp::{IcmpParser, PARSER_KIND},
         DatagramParser,
+        icmp::{IcmpParser, PARSER_KIND},
     };
     let p = IcmpParser::new();
     assert_eq!(p.parser_kind(), PARSER_KIND);

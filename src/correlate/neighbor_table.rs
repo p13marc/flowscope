@@ -23,7 +23,7 @@
 
 use std::{hash::Hash, num::NonZeroUsize, time::Duration};
 
-use crate::{correlate::KeyIndexed, Timestamp};
+use crate::{Timestamp, correlate::KeyIndexed};
 
 /// Per-binding state stored in a [`NeighborTable`].
 ///

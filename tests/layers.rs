@@ -3,9 +3,9 @@
 #![cfg(all(feature = "extractors", feature = "test-helpers"))]
 
 use flowscope::{
+    PacketView, Timestamp,
     extract::parse::test_frames::{ipv4_tcp, ipv4_udp, ipv6_tcp},
     layers::{Layer, LayerKind, Layers},
-    PacketView, Timestamp,
 };
 
 #[test]

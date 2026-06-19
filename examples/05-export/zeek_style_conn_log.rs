@@ -9,9 +9,9 @@
 //! cargo run --features pcap,emit --example zeek_style_conn_log
 //! ```
 
-use std::io::{stdout, BufWriter};
+use std::io::{BufWriter, stdout};
 
-use flowscope::{emit::ZeekConnLogWriter, extract::FiveTuple, pcap::PcapFlowSource, FlowTracker};
+use flowscope::{FlowTracker, emit::ZeekConnLogWriter, extract::FiveTuple, pcap::PcapFlowSource};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let path = std::env::args()

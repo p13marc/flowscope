@@ -8,8 +8,8 @@
 #![cfg(all(feature = "extractors", feature = "tracker"))]
 
 use flowscope::{
-    event::{AnomalyKind, FlowSide, OverflowPolicy},
     AnomalyFields,
+    event::{AnomalyKind, FlowSide, OverflowPolicy},
 };
 
 #[test]

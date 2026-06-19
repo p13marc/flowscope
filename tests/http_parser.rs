@@ -2,8 +2,8 @@
 //! `SessionParser` API.
 
 use flowscope::{
-    http::{HttpMessage, HttpParser, HttpRequest, HttpResponse},
     SessionParser, Timestamp,
+    http::{HttpMessage, HttpParser, HttpRequest, HttpResponse},
 };
 
 #[derive(Default)]

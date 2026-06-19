@@ -5,7 +5,7 @@
 //! interface, or a synthesized buffer. `PacketView` is the abstract
 //! handoff between "any source of bytes" and the extractor pipeline.
 
-use crate::{rx_metadata::RxMetadata, Timestamp};
+use crate::{Timestamp, rx_metadata::RxMetadata};
 
 /// What a [`crate::FlowExtractor`] is given.
 ///

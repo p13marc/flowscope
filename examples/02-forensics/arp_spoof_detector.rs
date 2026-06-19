@@ -19,10 +19,9 @@
 use std::{net::Ipv4Addr, time::Duration};
 
 use flowscope::{
-    arp,
+    ArpMessage, MacAddr, Timestamp, arp,
     correlate::{NeighborEvent, NeighborTable},
     pcap::PcapFlowSource,
-    ArpMessage, MacAddr, Timestamp,
 };
 
 fn main() -> flowscope::Result<()> {

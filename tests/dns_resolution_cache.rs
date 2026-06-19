@@ -9,8 +9,8 @@ use std::{
 };
 
 use flowscope::{
-    dns::{DnsFlags, DnsRcode, DnsRdata, DnsRecord, DnsResolutionCache, DnsResponse},
     Timestamp,
+    dns::{DnsFlags, DnsRcode, DnsRdata, DnsRecord, DnsResolutionCache, DnsResponse},
 };
 
 fn ts(sec: u32) -> Timestamp {

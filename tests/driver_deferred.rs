@@ -11,12 +11,12 @@
 use std::time::Duration;
 
 use flowscope::{
+    DatagramParser, FlowSide, PacketView, SessionParser, Timestamp,
     driver::{DeferredDriverBuilder, Driver, Event},
     extract::{
-        parse::test_frames::{ipv4_tcp, ipv4_udp},
         FiveTuple,
+        parse::test_frames::{ipv4_tcp, ipv4_udp},
     },
-    DatagramParser, FlowSide, PacketView, SessionParser, Timestamp,
 };
 
 #[derive(Default, Clone)]

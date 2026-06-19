@@ -14,17 +14,17 @@
 
 use std::{
     sync::{
-        atomic::{AtomicBool, Ordering},
         Arc,
+        atomic::{AtomicBool, Ordering},
     },
     thread,
     time::Duration,
 };
 
 use flowscope::{
-    driver::{Driver, SlotHandle, SlotMessage},
-    extract::{parse::test_frames::ipv4_tcp, FiveTuple, FiveTupleKey},
     PacketView, SessionParser, Timestamp,
+    driver::{Driver, SlotHandle, SlotMessage},
+    extract::{FiveTuple, FiveTupleKey, parse::test_frames::ipv4_tcp},
 };
 
 #[derive(Default, Clone)]

@@ -1,9 +1,9 @@
 //! [`MacPair`] — L2 MAC pair extractor.
 
 use crate::{
+    MacAddr,
     extractor::{Extracted, FlowExtractor, Orientation},
     view::PacketView,
-    MacAddr,
 };
 
 /// Extracts a MAC-pair flow key from the L2 Ethernet header.
@@ -87,9 +87,11 @@ mod tests {
     #[test]
     fn truncated_returns_none() {
         let f = [0u8; 8];
-        assert!(MacPair
-            .extract(PacketView::new(&f, Timestamp::default()))
-            .is_none());
+        assert!(
+            MacPair
+                .extract(PacketView::new(&f, Timestamp::default()))
+                .is_none()
+        );
     }
 
     #[test]

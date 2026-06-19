@@ -38,12 +38,13 @@ use std::{hash::Hash, sync::Arc, time::Duration};
 use crossbeam_queue::SegQueue;
 
 use super::{
+    BroadcastSlotHandle,
     slot::{SlotHandle, SlotMessage},
     typed_slot::{ErasedSlot, TypedConcreteDatagramSlot, TypedConcreteSlot},
     typed_slot_heuristic::{TypedHeuristicDatagramSlot, TypedHeuristicSessionSlot},
-    BroadcastSlotHandle,
 };
 use crate::{
+    PacketView, Timestamp,
     dedup::Dedup,
     detect::signatures::SignatureFn,
     event::{AnomalyKind, EndReason, FlowEvent, FlowSide, FlowStats},
@@ -53,7 +54,6 @@ use crate::{
     reassembler::NoopReassemblerFactory,
     session::{DatagramParser, SessionParser},
     tracker::{FlowTracker, FlowTrackerConfig},
-    PacketView, Timestamp,
 };
 
 /// Per-key idle-timeout predicate, boxed.

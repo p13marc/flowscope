@@ -45,18 +45,19 @@
 
 use std::{
     sync::{
+        Arc,
         atomic::{AtomicU64, Ordering},
-        mpsc, Arc,
+        mpsc,
     },
     thread,
 };
 
 use flowscope::{
+    OwnedPacketView, PacketView,
     driver::{Driver, Event, SlotMessage},
     extract::{FiveTuple, FiveTupleKey},
     http::{HttpMessage, HttpParser},
     pcap::PcapFlowSource,
-    OwnedPacketView, PacketView,
 };
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {

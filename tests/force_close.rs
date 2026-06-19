@@ -4,8 +4,8 @@
 #![cfg(all(feature = "tracker", feature = "extractors"))]
 
 use flowscope::{
-    extract::{parse::test_frames::ipv4_udp, FiveTuple},
     EndReason, FlowEvent, FlowTracker, L4Proto, PacketView, Timestamp,
+    extract::{FiveTuple, parse::test_frames::ipv4_udp},
 };
 
 fn view(frame: &[u8], sec: u32) -> PacketView<'_> {
@@ -59,16 +59,18 @@ fn tracker_force_close_clears_hot_cache() {
     // Re-tracking the same flow should treat it as fresh (no
     // half-state from the hot cache).
     let events = t.track(view(&f, 1));
-    assert!(events
-        .iter()
-        .any(|e| matches!(e, FlowEvent::Started { .. })));
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, FlowEvent::Started { .. }))
+    );
 }
 
 // ── Driver level ─────────────────────────────────────────────────
 
 #[cfg(all(feature = "reassembler", feature = "extractors"))]
 mod driver_level {
-    use flowscope::{reassembler::BufferedReassemblerFactory, FlowDriver, FlowExtractor};
+    use flowscope::{FlowDriver, FlowExtractor, reassembler::BufferedReassemblerFactory};
 
     use super::*;
 

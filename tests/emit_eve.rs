@@ -3,10 +3,10 @@
 #![cfg(all(feature = "emit-eve", feature = "tracker", feature = "extractors"))]
 
 use flowscope::{
+    HistoryString, L4Proto, Timestamp,
     emit::{EveJsonWriter, EveOptions},
     event::{AnomalyKind, EndReason, FlowEvent, FlowSide, FlowStats, OverflowPolicy},
     extract::FiveTupleKey,
-    HistoryString, L4Proto, Timestamp,
 };
 
 fn key() -> FiveTupleKey {

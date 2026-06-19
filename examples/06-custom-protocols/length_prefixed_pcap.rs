@@ -27,10 +27,10 @@
 use std::env;
 
 use flowscope::{
+    FlowSide, SessionParser, Timestamp,
     driver::{Driver, Event, SlotMessage},
     extract::{FiveTuple, FiveTupleKey},
     pcap::PcapFlowSource,
-    FlowSide, SessionParser, Timestamp,
 };
 
 const MARKER_2: &[u8] = b"PFX2,";

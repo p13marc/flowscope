@@ -24,7 +24,7 @@
 
 use super::{
     datagram::DnsMessage,
-    parser::{parse_message, DnsParseResult},
+    parser::{DnsParseResult, parse_message},
 };
 use crate::{SessionParser, Timestamp};
 

@@ -9,8 +9,8 @@
 //! `AsyncReassembler` and `channel_factory`.
 
 use crate::{
-    event::{FlowSide, OverflowPolicy},
     Timestamp,
+    event::{FlowSide, OverflowPolicy},
 };
 
 /// Receives TCP segments for one direction of one session. Sync —

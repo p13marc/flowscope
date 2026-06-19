@@ -23,8 +23,8 @@ use proptest::prelude::*;
 #[cfg(feature = "http")]
 mod http_props {
     use flowscope::{
-        http::{HttpMessage, HttpParser},
         SessionParser, Timestamp,
+        http::{HttpMessage, HttpParser},
     };
 
     use super::*;
@@ -105,8 +105,8 @@ mod http_props {
 #[cfg(feature = "tls")]
 mod tls_props {
     use flowscope::{
-        tls::{TlsMessage, TlsParser},
         SessionParser, Timestamp,
+        tls::{TlsMessage, TlsParser},
     };
 
     use super::*;
@@ -181,8 +181,8 @@ mod tls_props {
 #[cfg(feature = "dns")]
 mod dns_udp_props {
     use flowscope::{
-        dns::{DnsMessage, DnsUdpParser},
         DatagramParser, FlowSide, Timestamp,
+        dns::{DnsMessage, DnsUdpParser},
     };
 
     use super::*;
@@ -235,8 +235,8 @@ mod dns_udp_props {
 #[cfg(feature = "dns")]
 mod dns_tcp_props {
     use flowscope::{
-        dns::{DnsMessage, DnsTcpParser},
         SessionParser, Timestamp,
+        dns::{DnsMessage, DnsTcpParser},
     };
 
     use super::*;

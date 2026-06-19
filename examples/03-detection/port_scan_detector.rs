@@ -22,10 +22,10 @@
 use std::{net::IpAddr, time::Duration};
 
 use flowscope::{
+    PacketView, Timestamp,
     correlate::{TimeBucketedCounter, TimeBucketedSet},
     layers::TcpFlagsView,
     pcap::PcapFlowSource,
-    PacketView, Timestamp,
 };
 
 const WINDOW: Duration = Duration::from_secs(10);

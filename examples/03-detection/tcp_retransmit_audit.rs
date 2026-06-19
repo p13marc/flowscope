@@ -11,7 +11,7 @@
 //! cargo run --features pcap,extractors,reassembler --example tcp_retransmit_audit
 //! ```
 
-use flowscope::{extract::FiveTuple, pcap::PcapFlowSource, FlowEvent, FlowTracker, L4Proto};
+use flowscope::{FlowEvent, FlowTracker, L4Proto, extract::FiveTuple, pcap::PcapFlowSource};
 
 fn main() -> flowscope::Result<()> {
     let path = std::env::args()

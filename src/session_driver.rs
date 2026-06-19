@@ -45,6 +45,7 @@ use std::{collections::HashMap, hash::Hash};
 use ahash::RandomState;
 
 use crate::{
+    Timestamp,
     event::{AnomalyKind, EndReason, FlowEvent, FlowSide},
     extractor::FlowExtractor,
     flow_driver::FlowDriver,
@@ -52,7 +53,6 @@ use crate::{
     session::{SessionEvent, SessionParser},
     tracker::{FlowTracker, FlowTrackerConfig},
     view::PacketView,
-    Timestamp,
 };
 
 /// Cap on the size of `poison_reason()` strings carried through
@@ -730,7 +730,7 @@ where
         out: &mut Vec<SessionEvent<E::Key, P::Message>>,
     ) {
         let _ = ts; // No anomaly event needed; ts only matters if we
-                    // re-emit an anomaly here in the future.
+        // re-emit an anomaly here in the future.
         let stats = self
             .driver
             .tracker()
@@ -754,8 +754,8 @@ where
 mod tests {
     use super::*;
     use crate::{
-        extract::{parse::test_frames::ipv4_tcp, FiveTuple},
         AnomalyKind,
+        extract::{FiveTuple, parse::test_frames::ipv4_tcp},
     };
 
     fn view(frame: &[u8], sec: u32) -> PacketView<'_> {
@@ -1586,10 +1586,10 @@ mod tests {
     #[test]
     fn shipped_http_tls_dns_parser_kinds() {
         use crate::{
+            DatagramParser as _,
             dns::{DnsTcpParser, DnsUdpParser},
             http::HttpParser,
             tls::TlsParser,
-            DatagramParser as _,
         };
         assert_eq!(HttpParser::default().parser_kind(), "http/1");
         assert_eq!(TlsParser::default().parser_kind(), "tls");

@@ -345,7 +345,7 @@ mod tests {
         assert_eq!(f[4], 200.0); // bytes_resp
         assert_eq!(f[5], 1.0); // pkts_init
         assert_eq!(f[6], 1.0); // pkts_resp
-                               // skew = (100 - 200) / 300 = -1/3
+        // skew = (100 - 200) / 300 = -1/3
         assert!((f[7] - (-1.0 / 3.0)).abs() < 1e-12);
     }
 

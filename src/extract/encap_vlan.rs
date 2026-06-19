@@ -34,7 +34,7 @@ mod tests {
     use etherparse::{Ethernet2Header, IpNumber, Ipv4Header, SingleVlanHeader, TcpHeader, VlanId};
 
     use super::*;
-    use crate::{extract::FiveTuple, Timestamp};
+    use crate::{Timestamp, extract::FiveTuple};
 
     /// Build a VLAN-tagged Ethernet/IPv4/TCP frame.
     fn vlan_ipv4_tcp(vlan_id: u16) -> Vec<u8> {

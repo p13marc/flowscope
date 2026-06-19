@@ -63,10 +63,14 @@ fn five_tuple_protocol_label_kafka() {
 #[test]
 fn entries_iterates_known_rows() {
     let entries: Vec<_> = flowscope::well_known::entries().collect();
-    assert!(entries
-        .iter()
-        .any(|(p, port, l)| *p == L4Proto::Tcp && *port == 80 && *l == "http"));
-    assert!(entries
-        .iter()
-        .any(|(p, port, l)| *p == L4Proto::Udp && *port == 4789 && *l == "vxlan"));
+    assert!(
+        entries
+            .iter()
+            .any(|(p, port, l)| *p == L4Proto::Tcp && *port == 80 && *l == "http")
+    );
+    assert!(
+        entries
+            .iter()
+            .any(|(p, port, l)| *p == L4Proto::Udp && *port == 4789 && *l == "vxlan")
+    );
 }

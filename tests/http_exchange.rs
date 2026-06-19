@@ -3,8 +3,8 @@
 #![cfg(feature = "http")]
 
 use flowscope::{
-    http::{HttpExchangeParser, HttpOutcome},
     SessionParser, Timestamp,
+    http::{HttpExchangeParser, HttpOutcome},
 };
 
 fn req(host: &str) -> Vec<u8> {

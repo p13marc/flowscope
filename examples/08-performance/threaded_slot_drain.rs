@@ -22,19 +22,20 @@
 
 use std::{
     sync::{
+        Arc,
         atomic::{AtomicBool, Ordering},
-        mpsc, Arc,
+        mpsc,
     },
     thread,
     time::Duration,
 };
 
 use flowscope::{
+    PacketView,
     driver::{Driver, Event, SlotMessage},
     extract::{FiveTuple, FiveTupleKey},
     http::{HttpMessage, HttpParser},
     pcap::PcapFlowSource,
-    PacketView,
 };
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {

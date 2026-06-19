@@ -23,10 +23,10 @@
 //! ```
 
 use flowscope::{
+    AccumulatingSessionParser,
     driver::{Driver, Event, SlotMessage},
     extract::{FiveTuple, FiveTupleKey},
     pcap::PcapFlowSource,
-    AccumulatingSessionParser,
 };
 
 fn parse_one(buf: &[u8]) -> Option<(String, usize)> {

@@ -38,9 +38,9 @@ use std::{borrow::Cow, net::IpAddr};
 use smallvec::SmallVec;
 
 use crate::{
+    Timestamp,
     anomaly_fields::KeyFields,
     event::{AnomalyKind, Severity},
-    Timestamp,
 };
 
 /// Canonical owned anomaly value.

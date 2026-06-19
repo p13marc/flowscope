@@ -6,7 +6,7 @@
 use std::io::Cursor;
 
 use flowscope::{
-    extract::FiveTuple, EndReason, FlowEvent, FlowTracker, L4Proto, PacketView, Timestamp,
+    EndReason, FlowEvent, FlowTracker, L4Proto, PacketView, Timestamp, extract::FiveTuple,
 };
 use pcap_file::pcap::PcapReader;
 

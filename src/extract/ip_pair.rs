@@ -55,7 +55,7 @@ impl FlowExtractor for IpPair {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{extract::parse::test_frames::*, Timestamp};
+    use crate::{Timestamp, extract::parse::test_frames::*};
 
     #[test]
     fn extracts_ipv4_pair() {

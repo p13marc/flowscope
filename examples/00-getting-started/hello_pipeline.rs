@@ -6,10 +6,10 @@
 //! every payload chunk verbatim, and prints each event to stdout.
 
 use flowscope::{
+    SessionParser, Timestamp,
     driver::{Driver, Event, SlotMessage},
     extract::{FiveTuple, FiveTupleKey},
     pcap::PcapFlowSource,
-    SessionParser, Timestamp,
 };
 
 #[derive(Default, Clone)]

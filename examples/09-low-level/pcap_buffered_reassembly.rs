@@ -12,7 +12,7 @@
 use std::{env, fs::File, io::BufReader};
 
 use flowscope::{
-    extract::FiveTuple, BufferedReassemblerFactory, FlowDriver, FlowEvent, PacketView, Timestamp,
+    BufferedReassemblerFactory, FlowDriver, FlowEvent, PacketView, Timestamp, extract::FiveTuple,
 };
 use pcap_file::pcap::PcapReader;
 

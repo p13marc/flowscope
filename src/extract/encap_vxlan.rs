@@ -93,7 +93,7 @@ mod tests {
     use etherparse::{Ethernet2Header, IpNumber, Ipv4Header, TcpHeader, UdpHeader};
 
     use super::*;
-    use crate::{extract::FiveTuple, Timestamp};
+    use crate::{Timestamp, extract::FiveTuple};
 
     /// Build outer Eth/IPv4/UDP/VXLAN/inner-Eth/IPv4/TCP frame.
     fn vxlan_ipv4_tcp(vni: u32, vxlan_port: u16) -> Vec<u8> {
@@ -176,9 +176,11 @@ mod tests {
     #[test]
     fn wrong_port_returns_none() {
         let f = vxlan_ipv4_tcp(1, 9999);
-        assert!(InnerVxlan::new(FiveTuple::bidirectional())
-            .extract(PacketView::new(&f, Timestamp::default()))
-            .is_none());
+        assert!(
+            InnerVxlan::new(FiveTuple::bidirectional())
+                .extract(PacketView::new(&f, Timestamp::default()))
+                .is_none()
+        );
     }
 
     #[test]
@@ -206,8 +208,10 @@ mod tests {
             0x02,
             b"",
         );
-        assert!(InnerVxlan::new(FiveTuple::bidirectional())
-            .extract(PacketView::new(&f, Timestamp::default()))
-            .is_none());
+        assert!(
+            InnerVxlan::new(FiveTuple::bidirectional())
+                .extract(PacketView::new(&f, Timestamp::default()))
+                .is_none()
+        );
     }
 }

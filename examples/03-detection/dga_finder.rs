@@ -16,12 +16,12 @@
 use std::collections::HashMap;
 
 use flowscope::{
+    AsPacketView, DatagramParser, PacketView, Timestamp,
     detect::patterns::{DgaScore, DgaScorer},
     dns::{DnsMessage, DnsUdpParser},
     extract::FiveTuple,
     extractor::FlowExtractor,
     pcap::PcapFlowSource,
-    AsPacketView, DatagramParser, PacketView, Timestamp,
 };
 
 fn extract_sld(qname: &str) -> Option<String> {

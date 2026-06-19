@@ -5,8 +5,8 @@
 use std::time::Duration;
 
 use flowscope::{
-    dns::{DnsExchangeParser, DnsOutcome},
     DatagramParser, FlowSide, Timestamp,
+    dns::{DnsExchangeParser, DnsOutcome},
 };
 
 fn build_msg(tx_id: u16, qname: &str, flags: u16, rcode_lo: u8) -> Vec<u8> {

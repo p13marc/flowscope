@@ -91,8 +91,8 @@ mod tests {
 
     use super::*;
     use crate::{
-        extract::{parse::test_frames::ipv4_tcp, FiveTuple},
         Timestamp,
+        extract::{FiveTuple, parse::test_frames::ipv4_tcp},
     };
 
     fn build_ipv6_tcp(label: u32) -> Vec<u8> {

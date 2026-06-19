@@ -5,11 +5,11 @@
 use std::net::SocketAddr;
 
 use flowscope::{
+    EndReason, FlowEvent, FlowSide, FlowStats, Timestamp,
     emit::{FlowEventNdjsonWriter, NdjsonOptions},
     extract::FiveTupleKey,
     extractor::L4Proto,
     history::HistoryString,
-    EndReason, FlowEvent, FlowSide, FlowStats, Timestamp,
 };
 
 fn key(a: &str, b: &str, proto: L4Proto) -> FiveTupleKey {

@@ -162,8 +162,8 @@ where
 mod tests {
     use super::*;
     use crate::{
-        extract::{parse::test_frames::ipv4_tcp, FiveTuple},
         Timestamp,
+        extract::{FiveTuple, parse::test_frames::ipv4_tcp},
     };
 
     fn build_v4_frame(src_port: u16) -> Vec<u8> {

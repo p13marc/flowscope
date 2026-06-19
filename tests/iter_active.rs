@@ -3,11 +3,11 @@
 #![cfg(all(feature = "tracker", feature = "extractors"))]
 
 use flowscope::{
-    extract::{
-        parse::test_frames::{ipv4_tcp, ipv4_udp},
-        FiveTuple,
-    },
     FlowState, FlowTracker, L4Proto, PacketView, Timestamp,
+    extract::{
+        FiveTuple,
+        parse::test_frames::{ipv4_tcp, ipv4_udp},
+    },
 };
 
 fn view(frame: &[u8], sec: u32) -> PacketView<'_> {

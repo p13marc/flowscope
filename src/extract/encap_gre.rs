@@ -139,7 +139,7 @@ mod tests {
     use etherparse::{Ethernet2Header, IpNumber, Ipv4Header, TcpHeader};
 
     use super::*;
-    use crate::{extract::FiveTuple, Timestamp};
+    use crate::{Timestamp, extract::FiveTuple};
 
     /// Build an Ethernet+IPv4(GRE)+IPv4+TCP synthetic frame.
     fn build_ipv4_in_gre(gre_flags: u8, gre_extra: usize) -> Vec<u8> {

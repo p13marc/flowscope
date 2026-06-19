@@ -9,10 +9,10 @@
 //!
 //!     cargo bench --bench tracker --features tracker,extractors,test-helpers
 
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
 use flowscope::{
-    extract::{parse::test_frames::ipv4_tcp, FiveTuple},
     FlowTracker, PacketView, Timestamp,
+    extract::{FiveTuple, parse::test_frames::ipv4_tcp},
 };
 
 fn bench_monoflow(c: &mut Criterion) {

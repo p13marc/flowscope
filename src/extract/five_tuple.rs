@@ -317,7 +317,7 @@ pub(crate) fn extract_from_parsed(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{extract::parse::test_frames::*, extractor::TcpFlags, Timestamp};
+    use crate::{Timestamp, extract::parse::test_frames::*, extractor::TcpFlags};
 
     #[test]
     fn syn_packet_forward() {
@@ -447,9 +447,11 @@ mod tests {
     #[test]
     fn malformed_returns_none() {
         let f = [0u8; 4];
-        assert!(FiveTuple::bidirectional()
-            .extract(PacketView::new(&f, Timestamp::default()))
-            .is_none());
+        assert!(
+            FiveTuple::bidirectional()
+                .extract(PacketView::new(&f, Timestamp::default()))
+                .is_none()
+        );
     }
 
     #[test]

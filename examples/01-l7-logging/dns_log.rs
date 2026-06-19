@@ -13,10 +13,10 @@
 use std::env;
 
 use flowscope::{
+    SessionEvent,
     dns::{DnsMessage, DnsQuery, DnsRdata, DnsResponse, DnsUdpParser},
     extract::FiveTuple,
     pcap::PcapFlowSource,
-    SessionEvent,
 };
 
 fn log_query(q: &DnsQuery) {

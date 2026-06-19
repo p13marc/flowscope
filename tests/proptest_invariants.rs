@@ -8,9 +8,9 @@
 //!     PROPTEST_CASES=10000 cargo test -p netring-flow --test proptest_invariants
 
 use flowscope::{
-    extract::{parse::test_frames, FiveTuple},
     FlowEvent, FlowSide, FlowState, FlowTracker, FlowTrackerConfig, PacketView, TcpFlags,
     Timestamp,
+    extract::{FiveTuple, parse::test_frames},
 };
 use proptest::prelude::*;
 

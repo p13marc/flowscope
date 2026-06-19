@@ -5,8 +5,8 @@ use std::{net::IpAddr, num::NonZeroUsize, time::Duration};
 use lru::LruCache;
 
 use crate::{
-    dns::{DnsRdata, DnsResponse},
     Timestamp,
+    dns::{DnsRdata, DnsResponse},
 };
 
 /// Per-client DNS-resolution cache with TTL eviction.

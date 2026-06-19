@@ -10,7 +10,7 @@
 
 use std::{
     env,
-    fs::{create_dir_all, File},
+    fs::{File, create_dir_all},
     io::BufWriter,
     path::PathBuf,
     time::Duration,
@@ -18,8 +18,8 @@ use std::{
 
 use flowscope::extract::parse::test_frames::ipv4_tcp;
 use pcap_file::{
-    pcap::{PcapHeader, PcapPacket, PcapWriter},
     DataLink,
+    pcap::{PcapHeader, PcapPacket, PcapWriter},
 };
 
 const MAC: [u8; 6] = [0; 6];

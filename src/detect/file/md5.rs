@@ -9,8 +9,8 @@
 use md5::{Digest, Md5};
 
 use super::{
-    types::{classify, FileHashEvent, FileType},
     FileHashSink,
+    types::{FileHashEvent, FileType, classify},
 };
 
 /// Streaming MD5 sink.

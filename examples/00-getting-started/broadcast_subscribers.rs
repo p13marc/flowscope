@@ -19,11 +19,11 @@
 use std::env;
 
 use flowscope::{
+    PacketView,
     driver::{Driver, Event},
     extract::{FiveTuple, FiveTupleKey},
     http::HttpParser,
     pcap::PcapFlowSource,
-    PacketView,
 };
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {

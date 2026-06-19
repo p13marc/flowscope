@@ -25,8 +25,8 @@
 use std::time::Duration;
 
 use flowscope::{
-    correlate::RollingRate, extract::FiveTuple, pcap::PcapFlowSource, well_known::LabelTable,
-    FlowEvent, FlowTracker, L4Proto, Timestamp,
+    FlowEvent, FlowTracker, L4Proto, Timestamp, correlate::RollingRate, extract::FiveTuple,
+    pcap::PcapFlowSource, well_known::LabelTable,
 };
 
 fn main() -> flowscope::Result<()> {

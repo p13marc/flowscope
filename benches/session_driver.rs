@@ -5,10 +5,10 @@
 //!     cargo bench --bench session_driver \
 //!         --features session,reassembler,extractors,test-helpers
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion, Throughput};
+use criterion::{Criterion, Throughput, black_box, criterion_group, criterion_main};
 use flowscope::{
-    extract::{parse::test_frames::ipv4_tcp, FiveTuple},
     FlowSessionDriver, FlowSide, PacketView, SessionParser, Timestamp,
+    extract::{FiveTuple, parse::test_frames::ipv4_tcp},
 };
 
 /// No-op parser: returns no messages, just measures the driver's

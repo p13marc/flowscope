@@ -48,11 +48,7 @@ pub struct CsvOptions {
 impl CsvOptions {
     /// Separator character — `'\t'` or `','`.
     fn sep(&self) -> char {
-        if self.tab_separated {
-            '\t'
-        } else {
-            ','
-        }
+        if self.tab_separated { '\t' } else { ',' }
     }
 }
 

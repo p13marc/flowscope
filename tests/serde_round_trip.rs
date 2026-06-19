@@ -11,11 +11,11 @@
 #![cfg(feature = "serde")]
 
 use flowscope::{
+    Timestamp,
     event::{
         AnomalyKind, EndReason, FlowEvent, FlowSide, FlowState, FlowStats, OverflowPolicy, Severity,
     },
     extractor::L4Proto,
-    Timestamp,
 };
 
 fn ts(sec: u32, nsec: u32) -> Timestamp {

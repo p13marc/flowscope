@@ -13,9 +13,9 @@
 //! Falls back to `tests/data/mixed_short.pcap` if no path is given.
 
 use flowscope::{
+    PacketView,
     layers::{Layer, LayerKind},
     pcap::PcapFlowSource,
-    PacketView,
 };
 
 fn main() -> flowscope::Result<()> {
@@ -210,9 +210,5 @@ fn fmt_tcp_flags(f: &flowscope::layers::TcpFlagsView) -> String {
     if f.cwr {
         s.push('C');
     }
-    if s.is_empty() {
-        "-".into()
-    } else {
-        s
-    }
+    if s.is_empty() { "-".into() } else { s }
 }

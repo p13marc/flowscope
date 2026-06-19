@@ -5,8 +5,8 @@
 //! variants.
 
 use flowscope::{
-    tls::{TlsAlert, TlsClientHello, TlsMessage, TlsParser, TlsServerHello, TlsVersion},
     SessionParser, Timestamp,
+    tls::{TlsAlert, TlsClientHello, TlsMessage, TlsParser, TlsServerHello, TlsVersion},
 };
 
 #[derive(Default)]
