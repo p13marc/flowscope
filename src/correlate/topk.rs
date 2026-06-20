@@ -12,6 +12,7 @@ use std::{collections::HashMap, hash::Hash};
 ///
 /// Worst-case overestimate for any key (real or estimated) is
 /// bounded by the minimum retained count.
+#[derive(Clone)]
 pub struct TopK<K: Hash + Eq + Clone> {
     k: usize,
     counts: HashMap<K, u64>,
@@ -99,6 +100,53 @@ impl<K: Hash + Eq + Clone> TopK<K> {
 
     pub fn is_empty(&self) -> bool {
         self.counts.is_empty()
+    }
+}
+
+impl<K: Hash + Eq + Clone> crate::correlate::Mergeable for TopK<K> {
+    /// Misra-Gries / Space-Saving merge (Metwally, Agrawal, Abbadi
+    /// PODS '05): sum counters for shared keys, then re-truncate
+    /// to capacity by Misra-Gries decrement (subtract the
+    /// (k+1)-th largest from all counters, evict the zeroed
+    /// ones).
+    ///
+    /// **Capacity invariant**: both shards must share the same
+    /// `k`. Panics on mismatch — this is a config bug, not a
+    /// runtime condition we silently paper over.
+    fn merge(&mut self, other: Self) {
+        assert_eq!(
+            self.k, other.k,
+            "TopK::merge requires matching k (lhs={}, rhs={})",
+            self.k, other.k
+        );
+
+        // 1. Sum counters for shared keys; add new keys.
+        for (k, c) in other.counts {
+            *self.counts.entry(k).or_insert(0) += c;
+        }
+
+        // 2. Re-truncate to capacity (if we overflowed).
+        if self.counts.len() <= self.k {
+            return;
+        }
+        // Pivot on the (k+1)-th largest count; subtract it from
+        // every counter, drop the zeroed ones. This preserves
+        // the Misra-Gries error bound.
+        let mut counts: Vec<u64> = self.counts.values().copied().collect();
+        counts.sort_unstable_by(|a, b| b.cmp(a)); // descending
+        let pivot = counts[self.k];
+        let to_remove: Vec<K> = self
+            .counts
+            .iter()
+            .filter(|&(_, &c)| c <= pivot)
+            .map(|(k, _)| k.clone())
+            .collect();
+        for k in to_remove {
+            self.counts.remove(&k);
+        }
+        for c in self.counts.values_mut() {
+            *c = c.saturating_sub(pivot);
+        }
     }
 }
 

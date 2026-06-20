@@ -53,6 +53,7 @@
 mod bucketed;
 mod burst;
 mod ewma;
+mod mergeable;
 mod neighbor_table;
 mod rolling_rate;
 // FlowStateMap defaults its key type to `crate::extract::FiveTupleKey`,
@@ -69,6 +70,7 @@ mod topk;
 pub use bucketed::TimeBucketedCounter;
 pub use burst::{BurstDetector, BurstHit};
 pub use ewma::Ewma;
+pub use mergeable::Mergeable;
 #[cfg(feature = "extractors")]
 pub use flow_state_map::FlowStateMap;
 pub use indexed::KeyIndexed;

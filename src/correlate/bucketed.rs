@@ -167,6 +167,54 @@ where
     }
 }
 
+impl<K> crate::correlate::Mergeable for TimeBucketedCounter<K>
+where
+    K: Hash + Eq + Clone,
+{
+    /// Sum counters across aligned buckets.
+    ///
+    /// **Panics** if the two counters disagree on `window` or
+    /// `bucket_width` — the buckets wouldn't align and silently
+    /// realigning would mask config bugs. The `capacity` field
+    /// is also asserted equal so the bound stays consistent
+    /// post-merge.
+    fn merge(&mut self, other: Self) {
+        assert_eq!(
+            self.window, other.window,
+            "TimeBucketedCounter::merge requires matching window",
+        );
+        assert_eq!(
+            self.bucket_width, other.bucket_width,
+            "TimeBucketedCounter::merge requires matching bucket_width",
+        );
+        assert_eq!(
+            self.capacity, other.capacity,
+            "TimeBucketedCounter::merge requires matching capacity",
+        );
+        // For each bucket in `other`, find the same-timestamp
+        // bucket in `self` and merge; otherwise insert.
+        for (ts, counts) in other.buckets {
+            match self.buckets.iter_mut().find(|(t, _)| *t == ts) {
+                Some((_, my_counts)) => {
+                    for (k, c) in counts {
+                        *my_counts.entry(k).or_insert(0) += c;
+                    }
+                }
+                None => {
+                    // Insertion: keep `self.buckets` oldest-first
+                    // so the eviction logic stays valid.
+                    let pos = self
+                        .buckets
+                        .iter()
+                        .position(|(t, _)| *t > ts)
+                        .unwrap_or(self.buckets.len());
+                    self.buckets.insert(pos, (ts, counts));
+                }
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

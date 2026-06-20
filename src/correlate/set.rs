@@ -154,6 +154,45 @@ where
     }
 }
 
+impl<K, V> crate::correlate::Mergeable for TimeBucketedSet<K, V>
+where
+    K: Hash + Eq + Clone,
+    V: Hash + Eq + Clone,
+{
+    /// Union sets across aligned buckets.
+    ///
+    /// **Panics** if `window` / `bucket_width` / `capacity`
+    /// don't match — silent realignment would mask config bugs.
+    fn merge(&mut self, other: Self) {
+        assert_eq!(self.window, other.window, "TimeBucketedSet::merge requires matching window");
+        assert_eq!(
+            self.bucket_width, other.bucket_width,
+            "TimeBucketedSet::merge requires matching bucket_width",
+        );
+        assert_eq!(
+            self.capacity, other.capacity,
+            "TimeBucketedSet::merge requires matching capacity",
+        );
+        for (ts, sets) in other.buckets {
+            match self.buckets.iter_mut().find(|(t, _)| *t == ts) {
+                Some((_, my_sets)) => {
+                    for (k, vs) in sets {
+                        my_sets.entry(k).or_default().extend(vs);
+                    }
+                }
+                None => {
+                    let pos = self
+                        .buckets
+                        .iter()
+                        .position(|(t, _)| *t > ts)
+                        .unwrap_or(self.buckets.len());
+                    self.buckets.insert(pos, (ts, sets));
+                }
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

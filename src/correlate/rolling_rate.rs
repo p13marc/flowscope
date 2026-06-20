@@ -323,6 +323,47 @@ where
     }
 }
 
+impl<K, V> crate::correlate::Mergeable for RollingRate<K, V>
+where
+    K: Hash + Eq + Clone,
+    V: RateValue,
+{
+    /// Sum values across aligned buckets.
+    ///
+    /// **Panics** if `window` / `bucket_width` don't match —
+    /// silent realignment would mask config bugs.
+    ///
+    /// Issue #19 (Release A).
+    fn merge(&mut self, other: Self) {
+        assert_eq!(
+            self.window, other.window,
+            "RollingRate::merge requires matching window",
+        );
+        assert_eq!(
+            self.bucket_width, other.bucket_width,
+            "RollingRate::merge requires matching bucket_width",
+        );
+        for (ts, vs) in other.buckets {
+            match self.buckets.iter_mut().find(|(t, _)| *t == ts) {
+                Some((_, my_vs)) => {
+                    for (k, v) in vs {
+                        let entry = my_vs.entry(k).or_default();
+                        *entry += v;
+                    }
+                }
+                None => {
+                    let pos = self
+                        .buckets
+                        .iter()
+                        .position(|(t, _)| *t > ts)
+                        .unwrap_or(self.buckets.len());
+                    self.buckets.insert(pos, (ts, vs));
+                }
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

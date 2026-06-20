@@ -76,6 +76,42 @@ impl<K: Hash + Eq + Clone> Ewma<K> {
     }
 }
 
+impl<K: Hash + Eq + Clone> crate::correlate::Mergeable for Ewma<K> {
+    /// Per-key arithmetic-mean fold: for keys present in both,
+    /// the merged value is `0.5 * (a + b)` and `last_ts` is the
+    /// later of the two. For keys present in only one side, that
+    /// side's value is retained.
+    ///
+    /// **Why this semantic (not weighted-by-sample-count)**:
+    /// `Ewma` doesn't track sample count, only the exponentially-
+    /// weighted value. Without sample-count, the per-key average
+    /// is the only commutative+associative choice. Consumers
+    /// who need sample-count-weighted merging should track count
+    /// separately and merge it alongside.
+    ///
+    /// **Panics** if `alpha` doesn't match — different shards
+    /// running with different smoothing factors is a config bug.
+    fn merge(&mut self, other: Self) {
+        assert_eq!(
+            self.alpha, other.alpha,
+            "Ewma::merge requires matching alpha",
+        );
+        for (k, (v_other, ts_other)) in other.entries {
+            match self.entries.get_mut(&k) {
+                Some((v_self, ts_self)) => {
+                    *v_self = 0.5 * (*v_self + v_other);
+                    if ts_other > *ts_self {
+                        *ts_self = ts_other;
+                    }
+                }
+                None => {
+                    self.entries.insert(k, (v_other, ts_other));
+                }
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
