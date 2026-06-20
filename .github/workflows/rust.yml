@@ -53,6 +53,7 @@ jobs:
           - "emit-eve"          # 0.12: Suricata EVE JSON writer
           - "tls-fingerprints"  # 0.12: collapses former ja3 + ja4 sub-features
           - "ja4plus"           # 0.16: FoxIO-licensed JA4S (opt-in, off by default)
+          - "ja4plus,http"      # 0.18: JA4H FoxIO HTTP fingerprint (issue #10)
           - "file-hash"         # 0.12: streaming hash sinks + MIME magic
           - "ndp"               # 0.18: IPv6 Neighbor Discovery parser (issue #6)
           - "dhcp"              # 0.18: DHCP parser + Fingerbank fingerprint (issue #11)

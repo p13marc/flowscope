@@ -24,15 +24,6 @@ pub fn newkeys_message_byte() -> u8 {
     21
 }
 
-/// Which side of the handshake to HASSH-fingerprint.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum HasshKind {
-    /// Client-side `HASSH` — uses the c2s lists.
-    Client,
-    /// Server-side `HASSHServer` — uses the s2c lists.
-    Server,
-}
-
 /// Compute a HASSH-family fingerprint from the four
 /// side-appropriate name-lists.
 ///

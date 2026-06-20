@@ -42,6 +42,8 @@ mod parser;
 mod session;
 mod types;
 
-pub use parser::{HasshKind, compute_hassh, kexinit_message_byte, version_banner_prefix};
+pub use parser::{
+    compute_hassh, kexinit_message_byte, parse_kexinit_payload, version_banner_prefix,
+};
 pub use session::{PARSER_KIND, SshParser};
 pub use types::{SshKexInit, SshMessage};
