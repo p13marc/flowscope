@@ -205,6 +205,12 @@ pub use ntp::{NtpLeapIndicator, NtpMessage, NtpMode, NtpTimestamp};
 pub mod ssdp;
 #[cfg(feature = "ssdp")]
 pub use ssdp::{SsdpKind, SsdpMessage};
+// Issue #14 sub-piece (0.18): TFTP — UDP/69. Device-config
+// transfer visibility.
+#[cfg(feature = "tftp")]
+pub mod tftp;
+#[cfg(feature = "tftp")]
+pub use tftp::{TftpErrorCode, TftpMessage, TftpMode, TftpOpcode};
 // Issue #9 (0.18): p0f-style passive TCP/IP fingerprint.
 // License-clean alternative to FoxIO's JA4T / JA4TS.
 #[cfg(feature = "tcp_fingerprint")]

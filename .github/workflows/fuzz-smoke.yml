@@ -33,6 +33,7 @@ jobs:
           - ntp
           - ssdp
           - ssh
+          - tftp
           - tls
           - tls_handshake
           - layers

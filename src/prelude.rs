@@ -37,6 +37,10 @@ pub use crate::ntp::{NtpLeapIndicator, NtpMessage, NtpMode};
 // discovery.
 #[cfg(feature = "ssdp")]
 pub use crate::ssdp::{SsdpKind, SsdpMessage};
+// Issue #14 sub-piece (0.18): TFTP — device-config transfer
+// visibility.
+#[cfg(feature = "tftp")]
+pub use crate::tftp::{TftpErrorCode, TftpMessage, TftpMode, TftpOpcode};
 // Issue #9 (0.18): p0f-style passive TCP/IP fingerprint.
 #[cfg(feature = "tcp_fingerprint")]
 pub use crate::tcp_fingerprint::{TcpDirection, TcpFingerprint};

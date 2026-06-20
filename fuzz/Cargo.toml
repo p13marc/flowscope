@@ -27,6 +27,7 @@ features = [
     "session",
     "ssdp",
     "ssh",
+    "tftp",
     "tls",
     "tracker",
 ]
@@ -125,6 +126,13 @@ bench = false
 [[bin]]
 name = "ssdp"
 path = "fuzz_targets/ssdp.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "tftp"
+path = "fuzz_targets/tftp.rs"
 test = false
 doc = false
 bench = false

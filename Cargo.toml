@@ -143,6 +143,11 @@ ntp = ["extractors", "tracker", "session"]
 # UPnP / DLNA / IoT asset discovery (NOTIFY / M-SEARCH /
 # response). Issue #14 (Tier-2 sub-piece).
 ssdp = ["extractors", "tracker", "session"]
+# TFTP parser — UDP/69 (RFC 1350). Read/Write requests +
+# DATA / ACK / ERROR packets. Operationally useful for
+# device-config-theft visibility on OT / network gear.
+# Issue #14 (Tier-2 sub-piece, FTP/TFTP row).
+tftp = ["extractors", "tracker", "session"]
 # p0f-style passive TCP/IP fingerprint — extracts initial TTL,
 # window size, MSS, window-scale, TCP option order, DF bit, and
 # quirks from cleartext SYN / SYN-ACK packets. Operates over the
@@ -168,7 +173,7 @@ fingerprint = ["dep:arrayvec"]
 
 # Umbrella: enable every shipped L7 protocol parser at once. Strict
 # subset of `full` (no `pcap`, no observability).
-l7 = ["http", "tls", "tls-fingerprints", "dns", "icmp", "arp", "ndp", "dhcp", "lldp", "cdp", "ssh", "ntp", "ssdp"]
+l7 = ["http", "tls", "tls-fingerprints", "dns", "icmp", "arp", "ndp", "dhcp", "lldp", "cdp", "ssh", "ntp", "ssdp", "tftp"]
 
 # pcap source adapter (offline replay).
 pcap = ["extractors", "tracker", "dep:pcap-file"]
