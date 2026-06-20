@@ -139,6 +139,10 @@ cdp = ["extractors", "tracker", "dep:bytes"]
 # predicate flags NTP-amplification (monlist) participants.
 # Issue #14 (Tier-2 sub-piece).
 ntp = ["extractors", "tracker", "session"]
+# SSDP parser — UDP/1900 multicast. HTTP-like text-based
+# UPnP / DLNA / IoT asset discovery (NOTIFY / M-SEARCH /
+# response). Issue #14 (Tier-2 sub-piece).
+ssdp = ["extractors", "tracker", "session"]
 # p0f-style passive TCP/IP fingerprint — extracts initial TTL,
 # window size, MSS, window-scale, TCP option order, DF bit, and
 # quirks from cleartext SYN / SYN-ACK packets. Operates over the
@@ -164,7 +168,7 @@ fingerprint = ["dep:arrayvec"]
 
 # Umbrella: enable every shipped L7 protocol parser at once. Strict
 # subset of `full` (no `pcap`, no observability).
-l7 = ["http", "tls", "tls-fingerprints", "dns", "icmp", "arp", "ndp", "dhcp", "lldp", "cdp", "ssh", "ntp"]
+l7 = ["http", "tls", "tls-fingerprints", "dns", "icmp", "arp", "ndp", "dhcp", "lldp", "cdp", "ssh", "ntp", "ssdp"]
 
 # pcap source adapter (offline replay).
 pcap = ["extractors", "tracker", "dep:pcap-file"]

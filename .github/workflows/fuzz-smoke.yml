@@ -31,6 +31,7 @@ jobs:
           - lldp
           - ndp
           - ntp
+          - ssdp
           - ssh
           - tls
           - tls_handshake

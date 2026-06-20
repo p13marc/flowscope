@@ -33,6 +33,10 @@ pub use crate::cdp::{CdpAddress, CdpCapabilities, CdpMessage};
 // amplification detection.
 #[cfg(feature = "ntp")]
 pub use crate::ntp::{NtpLeapIndicator, NtpMessage, NtpMode};
+// Issue #14 sub-piece (0.18): SSDP — IoT / UPnP asset
+// discovery.
+#[cfg(feature = "ssdp")]
+pub use crate::ssdp::{SsdpKind, SsdpMessage};
 // Issue #9 (0.18): p0f-style passive TCP/IP fingerprint.
 #[cfg(feature = "tcp_fingerprint")]
 pub use crate::tcp_fingerprint::{TcpDirection, TcpFingerprint};

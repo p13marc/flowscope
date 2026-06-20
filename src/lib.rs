@@ -199,6 +199,12 @@ pub use cdp::{CdpAddress, CdpCapabilities, CdpMessage};
 pub mod ntp;
 #[cfg(feature = "ntp")]
 pub use ntp::{NtpLeapIndicator, NtpMessage, NtpMode, NtpTimestamp};
+// Issue #14 sub-piece (0.18): SSDP — UDP/1900. UPnP / DLNA /
+// IoT asset discovery.
+#[cfg(feature = "ssdp")]
+pub mod ssdp;
+#[cfg(feature = "ssdp")]
+pub use ssdp::{SsdpKind, SsdpMessage};
 // Issue #9 (0.18): p0f-style passive TCP/IP fingerprint.
 // License-clean alternative to FoxIO's JA4T / JA4TS.
 #[cfg(feature = "tcp_fingerprint")]

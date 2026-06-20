@@ -63,6 +63,7 @@ jobs:
           - "ssh"               # 0.18: SSH parser + HASSH fingerprint (issue #7)
           - "ipfix"             # 0.18: IPFIX IE vocabulary module (scoped piece of #16)
           - "ntp"               # 0.18: NTP parser + amplification detection (issue #14 sub-piece)
+          - "ssdp"              # 0.18: SSDP parser + IoT asset discovery (issue #14 sub-piece)
     steps:
       - uses: actions/checkout@v4
       - name: Build (--no-default-features --features "${{ matrix.features }}")

@@ -25,6 +25,7 @@ features = [
     "ntp",
     "reassembler",
     "session",
+    "ssdp",
     "ssh",
     "tls",
     "tracker",
@@ -117,6 +118,13 @@ bench = false
 [[bin]]
 name = "ntp"
 path = "fuzz_targets/ntp.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "ssdp"
+path = "fuzz_targets/ssdp.rs"
 test = false
 doc = false
 bench = false
