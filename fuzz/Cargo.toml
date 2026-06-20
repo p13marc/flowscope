@@ -1,0 +1,81 @@
+[package]
+name = "flowscope-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+
+[dependencies.flowscope]
+path = ".."
+features = [
+    "arp",
+    "dns",
+    "extractors",
+    "http",
+    "icmp",
+    "reassembler",
+    "session",
+    "tls",
+    "tracker",
+]
+
+[[bin]]
+name = "arp"
+path = "fuzz_targets/arp.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "dns_udp"
+path = "fuzz_targets/dns_udp.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "dns_tcp"
+path = "fuzz_targets/dns_tcp.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "http"
+path = "fuzz_targets/http.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "icmp"
+path = "fuzz_targets/icmp.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "tls"
+path = "fuzz_targets/tls.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "tls_handshake"
+path = "fuzz_targets/tls_handshake.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "layers"
+path = "fuzz_targets/layers.rs"
+test = false
+doc = false
+bench = false
