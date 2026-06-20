@@ -29,43 +29,53 @@ pub(crate) enum ParseOutput {
     ClientHello(Box<TlsClientHello>),
     ServerHello(Box<TlsServerHello>),
     Alert(TlsAlert),
+    /// One TLS 1.2 `Certificate` handshake message. The chain
+    /// is the server's (or client's, in mutual TLS) cert list,
+    /// each entry an X.509 DER blob. TLS 1.3 carries the cert
+    /// chain encrypted in EncryptedExtensions — not surfaced.
+    Certificate {
+        chain: Vec<Bytes>,
+    },
 }
 
-/// Try to advance the parser, possibly emitting one event.
+/// Try to advance the parser by exactly one TLS record. Every
+/// handshake message found inside the record is pushed onto
+/// `out` (one record can carry several — e.g. TLS 1.2's
+/// ServerHello + Certificate + ServerKeyExchange + ServerHelloDone
+/// chain).
 ///
 /// Returns:
-/// - `Ok(Some(event))` — emitted; caller should re-call to drain
-///   any subsequent records that were buffered.
-/// - `Ok(None)` — need more bytes (or we transitioned to Encrypted).
+/// - `Ok(true)` — a record was consumed; caller should re-call.
+/// - `Ok(false)` — need more bytes (or transitioned to Encrypted).
 /// - `Err(_)` — desync.
 pub(crate) fn step(
     state: &mut DirState,
     buffer: &mut Vec<u8>,
     is_initiator: bool,
     config: &TlsConfig,
-) -> crate::Result<Option<ParseOutput>> {
+    out: &mut Vec<ParseOutput>,
+) -> crate::Result<bool> {
     if buffer.len() > config.max_buffer {
         *state = DirState::Desynced;
         buffer.clear();
         return Err(Error::buffer_overflow(Module::Tls, config.max_buffer));
     }
     if matches!(*state, DirState::Encrypted | DirState::Desynced) {
-        return Ok(None);
+        return Ok(false);
     }
     if buffer.len() < 5 {
-        return Ok(None);
+        return Ok(false);
     }
     // Peek the record length without consuming.
     let record_len = u16::from_be_bytes([buffer[3], buffer[4]]) as usize;
     let total = 5 + record_len;
     if buffer.len() < total {
-        return Ok(None);
+        return Ok(false);
     }
 
     // Parse one record. The returned TlsPlaintext borrows from
     // `buffer`; we build owned events before releasing the borrow
     // and mutating the buffer.
-    let mut emitted: Option<ParseOutput> = None;
     let mut became_encrypted = false;
     {
         let plaintext = match parse_tls_plaintext(&buffer[..total]) {
@@ -84,16 +94,24 @@ pub(crate) fn step(
                 TlsMessage::Handshake(h) => match h {
                     TlsMessageHandshake::ClientHello(ch) if is_initiator => {
                         let ev = build_client_hello(record_version, ch);
-                        emitted = Some(ParseOutput::ClientHello(Box::new(ev)));
+                        out.push(ParseOutput::ClientHello(Box::new(ev)));
                     }
                     TlsMessageHandshake::ServerHello(sh) if !is_initiator => {
                         let ev = build_server_hello(record_version, sh);
-                        emitted = Some(ParseOutput::ServerHello(Box::new(ev)));
+                        out.push(ParseOutput::ServerHello(Box::new(ev)));
+                    }
+                    TlsMessageHandshake::Certificate(c) => {
+                        let chain: Vec<Bytes> = c
+                            .cert_chain
+                            .iter()
+                            .map(|raw| Bytes::copy_from_slice(raw.data))
+                            .collect();
+                        out.push(ParseOutput::Certificate { chain });
                     }
                     _ => {}
                 },
                 TlsMessage::Alert(alert) => {
-                    emitted = Some(ParseOutput::Alert(build_alert(alert)));
+                    out.push(ParseOutput::Alert(build_alert(alert)));
                 }
                 TlsMessage::ChangeCipherSpec => {
                     became_encrypted = true;
@@ -110,7 +128,7 @@ pub(crate) fn step(
     // Consume the record we just processed.
     let rest = buffer.split_off(total);
     *buffer = rest;
-    Ok(emitted)
+    Ok(true)
 }
 
 fn build_client_hello(

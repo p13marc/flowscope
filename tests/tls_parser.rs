@@ -31,6 +31,7 @@ impl Captured {
                 TlsMessage::Ja4 { .. } => {}
                 #[cfg(feature = "ja4plus")]
                 TlsMessage::Ja4s { .. } => {}
+                TlsMessage::Certificate { .. } => {}
             }
         }
     }

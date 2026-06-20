@@ -7,6 +7,8 @@
 //! does that stitching internally and emits one rich event per
 //! handshake outcome.
 
+use bytes::Bytes;
+
 use super::{
     TlsParser,
     session::TlsMessage,
@@ -78,6 +80,13 @@ pub struct TlsHandshake {
     /// HPKE `config_id` from the client's outer ECHClientHello,
     /// when ECH was offered.
     pub ech_config_id: Option<u8>,
+    /// Server's certificate chain from a TLS 1.2 `Certificate`
+    /// handshake record (leaf first per RFC 5246 §7.4.2). Each
+    /// entry is an X.509 DER blob. Empty for TLS 1.3
+    /// (cert chain is encrypted) and for sessions where no cert
+    /// record was observed before the parser stopped. New in
+    /// 0.18.0 (issue #24 prereq).
+    pub certificate_chain: Vec<Bytes>,
 }
 
 /// Aggregate ECH outcome on a [`TlsHandshake`]. Plan 144, 0.12.0.
@@ -145,6 +154,7 @@ impl Default for TlsHandshake {
             outcome: HandshakeOutcome::Truncated,
             ech_outcome: EchOutcome::NotOffered,
             ech_config_id: None,
+            certificate_chain: Vec::new(),
         }
     }
 }
@@ -267,6 +277,11 @@ impl TlsHandshakeParser {
                 #[cfg(feature = "ja4plus")]
                 TlsMessage::Ja4s { fingerprint } => {
                     self.accumulator.ja4s = Some(fingerprint);
+                }
+                // TLS 1.2 cert chain — accumulate; the ServerHello
+                // arm will take it via std::mem::take.
+                TlsMessage::Certificate { chain } => {
+                    self.accumulator.certificate_chain = chain;
                 }
             }
         }

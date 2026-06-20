@@ -6,6 +6,8 @@
 //! to get an async iterator of TLS events instead of a callback
 //! handler.
 
+use bytes::Bytes;
+
 use super::{
     parser::{self, DirState, ParseOutput},
     types::{TlsAlert, TlsClientHello, TlsConfig, TlsServerHello},
@@ -55,6 +57,15 @@ pub enum TlsMessage {
         /// `t130200_1301_a56c5b993250`).
         fingerprint: String,
     },
+    /// TLS 1.2 `Certificate` handshake record. `chain` is the
+    /// list of X.509 DER blobs the server (or client, in mutual
+    /// TLS) presented, in wire order — leaf first per RFC
+    /// 5246 §7.4.2. New in 0.18.0 (issue #24 prereq).
+    ///
+    /// TLS 1.3 carries the cert chain inside encrypted
+    /// `EncryptedExtensions` records; this variant only fires
+    /// on TLS 1.2 / 1.1 / 1.0 cleartext cert chains.
+    Certificate { chain: Vec<Bytes> },
 }
 
 /// Per-flow TLS handshake parser. Holds independent state for the
@@ -96,15 +107,19 @@ impl TlsParser {
         cfg: &TlsConfig,
         out: &mut Vec<TlsMessage>,
     ) {
+        let mut parsed = Vec::new();
         loop {
-            match parser::step(state, buf, is_initiator, cfg) {
-                Ok(Some(parsed)) => Self::dispatch(parsed, cfg, out),
-                Ok(None) => break,
+            match parser::step(state, buf, is_initiator, cfg, &mut parsed) {
+                Ok(true) => {}
+                Ok(false) => break,
                 Err(_) => {
                     buf.clear();
                     break;
                 }
             }
+        }
+        for ev in parsed {
+            Self::dispatch(ev, cfg, out);
         }
     }
 
@@ -138,6 +153,9 @@ impl TlsParser {
                 out.push(TlsMessage::ServerHello(sh));
             }
             ParseOutput::Alert(a) => out.push(TlsMessage::Alert(a)),
+            ParseOutput::Certificate { chain } => {
+                out.push(TlsMessage::Certificate { chain });
+            }
         }
     }
 }
