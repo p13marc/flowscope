@@ -68,11 +68,11 @@ mod resolution_cache;
 mod session;
 mod types;
 
-pub use resolution_cache::DnsResolutionCache;
 pub use correlator::Correlator;
 pub use datagram::{DnsMessage, DnsUdpParser};
 pub use exchange::{DnsExchange, DnsExchangeParser, DnsOutcome};
 pub use parser::{DnsParseResult, parse_message, parse_message_at};
+pub use resolution_cache::DnsResolutionCache;
 pub use session::DnsTcpParser;
 pub use types::*;
 

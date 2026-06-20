@@ -164,7 +164,10 @@ where
     /// **Panics** if `window` / `bucket_width` / `capacity`
     /// don't match — silent realignment would mask config bugs.
     fn merge(&mut self, other: Self) {
-        assert_eq!(self.window, other.window, "TimeBucketedSet::merge requires matching window");
+        assert_eq!(
+            self.window, other.window,
+            "TimeBucketedSet::merge requires matching window"
+        );
         assert_eq!(
             self.bucket_width, other.bucket_width,
             "TimeBucketedSet::merge requires matching bucket_width",

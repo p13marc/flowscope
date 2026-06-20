@@ -249,7 +249,11 @@ mod tests {
         }
         let c = h.count();
         let err = ((c as i64 - 100).abs()) as f64 / 100.0;
-        assert!(err < 0.05, "expected ~100, got {c} ({:.1}% err)", err * 100.0);
+        assert!(
+            err < 0.05,
+            "expected ~100, got {c} ({:.1}% err)",
+            err * 100.0
+        );
     }
 
     #[test]
@@ -261,7 +265,11 @@ mod tests {
         }
         let c = h.count();
         let err = ((c as i64 - 10_000).abs()) as f64 / 10_000.0;
-        assert!(err < 0.05, "expected ~10000, got {c} ({:.1}% err)", err * 100.0);
+        assert!(
+            err < 0.05,
+            "expected ~10000, got {c} ({:.1}% err)",
+            err * 100.0
+        );
     }
 
     #[test]

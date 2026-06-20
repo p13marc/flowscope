@@ -71,11 +71,11 @@ mod topk;
 pub use bucketed::TimeBucketedCounter;
 pub use burst::{BurstDetector, BurstHit};
 pub use ewma::Ewma;
-pub use hyperloglog::{HyperLogLog, InvalidPrecision};
-pub use mergeable::Mergeable;
 #[cfg(feature = "extractors")]
 pub use flow_state_map::FlowStateMap;
+pub use hyperloglog::{HyperLogLog, InvalidPrecision};
 pub use indexed::KeyIndexed;
+pub use mergeable::Mergeable;
 #[cfg(feature = "arp")]
 pub use neighbor_table::ArpTable;
 pub use neighbor_table::{NeighborBinding, NeighborEvent, NeighborTable};
