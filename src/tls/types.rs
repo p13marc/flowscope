@@ -60,6 +60,23 @@ impl TlsClientHello {
     pub fn sni(&self) -> Option<&str> {
         self.sni.as_deref()
     }
+
+    /// Classify the ECH (Encrypted ClientHello) state from
+    /// passively-observable signals.
+    ///
+    /// Distinguishes [GREASE-ECH](https://www.rfc-editor.org/rfc/rfc8701)
+    /// (sent by Chrome / Firefox on nearly every ClientHello)
+    /// from likely-real ECH adoption using
+    /// [`super::ech::is_ech_cover_domain`] against the outer
+    /// SNI. See [`super::ech`] for the full vocabulary and
+    /// limits of passive ECH classification.
+    ///
+    /// Issue #8 (0.18). Builds on the 0.12.0 plan 144 ECH
+    /// signal extraction ([`Self::ech_present`] /
+    /// [`Self::ech_config_id`] / [`Self::sni_is_outer`]).
+    pub fn ech_state(&self) -> super::ech::EchState {
+        super::ech::classify_client_hello(self.ech_present, self.sni.as_deref())
+    }
 }
 
 /// Parsed TLS ServerHello.

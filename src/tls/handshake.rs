@@ -102,6 +102,33 @@ pub enum EchOutcome {
     Unknown,
 }
 
+impl TlsHandshake {
+    /// Classify the ECH (Encrypted ClientHello) state from the
+    /// handshake-level evidence — the client's ECH offer and the
+    /// server's plaintext-observable rejection signal.
+    ///
+    /// Refines [`crate::tls::TlsClientHello::ech_state`] with
+    /// the server side:
+    ///
+    /// - `ech_outcome == NotOffered` → [`super::EchState::NotPresent`]
+    /// - `ech_outcome == Rejected` → [`super::EchState::Rejected`]
+    /// - else: classify by outer SNI via
+    ///   [`super::ech::classify_client_hello`] (Accepted /
+    ///   Unknown without `retry_configs` can't be distinguished
+    ///   from GREASE without further evidence).
+    ///
+    /// Issue #8 (0.18).
+    pub fn ech_state(&self) -> super::EchState {
+        match self.ech_outcome {
+            EchOutcome::NotOffered => super::EchState::NotPresent,
+            EchOutcome::Rejected => super::EchState::Rejected,
+            EchOutcome::Accepted | EchOutcome::Unknown => {
+                super::ech::classify_client_hello(true, self.sni.as_deref())
+            }
+        }
+    }
+}
+
 impl Default for TlsHandshake {
     fn default() -> Self {
         Self {

@@ -49,8 +49,12 @@ pub use crate::icmp::{DestUnreachableKind, IcmpInner, IcmpMessage, IcmpType, Mtu
 pub use crate::layers::{Layer, LayerKind, LayerParser, LayerStack, Layers};
 #[cfg(feature = "pcap")]
 pub use crate::pcap::PcapFlowSource;
+// Issue #8 (0.18): ECH GREASE-vs-real classification — surface
+// next to the rest of the TLS handshake vocabulary.
 #[cfg(feature = "session")]
 pub use crate::session::{DatagramParser, SessionEvent, SessionParser};
+#[cfg(feature = "tls")]
+pub use crate::tls::EchState;
 #[cfg(feature = "tracker")]
 pub use crate::tracker::{FlowTracker, FlowTrackerConfig};
 // Plan 165 (0.14): site-custom port label table.

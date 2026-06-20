@@ -71,6 +71,7 @@
 //! cipher / `resumption_attempted` / [`HandshakeOutcome`] in
 //! a single struct.
 
+pub mod ech;
 #[cfg(feature = "tls-fingerprints")]
 mod fingerprint;
 pub mod handshake;
@@ -84,6 +85,7 @@ mod parser;
 mod session;
 mod types;
 
+pub use ech::EchState;
 pub use handshake::{EchOutcome, HandshakeOutcome, TlsHandshake, TlsHandshakeParser};
 #[cfg(feature = "tls-fingerprints")]
 pub use ja4::{Ja4Parts, ja4 as ja4_fingerprint, ja4_parts};
