@@ -29,6 +29,7 @@ jobs:
           - icmp
           - lldp
           - ndp
+          - ssh
           - tls
           - tls_handshake
           - layers

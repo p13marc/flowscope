@@ -77,9 +77,9 @@ pub fn parse_frame(frame: &[u8]) -> Option<ArpMessage> {
     }
     let mut offset = 12;
     let mut ethertype = u16::from_be_bytes([frame[offset], frame[offset + 1]]);
-    // Strip one 802.1Q VLAN tag.
+    // Strip one 802.1Q VLAN tag — need 4 tag bytes + 2 inner-EtherType bytes.
     if ethertype == 0x8100 {
-        if frame.len() < offset + 4 {
+        if frame.len() < offset + 6 {
             return None;
         }
         offset += 4;

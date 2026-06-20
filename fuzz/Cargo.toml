@@ -23,6 +23,7 @@ features = [
     "ndp",
     "reassembler",
     "session",
+    "ssh",
     "tls",
     "tracker",
 ]
@@ -100,6 +101,13 @@ bench = false
 [[bin]]
 name = "lldp"
 path = "fuzz_targets/lldp.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "ssh"
+path = "fuzz_targets/ssh.rs"
 test = false
 doc = false
 bench = false

@@ -29,6 +29,9 @@ pub use crate::lldp::{ChassisId, LldpMessage, PortId, SystemCapabilities};
 // Issue #9 (0.18): p0f-style passive TCP/IP fingerprint.
 #[cfg(feature = "tcp_fingerprint")]
 pub use crate::tcp_fingerprint::{TcpDirection, TcpFingerprint};
+// Issue #7 (0.18): SSH handshake + HASSH fingerprint.
+#[cfg(feature = "ssh")]
+pub use crate::ssh::{SshKexInit, SshMessage, SshParser};
 // Plan 167 (0.14): discoverability sweep — surface the
 // `correlate::*` primitives in the prelude so users don't
 // have to know the module path to find them.

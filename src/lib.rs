@@ -192,6 +192,11 @@ pub use lldp::{ChassisId, LldpMessage, PortId, SystemCapabilities};
 pub mod tcp_fingerprint;
 #[cfg(feature = "tcp_fingerprint")]
 pub use tcp_fingerprint::{TcpDirection, TcpFingerprint};
+// Issue #7 (0.18): SSH handshake parser + HASSH fingerprint.
+#[cfg(feature = "ssh")]
+pub mod ssh;
+#[cfg(feature = "ssh")]
+pub use ssh::{SshKexInit, SshMessage, SshParser};
 #[cfg(feature = "pcap")]
 pub mod pcap;
 #[cfg(feature = "tls")]

@@ -133,7 +133,12 @@ lldp = ["extractors", "tracker", "dep:bytes"]
 # window size, MSS, window-scale, TCP option order, DF bit, and
 # quirks from cleartext SYN / SYN-ACK packets. Operates over the
 # per-packet `Layers` view; no per-flow state. Issue #9 (0.18).
-tcp_fingerprint = ["extractors"]
+tcp_fingerprint = ["extractors", "tracker"]
+# SSH parser — version banner + SSH_MSG_KEXINIT decode +
+# HASSH / HASSHServer fingerprints (Salesforce spec, MIT-
+# equivalent licensed). SessionParser over TCP/22.
+# Issue #7 (0.18).
+ssh = ["reassembler", "session", "dep:bytes", "dep:md-5", "dep:hex"]
 
 # Encrypted-flow behavioural fingerprinting — first-N packet sizes
 # and inter-arrival times accumulated per flow, finalised at flow
@@ -143,7 +148,7 @@ fingerprint = ["dep:arrayvec"]
 
 # Umbrella: enable every shipped L7 protocol parser at once. Strict
 # subset of `full` (no `pcap`, no observability).
-l7 = ["http", "tls", "tls-fingerprints", "dns", "icmp", "arp", "ndp", "dhcp", "lldp"]
+l7 = ["http", "tls", "tls-fingerprints", "dns", "icmp", "arp", "ndp", "dhcp", "lldp", "ssh"]
 
 # pcap source adapter (offline replay).
 pcap = ["extractors", "tracker", "dep:pcap-file"]
