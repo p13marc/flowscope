@@ -87,11 +87,18 @@
 //! | [`headers_all`](HttpResponse::headers_all) | `impl Iterator<Item = &[u8]>` | every matching header |
 
 mod exchange;
+// JA4H is FoxIO License 1.1 (patent pending) — opt-in via the
+// `ja4plus` feature alongside JA4S. See LICENSE-FoxIO-1.1 +
+// NOTICE.
+#[cfg(feature = "ja4plus")]
+pub mod ja4h;
 mod parser;
 mod session;
 mod types;
 
 pub use exchange::{HttpExchange, HttpExchangeParser, HttpOutcome};
+#[cfg(feature = "ja4plus")]
+pub use ja4h::{Ja4hParts, ja4h as ja4h_fingerprint, ja4h_parts};
 pub use session::{HttpMessage, HttpParser};
 pub use types::{HttpConfig, HttpRequest, HttpResponse, HttpVersion};
 
