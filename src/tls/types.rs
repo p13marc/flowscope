@@ -109,6 +109,7 @@ pub struct TlsAlert {
     feature = "serde",
     serde(tag = "kind", content = "value", rename_all = "snake_case")
 )]
+#[non_exhaustive]
 pub enum TlsAlertLevel {
     Warning,
     Fatal,
@@ -121,6 +122,7 @@ pub enum TlsAlertLevel {
     feature = "serde",
     serde(tag = "kind", content = "value", rename_all = "snake_case")
 )]
+#[non_exhaustive]
 pub enum TlsVersion {
     Ssl3_0,
     Tls1_0,

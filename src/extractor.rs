@@ -90,6 +90,7 @@ pub enum Orientation {
     feature = "serde",
     serde(tag = "kind", content = "value", rename_all = "snake_case")
 )]
+#[non_exhaustive]
 pub enum L4Proto {
     Tcp,
     Udp,

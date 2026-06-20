@@ -119,6 +119,7 @@ mod serde_smallvec_bytes {
     feature = "serde",
     serde(tag = "kind", content = "value", rename_all = "snake_case")
 )]
+#[non_exhaustive]
 pub enum DnsRcode {
     NoError,
     FormErr,

@@ -60,15 +60,15 @@
 //! | [`opcode`](DnsFlags::opcode) | `u8` |
 //! | [`rcode_raw`](DnsFlags::rcode_raw) | `u8` |
 
-mod correlate;
 mod correlator;
 mod datagram;
 mod exchange;
 mod parser;
+mod resolution_cache;
 mod session;
 mod types;
 
-pub use correlate::DnsResolutionCache;
+pub use resolution_cache::DnsResolutionCache;
 pub use correlator::Correlator;
 pub use datagram::{DnsMessage, DnsUdpParser};
 pub use exchange::{DnsExchange, DnsExchangeParser, DnsOutcome};
