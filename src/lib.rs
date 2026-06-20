@@ -72,12 +72,14 @@
 
 mod error;
 pub mod mac_addr;
+pub mod parser_kind;
 pub mod rx_metadata;
 mod timestamp;
 mod view;
 
 pub use error::{Error, ErrorCode, ErrorKind, Module, Result};
 pub use mac_addr::MacAddr;
+pub use parser_kind::ParserKind;
 pub use rx_metadata::{ChecksumStatus, RssHashType, RxHash, RxMetadata, VlanProto, VlanTag};
 
 pub mod extractor;
@@ -192,7 +194,19 @@ pub use view::{AsPacketView, OwnedPacketView, PacketView};
 ///     _ => {}
 /// }
 /// ```
+/// **Deprecated — soft-deprecation window**.
+///
+/// Use the typed [`ParserKind`] enum (added in 0.18 — issue #21)
+/// for new code. The string constants here resolve to the same
+/// slugs `ParserKind::as_str()` returns and will stay shipped
+/// for one minor cycle to give downstream consumers time to
+/// migrate match arms. Removed in 0.19.
+#[deprecated(
+    since = "0.18.0",
+    note = "use the typed `flowscope::ParserKind` enum instead — same slug vocabulary via `.as_str()`"
+)]
 pub mod parser_kinds {
+    #![allow(deprecated)]
     #[cfg(feature = "dns")]
     pub use crate::dns::PARSER_KIND_TCP as DNS_TCP;
     #[cfg(feature = "dns")]

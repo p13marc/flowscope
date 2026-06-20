@@ -2,8 +2,16 @@
 //! `flowscope::parser_kinds` umbrella re-export. Verify that
 //! each parser's `parser_kind()` returns the module constant
 //! and that the umbrella re-exports match.
+//!
+//! Issue #21 (0.18): the `flowscope::parser_kinds` umbrella is
+//! deprecated in favour of the typed [`flowscope::ParserKind`]
+//! enum. The tests below test backward-compat of the deprecated
+//! umbrella one last time before its 0.19 removal — we
+//! `#![allow(deprecated)]` the file scope so the deprecation
+//! lint doesn't fail CI.
 
 #![cfg(any(feature = "http", feature = "tls", feature = "dns", feature = "icmp"))]
+#![allow(deprecated)]
 
 #[cfg(feature = "http")]
 #[test]
