@@ -57,7 +57,7 @@ mod tunnel;
 
 pub use eth::{EthernetSlice, MplsSlice, VlanSlice};
 pub use fast::{LayerParser, LayerStack};
-pub use ip::{ArpSlice, Ipv4Slice, Ipv6Slice};
+pub use ip::{ArpSlice, Ipv4Slice, Ipv6ExtensionWalk, Ipv6Slice};
 pub use kind::LayerKind;
 pub use transport::{
     Icmpv4Slice, Icmpv6Slice, TcpFlagsView, TcpOption, TcpOptionsIter, TcpSlice, UdpSlice,
@@ -348,10 +348,12 @@ impl<'a> Layers<'a> {
         // MPLS detection — etherparse doesn't surface the MPLS
         // label stack either. EtherType 0x8847 (unicast) /
         // 0x8848 (multicast) signals MPLS; peel 4-byte label
-        // entries until BOS=1. The inner payload typically
-        // re-parses as IP; for now we push the label stack and
-        // return — IP re-parse after MPLS is queued for a
-        // follow-up plan.
+        // entries until BOS=1, then re-parse the inner payload
+        // as IPv4 or IPv6 based on the first nibble (MPLS
+        // carries no inner-protocol type — RFC 4385 PWE3 control
+        // word edge case deliberately not handled).
+        //
+        // Issue #22 (Release A) — inner IP re-parse after MPLS.
         if matches!(outer_ether_type, 0x8847 | 0x8848)
             && let Some(eth_layer) = stack.iter().find_map(|l| match l {
                 Layer::Ethernet(e) => Some(e),
@@ -369,10 +371,44 @@ impl<'a> Layers<'a> {
                     break;
                 }
             }
-            let payload: &[u8] = &eth_bytes[offset.min(eth_bytes.len())..];
+            let inner_payload: &[u8] = &eth_bytes[offset.min(eth_bytes.len())..];
+
+            // Peek first nibble to guess inner protocol family.
+            // RFC 4385 PWE3 with control word would prepend 4
+            // bytes here and confuse the peek — that's the
+            // documented edge case we accept.
+            if !inner_payload.is_empty() {
+                match inner_payload[0] >> 4 {
+                    4 if inner_payload.len() >= 20 => {
+                        // IPv4: IHL is the low nibble of byte 0,
+                        // measured in 32-bit words.
+                        let header_len = ((inner_payload[0] & 0x0F) as usize) * 4;
+                        if header_len >= 20 && inner_payload.len() >= header_len {
+                            stack.push(Layer::Ipv4(Ipv4Slice::new(inner_payload, header_len)));
+                            let payload: &[u8] = &inner_payload[header_len..];
+                            return Self {
+                                stack,
+                                payload,
+                                truncated,
+                            };
+                        }
+                    }
+                    6 if inner_payload.len() >= 40 => {
+                        // IPv6 header is always 40 bytes.
+                        stack.push(Layer::Ipv6(Ipv6Slice::new(inner_payload, 40)));
+                        let payload: &[u8] = &inner_payload[40..];
+                        return Self {
+                            stack,
+                            payload,
+                            truncated,
+                        };
+                    }
+                    _ => {} // unknown inner; fall through
+                }
+            }
             return Self {
                 stack,
-                payload,
+                payload: inner_payload,
                 truncated,
             };
         }
@@ -393,8 +429,16 @@ impl<'a> Layers<'a> {
                 etherparse::NetSlice::Ipv6(v6) => {
                     let header_slice = v6.header().slice();
                     if let Some(off) = byte_offset(frame, header_slice) {
-                        let payload_len = v6.payload().payload.len();
-                        let end = off + 40 + payload_len;
+                        // Use the on-wire payload_length field from
+                        // the IPv6 header so the slice includes
+                        // extension headers (which etherparse strips
+                        // from .payload().payload). The
+                        // `Ipv6Slice::extensions()` walker (issue
+                        // #22) needs those bytes to surface the
+                        // chain.
+                        let v6_payload_len =
+                            u16::from_be_bytes([header_slice[4], header_slice[5]]) as usize;
+                        let end = off + 40 + v6_payload_len;
                         let bytes = &frame[off..end.min(frame.len())];
                         stack.push(Layer::Ipv6(Ipv6Slice::new(bytes, 40)));
                     }
@@ -534,6 +578,28 @@ impl<'a> Layers<'a> {
     /// partway through. The outer layers stay accessible.
     pub fn truncated(&self) -> bool {
         self.truncated
+    }
+
+    /// `true` if the frame is an IPv6 packet with a Fragment
+    /// extension header (next_header = 44) in the chain.
+    ///
+    /// Fragment reassembly is explicitly out of scope (see
+    /// `docs/concepts.md`), but the **signal** is useful: a
+    /// fragmented flow may have its L4 classification skewed
+    /// (only the first fragment carries the L4 header) and is
+    /// a known evasion vector. Consumers can use this flag to
+    /// route fragmented flows to a forensic queue or skip
+    /// L4-payload analysis.
+    ///
+    /// Returns `false` for IPv4 (use `Ipv4Slice` accessors for
+    /// v4 fragments) and for IPv6 without ext headers.
+    ///
+    /// Issue #22 (Release A).
+    pub fn has_ipv6_fragment(&self) -> bool {
+        self.stack.iter().any(|l| match l {
+            Layer::Ipv6(v6) => v6.extensions().fragment_present,
+            _ => false,
+        })
     }
 
     /// `true` if this frame includes a recognised tunnel

@@ -175,6 +175,133 @@ impl<'a> Ipv6Slice<'a> {
     pub fn kind(&self) -> LayerKind {
         LayerKind::Ipv6
     }
+
+    /// Walk the IPv6 extension-header chain to the upper-layer
+    /// protocol. Returns the final `next_header` (the true L4),
+    /// the offset within `payload()` where that L4 header
+    /// starts, observed extension types, and a
+    /// `fragment_present` flag.
+    ///
+    /// Without this, [`Self::next_header`] returns the FIRST
+    /// header — which is the first extension when ext headers
+    /// are present, NOT the L4 protocol. The classic IPv6 NIDS
+    /// evasion vector (Atlasis 2012, RFC 8200 §4) inserts
+    /// Hop-by-Hop or Destination Options to hide the true L4
+    /// from analyzers that don't walk the chain.
+    ///
+    /// **Bounded** at 8 ext headers (real-world chains are
+    /// ≤4 deep; absurdly deep chains are an evasion attempt and
+    /// produce [`Ipv6ExtensionWalk::chain_too_deep == true`]).
+    ///
+    /// Issue #22 (Release A).
+    pub fn extensions(&self) -> Ipv6ExtensionWalk {
+        const MAX_DEPTH: u8 = 8;
+        let payload = self.payload();
+        let mut nh = self.next_header();
+        let mut offset = 0usize;
+        let mut chain_depth = 0u8;
+        let mut fragment_present = false;
+        let mut chain_too_deep = false;
+        let mut malformed = false;
+
+        loop {
+            if !is_extension_header(nh) {
+                break;
+            }
+            if chain_depth >= MAX_DEPTH {
+                chain_too_deep = true;
+                break;
+            }
+            // Need at least 2 bytes (next_header + hdr_ext_len)
+            // to walk. Anything shorter is malformed; stop with
+            // the malformed flag set.
+            if payload.len() < offset + 2 {
+                malformed = true;
+                break;
+            }
+            let hdr_next = payload[offset];
+            let ext_len_bytes = ext_header_len(nh, payload[offset + 1]);
+            // Truncated extension: cap offset at payload end and stop.
+            if payload.len() < offset + ext_len_bytes {
+                malformed = true;
+                break;
+            }
+            if nh == 44 {
+                fragment_present = true;
+            }
+            nh = hdr_next;
+            offset += ext_len_bytes;
+            chain_depth += 1;
+        }
+
+        Ipv6ExtensionWalk {
+            upper_header: nh,
+            payload_offset: offset,
+            chain_depth,
+            fragment_present,
+            chain_too_deep,
+            malformed,
+        }
+    }
+}
+
+/// Result of walking an IPv6 extension-header chain.
+///
+/// See [`Ipv6Slice::extensions`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[non_exhaustive]
+pub struct Ipv6ExtensionWalk {
+    /// The true upper-layer protocol (TCP=6, UDP=17, ICMPv6=58,
+    /// SCTP=132, etc.) after walking the extension chain. When
+    /// no extensions are present, equals [`Ipv6Slice::next_header`].
+    pub upper_header: u8,
+    /// Offset within [`Ipv6Slice::payload`] where the upper-layer
+    /// header starts. `0` when there are no extensions.
+    pub payload_offset: usize,
+    /// Number of extension headers walked.
+    pub chain_depth: u8,
+    /// `true` if a Fragment header (next_header = 44) was
+    /// observed in the chain.
+    pub fragment_present: bool,
+    /// `true` if the walker hit the 8-extension cap. Likely an
+    /// evasion attempt — real-world chains are ≤4 deep.
+    pub chain_too_deep: bool,
+    /// `true` if the chain was truncated mid-extension or had
+    /// an unparseable length field. Caller should treat the
+    /// resulting `upper_header` as "best effort, not
+    /// authoritative."
+    pub malformed: bool,
+}
+
+/// `true` for IPv6 extension-header `next_header` values that
+/// chain further (RFC 8200 §4).
+///
+/// Includes: Hop-by-Hop (0), Routing (43), Fragment (44),
+/// Destination Options (60), AH (51), Mobility (135), HIP (139),
+/// Shim6 (140). Notably excludes ESP (50), which is a terminal
+/// "encrypted-payload, no further info" marker.
+fn is_extension_header(nh: u8) -> bool {
+    matches!(nh, 0 | 43 | 44 | 60 | 51 | 135 | 139 | 140)
+}
+
+/// Length in bytes of an IPv6 extension header keyed by its
+/// `next_header` type code and the on-wire `hdr_ext_len` field
+/// (in 8-byte units, NOT including the first 8 bytes per
+/// RFC 8200 §4).
+fn ext_header_len(this_header: u8, hdr_ext_len: u8) -> usize {
+    match this_header {
+        // Fragment header is FIXED at 8 bytes (RFC 8200 §4.5).
+        44 => 8,
+        // AH (RFC 4302 §2.2): payload length in 32-bit words
+        // minus 2. We approximate as the standard 8-byte chunk
+        // formula since the chain still proceeds linearly.
+        51 => (hdr_ext_len as usize + 2) * 4,
+        // All other extension headers (Hop-by-Hop, Routing,
+        // Destination Options, Mobility, HIP, Shim6): the
+        // standard "8 + hdr_ext_len * 8" formula.
+        _ => 8 + (hdr_ext_len as usize) * 8,
+    }
 }
 
 /// ARP packet slice (RFC 826).
