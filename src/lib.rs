@@ -199,6 +199,10 @@ pub use cdp::{CdpAddress, CdpCapabilities, CdpMessage};
 pub mod tcp_fingerprint;
 #[cfg(feature = "tcp_fingerprint")]
 pub use tcp_fingerprint::{TcpDirection, TcpFingerprint};
+// Issue #16 sub-piece (0.18): IPFIX IE vocabulary. The full
+// FlowRecord re-key stays open in #16.
+#[cfg(feature = "ipfix")]
+pub mod ipfix;
 // Issue #7 (0.18): SSH handshake parser + HASSH fingerprint.
 #[cfg(feature = "ssh")]
 pub mod ssh;

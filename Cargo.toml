@@ -139,6 +139,12 @@ cdp = ["extractors", "tracker", "dep:bytes"]
 # quirks from cleartext SYN / SYN-ACK packets. Operates over the
 # per-packet `Layers` view; no per-flow state. Issue #9 (0.18).
 tcp_fingerprint = ["extractors", "tracker"]
+# IPFIX (RFC 7011/7012) Information Element vocabulary — IANA
+# IE registry as constants + flowEndReason mapping +
+# tcpControlBits encoder. Additive sub-piece of #16; the full
+# FlowRecord re-key to IPFIX IEs stays open in #16. No new
+# transitive deps.
+ipfix = []
 # SSH parser — version banner + SSH_MSG_KEXINIT decode +
 # HASSH / HASSHServer fingerprints (Salesforce spec, MIT-
 # equivalent licensed). SessionParser over TCP/22.
