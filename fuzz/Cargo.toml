@@ -18,6 +18,7 @@ features = [
     "extractors",
     "http",
     "icmp",
+    "ndp",
     "reassembler",
     "session",
     "tls",
@@ -76,6 +77,13 @@ bench = false
 [[bin]]
 name = "layers"
 path = "fuzz_targets/layers.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "ndp"
+path = "fuzz_targets/ndp.rs"
 test = false
 doc = false
 bench = false

@@ -15,6 +15,10 @@
 // Issue #1 (0.17): ARP visibility surface.
 #[cfg(feature = "arp")]
 pub use crate::arp::{ArpMessage, ArpOp};
+// Issue #6 (0.18): NDP (IPv6 Neighbor Discovery) — IPv6 sibling
+// of ARP.
+#[cfg(feature = "ndp")]
+pub use crate::ndp::{NdpKind, NdpMessage};
 // Plan 167 (0.14): discoverability sweep — surface the
 // `correlate::*` primitives in the prelude so users don't
 // have to know the module path to find them.

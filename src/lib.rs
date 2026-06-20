@@ -167,6 +167,13 @@ pub use icmp::{DestUnreachableKind, MtuSignalKind};
 pub mod arp;
 #[cfg(feature = "arp")]
 pub use arp::{ArpMessage, ArpOp};
+// Issue #6 (0.18): NDP (IPv6 Neighbor Discovery) — the ARP
+// sibling. Pairs with the always-on `NeighborTable<Ipv6Addr,
+// MacAddr>` for binding tracking.
+#[cfg(feature = "ndp")]
+pub mod ndp;
+#[cfg(feature = "ndp")]
+pub use ndp::{NdpKind, NdpMessage};
 #[cfg(feature = "pcap")]
 pub mod pcap;
 #[cfg(feature = "tls")]
