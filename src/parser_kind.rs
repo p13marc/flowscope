@@ -69,7 +69,7 @@ impl ParserKind {
     /// | [`Self::DnsUdp`] | `"dns-udp"` |
     /// | [`Self::DnsTcp`] | `"dns-tcp"` |
     /// | [`Self::Icmp`] | `"icmp"` |
-    /// | [`Self::Other(s)`] | `s` (caller-supplied) |
+    /// | [`Self::Other`] | the wrapped `&'static str` (caller-supplied) |
     /// | [`Self::Unspecified`] | `""` |
     pub fn as_str(&self) -> &'static str {
         match self {
