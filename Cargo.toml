@@ -148,6 +148,12 @@ ssdp = ["extractors", "tracker", "session"]
 # device-config-theft visibility on OT / network gear.
 # Issue #14 (Tier-2 sub-piece, FTP/TFTP row).
 tftp = ["extractors", "tracker", "session"]
+# Asset-inventory composition module — `flowscope::asset` —
+# unified `Asset` record + LRU-bounded `Inventory` over the
+# events emitted by the L2 / L3 / L4 asset-discovery
+# parsers (ARP / NDP / DHCP / LLDP / CDP / SSDP). Pure
+# composition; no new wire-format work. Issue #27 (0.18).
+asset = ["tracker"]
 # p0f-style passive TCP/IP fingerprint — extracts initial TTL,
 # window size, MSS, window-scale, TCP option order, DF bit, and
 # quirks from cleartext SYN / SYN-ACK packets. Operates over the

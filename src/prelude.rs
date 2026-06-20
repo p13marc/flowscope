@@ -41,6 +41,9 @@ pub use crate::ssdp::{SsdpKind, SsdpMessage};
 // visibility.
 #[cfg(feature = "tftp")]
 pub use crate::tftp::{TftpErrorCode, TftpMessage, TftpMode, TftpOpcode};
+// Issue #27 (0.18): asset-inventory composition.
+#[cfg(feature = "asset")]
+pub use crate::asset::{Asset, AssetCapabilities, AssetSourceSet, Inventory};
 // Issue #9 (0.18): p0f-style passive TCP/IP fingerprint.
 #[cfg(feature = "tcp_fingerprint")]
 pub use crate::tcp_fingerprint::{TcpDirection, TcpFingerprint};

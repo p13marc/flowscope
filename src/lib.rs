@@ -211,6 +211,12 @@ pub use ssdp::{SsdpKind, SsdpMessage};
 pub mod tftp;
 #[cfg(feature = "tftp")]
 pub use tftp::{TftpErrorCode, TftpMessage, TftpMode, TftpOpcode};
+// Issue #27 (0.18): unified Asset record + Inventory over
+// the asset-discovery parsers.
+#[cfg(feature = "asset")]
+pub mod asset;
+#[cfg(feature = "asset")]
+pub use asset::{Asset, AssetCapabilities, AssetFingerprints, AssetSourceSet, Inventory};
 // Issue #9 (0.18): p0f-style passive TCP/IP fingerprint.
 // License-clean alternative to FoxIO's JA4T / JA4TS.
 #[cfg(feature = "tcp_fingerprint")]
