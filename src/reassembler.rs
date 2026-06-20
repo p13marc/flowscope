@@ -146,6 +146,22 @@ pub trait Reassembler: Send + 'static {
     fn rexmit_inconsistencies(&self) -> u64 {
         0
     }
+
+    /// Current live byte occupancy of the reassembler — bytes
+    /// in the ready buffer plus any OOO pending. This is the
+    /// hook a future global-memcap enforcement layer
+    /// (see [`crate::FlowTrackerConfig::reassembly_memcap`])
+    /// reads to sum cross-flow usage.
+    ///
+    /// Default `0` for the trivial / no-op impls. Concrete
+    /// reassemblers ([`BufferedReassembler`],
+    /// [`crate::SegmentBufferReassembler`]) override.
+    ///
+    /// New in 0.18.0 (issue #17 close — declarative hook;
+    /// FlowDriver enforcement is its own follow-up).
+    fn current_bytes(&self) -> u64 {
+        0
+    }
 }
 
 /// Build a [`Reassembler`] for a brand-new session, given its key
@@ -456,6 +472,10 @@ impl Reassembler for BufferedReassembler {
 
     fn retransmits(&self) -> u64 {
         Self::retransmits(self)
+    }
+
+    fn current_bytes(&self) -> u64 {
+        self.buffer.len() as u64
     }
 }
 

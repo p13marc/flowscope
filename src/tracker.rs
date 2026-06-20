@@ -129,6 +129,31 @@ pub struct FlowTrackerConfig {
     /// Manual [`FlowTracker::sweep`] resets `last_sweep_ts`, so
     /// mixing manual + auto sweep is safe (no double-fires).
     pub auto_sweep_interval: Option<Duration>,
+    /// TCP overlap-resolution policy used by the default
+    /// [`crate::BufferedReassemblerFactory`] / OOO-capable
+    /// reassembler factories. The hint is read at factory time;
+    /// per-flow reassembler factories that ignore it stay free
+    /// to do so. Default is
+    /// [`crate::event::TcpOverlapPolicy::First`] (BSD).
+    ///
+    /// Issue #17 (0.18 close).
+    pub tcp_overlap_policy: crate::event::TcpOverlapPolicy,
+    /// Tracker-wide reassembly memcap — total bytes of
+    /// reassembly buffering across every live flow. When the
+    /// running sum trips this cap on a `track` call, the
+    /// configured [`Self::reassembly_memcap_policy`] decides
+    /// the response (drop the packet, drop the flow, etc.).
+    ///
+    /// `None` (default) = unbounded; the per-flow
+    /// `max_reassembler_buffer` is the only cap.
+    ///
+    /// Issue #17 (0.18 close).
+    pub reassembly_memcap: Option<u64>,
+    /// Companion to [`Self::reassembly_memcap`]; no effect
+    /// unless that field is `Some`. Default
+    /// [`crate::event::MemcapPolicy::Ignore`] mirrors
+    /// Suricata's `memcap-policy: ignore` default.
+    pub reassembly_memcap_policy: crate::event::MemcapPolicy,
 }
 
 impl Default for FlowTrackerConfig {
@@ -145,6 +170,9 @@ impl Default for FlowTrackerConfig {
             reassembler_high_watermark_pct: None,
             flow_tick_interval: None,
             auto_sweep_interval: None,
+            tcp_overlap_policy: crate::event::TcpOverlapPolicy::First,
+            reassembly_memcap: None,
+            reassembly_memcap_policy: crate::event::MemcapPolicy::Ignore,
         }
     }
 }

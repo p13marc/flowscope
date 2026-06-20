@@ -22,7 +22,7 @@ use std::collections::BTreeMap;
 use std::time::Duration;
 
 use crate::Timestamp;
-use crate::event::OverflowPolicy;
+use crate::event::{OverflowPolicy, TcpOverlapPolicy};
 use crate::reassembler::Reassembler;
 
 const DEFAULT_OOO_CAP: usize = 256 * 1024;
@@ -50,6 +50,10 @@ pub struct SegmentBufferReassembler {
     max_ooo_buffer: usize,
     ooo_deadline: Duration,
     overflow_policy: OverflowPolicy,
+    /// Which bytes win overlap regions when two segments cover
+    /// the same sequence range with different content. See
+    /// [`TcpOverlapPolicy`] for the per-policy semantics.
+    overlap_policy: TcpOverlapPolicy,
 
     // Counters.
     holes_filled: u64,
@@ -78,6 +82,7 @@ impl SegmentBufferReassembler {
             max_ooo_buffer: DEFAULT_OOO_CAP,
             ooo_deadline: DEFAULT_OOO_DEADLINE,
             overflow_policy: OverflowPolicy::SlidingWindow,
+            overlap_policy: TcpOverlapPolicy::First,
             holes_filled: 0,
             holes_expired: 0,
             retransmits: 0,
@@ -111,6 +116,22 @@ impl SegmentBufferReassembler {
     pub fn with_overflow_policy(mut self, policy: OverflowPolicy) -> Self {
         self.overflow_policy = policy;
         self
+    }
+
+    /// TCP overlap-resolution policy — which bytes win when
+    /// two segments cover the same sequence range with
+    /// different content. Default is [`TcpOverlapPolicy::First`]
+    /// (BSD-family default).
+    ///
+    /// Issue #17 (0.18 close).
+    pub fn with_tcp_overlap_policy(mut self, policy: TcpOverlapPolicy) -> Self {
+        self.overlap_policy = policy;
+        self
+    }
+
+    /// Currently-configured TCP overlap policy.
+    pub fn tcp_overlap_policy(&self) -> TcpOverlapPolicy {
+        self.overlap_policy
     }
 
     /// Take the ready (in-order) bytes; leaves the buffer empty.
@@ -229,6 +250,193 @@ impl SegmentBufferReassembler {
             }
         }
     }
+
+    /// Insert an OOO segment into pending, applying the
+    /// configured [`TcpOverlapPolicy`] for byte-level overlap
+    /// resolution against any pre-existing pending entries.
+    ///
+    /// Algorithm:
+    /// 1. Find every existing entry whose range intersects
+    ///    `[seq, seq+payload.len())`.
+    /// 2. For each, detect content divergence in the overlap
+    ///    region — increment `rexmit_inconsistencies` on the
+    ///    first divergence (one per arrival, not per overlap).
+    /// 3. Build a merged buffer for the *full union range*
+    ///    where every byte comes from the policy-chosen
+    ///    winner.
+    /// 4. Apply the OOO-buffer cap (evict-oldest-if-over).
+    /// 5. Remove the absorbed existing entries and insert the
+    ///    merged range as a single new pending entry keyed at
+    ///    `union_start`.
+    fn absorb_ooo_with_policy(&mut self, seq: u32, payload: &[u8], ts: Timestamp) {
+        let new_end = seq.wrapping_add(payload.len() as u32);
+
+        // Step 1+2: walk overlaps, collect inconsistency signal,
+        // compute the union range.
+        let mut overlapping_keys: Vec<u32> = Vec::new();
+        let mut union_start = seq;
+        let mut union_end = new_end;
+        let mut divergence_seen = false;
+        for (&start, (existing, _)) in &self.pending {
+            let end = start.wrapping_add(existing.len() as u32);
+            if !ranges_overlap(seq, new_end, start, end) {
+                continue;
+            }
+            overlapping_keys.push(start);
+            // Track the union [min(start), max(end)] in
+            // sequence-space order.
+            if seq_compare(start, union_start).is_lt() {
+                union_start = start;
+            }
+            if seq_compare(end, union_end).is_gt() {
+                union_end = end;
+            }
+            if !divergence_seen {
+                let overlap_start = if seq_compare(seq, start).is_ge() {
+                    seq
+                } else {
+                    start
+                };
+                let overlap_end = if seq_compare(new_end, end).is_le() {
+                    new_end
+                } else {
+                    end
+                };
+                let overlap_len = overlap_end.wrapping_sub(overlap_start) as usize;
+                let off_existing = overlap_start.wrapping_sub(start) as usize;
+                let off_new = overlap_start.wrapping_sub(seq) as usize;
+                if existing[off_existing..off_existing + overlap_len]
+                    != payload[off_new..off_new + overlap_len]
+                {
+                    self.rexmit_inconsistencies = self.rexmit_inconsistencies.saturating_add(1);
+                    divergence_seen = true;
+                }
+            }
+        }
+
+        // Hot path: no overlap → just insert.
+        if overlapping_keys.is_empty() {
+            self.cap_and_insert_ooo(seq, payload.to_vec(), ts);
+            return;
+        }
+
+        // Step 3: build the merged buffer over the union range.
+        let union_len = union_end.wrapping_sub(union_start) as usize;
+        let mut merged: Vec<u8> = vec![0u8; union_len];
+        // Track ownership per byte: arrival-ts of the segment
+        // whose bytes are currently filled in that position.
+        // `None` means "no segment yet" (sentinel).
+        let mut owner_ts: Vec<Option<Timestamp>> = vec![None; union_len];
+        let mut owner_seq: Vec<Option<u32>> = vec![None; union_len];
+
+        // Process pending entries in insertion-order (BTreeMap
+        // iteration is seq-sorted, so this lays older content
+        // first; the policy decides whether to overwrite).
+        for &start in &overlapping_keys {
+            let (bytes, e_ts) = self.pending.get(&start).expect("just collected").clone();
+            let end = start.wrapping_add(bytes.len() as u32);
+            self.apply_segment_to_merge(
+                start,
+                end,
+                &bytes,
+                e_ts,
+                union_start,
+                &mut merged,
+                &mut owner_ts,
+                &mut owner_seq,
+            );
+        }
+        // Now the new arrival.
+        self.apply_segment_to_merge(
+            seq,
+            new_end,
+            payload,
+            ts,
+            union_start,
+            &mut merged,
+            &mut owner_ts,
+            &mut owner_seq,
+        );
+
+        // Step 4 + 5: drop absorbed entries from pending and the
+        // pending-byte accounting, then re-insert the merged
+        // range — subject to the OOO cap.
+        for k in &overlapping_keys {
+            if let Some((existing, _)) = self.pending.remove(k) {
+                self.pending_bytes = self.pending_bytes.saturating_sub(existing.len());
+            }
+        }
+        self.cap_and_insert_ooo(union_start, merged, ts);
+    }
+
+    /// Per-policy byte-level merge: copy bytes from `[start, end)`
+    /// into `merged[start - union_start..end - union_start]`
+    /// subject to the configured `overlap_policy`.
+    #[allow(clippy::too_many_arguments)]
+    fn apply_segment_to_merge(
+        &self,
+        start: u32,
+        end: u32,
+        bytes: &[u8],
+        ts: Timestamp,
+        union_start: u32,
+        merged: &mut [u8],
+        owner_ts: &mut [Option<Timestamp>],
+        owner_seq: &mut [Option<u32>],
+    ) {
+        let union_offset = start.wrapping_sub(union_start) as usize;
+        let len = end.wrapping_sub(start) as usize;
+        for (i, &new_byte) in bytes.iter().take(len).enumerate() {
+            let dst = union_offset + i;
+            let take_new = match owner_ts[dst] {
+                None => true, // no prior content — always take new
+                Some(prev_ts) => {
+                    let prev_seq = owner_seq[dst].expect("ts implies seq");
+                    match self.overlap_policy {
+                        TcpOverlapPolicy::First => {
+                            // First-arrived wins → keep prev (only
+                            // overwrite when no prior content).
+                            false
+                        }
+                        TcpOverlapPolicy::Last => {
+                            // Last-arrived wins → overwrite if new
+                            // arrived strictly after prev. Tie →
+                            // keep prev (stable).
+                            ts > prev_ts
+                        }
+                        TcpOverlapPolicy::LowerSeq => {
+                            // Segment with lower start-seq wins.
+                            seq_compare(start, prev_seq).is_lt()
+                        }
+                        TcpOverlapPolicy::HigherSeq => {
+                            // Segment with higher start-seq wins.
+                            seq_compare(start, prev_seq).is_gt()
+                        }
+                    }
+                }
+            };
+            if take_new {
+                merged[dst] = new_byte;
+                owner_ts[dst] = Some(ts);
+                owner_seq[dst] = Some(start);
+            }
+        }
+    }
+
+    /// Apply the OOO buffer cap and insert a (possibly merged)
+    /// range as a new pending entry.
+    fn cap_and_insert_ooo(&mut self, seq: u32, bytes: Vec<u8>, ts: Timestamp) {
+        if self.pending_bytes + bytes.len() > self.max_ooo_buffer {
+            self.evict_oldest_ooo(self.max_ooo_buffer.saturating_sub(bytes.len()));
+            if self.pending_bytes + bytes.len() > self.max_ooo_buffer {
+                // Even after eviction, won't fit.
+                self.bytes_dropped_oversize += bytes.len() as u64;
+                return;
+            }
+        }
+        self.pending_bytes += bytes.len();
+        self.pending.insert(seq, (bytes, ts));
+    }
 }
 
 impl Reassembler for SegmentBufferReassembler {
@@ -264,49 +472,21 @@ impl Reassembler for SegmentBufferReassembler {
             return;
         }
 
-        // OOO future segment. Before buffering, scan the pending
-        // BTreeMap for any segment whose [start, start+len) range
-        // overlaps with this segment's [seq, seq+len) range. If
-        // overlapping byte ranges disagree, flag the divergence —
-        // it's the classic Ptacek-Newsham TCP-overlap evasion
-        // shape (cf. Zeek's `rexmit_inconsistency`).
-        let new_end = seq.wrapping_add(payload.len() as u32);
-        for (&start, (existing, _)) in &self.pending {
-            let end = start.wrapping_add(existing.len() as u32);
-            let overlap_start = if seq_compare(seq, start).is_ge() {
-                seq
-            } else {
-                start
-            };
-            let overlap_end = if seq_compare(new_end, end).is_le() {
-                new_end
-            } else {
-                end
-            };
-            if seq_compare(overlap_start, overlap_end).is_ge() {
-                continue;
-            }
-            let overlap_len = overlap_end.wrapping_sub(overlap_start) as usize;
-            let off_existing = overlap_start.wrapping_sub(start) as usize;
-            let off_new = overlap_start.wrapping_sub(seq) as usize;
-            if existing[off_existing..off_existing + overlap_len]
-                != payload[off_new..off_new + overlap_len]
-            {
-                self.rexmit_inconsistencies = self.rexmit_inconsistencies.saturating_add(1);
-                break;
-            }
-        }
-
-        if self.pending_bytes + payload.len() > self.max_ooo_buffer {
-            self.evict_oldest_ooo(self.max_ooo_buffer.saturating_sub(payload.len()));
-            if self.pending_bytes + payload.len() > self.max_ooo_buffer {
-                // Even after eviction, won't fit. Drop this segment.
-                self.bytes_dropped_oversize += payload.len() as u64;
-                return;
-            }
-        }
-        self.pending.insert(seq, (payload.to_vec(), ts));
-        self.pending_bytes += payload.len();
+        // OOO future segment. The pending buffer is a BTreeMap
+        // of (start_seq → (bytes, arrival_ts)). To honour
+        // [`TcpOverlapPolicy`] we:
+        //   1. Walk every existing entry that overlaps with the
+        //      new segment.
+        //   2. For each overlapping pair, if the overlap-region
+        //      bytes diverge, increment `rexmit_inconsistencies`
+        //      (the IOC fires regardless of which side later
+        //      wins the byte-level resolution).
+        //   3. Apply the policy to merge: build a fresh byte
+        //      buffer for the new segment's seq range where
+        //      each overlapping byte comes from whichever
+        //      segment wins, then replace the affected pending
+        //      entries with the merged result.
+        self.absorb_ooo_with_policy(seq, payload, ts);
     }
 
     fn fin(&mut self) {
@@ -340,6 +520,13 @@ impl Reassembler for SegmentBufferReassembler {
     fn rexmit_inconsistencies(&self) -> u64 {
         self.rexmit_inconsistencies
     }
+
+    fn current_bytes(&self) -> u64 {
+        // Ready + OOO-pending. `high_watermark` returns the
+        // peak; `current_bytes` is the instantaneous occupancy
+        // the cross-flow memcap layer reads.
+        self.pending_bytes as u64 + self.ready.len() as u64
+    }
 }
 
 /// Compare two TCP sequence numbers respecting 32-bit wrap.
@@ -347,6 +534,13 @@ impl Reassembler for SegmentBufferReassembler {
 fn seq_compare(a: u32, b: u32) -> std::cmp::Ordering {
     let diff = a.wrapping_sub(b) as i32;
     diff.cmp(&0)
+}
+
+/// `true` when the two TCP-seq ranges `[a_start, a_end)` and
+/// `[b_start, b_end)` overlap. Wrap-aware via `seq_compare`.
+#[inline]
+fn ranges_overlap(a_start: u32, a_end: u32, b_start: u32, b_end: u32) -> bool {
+    seq_compare(a_start, b_end).is_lt() && seq_compare(b_start, a_end).is_lt()
 }
 
 #[cfg(test)]

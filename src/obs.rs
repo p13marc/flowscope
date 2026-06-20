@@ -115,6 +115,7 @@ pub(crate) fn anomaly_label(kind: &AnomalyKind) -> &'static str {
         AnomalyKind::RetransmittedSegment { .. } => "retransmit",
         AnomalyKind::ReassemblerHighWatermark { .. } => "reassembler_high_watermark",
         AnomalyKind::TcpRexmitInconsistency { .. } => "tcp_rexmit_inconsistency",
+        AnomalyKind::GlobalMemcapHit { .. } => "global_memcap_hit",
     }
 }
 

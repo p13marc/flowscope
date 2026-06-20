@@ -147,6 +147,135 @@ pub enum OverflowPolicy {
     DropFlow,
 }
 
+/// TCP overlap-resolution policy — which segment's bytes win
+/// the overlap region when two TCP segments cover the same
+/// sequence range with different content.
+///
+/// This is the Ptacek-Newsham (1998) evasion model. Different
+/// OS TCP stacks resolve overlap differently; if the analyzer
+/// resolves it the wrong way for the target, attackers can
+/// smuggle bytes the IDS can't see. flowscope flags any
+/// content divergence via
+/// [`AnomalyKind::TcpRexmitInconsistency`] regardless of the
+/// policy chosen; the policy controls *which* bytes the
+/// reassembler hands to the consumer.
+///
+/// The 4-variant enum collapses Suricata's 15+ `OS_POLICY_*`
+/// constants into the operationally-meaningful kernels —
+/// most named OS policies actually behave identically and
+/// the per-OS divergence is mostly historical drift. The
+/// mapping table:
+///
+/// | flowscope policy | Suricata `OS_POLICY_*` |
+/// |---|---|
+/// | [`Self::First`] | BSD (default), HPUX10, IRIX, MACOS, WINDOWS, WINDOWS2K3 |
+/// | [`Self::Last`] | LAST |
+/// | [`Self::LowerSeq`] | BSD_RIGHT, SOLARIS, OLD_SOLARIS, FIRST |
+/// | [`Self::HigherSeq`] | VISTA, OLD_LINUX, LINUX, HPUX11 |
+///
+/// Default is [`Self::First`] — matches Suricata's
+/// `OS_POLICY_DEFAULT = OS_POLICY_BSD`.
+///
+/// `#[non_exhaustive]` — future per-OS variants can land
+/// additively.
+///
+/// New in 0.18.0 (issue #17 close).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
+#[non_exhaustive]
+pub enum TcpOverlapPolicy {
+    /// **Default.** First-arriving segment's bytes win the
+    /// overlap region. The BSD-family default — the safest
+    /// evasion-resistant choice when no per-host knowledge
+    /// is available, because it matches what real BSD /
+    /// macOS / Windows / IRIX / HP-UX 10 hosts do.
+    #[default]
+    First,
+    /// Last-arriving segment's bytes win the overlap region.
+    /// Matches the explicit Suricata `last` policy.
+    Last,
+    /// The segment with the **lower start sequence** wins
+    /// the overlap region. Models Suricata `bsd_right` /
+    /// `solaris` / `old_solaris` / `first` behavior — on
+    /// truly partial overlaps, the segment whose data
+    /// started earlier in the byte stream wins.
+    LowerSeq,
+    /// The segment with the **higher start sequence** wins.
+    /// Models Linux's (Suricata `linux` / `old_linux` /
+    /// `hpux11` / `vista`) handling — when a later segment
+    /// starts deeper into the stream and overlaps, the
+    /// later-starting segment wins the overlap region.
+    HigherSeq,
+}
+
+impl TcpOverlapPolicy {
+    /// Stable slug for metric labels and JSON emission.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            TcpOverlapPolicy::First => "first",
+            TcpOverlapPolicy::Last => "last",
+            TcpOverlapPolicy::LowerSeq => "lower_seq",
+            TcpOverlapPolicy::HigherSeq => "higher_seq",
+        }
+    }
+}
+
+/// Tracker-wide memcap policy — what to do when the total
+/// reassembly buffering across all flows trips the configured
+/// memcap. Mirrors Suricata's `stream.reassembly.memcap-policy`
+/// vocabulary, collapsed to the four behaviors that make
+/// sense for a passive analyzer.
+///
+/// Set on [`crate::FlowTrackerConfig::reassembly_memcap_policy`];
+/// the cap itself is
+/// [`crate::FlowTrackerConfig::reassembly_memcap`].
+///
+/// `#[non_exhaustive]` — additive forever.
+///
+/// New in 0.18.0 (issue #17 close).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
+#[non_exhaustive]
+pub enum MemcapPolicy {
+    /// **Default.** Silently drop new segments when the cap
+    /// is hit. The flow stays alive; the parser sees a gap
+    /// and may resync. A single
+    /// [`AnomalyKind::GlobalMemcapHit`] fires per tick on the
+    /// first violation; subsequent violations in the same
+    /// tick are coalesced into the same anomaly's running
+    /// count.
+    #[default]
+    Ignore,
+    /// End the violating flow on the next tick — emits
+    /// `Ended { reason: BufferOverflow }`. Use when you'd
+    /// rather lose one flow than corrupt analysis on it.
+    DropFlow,
+    /// Discard the segment that would push past the memcap
+    /// but keep the flow + existing buffer intact. The
+    /// reassembler stays usable; only the offending packet
+    /// is dropped.
+    DropPacket,
+    /// Stop reassembling this flow (poison its reassembler)
+    /// but keep tracking flow stats. Parser stops emitting
+    /// messages on the affected flow; the flow itself stays
+    /// alive in the tracker.
+    PassThrough,
+}
+
+impl MemcapPolicy {
+    /// Stable slug for metric labels.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            MemcapPolicy::Ignore => "ignore",
+            MemcapPolicy::DropFlow => "drop_flow",
+            MemcapPolicy::DropPacket => "drop_packet",
+            MemcapPolicy::PassThrough => "pass_through",
+        }
+    }
+}
+
 /// Aggregate counters maintained per flow.
 ///
 /// `#[non_exhaustive]` to keep future additions purely additive.
@@ -458,6 +587,19 @@ pub enum AnomalyKind {
     /// tick, with `count` summing the delta of
     /// [`crate::Reassembler::rexmit_inconsistencies`].
     TcpRexmitInconsistency { side: FlowSide, count: u64 },
+
+    /// New in 0.18.0 (issue #17 close). Tracker-wide
+    /// reassembly memcap was hit during this tick and the
+    /// configured [`crate::MemcapPolicy`] kicked in.
+    /// `bytes_in_flight` is the total reassembly buffering
+    /// occupancy at the moment of the trip; `cap` is the
+    /// configured memcap; `policy` records how the violation
+    /// was handled. Coalesced per tick.
+    GlobalMemcapHit {
+        bytes_in_flight: u64,
+        cap: u64,
+        policy: MemcapPolicy,
+    },
 }
 
 impl AnomalyKind {
@@ -480,6 +622,7 @@ impl AnomalyKind {
     /// | [`Self::RetransmittedSegment`] | `"retransmit"` |
     /// | [`Self::ReassemblerHighWatermark`] | `"reassembler_high_watermark"` |
     /// | [`Self::TcpRexmitInconsistency`] | `"tcp_rexmit_inconsistency"` |
+    /// | [`Self::GlobalMemcapHit`] | `"global_memcap_hit"` |
     pub fn short_kind(&self) -> &'static str {
         crate::obs::anomaly_label(self)
     }
@@ -505,6 +648,7 @@ impl crate::AnomalyFields for AnomalyKind {
             | AnomalyKind::ReassemblerHighWatermark { .. } => "stream",
             AnomalyKind::SessionParseError { .. } => "applayer",
             AnomalyKind::FlowTableEvictionPressure { .. } => "stream",
+            AnomalyKind::GlobalMemcapHit { .. } => "stream",
         })
     }
 
@@ -583,6 +727,10 @@ impl AnomalyKind {
             // Overlapping bytes that disagree is an evasion IOC,
             // not a benign retransmit — escalate above `Info`.
             AnomalyKind::TcpRexmitInconsistency { .. } => Severity::Error,
+            // Hitting the global memcap is a serious capacity
+            // problem; operators have to react. Critical so it
+            // crosses default alert thresholds.
+            AnomalyKind::GlobalMemcapHit { .. } => Severity::Critical,
         }
     }
 }
