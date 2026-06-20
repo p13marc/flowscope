@@ -19,6 +19,9 @@ pub use crate::arp::{ArpMessage, ArpOp};
 // of ARP.
 #[cfg(feature = "ndp")]
 pub use crate::ndp::{NdpKind, NdpMessage};
+// Issue #11 (0.18): DHCP — passive asset / OS discovery.
+#[cfg(feature = "dhcp")]
+pub use crate::dhcp::{DhcpMessage, DhcpMessageType, DhcpOp};
 // Plan 167 (0.14): discoverability sweep — surface the
 // `correlate::*` primitives in the prelude so users don't
 // have to know the module path to find them.

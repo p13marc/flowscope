@@ -120,6 +120,11 @@ arp = ["extractors", "tracker", "session", "dep:bytes"]
 # `NeighborTable<Ipv6Addr, MacAddr>` for binding tracking and
 # SLAAC-poisoning / NDP-spoof detection. Issue #6 (0.18).
 ndp = ["extractors", "tracker", "dep:bytes"]
+# DHCP parser — UDP/67-68 BOOTP + DHCP options (RFC 2131 / 2132).
+# DatagramParser over the unencrypted DHCP control plane. Surfaces
+# the Fingerbank-style option-55 + option-60 fingerprint for asset
+# / OS discovery. Issue #11 (0.18).
+dhcp = ["extractors", "tracker", "session", "dep:bytes"]
 
 # Encrypted-flow behavioural fingerprinting — first-N packet sizes
 # and inter-arrival times accumulated per flow, finalised at flow
@@ -129,7 +134,7 @@ fingerprint = ["dep:arrayvec"]
 
 # Umbrella: enable every shipped L7 protocol parser at once. Strict
 # subset of `full` (no `pcap`, no observability).
-l7 = ["http", "tls", "tls-fingerprints", "dns", "icmp", "arp", "ndp"]
+l7 = ["http", "tls", "tls-fingerprints", "dns", "icmp", "arp", "ndp", "dhcp"]
 
 # pcap source adapter (offline replay).
 pcap = ["extractors", "tracker", "dep:pcap-file"]

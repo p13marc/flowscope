@@ -174,6 +174,12 @@ pub use arp::{ArpMessage, ArpOp};
 pub mod ndp;
 #[cfg(feature = "ndp")]
 pub use ndp::{NdpKind, NdpMessage};
+// Issue #11 (0.18): DHCP — UDP/67-68 BOOTP + RFC 2132 options
+// + Fingerbank-style option-55 + option-60 fingerprint.
+#[cfg(feature = "dhcp")]
+pub mod dhcp;
+#[cfg(feature = "dhcp")]
+pub use dhcp::{DhcpMessage, DhcpMessageType, DhcpOp};
 #[cfg(feature = "pcap")]
 pub mod pcap;
 #[cfg(feature = "tls")]

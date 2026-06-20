@@ -55,6 +55,7 @@ jobs:
           - "ja4plus"           # 0.16: FoxIO-licensed JA4S (opt-in, off by default)
           - "file-hash"         # 0.12: streaming hash sinks + MIME magic
           - "ndp"               # 0.18: IPv6 Neighbor Discovery parser (issue #6)
+          - "dhcp"              # 0.18: DHCP parser + Fingerbank fingerprint (issue #11)
     steps:
       - uses: actions/checkout@v4
       - name: Build (--no-default-features --features "${{ matrix.features }}")
