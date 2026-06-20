@@ -186,6 +186,12 @@ pub use dhcp::{DhcpMessage, DhcpMessageType, DhcpOp};
 pub mod lldp;
 #[cfg(feature = "lldp")]
 pub use lldp::{ChassisId, LldpMessage, PortId, SystemCapabilities};
+// Issue #9 (0.18): p0f-style passive TCP/IP fingerprint.
+// License-clean alternative to FoxIO's JA4T / JA4TS.
+#[cfg(feature = "tcp_fingerprint")]
+pub mod tcp_fingerprint;
+#[cfg(feature = "tcp_fingerprint")]
+pub use tcp_fingerprint::{TcpDirection, TcpFingerprint};
 #[cfg(feature = "pcap")]
 pub mod pcap;
 #[cfg(feature = "tls")]

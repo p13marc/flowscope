@@ -57,6 +57,7 @@ jobs:
           - "ndp"               # 0.18: IPv6 Neighbor Discovery parser (issue #6)
           - "dhcp"              # 0.18: DHCP parser + Fingerbank fingerprint (issue #11)
           - "lldp"              # 0.18: LLDP L2 discovery parser (issue #23)
+          - "tcp_fingerprint"   # 0.18: p0f-style passive TCP/IP fingerprint (issue #9)
     steps:
       - uses: actions/checkout@v4
       - name: Build (--no-default-features --features "${{ matrix.features }}")

@@ -129,6 +129,11 @@ dhcp = ["extractors", "tracker", "session", "dep:bytes"]
 # of `arp`; gives switch / router / IP-phone / IPMI-BMC asset
 # discovery and rogue-switch detection. Issue #23 (0.18).
 lldp = ["extractors", "tracker", "dep:bytes"]
+# p0f-style passive TCP/IP fingerprint — extracts initial TTL,
+# window size, MSS, window-scale, TCP option order, DF bit, and
+# quirks from cleartext SYN / SYN-ACK packets. Operates over the
+# per-packet `Layers` view; no per-flow state. Issue #9 (0.18).
+tcp_fingerprint = ["extractors"]
 
 # Encrypted-flow behavioural fingerprinting — first-N packet sizes
 # and inter-arrival times accumulated per flow, finalised at flow

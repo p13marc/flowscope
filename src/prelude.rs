@@ -26,6 +26,9 @@ pub use crate::dhcp::{DhcpMessage, DhcpMessageType, DhcpOp};
 // detection.
 #[cfg(feature = "lldp")]
 pub use crate::lldp::{ChassisId, LldpMessage, PortId, SystemCapabilities};
+// Issue #9 (0.18): p0f-style passive TCP/IP fingerprint.
+#[cfg(feature = "tcp_fingerprint")]
+pub use crate::tcp_fingerprint::{TcpDirection, TcpFingerprint};
 // Plan 167 (0.14): discoverability sweep — surface the
 // `correlate::*` primitives in the prelude so users don't
 // have to know the module path to find them.
