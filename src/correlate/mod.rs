@@ -53,6 +53,7 @@
 mod bucketed;
 mod burst;
 mod ewma;
+mod hyperloglog;
 mod mergeable;
 mod neighbor_table;
 mod rolling_rate;
@@ -70,6 +71,7 @@ mod topk;
 pub use bucketed::TimeBucketedCounter;
 pub use burst::{BurstDetector, BurstHit};
 pub use ewma::Ewma;
+pub use hyperloglog::{HyperLogLog, InvalidPrecision};
 pub use mergeable::Mergeable;
 #[cfg(feature = "extractors")]
 pub use flow_state_map::FlowStateMap;
