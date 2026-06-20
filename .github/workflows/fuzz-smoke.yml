@@ -27,6 +27,7 @@ jobs:
           - dns_tcp
           - http
           - icmp
+          - lldp
           - ndp
           - tls
           - tls_handshake

@@ -22,6 +22,10 @@ pub use crate::ndp::{NdpKind, NdpMessage};
 // Issue #11 (0.18): DHCP — passive asset / OS discovery.
 #[cfg(feature = "dhcp")]
 pub use crate::dhcp::{DhcpMessage, DhcpMessageType, DhcpOp};
+// Issue #23 (0.18): LLDP — L2 asset discovery + rogue-switch
+// detection.
+#[cfg(feature = "lldp")]
+pub use crate::lldp::{ChassisId, LldpMessage, PortId, SystemCapabilities};
 // Plan 167 (0.14): discoverability sweep — surface the
 // `correlate::*` primitives in the prelude so users don't
 // have to know the module path to find them.

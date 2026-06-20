@@ -180,6 +180,12 @@ pub use ndp::{NdpKind, NdpMessage};
 pub mod dhcp;
 #[cfg(feature = "dhcp")]
 pub use dhcp::{DhcpMessage, DhcpMessageType, DhcpOp};
+// Issue #23 (0.18): LLDP — IEEE 802.1AB-2016 L2 discovery.
+// Asset / rogue-switch visibility for infrastructure devices.
+#[cfg(feature = "lldp")]
+pub mod lldp;
+#[cfg(feature = "lldp")]
+pub use lldp::{ChassisId, LldpMessage, PortId, SystemCapabilities};
 #[cfg(feature = "pcap")]
 pub mod pcap;
 #[cfg(feature = "tls")]

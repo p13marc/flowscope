@@ -19,6 +19,7 @@ features = [
     "extractors",
     "http",
     "icmp",
+    "lldp",
     "ndp",
     "reassembler",
     "session",
@@ -92,6 +93,13 @@ bench = false
 [[bin]]
 name = "dhcp"
 path = "fuzz_targets/dhcp.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "lldp"
+path = "fuzz_targets/lldp.rs"
 test = false
 doc = false
 bench = false
