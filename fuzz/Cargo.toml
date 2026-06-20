@@ -22,6 +22,7 @@ features = [
     "icmp",
     "lldp",
     "ndp",
+    "ntp",
     "reassembler",
     "session",
     "ssh",
@@ -109,6 +110,13 @@ bench = false
 [[bin]]
 name = "cdp"
 path = "fuzz_targets/cdp.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "ntp"
+path = "fuzz_targets/ntp.rs"
 test = false
 doc = false
 bench = false

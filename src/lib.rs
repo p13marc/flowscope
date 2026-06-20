@@ -193,6 +193,12 @@ pub use lldp::{ChassisId, LldpMessage, PortId, SystemCapabilities};
 pub mod cdp;
 #[cfg(feature = "cdp")]
 pub use cdp::{CdpAddress, CdpCapabilities, CdpMessage};
+// Issue #14 sub-piece (0.18): NTP — UDP/123. Stratum / mode /
+// ref-id surface + NTP-amplification (monlist) detection.
+#[cfg(feature = "ntp")]
+pub mod ntp;
+#[cfg(feature = "ntp")]
+pub use ntp::{NtpLeapIndicator, NtpMessage, NtpMode, NtpTimestamp};
 // Issue #9 (0.18): p0f-style passive TCP/IP fingerprint.
 // License-clean alternative to FoxIO's JA4T / JA4TS.
 #[cfg(feature = "tcp_fingerprint")]

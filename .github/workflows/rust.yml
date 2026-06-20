@@ -62,6 +62,7 @@ jobs:
           - "tcp_fingerprint"   # 0.18: p0f-style passive TCP/IP fingerprint (issue #9)
           - "ssh"               # 0.18: SSH parser + HASSH fingerprint (issue #7)
           - "ipfix"             # 0.18: IPFIX IE vocabulary module (scoped piece of #16)
+          - "ntp"               # 0.18: NTP parser + amplification detection (issue #14 sub-piece)
     steps:
       - uses: actions/checkout@v4
       - name: Build (--no-default-features --features "${{ matrix.features }}")

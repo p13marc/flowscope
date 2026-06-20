@@ -30,6 +30,7 @@ jobs:
           - icmp
           - lldp
           - ndp
+          - ntp
           - ssh
           - tls
           - tls_handshake

@@ -29,6 +29,10 @@ pub use crate::lldp::{ChassisId, LldpMessage, PortId, SystemCapabilities};
 // Issue #25 (0.18): CDP — LLDP sibling for Cisco gear.
 #[cfg(feature = "cdp")]
 pub use crate::cdp::{CdpAddress, CdpCapabilities, CdpMessage};
+// Issue #14 sub-piece (0.18): NTP — UDP/123 visibility +
+// amplification detection.
+#[cfg(feature = "ntp")]
+pub use crate::ntp::{NtpLeapIndicator, NtpMessage, NtpMode};
 // Issue #9 (0.18): p0f-style passive TCP/IP fingerprint.
 #[cfg(feature = "tcp_fingerprint")]
 pub use crate::tcp_fingerprint::{TcpDirection, TcpFingerprint};
