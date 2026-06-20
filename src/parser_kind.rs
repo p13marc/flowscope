@@ -106,7 +106,10 @@ mod tests {
         assert_eq!(ParserKind::DnsTcp.as_str(), "dns-tcp");
         assert_eq!(ParserKind::Icmp.as_str(), "icmp");
         assert_eq!(ParserKind::Unspecified.as_str(), "");
-        assert_eq!(ParserKind::Other("netring/syslog").as_str(), "netring/syslog");
+        assert_eq!(
+            ParserKind::Other("netring/syslog").as_str(),
+            "netring/syslog"
+        );
     }
 
     #[test]
