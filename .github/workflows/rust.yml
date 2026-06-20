@@ -58,6 +58,7 @@ jobs:
           - "ndp"               # 0.18: IPv6 Neighbor Discovery parser (issue #6)
           - "dhcp"              # 0.18: DHCP parser + Fingerbank fingerprint (issue #11)
           - "lldp"              # 0.18: LLDP L2 discovery parser (issue #23)
+          - "cdp"               # 0.18: CDP Cisco Discovery Protocol parser (issue #25)
           - "tcp_fingerprint"   # 0.18: p0f-style passive TCP/IP fingerprint (issue #9)
           - "ssh"               # 0.18: SSH parser + HASSH fingerprint (issue #7)
     steps:

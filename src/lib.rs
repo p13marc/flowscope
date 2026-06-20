@@ -186,6 +186,13 @@ pub use dhcp::{DhcpMessage, DhcpMessageType, DhcpOp};
 pub mod lldp;
 #[cfg(feature = "lldp")]
 pub use lldp::{ChassisId, LldpMessage, PortId, SystemCapabilities};
+// Issue #25 (0.18): CDP — Cisco Discovery Protocol, the LLDP
+// sibling. Asset / topology / rogue-switch visibility on
+// Cisco gear.
+#[cfg(feature = "cdp")]
+pub mod cdp;
+#[cfg(feature = "cdp")]
+pub use cdp::{CdpAddress, CdpCapabilities, CdpMessage};
 // Issue #9 (0.18): p0f-style passive TCP/IP fingerprint.
 // License-clean alternative to FoxIO's JA4T / JA4TS.
 #[cfg(feature = "tcp_fingerprint")]

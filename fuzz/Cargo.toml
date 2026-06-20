@@ -14,6 +14,7 @@ libfuzzer-sys = "0.4"
 path = ".."
 features = [
     "arp",
+    "cdp",
     "dhcp",
     "dns",
     "extractors",
@@ -101,6 +102,13 @@ bench = false
 [[bin]]
 name = "lldp"
 path = "fuzz_targets/lldp.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "cdp"
+path = "fuzz_targets/cdp.rs"
 test = false
 doc = false
 bench = false
