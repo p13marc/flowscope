@@ -127,6 +127,25 @@ pub trait Reassembler: Send + 'static {
     /// [`BufferedReassembler`] for each classified retransmit; not
     /// called for fresh or OOO segments.
     fn on_duplicate(&mut self, _seq: u32, _payload: &[u8], _ts: Timestamp) {}
+
+    /// Running count of retransmits whose bytes differ from what
+    /// the reassembler previously saw for the overlapping
+    /// sequence range — the classic Ptacek-Newsham TCP overlap
+    /// evasion IOC (cf. Zeek's `rexmit_inconsistency`). Default
+    /// `0` for implementations that don't retain enough history
+    /// to detect the divergence.
+    ///
+    /// Detection scope today is implementation-specific:
+    /// [`crate::SegmentBufferReassembler`] compares incoming
+    /// segments against bytes still pending in its OOO buffer
+    /// before draining; the simpler [`BufferedReassembler`]
+    /// returns `0` because it doesn't retain the original bytes
+    /// after they drain.
+    ///
+    /// New in 0.18.0 (issue #17 sub-piece).
+    fn rexmit_inconsistencies(&self) -> u64 {
+        0
+    }
 }
 
 /// Build a [`Reassembler`] for a brand-new session, given its key

@@ -114,6 +114,7 @@ pub(crate) fn anomaly_label(kind: &AnomalyKind) -> &'static str {
         AnomalyKind::SessionParseError { .. } => "parse_error",
         AnomalyKind::RetransmittedSegment { .. } => "retransmit",
         AnomalyKind::ReassemblerHighWatermark { .. } => "reassembler_high_watermark",
+        AnomalyKind::TcpRexmitInconsistency { .. } => "tcp_rexmit_inconsistency",
     }
 }
 

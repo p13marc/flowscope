@@ -55,6 +55,7 @@ pub struct SegmentBufferReassembler {
     holes_filled: u64,
     holes_expired: u64,
     retransmits: u64,
+    rexmit_inconsistencies: u64,
     bytes_dropped_oversize: u64,
     poisoned: bool,
     fin_observed: bool,
@@ -80,6 +81,7 @@ impl SegmentBufferReassembler {
             holes_filled: 0,
             holes_expired: 0,
             retransmits: 0,
+            rexmit_inconsistencies: 0,
             bytes_dropped_oversize: 0,
             poisoned: false,
             fin_observed: false,
@@ -126,6 +128,24 @@ impl SegmentBufferReassembler {
 
     pub fn buffered_ooo_bytes(&self) -> usize {
         self.pending_bytes
+    }
+
+    /// Running count of TCP overlap-inconsistencies — incoming
+    /// segments whose bytes diverge from already-pending OOO
+    /// bytes in the same sequence range. Classic Ptacek-Newsham
+    /// TCP-overlap evasion signal (cf. Zeek's
+    /// `rexmit_inconsistency`).
+    ///
+    /// Detection scope: only the OOO buffer is consulted —
+    /// pure post-drain retransmits aren't compared because the
+    /// original bytes have already been handed to the consumer.
+    /// For a flow under evasion, the divergence is typically
+    /// visible in the OOO window (attackers send fake fragments
+    /// into unfilled holes), so this catches the common case.
+    ///
+    /// New in 0.18.0 (issue #17 sub-piece).
+    pub fn rexmit_inconsistencies(&self) -> u64 {
+        self.rexmit_inconsistencies
     }
 
     /// Evict OOO segments older than `ooo_deadline` relative to
@@ -244,7 +264,39 @@ impl Reassembler for SegmentBufferReassembler {
             return;
         }
 
-        // OOO future segment.
+        // OOO future segment. Before buffering, scan the pending
+        // BTreeMap for any segment whose [start, start+len) range
+        // overlaps with this segment's [seq, seq+len) range. If
+        // overlapping byte ranges disagree, flag the divergence —
+        // it's the classic Ptacek-Newsham TCP-overlap evasion
+        // shape (cf. Zeek's `rexmit_inconsistency`).
+        let new_end = seq.wrapping_add(payload.len() as u32);
+        for (&start, (existing, _)) in &self.pending {
+            let end = start.wrapping_add(existing.len() as u32);
+            let overlap_start = if seq_compare(seq, start).is_ge() {
+                seq
+            } else {
+                start
+            };
+            let overlap_end = if seq_compare(new_end, end).is_le() {
+                new_end
+            } else {
+                end
+            };
+            if seq_compare(overlap_start, overlap_end).is_ge() {
+                continue;
+            }
+            let overlap_len = overlap_end.wrapping_sub(overlap_start) as usize;
+            let off_existing = overlap_start.wrapping_sub(start) as usize;
+            let off_new = overlap_start.wrapping_sub(seq) as usize;
+            if existing[off_existing..off_existing + overlap_len]
+                != payload[off_new..off_new + overlap_len]
+            {
+                self.rexmit_inconsistencies = self.rexmit_inconsistencies.saturating_add(1);
+                break;
+            }
+        }
+
         if self.pending_bytes + payload.len() > self.max_ooo_buffer {
             self.evict_oldest_ooo(self.max_ooo_buffer.saturating_sub(payload.len()));
             if self.pending_bytes + payload.len() > self.max_ooo_buffer {
@@ -283,6 +335,10 @@ impl Reassembler for SegmentBufferReassembler {
 
     fn retransmits(&self) -> u64 {
         self.retransmits
+    }
+
+    fn rexmit_inconsistencies(&self) -> u64 {
+        self.rexmit_inconsistencies
     }
 }
 

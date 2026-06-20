@@ -448,6 +448,16 @@ pub enum AnomalyKind {
         cap: u64,
         threshold_pct: u8,
     },
+
+    /// New in 0.18.0 (issue #17 sub-piece). Reassembler observed
+    /// one or more TCP segments whose bytes diverged from
+    /// already-pending bytes in the same sequence range during
+    /// this tick — the classic Ptacek-Newsham TCP-overlap
+    /// evasion IOC (Zeek calls this `rexmit_inconsistency`).
+    /// Coalesced — at most one anomaly per (flow, side) per
+    /// tick, with `count` summing the delta of
+    /// [`crate::Reassembler::rexmit_inconsistencies`].
+    TcpRexmitInconsistency { side: FlowSide, count: u64 },
 }
 
 impl AnomalyKind {
@@ -469,6 +479,7 @@ impl AnomalyKind {
     /// | [`Self::SessionParseError`] | `"parse_error"` |
     /// | [`Self::RetransmittedSegment`] | `"retransmit"` |
     /// | [`Self::ReassemblerHighWatermark`] | `"reassembler_high_watermark"` |
+    /// | [`Self::TcpRexmitInconsistency`] | `"tcp_rexmit_inconsistency"` |
     pub fn short_kind(&self) -> &'static str {
         crate::obs::anomaly_label(self)
     }
@@ -490,6 +501,7 @@ impl crate::AnomalyFields for AnomalyKind {
             AnomalyKind::BufferOverflow { .. }
             | AnomalyKind::OutOfOrderSegment { .. }
             | AnomalyKind::RetransmittedSegment { .. }
+            | AnomalyKind::TcpRexmitInconsistency { .. }
             | AnomalyKind::ReassemblerHighWatermark { .. } => "stream",
             AnomalyKind::SessionParseError { .. } => "applayer",
             AnomalyKind::FlowTableEvictionPressure { .. } => "stream",
@@ -568,6 +580,9 @@ impl AnomalyKind {
             | AnomalyKind::BufferOverflow { .. }
             | AnomalyKind::FlowTableEvictionPressure { .. } => Severity::Warning,
             AnomalyKind::SessionParseError { .. } => Severity::Error,
+            // Overlapping bytes that disagree is an evasion IOC,
+            // not a benign retransmit — escalate above `Info`.
+            AnomalyKind::TcpRexmitInconsistency { .. } => Severity::Error,
         }
     }
 }
