@@ -179,8 +179,11 @@ pub struct FlowRecord {
 impl FlowRecord {
     /// Build a `FlowRecord` from flowscope's existing
     /// per-flow state — the `FlowStats` counters, the
-    /// `FiveTupleKey` (or any [`crate::KeyFields`] impl),
-    /// and the lifecycle `EndReason`.
+    /// `FiveTupleKey`, and the lifecycle `EndReason`.
+    ///
+    /// Thin wrapper around [`Self::from_key_fields`] kept
+    /// for the `FiveTupleKey`-specialised call site. Both
+    /// produce identical [`FlowRecord`]s.
     ///
     /// The conversion handles:
     /// - IPv4 / IPv6 routing (which IE fields populate
@@ -201,10 +204,40 @@ impl FlowRecord {
         key: &crate::extract::FiveTupleKey,
         end_reason: Option<crate::EndReason>,
     ) -> Self {
+        Self::from_key_fields(stats, key, end_reason)
+    }
+
+    /// Generic constructor — build a [`FlowRecord`] from any
+    /// `K: KeyFields`. Used by every emit writer's
+    /// `write_event(FlowEnded)` path so the IE-keyed FlowRecord
+    /// is the single canonical record shape; emit writers are
+    /// pure views over it.
+    ///
+    /// Defaults:
+    /// - IPv4 / IPv6 addresses populate from `K::src_ip`/
+    ///   `K::dest_ip`; absent → fields stay `None`.
+    /// - Ports from `K::src_port`/`K::dest_port`; absent → `0`.
+    /// - `protocol_identifier` from `K::protocol_identifier`;
+    ///   absent → `0` (IPFIX IE 4 = 0 is reserved for
+    ///   HOPOPT but commonly used as "unspecified" in
+    ///   tracking systems).
+    /// - `application_name` from `K::app_proto_str` when
+    ///   present.
+    ///
+    /// Issue #16.
+    #[cfg(feature = "tracker")]
+    pub fn from_key_fields<K>(
+        stats: &crate::FlowStats,
+        key: &K,
+        end_reason: Option<crate::EndReason>,
+    ) -> Self
+    where
+        K: crate::KeyFields + ?Sized,
+    {
         let mut rec = Self {
-            protocol_identifier: key.proto.as_u8(),
-            source_transport_port: key.a.port(),
-            destination_transport_port: key.b.port(),
+            protocol_identifier: key.protocol_identifier().unwrap_or(0),
+            source_transport_port: key.src_port().unwrap_or(0),
+            destination_transport_port: key.dest_port().unwrap_or(0),
             octet_delta_count_initiator: stats.bytes_initiator,
             octet_delta_count_responder: stats.bytes_responder,
             packet_delta_count_initiator: stats.packets_initiator,
@@ -218,16 +251,21 @@ impl FlowRecord {
             retransmits_responder: stats.retransmits_responder,
             ..Self::default()
         };
-        match key.a.ip() {
-            IpAddr::V4(v4) => rec.source_ipv4_address = Some(v4),
-            IpAddr::V6(v6) => rec.source_ipv6_address = Some(v6),
+        if let Some(ip) = key.src_ip() {
+            match ip {
+                IpAddr::V4(v4) => rec.source_ipv4_address = Some(v4),
+                IpAddr::V6(v6) => rec.source_ipv6_address = Some(v6),
+            }
         }
-        match key.b.ip() {
-            IpAddr::V4(v4) => rec.destination_ipv4_address = Some(v4),
-            IpAddr::V6(v6) => rec.destination_ipv6_address = Some(v6),
+        if let Some(ip) = key.dest_ip() {
+            match ip {
+                IpAddr::V4(v4) => rec.destination_ipv4_address = Some(v4),
+                IpAddr::V6(v6) => rec.destination_ipv6_address = Some(v6),
+            }
         }
-        let app = key.app_label();
-        if !app.is_empty() {
+        if let Some(app) = key.app_proto_str()
+            && !app.is_empty()
+        {
             rec.application_name = Some(app.to_string());
         }
         rec

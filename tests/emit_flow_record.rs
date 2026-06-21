@@ -208,3 +208,74 @@ fn eve_write_flow_record_matches_event_shape() {
     assert_eq!(ev_value["src_ip"], rec_value["src_ip"]);
     assert_eq!(ev_value["dest_ip"], rec_value["dest_ip"]);
 }
+
+/// Issue #16 — the generic `FlowRecord::from_key_fields<K: KeyFields>`
+/// constructor produces an identical FlowRecord to the
+/// `FiveTupleKey`-specialised `from_parts` when called on a
+/// `FiveTupleKey`. This is the trait-shaped builder consumers
+/// reach for when their key isn't `FiveTupleKey`.
+#[test]
+fn from_key_fields_matches_from_parts_for_five_tuple() {
+    let (rec_specialised, ev) = build_finalised_record();
+    let FlowEvent::Ended {
+        key, reason, stats, ..
+    } = ev
+    else {
+        unreachable!()
+    };
+    let rec_generic = FlowRecord::from_key_fields(&stats, &key, Some(reason));
+
+    assert_eq!(rec_generic, rec_specialised);
+}
+
+/// Issue #16 — the generic `from_key_fields` works for an
+/// arbitrary `K: KeyFields` (here a custom IP-only key with no
+/// L4 protocol identifier or app proto). Verifies the
+/// none-returning default impls of `KeyFields` flow through
+/// cleanly: missing IP / port / proto fields stay at the
+/// `FlowRecord::default()` zero / `None` defaults.
+#[test]
+fn from_key_fields_handles_minimal_key() {
+    use std::net::{IpAddr, Ipv4Addr};
+
+    struct IpOnlyKey {
+        a: Ipv4Addr,
+        b: Ipv4Addr,
+    }
+    impl flowscope::KeyFields for IpOnlyKey {
+        fn src_ip(&self) -> Option<IpAddr> {
+            Some(IpAddr::V4(self.a))
+        }
+        fn dest_ip(&self) -> Option<IpAddr> {
+            Some(IpAddr::V4(self.b))
+        }
+    }
+
+    let key = IpOnlyKey {
+        a: Ipv4Addr::new(10, 0, 0, 1),
+        b: Ipv4Addr::new(10, 0, 0, 2),
+    };
+    let mut stats = FlowStats::default();
+    stats.bytes_initiator = 100;
+    stats.bytes_responder = 200;
+    stats.packets_initiator = 1;
+    stats.packets_responder = 2;
+    stats.started = Timestamp::new(1700000000, 0);
+    stats.last_seen = Timestamp::new(1700000001, 0);
+    let rec = FlowRecord::from_key_fields(&stats, &key, Some(EndReason::IdleTimeout));
+
+    assert_eq!(rec.source_ipv4_address, Some(Ipv4Addr::new(10, 0, 0, 1)));
+    assert_eq!(
+        rec.destination_ipv4_address,
+        Some(Ipv4Addr::new(10, 0, 0, 2))
+    );
+    assert_eq!(
+        rec.protocol_identifier, 0,
+        "no protocol_identifier on this key"
+    );
+    assert_eq!(rec.source_transport_port, 0);
+    assert_eq!(rec.destination_transport_port, 0);
+    assert!(rec.application_name.is_none(), "no app_proto_str hint");
+    assert_eq!(rec.octet_total_count, 300);
+    assert_eq!(rec.packet_total_count, 3);
+}

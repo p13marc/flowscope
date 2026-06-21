@@ -130,6 +130,9 @@ impl crate::KeyFields for L4Proto {
             L4Proto::Other(_) => return None,
         })
     }
+    fn protocol_identifier(&self) -> Option<u8> {
+        Some(self.as_u8())
+    }
 }
 
 impl L4Proto {

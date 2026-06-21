@@ -247,6 +247,9 @@ impl crate::KeyFields for FiveTupleKey {
     fn proto_str(&self) -> Option<&'static str> {
         self.proto.proto_str()
     }
+    fn protocol_identifier(&self) -> Option<u8> {
+        Some(self.proto.as_u8())
+    }
     /// Best-effort app-protocol from the well-known port table.
     fn app_proto_str(&self) -> Option<&'static str> {
         crate::well_known::protocol_label(self.proto, self.a.port(), self.b.port())

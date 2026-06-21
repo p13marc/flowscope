@@ -69,6 +69,20 @@ pub trait KeyFields {
         None
     }
 
+    /// L4 protocol number per IANA assigned numbers
+    /// (TCP=6, UDP=17, ICMP=1, ICMPv6=58, SCTP=132). Used by
+    /// IPFIX-IE-keyed exporters that need the numeric ID
+    /// alongside the [`Self::proto_str`] label. Default `None`
+    /// — override on keys that carry an L4 protocol.
+    ///
+    /// Issue #16 — needed by the
+    /// [`FlowRecord::from_key_fields`](crate::FlowRecord::from_key_fields)
+    /// generic constructor so emit writers can unify the
+    /// `write_event(FlowEnded)` → `write_flow_record` code path.
+    fn protocol_identifier(&self) -> Option<u8> {
+        None
+    }
+
     /// Application-layer protocol label, e.g. `"http"` /
     /// `"dns"` / `"tls"`. Default `None` — emit writers
     /// typically thread the `parser_kind` from
