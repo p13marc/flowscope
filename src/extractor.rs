@@ -160,6 +160,31 @@ impl L4Proto {
             L4Proto::Other(_) => "other",
         }
     }
+
+    /// IANA IP protocol number — the wire-format value
+    /// carried in the IPv4 `protocol` / IPv6 `next_header`
+    /// header field. Used as IPFIX IE 4
+    /// (`protocolIdentifier`).
+    ///
+    /// - `Tcp` → 6
+    /// - `Udp` → 17
+    /// - `Icmp` → 1
+    /// - `IcmpV6` → 58
+    /// - `Sctp` → 132
+    /// - `Other(n)` → `n`
+    ///
+    /// New in 0.18.0 (issue #16 sub-piece — needed for the
+    /// IE-keyed [`crate::ipfix::FlowRecord`]).
+    pub fn as_u8(&self) -> u8 {
+        match self {
+            L4Proto::Tcp => 6,
+            L4Proto::Udp => 17,
+            L4Proto::Icmp => 1,
+            L4Proto::IcmpV6 => 58,
+            L4Proto::Sctp => 132,
+            L4Proto::Other(n) => *n,
+        }
+    }
 }
 
 /// Pre-parsed TCP information for a packet.

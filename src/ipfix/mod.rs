@@ -38,8 +38,10 @@
 //! Issue #16 (scoped sub-piece). Full FlowRecord re-key stays
 //! open in #16 itself.
 
+mod record;
 mod registry;
 mod types;
 
+pub use record::FlowRecord;
 pub use registry::{IES, lookup_by_id, lookup_by_name};
 pub use types::{FlowEndReason, IeAbstractType, InformationElement, encode_tcp_control_bits};
