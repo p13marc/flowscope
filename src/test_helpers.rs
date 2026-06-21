@@ -233,6 +233,7 @@ pub mod events {
     }
 
     /// Typed `driver::Event<K>` constructors.
+    #[cfg(all(feature = "extractors", feature = "reassembler", feature = "session"))]
     pub mod driver {
         use crate::{
             Timestamp,

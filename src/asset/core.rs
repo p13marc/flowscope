@@ -197,7 +197,8 @@ bitflags! {
         const LLDP  = 1 << 3;
         const CDP   = 1 << 4;
         const SSDP  = 1 << 5;
-        /// Reserved for future parsers — mDNS, NetBIOS-NS,
+        const MDNS  = 1 << 6;
+        /// Reserved for future parsers — NetBIOS-NS,
         /// SNMP-asset-discovery, etc.
         const OTHER = 1 << 31;
     }
@@ -438,6 +439,92 @@ impl Asset {
         a.capabilities |= AssetCapabilities::UPNP | AssetCapabilities::HOST;
         a.seen_via |= AssetSourceSet::SSDP;
         a
+    }
+}
+
+#[cfg(feature = "mdns")]
+impl Asset {
+    /// Build an `Asset` from one parsed mDNS [`crate::dns::DnsResponse`].
+    /// mDNS payloads carry no MAC; the caller must provide
+    /// `source_mac` (typically the Ethernet source of the
+    /// frame that carried the response). Returns `None` when
+    /// the response contains nothing inventory-relevant —
+    /// no `.local` A/AAAA bindings and no service-discovery
+    /// PTRs.
+    ///
+    /// Pulls:
+    ///
+    /// - A / AAAA records whose name ends in `.local` →
+    ///   `hostname` (set from the leftmost label of the first
+    ///   matching record) + ipv4/ipv6 bindings.
+    /// - Service-discovery PTR records (RFC 6763) →
+    ///   `AssetCapabilities::UPNP | HOST`. The full
+    ///   service vocabulary stays on the parsed `ServiceRecord`s
+    ///   themselves; the inventory just records the device
+    ///   class.
+    pub fn from_mdns(resp: &crate::dns::DnsResponse, source_mac: MacAddr) -> Option<Self> {
+        let mut a = Self::new(source_mac);
+        let mut populated = false;
+
+        // Walk every answer + additional looking for A / AAAA
+        // bindings on `.local` names — those are the host's
+        // direct address publications.
+        let all_records = resp.answers.iter().chain(resp.additionals.iter());
+        for rr in all_records {
+            // DNS is case-insensitive (RFC 1035 §2.3.3) so
+            // the suffix match needs to be too; but hostnames
+            // are operationally display-relevant, so keep the
+            // original case for the extracted value.
+            let original = rr.name.strip_suffix('.').unwrap_or(&rr.name);
+            let lower = original.to_ascii_lowercase();
+            let Some(_) = lower.strip_suffix(".local") else {
+                continue;
+            };
+            let hostname_orig = &original[..original.len() - ".local".len()];
+            // hostname_label may itself contain dots (sub-
+            // domain.local); take everything before any dot
+            // as the leftmost label.
+            let leftmost = hostname_orig.split('.').next().unwrap_or(hostname_orig);
+            match &rr.data {
+                crate::dns::DnsRdata::A(v4) => {
+                    if !a.ipv4.contains(v4) {
+                        push_bounded(&mut a.ipv4, *v4, MAX_IPS_PER_ASSET);
+                    }
+                    if a.hostname.is_none() && !leftmost.is_empty() {
+                        a.hostname = Some(leftmost.to_string());
+                    }
+                    populated = true;
+                }
+                crate::dns::DnsRdata::AAAA(v6) => {
+                    if !a.ipv6.contains(v6) {
+                        push_bounded(&mut a.ipv6, *v6, MAX_IPS_PER_ASSET);
+                    }
+                    if a.hostname.is_none() && !leftmost.is_empty() {
+                        a.hostname = Some(leftmost.to_string());
+                    }
+                    populated = true;
+                }
+                _ => {}
+            }
+        }
+
+        // Walk service-discovery PTR records — every one
+        // implies UPNP-class IoT capability.
+        let services = crate::mdns::extract_services(resp);
+        if !services.is_empty() {
+            a.capabilities |= AssetCapabilities::UPNP | AssetCapabilities::HOST;
+            populated = true;
+        } else if populated {
+            // Pure A/AAAA contribution — still a host.
+            a.capabilities |= AssetCapabilities::HOST;
+        }
+
+        if populated {
+            a.seen_via |= AssetSourceSet::MDNS;
+            Some(a)
+        } else {
+            None
+        }
     }
 }
 

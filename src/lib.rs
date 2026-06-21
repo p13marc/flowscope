@@ -211,6 +211,13 @@ pub use ssdp::{SsdpKind, SsdpMessage};
 pub mod tftp;
 #[cfg(feature = "tftp")]
 pub use tftp::{TftpErrorCode, TftpMessage, TftpMode, TftpOpcode};
+// Issue #14 sub-piece (0.18): mDNS — UDP/5353. Wire-format
+// wrapper around `dns` + RFC 6763 service-discovery helpers.
+// Pairs with `asset` for IoT inventory enrichment.
+#[cfg(feature = "mdns")]
+pub mod mdns;
+#[cfg(feature = "mdns")]
+pub use mdns::{MdnsParser, ServiceRecord};
 // Issue #27 (0.18): unified Asset record + Inventory over
 // the asset-discovery parsers.
 #[cfg(feature = "asset")]

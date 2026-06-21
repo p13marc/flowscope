@@ -67,6 +67,8 @@ jobs:
           - "tftp"              # 0.18: TFTP parser + device-config-theft detection (issue #14 sub-piece)
           - "asset"             # 0.18: asset-inventory composition (issue #27)
           - "asset,arp,ndp,dhcp,lldp,cdp,ssdp"  # 0.18: asset adapters require parsers
+          - "mdns"              # 0.18: mDNS module (issue #14 sub-piece)
+          - "asset,mdns"        # 0.18: mDNS asset adapter
     steps:
       - uses: actions/checkout@v4
       - name: Build (--no-default-features --features "${{ matrix.features }}")

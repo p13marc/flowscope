@@ -293,6 +293,7 @@ pub type Result<T> = std::result::Result<T, Error>;
 mod tests {
     use super::*;
 
+    #[cfg(any(feature = "http", feature = "tls", feature = "dns"))]
     #[test]
     fn error_carries_module_and_code() {
         let e = Error::parse(Module::Http, "bad request line");
@@ -302,6 +303,7 @@ mod tests {
         assert!(e.source().is_none());
     }
 
+    #[cfg(feature = "pcap")]
     #[test]
     fn error_wraps_source() {
         let io = std::io::Error::other("disk gone");
@@ -312,6 +314,7 @@ mod tests {
         assert!(e.source().is_some());
     }
 
+    #[cfg(any(feature = "http", feature = "tls", feature = "dns"))]
     #[test]
     fn display_format() {
         let e = Error::parse(Module::Tls, "alert received");
@@ -327,6 +330,7 @@ mod tests {
         assert_traits::<Error>();
     }
 
+    #[cfg(feature = "pcap")]
     #[test]
     fn source_chain_walks() {
         use std::error::Error as _;
@@ -336,6 +340,7 @@ mod tests {
         assert!(format!("{s}").contains("disk gone"));
     }
 
+    #[cfg(any(feature = "http", feature = "tls"))]
     #[test]
     fn buffer_overflow_includes_cap() {
         let e = Error::buffer_overflow(Module::Http, 8192);
