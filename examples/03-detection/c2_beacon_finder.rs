@@ -13,6 +13,30 @@
 //! inter-arrival in the [10 s, 24 h] band before scoring. Short
 //! pcaps may produce no hits — that's the chatty-flow suppressor
 //! working, not a bug.
+//!
+//! ## MITRE ATT&CK
+//!
+//! - [T1071](https://attack.mitre.org/techniques/T1071/) —
+//!   Application Layer Protocol (C2 channels).
+//! - [T1029](https://attack.mitre.org/techniques/T1029/) —
+//!   Scheduled Transfer (periodicity).
+//! - [T1102](https://attack.mitre.org/techniques/T1102/) —
+//!   Web Service (high-reputation hops like GitHub /
+//!   Dropbox / Slack).
+//!
+//! ## Known false positives
+//!
+//! - DNS resolvers, NTP clients, OCSP / CRL pollers, Slack /
+//!   Discord / Teams keepalives, browser update checks,
+//!   Windows Update.
+//! - Monitoring / metrics scrapers (Prometheus, Telegraf,
+//!   Datadog agent). Mainstream beacon behavior on the wire.
+//! - APT-style C2 deliberately jitters timing to evade CV
+//!   scoring; a high score doesn't prove badness but a low
+//!   score doesn't prove safety either.
+//!
+//! Pair with `DgaScorer` + a TLS-version check (see
+//! `composite_c2.rs`) for higher-confidence verdicts.
 
 use std::collections::HashMap;
 

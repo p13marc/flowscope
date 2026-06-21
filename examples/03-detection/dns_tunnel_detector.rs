@@ -15,6 +15,25 @@
 //! ```bash
 //! cargo run --features pcap,dns,extractors --example dns_tunnel_detector
 //! ```
+//!
+//! ## MITRE ATT&CK
+//!
+//! - [T1071.004](https://attack.mitre.org/techniques/T1071/004/)
+//!   — Application Layer Protocol: DNS.
+//! - [T1048.003](https://attack.mitre.org/techniques/T1048/003/)
+//!   — Exfiltration Over Unencrypted Non-C2 Protocol (when
+//!   used for data exfil rather than C2).
+//!
+//! ## Known false positives
+//!
+//! - CDN edge probing — Akamai / Cloudflare / Fastly produce
+//!   long, opaque hostnames that look like base64 to the
+//!   entropy test.
+//! - Anti-bot / fingerprinting services (Akamai BMP, hCaptcha)
+//!   that synthesize per-page DNS lookups with random nonces.
+//! - DNSSEC NSEC3 hashed denial-of-existence responses.
+//! - Some browser telemetry endpoints (Firefox shavar, Chrome
+//!   safebrowsing).
 
 use std::{collections::HashMap, net::IpAddr, time::Duration};
 

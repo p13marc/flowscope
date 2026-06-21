@@ -12,6 +12,25 @@
 //! The DgaScorer treats the leftmost-but-one DNS label as the
 //! SLD; consumers wanting strict eTLD+1 handling pair with the
 //! `publicsuffix` crate.
+//!
+//! ## MITRE ATT&CK
+//!
+//! [T1568.002](https://attack.mitre.org/techniques/T1568/002/)
+//! — Dynamic Resolution: Domain Generation Algorithms.
+//!
+//! ## Known false positives
+//!
+//! - Akamai / Cloudflare / Fastly CDN edges use entropy-heavy
+//!   subdomain hashes that look DGA-shaped on the bigram score.
+//! - Some browser telemetry endpoints (Firefox shavar, Chrome
+//!   safebrowsing) and Spotify ad delivery use opaque
+//!   pseudo-random hostnames.
+//! - Internal CI artifact repositories often build hostnames
+//!   from commit SHAs.
+//!
+//! Pair the DGA score with [`flowscope::detect::patterns::BeaconDetector`]
+//! and a TLS-version check for high-confidence verdicts —
+//! see `composite_c2.rs`.
 
 use std::collections::HashMap;
 

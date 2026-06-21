@@ -12,6 +12,25 @@
 //! ```
 //!
 //! Plan 102 sub-A migration.
+//!
+//! ## MITRE ATT&CK
+//!
+//! - [T1110.003](https://attack.mitre.org/techniques/T1110/003/)
+//!   — Brute Force: Password Spraying.
+//! - [T1110.004](https://attack.mitre.org/techniques/T1110/004/)
+//!   — Brute Force: Credential Stuffing.
+//!
+//! ## Known false positives
+//!
+//! - Forgotten-credential users who fail several times before
+//!   completing a password reset.
+//! - Health-check probes that intentionally send a bad
+//!   credential to verify auth gating.
+//! - Internal pentests / red-team engagements (true positive
+//!   on the wire, false positive from the SOC perspective if
+//!   not pre-coordinated).
+//! - Mobile apps with cached stale tokens that retry on every
+//!   API call after rotation.
 
 use std::{net::IpAddr, time::Duration};
 
