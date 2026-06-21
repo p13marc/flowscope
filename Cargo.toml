@@ -45,6 +45,9 @@ base64 = { version = "0.22", optional = true, default-features = false, features
 # rusticata crate; small surface, no transport / no async.
 x509-parser = { version = "0.18", optional = true }
 
+# `snmp` feature — rusticata SNMPv1/v2c ASN.1 BER parser.
+snmp-parser = { version = "0.11", optional = true }
+
 # `tls` feature
 tls-parser = { version = "0.12", optional = true }
 
@@ -207,6 +210,14 @@ wireguard = ["session"]
 # observation mode for ICS networks. Issue #14 (Tier-2
 # row 6 — ICS).
 modbus = ["session", "dep:bytes"]
+# SNMP v1/v2c — UDP/161 (queries) + UDP/162 (traps) per
+# RFC 1157 (v1) / RFC 1905 (v2c). ASN.1 BER via the
+# rusticata `snmp-parser` crate. Surfaces cleartext
+# community string (T1078), version, PDU type,
+# request_id, and the varbind OID list. SNMPv3 (USM auth +
+# encryption) is out of scope for the initial ship.
+# Issue #14 (Tier-2 row 3 — asset enum + DDoS amplification).
+snmp = ["session", "dep:snmp-parser"]
 # STUN — RFC 5389 over UDP (no IANA port; 3478 is the
 # convention; TURN uses 3478/5349). Useful for WebRTC peer
 # detection, NAT-type discovery, TURN identification. 20-

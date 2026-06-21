@@ -462,6 +462,7 @@ dependencies = [
  "sha2",
  "simple-dns",
  "smallvec",
+ "snmp-parser",
  "static_assertions",
  "tdigest",
  "tls-parser",
@@ -1394,6 +1395,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "67b1b7a3b5fe4f1376887184045fcf45c69e92af734b7aaddc05fb777b6fbd03"
 dependencies = [
  "serde",
+]
+
+[[package]]
+name = "snmp-parser"
+version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0edee72a0990df1c39eb951d9495e3aa5f78569eea497767960d2450dafd7999"
+dependencies = [
+ "asn1-rs",
+ "nom",
+ "rusticata-macros",
+ "thiserror 2.0.18",
 ]
 
 [[package]]

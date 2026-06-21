@@ -79,6 +79,7 @@ jobs:
           - "stun"              # 0.18: STUN datagram parser (issue #14 sub-piece)
           - "rdp"               # 0.18: RDP X.224 negotiation parser (issue #14 sub-piece)
           - "ipfix-export"      # 0.18: IPFIX binary wire encoder (issue #28)
+          - "snmp"              # 0.18: SNMP v1/v2c parser (issue #14 sub-piece)
     steps:
       - uses: actions/checkout@v4
       - name: Build (--no-default-features --features "${{ matrix.features }}")

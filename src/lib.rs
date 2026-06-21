@@ -265,6 +265,13 @@ pub use stun::{StunClass, StunMessage, StunParser};
 pub mod rdp;
 #[cfg(feature = "rdp")]
 pub use rdp::{RdpFailureCode, RdpMessage, RdpParser, RdpProtocols};
+// Issue #14 sub-piece (0.18): SNMP v1/v2c — UDP/161 + UDP/162.
+// Asset enum + DDoS amplification detection + cleartext
+// community-string capture.
+#[cfg(feature = "snmp")]
+pub mod snmp;
+#[cfg(feature = "snmp")]
+pub use snmp::{SnmpMessage, SnmpParser, SnmpPduKind, SnmpVersion};
 // Issue #27 (0.18): unified Asset record + Inventory over
 // the asset-discovery parsers.
 #[cfg(feature = "asset")]

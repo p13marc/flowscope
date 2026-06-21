@@ -80,6 +80,10 @@ pub use crate::stun::{StunClass, StunMessage, StunParser};
 // metadata-only lateral-movement (T1021.001) detection.
 #[cfg(feature = "rdp")]
 pub use crate::rdp::{RdpFailureCode, RdpMessage, RdpParser, RdpProtocols};
+// Issue #14 sub-piece (0.18): SNMP v1/v2c — asset enum +
+// DDoS amplification + cleartext community-string capture.
+#[cfg(feature = "snmp")]
+pub use crate::snmp::{SnmpMessage, SnmpParser, SnmpPduKind, SnmpVersion};
 // Issue #16 / #28 (0.18): IPFIX canonical record + binary
 // wire encoder.
 #[cfg(feature = "ipfix")]
