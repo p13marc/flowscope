@@ -1,124 +1,80 @@
 //! One log line per HTTP request/response pair.
 //!
-//! Uses [`flowscope::http::HttpExchangeParser`] (plan 107, 0.10)
-//! — the aggregator that stitches each request to its response
-//! and emits a single [`flowscope::http::HttpExchange`] event
-//! with elapsed RTT and an [`flowscope::http::HttpOutcome`]
+//! Uses [`flowscope::http::HttpExchangeParser`] (plan 107, 0.10) —
+//! the aggregator that stitches each request to its response and
+//! emits a single [`flowscope::http::HttpExchange`] event with
+//! elapsed RTT and an [`flowscope::http::HttpOutcome`]
 //! discriminant.
 //!
 //! Compare to `http_log.rs` which dumps the per-message
-//! `HttpRequest` / `HttpResponse` stream — this version is what
-//! you reach for when you want one access-log-shaped row per
-//! exchange.
+//! `HttpRequest` / `HttpResponse` stream — this version is what you
+//! reach for when you want one access-log-shaped row per exchange.
 //!
 //! ```bash
-//! cargo run --features http,pcap --example http_exchanges
+//! cargo run --features http,pcap --example http_exchanges -- trace.pcap
 //! ```
+//!
+//! Closes issues #32 (UTF-8 panic on User-Agent slice) and #37
+//! (port to the high-level `PcapFlowSource::sessions` shape).
 
-use flowscope::{
-    driver::{Driver, Event, SlotMessage},
-    extract::{FiveTuple, FiveTupleKey},
-    http::{HttpExchange, HttpExchangeParser, HttpOutcome},
-    pcap::PcapFlowSource,
-};
+use flowscope::SessionEvent;
+use flowscope::extract::FiveTuple;
+use flowscope::http::{HttpExchangeParser, HttpOutcome};
+use flowscope::pcap::PcapFlowSource;
 
-fn main() -> flowscope::Result<()> {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     let path = std::env::args()
         .nth(1)
         .unwrap_or_else(|| "tests/data/http_session.pcap".to_string());
-
-    let mut builder = Driver::builder(FiveTuple::bidirectional());
-    let mut ex_slot = builder.session_on_ports(HttpExchangeParser::new(), [80, 8080]);
-    let mut driver = builder.build();
 
     println!(
         "{:<8} {:<6} {:<24} {:<32} {:<8} {:>5} {:>9}",
         "outcome", "status", "src → dst", "host + method + path", "ua", "ms", "bytes"
     );
 
-    let mut events: Vec<Event<FiveTupleKey>> = Vec::new();
-    let mut msgs: Vec<SlotMessage<HttpExchange, FiveTupleKey>> = Vec::new();
-
-    for owned in PcapFlowSource::open(&path)?.views() {
-        let owned = owned?;
-        events.clear();
-        driver.track_into(&owned, &mut events);
-        msgs.clear();
-        ex_slot.drain(&mut msgs);
-
-        for m in &msgs {
-            let key = &m.key;
-            let ex = &m.message;
-            let outcome = match ex.outcome {
-                HttpOutcome::Completed if ex.is_success() => "2xx",
-                HttpOutcome::Completed if ex.status_class() == Some(3) => "3xx",
-                HttpOutcome::Completed if ex.is_error() => "err",
-                HttpOutcome::Completed => "1xx",
-                HttpOutcome::NoResponse => "no-resp",
-                HttpOutcome::Reset => "rst",
-                _ => "?",
-            };
-            let status = ex
-                .response
-                .as_ref()
-                .map(|r| r.status.to_string())
-                .unwrap_or_else(|| "-".to_string());
-            let host = ex.request.host().unwrap_or("?");
-            let ua = ex
-                .request
-                .user_agent()
-                .map(|s| {
-                    if s.len() > 8 {
-                        s[..8].to_string()
-                    } else {
-                        s.to_string()
-                    }
-                })
-                .unwrap_or_else(|| "-".to_string());
-            let elapsed_ms = ex.elapsed.map(|d| d.as_secs_f64() * 1000.0).unwrap_or(0.0);
-            let bytes = ex.response.as_ref().map(|r| r.body.len()).unwrap_or(0);
-            println!(
-                "{outcome:<8} {status:<6} {:<24} {:<32} {ua:<8} {elapsed_ms:>5.1} {bytes:>9}",
-                format!("{} → {}", key.a.ip(), key.b.ip()),
-                format!(
-                    "{host} {} {}",
-                    ex.request.method_str().unwrap_or("?"),
-                    ex.request.path_str().unwrap_or("?")
-                ),
-            );
-        }
-    }
-
-    // Final flush.
-    events.clear();
-    driver.finish_into(&mut events);
-    msgs.clear();
-    ex_slot.drain(&mut msgs);
-    let _ = events; // events drained — exchanges may also flush.
-    for m in &msgs {
-        let key = &m.key;
-        let ex = &m.message;
+    for evt in
+        PcapFlowSource::open(&path)?.sessions(FiveTuple::bidirectional(), HttpExchangeParser::new())
+    {
+        let SessionEvent::Application {
+            key, message: ex, ..
+        } = evt?
+        else {
+            continue;
+        };
+        let outcome = match ex.outcome {
+            HttpOutcome::Completed if ex.is_success() => "2xx",
+            HttpOutcome::Completed if ex.status_class() == Some(3) => "3xx",
+            HttpOutcome::Completed if ex.is_error() => "err",
+            HttpOutcome::Completed => "1xx",
+            HttpOutcome::NoResponse => "no-resp",
+            HttpOutcome::Reset => "rst",
+            _ => "?",
+        };
         let status = ex
             .response
             .as_ref()
             .map(|r| r.status.to_string())
             .unwrap_or_else(|| "-".to_string());
         let host = ex.request.host().unwrap_or("?");
+        // BUGFIX (#32): truncate by char count, not byte index —
+        // slicing on byte boundaries panics on multi-byte UTF-8.
+        let ua = ex
+            .request
+            .user_agent()
+            .map(|s| s.chars().take(8).collect::<String>())
+            .unwrap_or_else(|| "-".to_string());
+        let elapsed_ms = ex.elapsed.map(|d| d.as_secs_f64() * 1000.0).unwrap_or(0.0);
         let bytes = ex.response.as_ref().map(|r| r.body.len()).unwrap_or(0);
         println!(
-            "{:<8} {:<6} {:<24} {:<32} {:<8} {:>5} {:>9}",
-            "flush",
-            status,
+            "{outcome:<8} {status:<6} {:<24} {:<32} {ua:<8} {elapsed_ms:>5.1} {bytes:>9}",
             format!("{} → {}", key.a.ip(), key.b.ip()),
             format!(
                 "{host} {} {}",
                 ex.request.method_str().unwrap_or("?"),
                 ex.request.path_str().unwrap_or("?")
             ),
-            "-",
-            "-",
-            bytes,
         );
     }
+
     Ok(())
 }

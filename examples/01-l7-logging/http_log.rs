@@ -1,49 +1,31 @@
 //! Log every HTTP request and response observed on a pcap file.
 //!
-//! Demonstrates the plan-121 typed `Driver` shape: register an
-//! `HttpParser` on common HTTP ports and drain the typed
-//! `HttpMessage` slot.
+//! Uses [`PcapFlowSource::sessions`] — the one-call offline
+//! pipeline that wraps the tracker + reassembler + per-flow
+//! `HttpParser` into a single iterator of [`SessionEvent`]s.
 //!
 //! Usage:
 //!     cargo run --features http,pcap --example http_log -- trace.pcap
 
 use std::env;
 
-use flowscope::{
-    driver::{Driver, Event, SlotMessage},
-    extract::{FiveTuple, FiveTupleKey},
-    http::{HttpMessage, HttpParser},
-    pcap::PcapFlowSource,
-};
+use flowscope::SessionEvent;
+use flowscope::extract::FiveTuple;
+use flowscope::http::{HttpMessage, HttpParser};
+use flowscope::pcap::PcapFlowSource;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let path = env::args().nth(1).ok_or("usage: http_log <trace.pcap>")?;
-
-    let mut builder = Driver::builder(FiveTuple::bidirectional());
-    let mut http_slot = builder.session_on_ports(HttpParser::default(), [80, 8080]);
-    let mut driver = builder.build();
 
     let mut reqs = 0u64;
     let mut resps = 0u64;
     let mut closed = 0u64;
 
-    let mut events: Vec<Event<FiveTupleKey>> = Vec::new();
-    let mut msgs: Vec<SlotMessage<HttpMessage, FiveTupleKey>> = Vec::new();
-
-    for view in PcapFlowSource::open(&path)?.views() {
-        let view = view?;
-        events.clear();
-        driver.track_into(&view, &mut events);
-        msgs.clear();
-        http_slot.drain(&mut msgs);
-
-        for ev in &events {
-            if matches!(ev, Event::FlowEnded { .. }) {
-                closed += 1;
-            }
-        }
-        for m in &msgs {
-            match &m.message {
+    for evt in
+        PcapFlowSource::open(&path)?.sessions(FiveTuple::bidirectional(), HttpParser::default())
+    {
+        match evt? {
+            SessionEvent::Application { message, .. } => match message {
                 HttpMessage::Request(req) => {
                     reqs += 1;
                     let host = req.host().unwrap_or("");
@@ -66,15 +48,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         ct
                     );
                 }
-            }
-        }
-    }
-
-    events.clear();
-    driver.finish_into(&mut events);
-    for ev in &events {
-        if matches!(ev, Event::FlowEnded { .. }) {
-            closed += 1;
+            },
+            SessionEvent::Closed { .. } => closed += 1,
+            _ => {}
         }
     }
 
