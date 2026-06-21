@@ -322,6 +322,20 @@ pub use ml_features::CicFlowFeatures;
 pub mod nprint;
 #[cfg(feature = "ml-features-nprint")]
 pub use nprint::{NPrintConfig, NPrintMatrix, NPrintRow};
+// Issue #13 (0.18): Kerberos passive metadata parser
+// (rusticata kerberos-parser).
+#[cfg(feature = "kerberos")]
+pub mod kerberos;
+#[cfg(feature = "kerberos")]
+pub use kerberos::{
+    KERBEROS_PORT, KerberosMessage, KerberosMessageKind, KerberosTcpParser, KerberosUdpParser,
+};
+// Issue #13 (0.18): LDAP passive metadata parser
+// (rusticata ldap-parser).
+#[cfg(feature = "ldap")]
+pub mod ldap;
+#[cfg(feature = "ldap")]
+pub use ldap::{LDAP_PORT, LdapMessage, LdapOperation, LdapParser};
 // Issue #7 (0.18): SSH handshake parser + HASSH fingerprint.
 #[cfg(feature = "ssh")]
 pub mod ssh;

@@ -261,14 +261,16 @@ impl FlowRecord {
         // routed through FlowRecord don't drop the L4 protocol
         // column for KeyFields impls that only provide one of
         // the two accessors.
-        let proto_id = key.protocol_identifier().unwrap_or_else(|| match key.proto_str() {
-            Some("TCP") => 6,
-            Some("UDP") => 17,
-            Some("ICMP") => 1,
-            Some("ICMPv6") => 58,
-            Some("SCTP") => 132,
-            _ => 0,
-        });
+        let proto_id = key
+            .protocol_identifier()
+            .unwrap_or_else(|| match key.proto_str() {
+                Some("TCP") => 6,
+                Some("UDP") => 17,
+                Some("ICMP") => 1,
+                Some("ICMPv6") => 58,
+                Some("SCTP") => 132,
+                _ => 0,
+            });
         let mut rec = Self {
             protocol_identifier: proto_id,
             source_transport_port: key.src_port().unwrap_or(0),

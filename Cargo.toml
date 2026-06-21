@@ -51,6 +51,16 @@ snmp-parser = { version = "0.11", optional = true }
 # `radius` feature — rusticata RADIUS parser.
 radius-parser = { version = "0.5", optional = true }
 
+# `kerberos` feature — rusticata kerberos-parser. ASN.1
+# BER/DER decoded AS-REQ/AS-REP/TGS-REQ/TGS-REP +
+# KRB-ERROR. Issue #13.
+kerberos-parser = { version = "0.9", optional = true }
+
+# `ldap` feature — rusticata ldap-parser. RFC 4511 LDAP
+# operation decode for Bind / Search / SearchResultDone.
+# Issue #13.
+ldap-parser = { version = "0.5", optional = true }
+
 # `tls` feature
 tls-parser = { version = "0.12", optional = true }
 
@@ -242,6 +252,17 @@ snmp = ["session", "dep:snmp-parser"]
 # correlation, NAC / wireless-auth visibility, AAA flow
 # topology. Issue #14 (Tier-2 row 4).
 radius = ["session", "dep:radius-parser"]
+# Kerberos parser (TCP/UDP/88) — AS-REQ / AS-REP / TGS-REQ /
+# TGS-REP / KRB-ERROR. Surfaces principals, realm, etype list
+# (Kerberoasting RC4-downgrade signal). Wraps the rusticata
+# kerberos-parser. Issue #13 sub-piece.
+kerberos = ["session", "dep:kerberos-parser", "dep:bytes"]
+# LDAP parser (TCP/389) — BindRequest / SearchRequest /
+# SearchResultDone. Surfaces auth method (simple-cleartext
+# vs SASL), base DN, filter summary, attribute requests
+# (SPN-query → GetUserSPNs / BloodHound enumeration signal).
+# Wraps the rusticata ldap-parser. Issue #13 sub-piece.
+ldap = ["session", "dep:ldap-parser", "dep:bytes"]
 # STUN — RFC 5389 over UDP (no IANA port; 3478 is the
 # convention; TURN uses 3478/5349). Useful for WebRTC peer
 # detection, NAT-type discovery, TURN identification. 20-

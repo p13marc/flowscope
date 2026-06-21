@@ -83,6 +83,8 @@ jobs:
           - "radius"            # 0.18: RADIUS parser (issue #14 sub-piece)
           - "dnp3"              # 0.18: DNP3 metadata-only parser (issue #29)
           - "ml-features-nprint" # 0.18: nPrint per-packet ternary header-bit matrix (issue #30)
+          - "kerberos"          # 0.18: Kerberos parser (issue #13)
+          - "ldap"              # 0.18: LDAP parser (issue #13)
     steps:
       - uses: actions/checkout@v4
       - name: Build (--no-default-features --features "${{ matrix.features }}")

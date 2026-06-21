@@ -95,6 +95,15 @@ pub use crate::dnp3::{
     DnpAppFunctionKind, DnpApplication, DnpInternalIndications, DnpLinkFunctionKind, DnpMessage,
     DnpParser,
 };
+// Issue #13 (0.18): Kerberos passive metadata
+// (AS-REQ / TGS-REQ / RC4 Kerberoast signal).
+#[cfg(feature = "kerberos")]
+pub use crate::kerberos::{
+    KerberosMessage, KerberosMessageKind, KerberosTcpParser, KerberosUdpParser,
+};
+// Issue #13 (0.18): LDAP — AD recon + SPN-query detection.
+#[cfg(feature = "ldap")]
+pub use crate::ldap::{LdapAuthKind, LdapMessage, LdapOperation, LdapParser};
 // Issue #16 / #28 (0.18): IPFIX canonical record + binary
 // wire encoder.
 #[cfg(feature = "ipfix")]
