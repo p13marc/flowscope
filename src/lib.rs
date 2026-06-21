@@ -340,7 +340,7 @@ pub use ldap::{LDAP_PORT, LdapMessage, LdapOperation, LdapParser};
 #[cfg(feature = "smb")]
 pub mod smb;
 #[cfg(feature = "smb")]
-pub use smb::{SMB_PORT, SmbCommand, SmbDialect, SmbMessage, SmbParser};
+pub use smb::{NtlmAuth, SMB_PORT, SmbCommand, SmbDialect, SmbMessage, SmbParser};
 // Issue #3 (0.18): QUIC Initial parser — ClientHello
 // visibility via RFC 9001 §5.2 Initial-secret derivation
 // + AEAD decrypt (passive-decryptable).

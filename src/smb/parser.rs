@@ -1,6 +1,6 @@
 //! SMB wire decoder.
 
-use super::types::{SmbCommand, SmbDialect, SmbMessage};
+use super::types::{NtlmAuth, SmbCommand, SmbDialect, SmbMessage};
 
 pub const PARSER_KIND_STR: &str = "smb";
 
@@ -171,7 +171,7 @@ fn parse_smb2(payload: &[u8]) -> Option<SmbMessage> {
 
     // M2: SMB2 WRITE request body (§2.2.21).
     // StructureSize(2)=49 + DataOffset(2) + Length(4) +
-    // Offset(8) + ... (rest not needed).
+    // Offset(8) + ... + WriteData.
     if matches!(command, SmbCommand::Write) {
         let body = &payload[64..];
         if body.len() >= 16 {
@@ -181,10 +181,182 @@ fn parse_smb2(payload: &[u8]) -> Option<SmbMessage> {
             ]);
             msg.write_length = Some(length);
             msg.write_offset = Some(offset);
+
+            // M3: scan the WRITE data for a DCE-RPC v5 PDU.
+            // DataOffset (body[2..4]) is from the start of
+            // the SMB2 header; the payload is `length`
+            // bytes starting there.
+            let data_offset = u16::from_le_bytes([body[2], body[3]]) as usize;
+            let len_usize = length as usize;
+            if data_offset >= 64 && data_offset + len_usize <= payload.len() {
+                let data = &payload[data_offset..data_offset + len_usize];
+                if let Some(uuids) = decode_dcerpc_bind(data) {
+                    msg.dcerpc_bind_uuids = uuids;
+                }
+            }
+        }
+    }
+
+    // M3: SMB2 SESSION_SETUP request body (§2.2.5) —
+    // walk the security buffer for an NTLMSSP blob.
+    // StructureSize(2)=25 + Flags(1) + SecurityMode(1) +
+    // Capabilities(4) + Channel(4) + SecurityBufferOffset(2) +
+    // SecurityBufferLength(2) + PreviousSessionId(8) + Buffer.
+    if matches!(command, SmbCommand::SessionSetup) {
+        let body = &payload[64..];
+        if body.len() >= 24 {
+            let sec_off = u16::from_le_bytes([body[12], body[13]]) as usize;
+            let sec_len = u16::from_le_bytes([body[14], body[15]]) as usize;
+            if sec_off >= 64 && sec_off + sec_len <= payload.len() {
+                let sec_buf = &payload[sec_off..sec_off + sec_len];
+                if let Some(auth) = scan_ntlm_authenticate(sec_buf) {
+                    msg.ntlm_auth = Some(auth);
+                }
+            }
         }
     }
 
     Some(msg)
+}
+
+/// Scan a SESSION_SETUP security buffer for an NTLMSSP
+/// AUTHENTICATE (Type 3) message. The buffer is usually
+/// SPNEGO-wrapped (ASN.1 GSS-API mechToken); we bypass
+/// the wrapper by searching for the `NTLMSSP\0` magic and
+/// decoding from there. This matches Wireshark's approach
+/// and is robust against SPNEGO version drift.
+fn scan_ntlm_authenticate(buf: &[u8]) -> Option<NtlmAuth> {
+    const MAGIC: &[u8; 8] = b"NTLMSSP\0";
+    let start =
+        (0..buf.len().saturating_sub(MAGIC.len())).find(|&i| &buf[i..i + MAGIC.len()] == MAGIC)?;
+    let msg = &buf[start..];
+    if msg.len() < 12 {
+        return None;
+    }
+    let message_type = u32::from_le_bytes([msg[8], msg[9], msg[10], msg[11]]);
+    if message_type != 3 {
+        return None;
+    }
+    // Type 3 AUTHENTICATE layout per MS-NLMP §2.2.1.3:
+    //   12..20  LmChallengeResponseFields (SecurityBuffer)
+    //   20..28  NtChallengeResponseFields
+    //   28..36  DomainNameFields
+    //   36..44  UserNameFields
+    //   44..52  WorkstationFields
+    //   52..60  EncryptedRandomSessionKeyFields
+    //   60..64  NegotiateFlags
+    //   ...
+    if msg.len() < 64 {
+        return None;
+    }
+    let flags = u32::from_le_bytes([msg[60], msg[61], msg[62], msg[63]]);
+    let unicode = (flags & 0x0000_0001) != 0; // NEGOTIATE_UNICODE
+    let domain = read_security_buffer_string(msg, 28, unicode);
+    let username = read_security_buffer_string(msg, 36, unicode);
+    let workstation = read_security_buffer_string(msg, 44, unicode);
+    Some(NtlmAuth {
+        domain,
+        username,
+        workstation,
+    })
+}
+
+/// Decode a SecurityBuffer (u16 length + u16 max + u32
+/// offset) and return its payload as a string. `unicode`
+/// selects UTF-16LE vs Windows-1252-ish; we map non-ASCII
+/// OEM bytes through `String::from_utf8_lossy` for safety.
+fn read_security_buffer_string(msg: &[u8], field_off: usize, unicode: bool) -> Option<String> {
+    let entry = msg.get(field_off..field_off + 8)?;
+    let len = u16::from_le_bytes([entry[0], entry[1]]) as usize;
+    let offset = u32::from_le_bytes([entry[4], entry[5], entry[6], entry[7]]) as usize;
+    if len == 0 {
+        return None;
+    }
+    let bytes = msg.get(offset..offset + len)?;
+    if unicode {
+        if !bytes.len().is_multiple_of(2) {
+            return None;
+        }
+        let units: Vec<u16> = bytes
+            .chunks_exact(2)
+            .map(|c| u16::from_le_bytes([c[0], c[1]]))
+            .collect();
+        String::from_utf16(&units).ok()
+    } else {
+        Some(String::from_utf8_lossy(bytes).into_owned())
+    }
+}
+
+/// Check whether `data` is a DCE-RPC v5 connection-oriented
+/// BIND PDU and, if so, extract the offered abstract-syntax
+/// UUIDs from each context-element. Returns `None` when
+/// the PDU isn't a BIND.
+///
+/// PDU layout (MS-RPCE §2.2.2.3):
+///   0..16   Common header (rpc_vers=5, ptype=0x0B for BIND)
+///   16..18  max_xmit_frag
+///   18..20  max_recv_frag
+///   20..24  assoc_group_id
+///   24      n_context_elem
+///   25..28  reserved
+///   28..    p_cont_elem[n_context_elem]
+/// Each p_cont_elem: p_cont_id(2) + n_transfer_syn(1) +
+///   reserved(1) + abstract_syntax(20) +
+///   transfer_syntaxes[n_transfer_syn * 20]
+/// abstract_syntax = if_uuid(16) + if_version(4).
+fn decode_dcerpc_bind(data: &[u8]) -> Option<Vec<String>> {
+    if data.len() < 28 {
+        return None;
+    }
+    if data[0] != 0x05 || data[2] != 0x0B {
+        return None;
+    }
+    let n_ctx = data[24] as usize;
+    let mut cursor = 28;
+    let mut uuids = Vec::with_capacity(n_ctx);
+    for _ in 0..n_ctx {
+        if cursor + 24 > data.len() {
+            break;
+        }
+        let n_transfer = data[cursor + 2] as usize;
+        let uuid_bytes = &data[cursor + 4..cursor + 20];
+        uuids.push(format_uuid_le(uuid_bytes));
+        cursor = cursor
+            .saturating_add(24)
+            .saturating_add(n_transfer.saturating_mul(20));
+    }
+    Some(uuids)
+}
+
+/// Render 16 raw bytes as the canonical UUID hyphenated
+/// hex form (with the first three fields little-endian
+/// per MS-RPCE / MS-DTYP). Helper for
+/// [`decode_dcerpc_bind`].
+fn format_uuid_le(b: &[u8]) -> String {
+    debug_assert_eq!(b.len(), 16);
+    format!(
+        "{:02x}{:02x}{:02x}{:02x}-\
+         {:02x}{:02x}-\
+         {:02x}{:02x}-\
+         {:02x}{:02x}-\
+         {:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
+        b[3],
+        b[2],
+        b[1],
+        b[0],
+        b[5],
+        b[4],
+        b[7],
+        b[6],
+        b[8],
+        b[9],
+        b[10],
+        b[11],
+        b[12],
+        b[13],
+        b[14],
+        b[15],
+    )
 }
 
 /// Decode UTF-16LE bytes to a Rust `String`. Returns
@@ -440,6 +612,186 @@ mod tests {
         assert_eq!(msg.command, SmbCommand::Read);
         assert_eq!(msg.read_length, Some(0x0010_0000));
         assert_eq!(msg.read_offset, Some(0x1234_5678));
+    }
+
+    /// M3: SMB2 SESSION_SETUP carrying a synthetic NTLM
+    /// Type 3 AUTHENTICATE blob — decode `domain` /
+    /// `username` / `workstation`.
+    #[test]
+    fn session_setup_extracts_ntlm_identity() {
+        // Build the NTLMSSP blob first.
+        let domain = "CONTOSO";
+        let user = "alice";
+        let workstation = "WS01";
+        let domain_u: Vec<u8> = domain
+            .encode_utf16()
+            .flat_map(|u| u.to_le_bytes())
+            .collect();
+        let user_u: Vec<u8> = user.encode_utf16().flat_map(|u| u.to_le_bytes()).collect();
+        let ws_u: Vec<u8> = workstation
+            .encode_utf16()
+            .flat_map(|u| u.to_le_bytes())
+            .collect();
+        let mut blob = Vec::new();
+        blob.extend_from_slice(b"NTLMSSP\0");
+        blob.extend_from_slice(&3u32.to_le_bytes()); // MessageType = 3
+        // SecurityBuffer rows occupy bytes 12..60 (six rows of 8).
+        // We fill only Domain/User/Workstation; the rest stay zero.
+        let header_len: u32 = 64;
+        let domain_off = header_len;
+        let user_off = domain_off + domain_u.len() as u32;
+        let ws_off = user_off + user_u.len() as u32;
+        // LM (12..20) — empty.
+        blob.extend_from_slice(&0u16.to_le_bytes()); // length
+        blob.extend_from_slice(&0u16.to_le_bytes()); // max
+        blob.extend_from_slice(&0u32.to_le_bytes()); // offset
+        // NT (20..28) — empty.
+        blob.extend_from_slice(&0u16.to_le_bytes());
+        blob.extend_from_slice(&0u16.to_le_bytes());
+        blob.extend_from_slice(&0u32.to_le_bytes());
+        // Domain (28..36).
+        blob.extend_from_slice(&(domain_u.len() as u16).to_le_bytes());
+        blob.extend_from_slice(&(domain_u.len() as u16).to_le_bytes());
+        blob.extend_from_slice(&domain_off.to_le_bytes());
+        // User (36..44).
+        blob.extend_from_slice(&(user_u.len() as u16).to_le_bytes());
+        blob.extend_from_slice(&(user_u.len() as u16).to_le_bytes());
+        blob.extend_from_slice(&user_off.to_le_bytes());
+        // Workstation (44..52).
+        blob.extend_from_slice(&(ws_u.len() as u16).to_le_bytes());
+        blob.extend_from_slice(&(ws_u.len() as u16).to_le_bytes());
+        blob.extend_from_slice(&ws_off.to_le_bytes());
+        // EncryptedRandomSessionKey (52..60) — empty.
+        blob.extend_from_slice(&0u16.to_le_bytes());
+        blob.extend_from_slice(&0u16.to_le_bytes());
+        blob.extend_from_slice(&0u32.to_le_bytes());
+        // NegotiateFlags (60..64) — only NEGOTIATE_UNICODE set.
+        blob.extend_from_slice(&0x0000_0001u32.to_le_bytes());
+        // Payload at offset 64.
+        blob.extend_from_slice(&domain_u);
+        blob.extend_from_slice(&user_u);
+        blob.extend_from_slice(&ws_u);
+
+        // Build the surrounding SMB2 SESSION_SETUP frame.
+        let sec_offset_in_payload = 64 + 24; // body header is 24 bytes.
+        let blob_len = blob.len();
+        let mut frame = vec![0u8; sec_offset_in_payload + blob_len];
+        frame[0..4].copy_from_slice(&[0xFE, b'S', b'M', b'B']);
+        frame[12] = 0x01; // SESSION_SETUP
+        // body[0..2] StructureSize = 25.
+        frame[64] = 25;
+        frame[65] = 0;
+        // body[12..14] SecurityBufferOffset (relative to SMB2 header).
+        let off_bytes = (sec_offset_in_payload as u16).to_le_bytes();
+        let len_bytes = (blob_len as u16).to_le_bytes();
+        frame[64 + 12] = off_bytes[0];
+        frame[64 + 13] = off_bytes[1];
+        frame[64 + 14] = len_bytes[0];
+        frame[64 + 15] = len_bytes[1];
+        frame[sec_offset_in_payload..sec_offset_in_payload + blob_len].copy_from_slice(&blob);
+
+        let msg = parse(&frame).expect("parse");
+        let auth = msg.ntlm_auth.expect("ntlm");
+        assert_eq!(auth.domain.as_deref(), Some("CONTOSO"));
+        assert_eq!(auth.username.as_deref(), Some("alice"));
+        assert_eq!(auth.workstation.as_deref(), Some("WS01"));
+    }
+
+    /// M3: SMB2 SESSION_SETUP carrying a non-NTLM
+    /// (e.g. raw Kerberos) blob — no NtlmAuth surfaced.
+    #[test]
+    fn session_setup_kerberos_yields_no_ntlm_auth() {
+        let mut frame = vec![0u8; 64 + 24 + 16];
+        frame[0..4].copy_from_slice(&[0xFE, b'S', b'M', b'B']);
+        frame[12] = 0x01;
+        frame[64] = 25;
+        let off_bytes = (64u16 + 24).to_le_bytes();
+        frame[64 + 12] = off_bytes[0];
+        frame[64 + 13] = off_bytes[1];
+        frame[64 + 14] = 16;
+        frame[64 + 15] = 0;
+        // 16 bytes of opaque payload — no NTLMSSP magic.
+        for b in frame.iter_mut().skip(64 + 24).take(16) {
+            *b = 0x42;
+        }
+        let msg = parse(&frame).expect("parse");
+        assert!(msg.ntlm_auth.is_none());
+    }
+
+    /// M3: SMB2 WRITE carrying a synthetic DCE-RPC BIND PDU
+    /// with one context offering the `svcctl` interface
+    /// (UUID 367abb81-9844-35f1-ad32-98f038001003). Verifies
+    /// `dcerpc_bind_uuids` surfaces it.
+    #[test]
+    fn write_surfaces_dcerpc_bind_uuids() {
+        // svcctl UUID, little-endian per MS-DTYP.
+        let uuid_le: [u8; 16] = [
+            0x81, 0xbb, 0x7a, 0x36, // 367abb81 (LE)
+            0x44, 0x98, // 9844
+            0xf1, 0x35, // 35f1
+            0xad, 0x32, // ad32
+            0x98, 0xf0, 0x38, 0x00, 0x10, 0x03,
+        ];
+        let mut pdu = vec![
+            5,    // rpc_vers
+            0,    // rpc_vers_minor
+            0x0B, // ptype = BIND
+            0,    // pfc_flags
+        ];
+        pdu.extend_from_slice(&[0x10, 0, 0, 0]); // packed_drep
+        pdu.extend_from_slice(&[0, 0]); // frag_length
+        pdu.extend_from_slice(&[0, 0]); // auth_length
+        pdu.extend_from_slice(&[0, 0, 0, 0]); // call_id
+        // BIND header.
+        pdu.extend_from_slice(&[0, 0]); // max_xmit_frag
+        pdu.extend_from_slice(&[0, 0]); // max_recv_frag
+        pdu.extend_from_slice(&[0, 0, 0, 0]); // assoc_group_id
+        pdu.push(1); // n_context_elem = 1
+        pdu.extend_from_slice(&[0, 0, 0]); // reserved
+        // p_cont_elem.
+        pdu.extend_from_slice(&[0, 0]); // p_cont_id
+        pdu.push(0); // n_transfer_syn
+        pdu.push(0); // reserved
+        pdu.extend_from_slice(&uuid_le);
+        pdu.extend_from_slice(&[0, 0, 0, 0]); // if_version
+
+        let data_offset_in_payload = 64 + 16; // arbitrary; > body header
+        let mut frame = vec![0u8; data_offset_in_payload + pdu.len()];
+        frame[0..4].copy_from_slice(&[0xFE, b'S', b'M', b'B']);
+        frame[12] = 0x09; // WRITE
+        // body[2..4] = DataOffset.
+        let off_bytes = (data_offset_in_payload as u16).to_le_bytes();
+        frame[64 + 2] = off_bytes[0];
+        frame[64 + 3] = off_bytes[1];
+        // body[4..8] = Length.
+        let len_bytes = (pdu.len() as u32).to_le_bytes();
+        frame[64 + 4] = len_bytes[0];
+        frame[64 + 5] = len_bytes[1];
+        frame[64 + 6] = len_bytes[2];
+        frame[64 + 7] = len_bytes[3];
+        // body[8..16] = Offset, zero.
+        frame[data_offset_in_payload..data_offset_in_payload + pdu.len()].copy_from_slice(&pdu);
+
+        let msg = parse(&frame).expect("parse");
+        assert_eq!(msg.command, SmbCommand::Write);
+        assert_eq!(msg.dcerpc_bind_uuids.len(), 1);
+        assert_eq!(
+            msg.dcerpc_bind_uuids[0],
+            "367abb81-9844-35f1-ad32-98f038001003"
+        );
+    }
+
+    #[test]
+    fn write_without_dcerpc_yields_empty_uuid_list() {
+        let mut frame = vec![0u8; 64 + 16 + 8];
+        frame[0..4].copy_from_slice(&[0xFE, b'S', b'M', b'B']);
+        frame[12] = 0x09;
+        let off_bytes = (64u16 + 16).to_le_bytes();
+        frame[64 + 2] = off_bytes[0];
+        frame[64 + 3] = off_bytes[1];
+        frame[64 + 4] = 8;
+        let msg = parse(&frame).expect("parse");
+        assert!(msg.dcerpc_bind_uuids.is_empty());
     }
 
     /// SMB2 WRITE request: surface offset + length.

@@ -106,7 +106,7 @@ pub use crate::kerberos::{
 pub use crate::ldap::{LdapAuthKind, LdapMessage, LdapOperation, LdapParser};
 // Issue #12 (0.18): SMB2/3 — lateral-movement visibility.
 #[cfg(feature = "smb")]
-pub use crate::smb::{SmbCommand, SmbDialect, SmbMessage, SmbParser};
+pub use crate::smb::{NtlmAuth, SmbCommand, SmbDialect, SmbMessage, SmbParser};
 // Issue #3 (0.18): QUIC Initial — passive-decryptable SNI /
 // ALPN extraction for HTTP/3 + DoQ visibility.
 #[cfg(feature = "quic")]

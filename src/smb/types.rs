@@ -186,6 +186,41 @@ pub struct SmbMessage {
     /// For SMB2 WRITE requests, the file offset.
     /// **M2 (issue #12).**
     pub write_offset: Option<u64>,
+
+    /// For SMB2 SESSION_SETUP requests that carry an
+    /// NTLMSSP authentication blob (NTLM Type 3
+    /// AUTHENTICATE), the decoded identity tuple.
+    /// `None` for Kerberos / Negotiate auth.
+    /// **M3 (issue #12).**
+    pub ntlm_auth: Option<NtlmAuth>,
+
+    /// For SMB2 WRITE requests whose payload is a
+    /// DCE-RPC PDU, the parsed bind information when the
+    /// PDU type is BIND (0x0B). One entry per offered
+    /// abstract-syntax UUID. **M3 (issue #12).**
+    pub dcerpc_bind_uuids: Vec<String>,
+}
+
+/// Identity tuple extracted from an NTLM Type 3
+/// AUTHENTICATE message. Used for pass-the-hash detection
+/// (workstation field anomalies, mismatched-domain auth)
+/// and identity-correlation.
+///
+/// Per MS-NLMP §2.2.1.3. Strings are decoded as UTF-16LE
+/// when the NTLMSSP NEGOTIATE_UNICODE flag is set
+/// (commonplace) or as Windows-1252 / ASCII when OEM.
+/// We default to assuming Unicode; the surface is
+/// best-effort and consumers should not rely on
+/// byte-perfect domain casing.
+///
+/// Issue #12 M3.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[non_exhaustive]
+pub struct NtlmAuth {
+    pub domain: Option<String>,
+    pub username: Option<String>,
+    pub workstation: Option<String>,
 }
 
 impl SmbMessage {
@@ -205,6 +240,8 @@ impl SmbMessage {
             read_offset: None,
             write_length: None,
             write_offset: None,
+            ntlm_auth: None,
+            dcerpc_bind_uuids: Vec::new(),
         }
     }
 }

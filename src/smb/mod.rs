@@ -28,15 +28,41 @@
 //!   SMB2 negotiation is suspicious by itself (legacy /
 //!   downgrade attack indicator).
 //!
-//! ## Out of scope (M2/M3 follow-ups)
+//! ## M2 surface (shipped — file ops)
 //!
-//! - **NTLM authentication blob** decoding from
-//!   SESSION_SETUP (pass-the-hash signal).
-//! - **DCE-RPC binds** over IPC$ named pipes
-//!   (svcctl / lsass / spoolss — service-creation,
-//!   credential-dump, PrintNightmare).
-//! - **File create/write/rename** events (PSEXESVC.exe
-//!   marker, mass-rename = ransomware).
+//! - **CREATE filename** → `create_path` (UTF-16LE → UTF-8).
+//!   `create_is_admin_named_pipe` boolean for well-known
+//!   abused pipes (`svcctl` / `winreg` / `lsarpc` / `samr`
+//!   / `netlogon` / `spoolss` / `atsvc` / `eventlog` /
+//!   `ntsvcs` / `wkssvc` / `srvsvc` / `drsuapi`).
+//! - **READ / WRITE offset + length** → `read_offset` /
+//!   `read_length` / `write_offset` / `write_length`.
+//!   Large reads = exfil signal; mass writes = ransomware
+//!   signal.
+//!
+//! ## M3 surface (shipped — auth + RPC binds)
+//!
+//! - **NTLMSSP AUTHENTICATE** in SESSION_SETUP →
+//!   [`NtlmAuth`] with `domain` / `username` /
+//!   `workstation`. Scans the security buffer for the
+//!   `NTLMSSP\0` magic to bypass SPNEGO/GSS-API wrapping
+//!   (Wireshark-style).
+//! - **DCE-RPC bind UUIDs** in WRITE bodies →
+//!   `dcerpc_bind_uuids: Vec<String>`. One entry per
+//!   offered abstract-syntax (the interface the client is
+//!   binding to). Per the issue body: "note DCE-RPC binds,
+//!   full DCE-RPC parsing is a follow-up".
+//!
+//! ## Out of scope
+//!
+//! - **NTLM Type 1 / Type 2 decode** — NEGOTIATE +
+//!   CHALLENGE messages from the same SPNEGO exchange.
+//!   Only AUTHENTICATE (Type 3) carries the identity
+//!   tuple worth surfacing.
+//! - **Full DCE-RPC PDU decoding** beyond BIND — request /
+//!   response / fragment reassembly. The Suricata
+//!   DCERPC-over-SMB CVE history is the load-bearing
+//!   reason this stays opt-out.
 //! - **Compound / chained** request decode — we read the
 //!   first message in each NetBIOS PDU; chained
 //!   `NextCommand`-offset traversal is deferred.
@@ -63,4 +89,4 @@ mod types;
 
 pub use parser::{parse, parser_kind};
 pub use session::{SMB_PORT, SmbParser};
-pub use types::{SmbCommand, SmbDialect, SmbMessage};
+pub use types::{NtlmAuth, SmbCommand, SmbDialect, SmbMessage};
