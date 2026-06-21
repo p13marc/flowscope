@@ -218,6 +218,13 @@ pub use tftp::{TftpErrorCode, TftpMessage, TftpMode, TftpOpcode};
 pub mod mdns;
 #[cfg(feature = "mdns")]
 pub use mdns::{MdnsParser, ServiceRecord};
+// Issue #14 sub-piece (0.18): NetBIOS Name Service — UDP/137.
+// Windows-side counterpart to mDNS/SSDP; completes the
+// broadcast-name-service asset-discovery trio.
+#[cfg(feature = "netbios-ns")]
+pub mod netbios_ns;
+#[cfg(feature = "netbios-ns")]
+pub use netbios_ns::{NbnsMessage, NbnsOpcode, NbnsParser};
 // Issue #27 (0.18): unified Asset record + Inventory over
 // the asset-discovery parsers.
 #[cfg(feature = "asset")]

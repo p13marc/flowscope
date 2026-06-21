@@ -198,8 +198,8 @@ bitflags! {
         const CDP   = 1 << 4;
         const SSDP  = 1 << 5;
         const MDNS  = 1 << 6;
-        /// Reserved for future parsers — NetBIOS-NS,
-        /// SNMP-asset-discovery, etc.
+        const NBNS  = 1 << 7;
+        /// Reserved for future parsers — SNMP-asset-discovery, etc.
         const OTHER = 1 << 31;
     }
 }
@@ -525,6 +525,46 @@ impl Asset {
         } else {
             None
         }
+    }
+}
+
+#[cfg(feature = "netbios-ns")]
+impl Asset {
+    /// Build an `Asset` from one parsed NetBIOS Name Service
+    /// message. NBNS payloads carry no L2 — the caller must
+    /// supply `source_mac` (the Ethernet source of the frame
+    /// that carried the datagram). Returns `None` when the
+    /// message has neither a `queried_name` nor any
+    /// `answer_addresses` — nothing inventory-relevant.
+    ///
+    /// Pulls:
+    ///
+    /// - `queried_name` → `hostname` (the decoded NetBIOS
+    ///   name, suffix-stripped).
+    /// - Every address in `answer_addresses` → `ipv4`
+    ///   bindings.
+    /// - `AssetCapabilities::HOST` (NBNS is a station
+    ///   protocol).
+    /// - `AssetSourceSet::NBNS`.
+    pub fn from_netbios_ns(
+        nb: &crate::netbios_ns::NbnsMessage,
+        source_mac: MacAddr,
+    ) -> Option<Self> {
+        if nb.queried_name.is_none() && nb.answer_addresses.is_empty() {
+            return None;
+        }
+        let mut a = Self::new(source_mac);
+        if let Some(name) = nb.queried_name.as_deref() {
+            a.hostname = Some(name.to_string());
+        }
+        for v4 in nb.answer_addresses.iter() {
+            if !a.ipv4.contains(v4) {
+                push_bounded(&mut a.ipv4, *v4, MAX_IPS_PER_ASSET);
+            }
+        }
+        a.capabilities |= AssetCapabilities::HOST;
+        a.seen_via |= AssetSourceSet::NBNS;
+        Some(a)
     }
 }
 

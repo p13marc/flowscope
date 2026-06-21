@@ -160,6 +160,12 @@ asset = ["tracker"]
 # an asset-inventory adapter. Issue #14 (Tier-2 row 5
 # sub-piece). Pairs with `asset` for full IoT discovery.
 mdns = ["dns"]
+# NetBIOS Name Service (NBNS / NBT-NS) — RFC 1002 §4.2 over
+# UDP/137. Binary DNS-like protocol; the Windows-side sibling
+# to mDNS / SSDP for the broadcast-name-service asset
+# discovery trio. Pairs with `asset` for IoT/Windows
+# inventory. Issue #14 (Tier-2 row 5 sub-piece).
+netbios-ns = ["session", "dep:smallvec"]
 # ml-features — `flowscope::ml_features` CICFlowMeter-style
 # per-flow feature vector. The totals/throughput/per-direction
 # subset of the ~80 CICFlowMeter features that's computable
