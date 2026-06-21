@@ -335,7 +335,7 @@ pub use kerberos::{
 #[cfg(feature = "ldap")]
 pub mod ldap;
 #[cfg(feature = "ldap")]
-pub use ldap::{LDAP_PORT, LdapMessage, LdapOperation, LdapParser};
+pub use ldap::{LDAP_PORT, LdapAuthKind, LdapMessage, LdapOperation, LdapParser};
 // Issue #12 (0.18): SMB2/3 passive parser (hand-rolled).
 #[cfg(feature = "smb")]
 pub mod smb;

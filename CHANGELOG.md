@@ -1,22 +1,28 @@
 # Changelog
 
-## 0.18.0 — Tier-2 protocol cycle + ML features + IPFIX export (in progress)
+## 0.18.0 — Tier-2 protocol cycle + ML features + IPFIX export + AD recon + lateral movement + QUIC
 
 The biggest cycle since 0.10. Drove every named row in the
-`#14` Tier-2 protocol epic to completion (except DNP3 — split
-off into [#29](https://github.com/p13marc/flowscope/issues/29)
-for its license/CVE considerations), closed the asset-inventory
-composition layer (`#27`), shipped CICFlowMeter parity in
-`flowscope::ml_features`, finished `#17`'s cross-flow memcap
-enforcement story, and added the binary IPFIX wire encoder so
-flowscope is self-sufficient for IPFIX export (no netring
-dependency in that direction).
+`#14` Tier-2 protocol epic to completion, closed the
+asset-inventory composition layer (`#27`), shipped CICFlowMeter
+parity in `flowscope::ml_features` (totals + per-packet IAT +
+Active/Idle + nPrint per-packet bit matrix), finished `#17`'s
+cross-flow memcap enforcement story, added the binary IPFIX
+wire encoder so flowscope is self-sufficient for IPFIX export
+(no netring dependency in that direction), shipped the AD-recon
+pair (Kerberos + LDAP), the lateral-movement SMB2/3 parser
+(M1 + M2 + M3 — dialect + tree-connect + file ops + NTLM +
+DCE-RPC bind), and the QUIC Initial parser (RFC 9001 §5.2
+passive decryption → ClientHello SNI/ALPN).
 
-Issues closed this cycle: `#6` NDP, `#7` SSH+HASSH, `#8` ECH,
-`#9` p0f, `#10` JA4H, `#11` DHCP, `#14` Tier-2 epic (above),
-`#15` ml-features, `#17` reassembler hardening, `#20` fuzz
-harnesses, `#23` LLDP, `#24` JA4X, `#25` CDP, `#26` memcap
-enforcement, `#27` asset inventory, `#28` IPFIX wire encoder.
+Issues closed this cycle: `#3` QUIC Initial, `#6` NDP,
+`#7` SSH+HASSH, `#8` ECH, `#9` p0f, `#10` JA4H, `#11` DHCP,
+`#12` SMB2/3 (M1+M2+M3), `#13` Kerberos+LDAP, `#14` Tier-2
+epic, `#15` ml-features (incl. `#30` nPrint), `#16` IPFIX-
+IE-keyed FlowRecord (incl. routing), `#17` reassembler
+hardening, `#20` fuzz harnesses, `#23` LLDP, `#24` JA4X,
+`#25` CDP, `#26` memcap enforcement, `#27` asset inventory,
+`#28` IPFIX wire encoder, `#29` DNP3, `#30` nPrint matrix.
 
 ### Added — new feature gates
 
@@ -46,6 +52,12 @@ enforcement, `#27` asset inventory, `#28` IPFIX wire encoder.
 | `ipfix` | `flowscope::ipfix` | IANA IE registry constants + `FlowRecord` IE-keyed canonical record + `flowEndReason` + `tcpControlBits` helpers. Scoped piece of `#16`. |
 | `ipfix-export` | `flowscope::ipfix::wire` | RFC 7011/7012 binary IPFIX Message encoder — `MessageBuilder` + `TemplateRegistry` + default IPv4/IPv6 templates. Issue `#28`. |
 | `ml-features` | `flowscope::ml_features` | CICFlowMeter parity — totals/throughput + per-packet IAT + Active/Idle period accounting. Issue `#15`. |
+| `ml-features-nprint` | `flowscope::nprint` | nPrint (CCS 2021) per-packet ternary header-bit matrix for model-agnostic ML. Eth/IPv4/TCP/UDP base headers, bounded at 100 packets/flow default. Issue `#30`. |
+| `dnp3` | `flowscope::dnp3` | DNP3 (IEEE 1815-2012) OT/SCADA metadata — link header + first-block application header + IIN bits. Link-layer reassembly deliberately out (Suricata CVE-2026-22259). Issue `#29`. |
+| `kerberos` | `flowscope::kerberos` | Kerberos passive metadata (TCP/UDP 88) — AS/TGS/KRB-ERROR. Surfaces principals, realm, etype list, and `kerberoast_suspect` boolean (TGS-REQ + RC4-HMAC = MITRE T1558.003). Issue `#13`. |
+| `ldap` | `flowscope::ldap` | LDAP RFC 4511 (TCP/389) — Bind/Search/Result, `creds_present` (Simple bind), `search_attributes_spn_query` (BloodHound / GetUserSPNs signal, MITRE T1087). Issue `#13`. |
+| `smb` | `flowscope::smb` | SMB2/3 (TCP/445) — dialect detect + command + tree-connect target + CREATE filename + READ/WRITE size + NTLM identity (domain/user/workstation) + DCE-RPC BIND UUIDs. Lateral-movement / pass-the-hash / credential-dump / PrintNightmare visibility (MITRE T1021.002, T1550.002, T1003). Issue `#12`. |
+| `quic` | `flowscope::quic` | QUIC Initial (UDP/443) — RFC 9001 §5.2 Initial-secret derivation + AEAD decrypt + CRYPTO reassembly + ClientHello → SNI/ALPN. The only L7 visibility for HTTP/3 and DNS-over-QUIC. Issue `#3`. |
 | `fingerprint` | `flowscope::detect::fingerprint` | First-N packet-length + IAT baseline. Issue `#4`. |
 
 ### Added — new infrastructure
@@ -66,6 +78,19 @@ enforcement, `#27` asset inventory, `#28` IPFIX wire encoder.
 ### Added — FlowRecord fields (`#[non_exhaustive]`)
 
 - `retransmits_initiator` / `retransmits_responder: u64` — flowscope-specific extension fields so the CSV emitter can fully reproduce its existing schema through the `write_flow_record` path.
+- `original_end_reason: Option<EndReason>` — flowscope private-enterprise extension that preserves the 8-variant `EndReason` fidelity that IPFIX IE 136 (`flowEndReason`) collapses to 5 standard values. Internal flowscope consumers (CSV / Zeek / NDJSON / EVE writers) prefer this shadow when present; pure-IPFIX consumers read `flow_end_reason`. Issue `#16` close.
+
+### Added — KeyFields trait
+
+- `KeyFields::protocol_identifier() -> Option<u8>` — IANA L4 protocol number (TCP=6 / UDP=17 / ICMP=1 / ICMPv6=58 / SCTP=132). Overrides on `FiveTupleKey` + `L4Proto`. Default `None`. Enables the generic `FlowRecord::from_key_fields<K: KeyFields>` builder. Issue `#16`.
+
+### Added — FlowRecord generic constructor
+
+- `FlowRecord::from_key_fields<K: KeyFields>(stats, key, end_reason)` — generic builder used by every emit writer's `write_event(FlowEnded)` path so the IPFIX-IE-keyed FlowRecord is the single canonical record shape; emit writers are pure views over it. `FlowRecord::from_parts` is a thin wrapper around it for the `FiveTupleKey`-specialised call site.
+
+### Changed — emit writers
+
+- **CSV** and **EVE** `write_event(FlowEnded)` paths now route through `write_flow_record` when `ipfix` is enabled — single source of truth for the FlowEnded row shape. **Zeek** and **NDJSON** keep their parallel paths (Zeek's `history` column has no FlowRecord equivalent; NDJSON's `write_event` and `write_flow_record` serialize different schemas by design). Issue `#16` close.
 
 ### Added — FlowTrackerConfig fields
 
@@ -107,10 +132,15 @@ enforcement, `#27` asset inventory, `#28` IPFIX wire encoder.
 
 ### Stats
 
-- 1541 tests passing (up from 809 at 0.13.0 start of 0.18 cycle).
+- **1615 tests passing** (up from 809 at 0.13.0 start; +806 over the cycle).
 - Zero clippy warnings under `--all-features --all-targets -D warnings`.
-- Zero rustdoc warnings.
-- 19 CI feature-matrix entries (new: `ipfix`, `ntp`, `ssdp`, `tftp`, `asset`, `mdns`, `netbios-ns`, `ftp`, `smtp`, `wireguard`, `modbus`, `stun`, `rdp`, `ml-features`, `ipfix-export`, `snmp`, `radius` + the `asset,*` combo entries).
+- Zero rustdoc warnings under `RUSTDOCFLAGS=-D warnings`.
+- `cargo machete` clean (no unused deps).
+- **26 CI feature-matrix entries** (`ipfix`, `ntp`, `ssdp`, `tftp`, `asset`, `mdns`, `netbios-ns`, `ftp`, `smtp`, `wireguard`, `modbus`, `stun`, `rdp`, `ml-features`, `ml-features-nprint`, `ipfix-export`, `snmp`, `radius`, `dnp3`, `kerberos`, `ldap`, `smb`, `quic`, the `asset,*` combos).
+
+### Fixed (build hygiene)
+
+- `extractors` feature missing `dep:smallvec` despite using `SmallVec` in `layers/` since 0.9. Latent CI gap surfaced by `ml-features-nprint` (the first matrix entry whose minimum feature set is just `extractors`). One-line manifest fix.
 
 ## 0.17.0 — multi-source / RX-metadata / ARP / fingerprint cycle (in progress)
 

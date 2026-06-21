@@ -31,3 +31,21 @@ The default flowscope build, and the `tls-fingerprints` feature
 (JA3 + JA4 TLS *client* fingerprints), are **BSD-3-Clause-equivalent /
 royalty-free** — JA3 (Salesforce) and JA4 client are open-source. Only
 `ja4plus` (JA4S) carries the FoxIO terms.
+
+================================================================================
+Third-party crate licenses (informational, no copy-left obligations)
+================================================================================
+
+flowscope pulls the following optional crates when their feature gates
+are enabled. All are permissively licensed and add no copy-left
+obligations beyond standard attribution. Listed here for convenience
+when assembling a downstream binary's NOTICE.
+
+- `kerberos-parser` 0.9 (MIT OR Apache-2.0)        — `kerberos` feature
+- `ldap-parser` 0.5 (MIT OR Apache-2.0)            — `ldap` feature
+- `snmp-parser` 0.11 (MIT OR Apache-2.0)           — `snmp` feature
+- `radius-parser` 0.5 (MIT OR Apache-2.0)          — `radius` feature
+- `tls-parser` 0.12 (MIT OR Apache-2.0)            — `tls`, `quic` features
+- `x509-parser` 0.18 (MIT OR Apache-2.0)           — `ja4plus` feature
+- `quic-parser` 0.1 (MIT)                          — `quic` feature
+  - transitively pulls `ring` 0.17 (ISC AND OpenSSL AND MIT) — `quic` feature

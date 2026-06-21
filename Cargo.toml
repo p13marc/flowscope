@@ -441,6 +441,11 @@ path = "examples/01-l7-logging/tls_observer.rs"
 required-features = ["tls", "pcap"]
 
 [[example]]
+name = "quic_initial_observer"
+path = "examples/01-l7-logging/quic_initial_observer.rs"
+required-features = ["quic", "pcap"]
+
+[[example]]
 name = "dns_log"
 path = "examples/01-l7-logging/dns_log.rs"
 required-features = ["dns", "pcap"]
@@ -465,6 +470,11 @@ required-features = ["arp", "pcap"]
 name = "smtp_credentials"
 path = "examples/02-forensics/smtp_credentials.rs"
 required-features = ["smtp", "pcap"]
+
+[[example]]
+name = "smb_lateral_movement"
+path = "examples/02-forensics/smb_lateral_movement.rs"
+required-features = ["smb", "pcap"]
 
 # ── 03 security / detection ──────────────────────────
 [[example]]

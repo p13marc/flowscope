@@ -781,6 +781,30 @@ src/
 ├── ml_features/                 # `ml-features` feature — CICFlowMeter feature vector (issue #15, 0.18)
 │   ├── conn_state.rs            # TcpFlagCounts + count_tcp_flags
 │   └── features.rs              # CicFlowFeatures + from_flow_record + with_iat
+├── nprint/                      # `ml-features-nprint` feature — per-packet ternary header-bit matrix (issue #30, 0.18)
+│   ├── matrix.rs                # NPrintMatrix + NPrintConfig + push_view
+│   └── row.rs                   # NPrintRow + bits_per_row + encode_from_layers (Eth/IPv4/TCP/UDP)
+├── dnp3/                        # `dnp3` feature — DNP3 OT/SCADA metadata (issue #29, 0.18)
+│   ├── parser.rs                # parse(&[u8]) — link header + first-block app header + IIN bits
+│   ├── session.rs               # DnpParser SessionParser over TCP/20000
+│   └── types.rs                 # DnpMessage / DnpLinkFunctionKind / DnpApplication / DnpAppFunctionKind / DnpInternalIndications
+├── kerberos/                    # `kerberos` feature — Kerberos AS/TGS/KRB-ERROR (issue #13, 0.18)
+│   ├── parser.rs                # First-byte dispatch on APP-tag → rusticata kerberos-parser
+│   ├── datagram.rs              # KerberosUdpParser DatagramParser (UDP/88)
+│   ├── session.rs               # KerberosTcpParser SessionParser (RFC 4120 §7.2.2 length-prefix)
+│   └── types.rs                 # KerberosMessage / KerberosMessageKind (+ kerberoast_suspect)
+├── ldap/                        # `ldap` feature — LDAP RFC 4511 (issue #13, 0.18)
+│   ├── parser.rs                # parse_ldap_message wrap + from_parsed
+│   ├── session.rs               # LdapParser SessionParser (TCP/389)
+│   └── types.rs                 # LdapMessage / LdapOperation / LdapAuthKind (+ search_attributes_spn_query)
+├── smb/                         # `smb` feature — SMB2/3 lateral-movement (issue #12, 0.18; M1+M2+M3)
+│   ├── parser.rs                # SMB2 64-byte header + TREE_CONNECT path + CREATE filename + READ/WRITE size + NTLM identity scan + DCE-RPC BIND UUIDs
+│   ├── session.rs               # SmbParser SessionParser + NBSS framing (TCP/445)
+│   └── types.rs                 # SmbMessage / SmbDialect / SmbCommand / NtlmAuth
+├── quic/                        # `quic` feature — QUIC Initial passive decrypt (issue #3, 0.18)
+│   ├── parser.rs                # quic-parser pipeline + tls-parser ClientHello → SNI/ALPN
+│   ├── datagram.rs              # QuicUdpParser DatagramParser (UDP/443)
+│   └── types.rs                 # QuicInitial
 └── pcap/                        # `pcap` feature
     └── source.rs                # PcapFlowSource — offline replay
 ```

@@ -53,6 +53,42 @@ Protocol parsers + analysis modules (each behind its own feature):
 | `l7`    | Umbrella: `http` + `tls` + `dns` + `icmp` |
 | `full`  | All of the above (incl. `tls-fingerprints`, `pcap`, `serde`, observability, `emit`, `emit-ndjson`, `emit-eve`, `aggregate`, `chrono`, `file-hash`) |
 
+### 0.18 cycle — protocol & analytics features
+
+| Feature | What you get |
+|---------|--------------|
+| `arp` | ARP — `is_gratuitous` / `is_likely_spoof` predicates + asset adapter |
+| `ndp` | IPv6 Neighbor Discovery (RFC 4861) |
+| `dhcp` | DHCP RFC 2132 options + Fingerbank-style OS / device-class fingerprint |
+| `lldp` | LLDP (IEEE 802.1AB) L2 discovery + rogue-switch detection |
+| `cdp` | Cisco Discovery Protocol — LLDP sibling for Cisco gear |
+| `ssh` | SSH banner + KEXINIT + HASSH client fingerprint |
+| `tcp_fingerprint` | p0f-style passive TCP/IP OS fingerprint |
+| `ntp` | NTP UDP/123 — monlist amplification detection |
+| `ssdp` | SSDP — UPnP / IoT asset discovery |
+| `tftp` | TFTP UDP/69 — device-config-theft visibility |
+| `mdns` | mDNS RFC 6762 + DNS-SD RFC 6763 service walker |
+| `netbios-ns` | NBNS RFC 1002 §4.2 with suffix decode (Windows-side broadcast naming) |
+| `ftp` | FTP control channel — USER/PASS aggregation + AUTH-TLS upgrade + transfer events |
+| `smtp` | SMTP — MAIL FROM / RCPT TO envelope + AUTH PLAIN/LOGIN base64 decode + STARTTLS |
+| `wireguard` | WireGuard handshake detection (passive, no decryption) |
+| `modbus` | Modbus/TCP — function codes + exception codes (ICS visibility) |
+| `stun` | STUN RFC 5389 — WebRTC peer / NAT-type discovery |
+| `rdp` | RDP X.224 negotiation — `Cookie: mstshash=USER` capture (T1021.001) |
+| `snmp` | SNMP v1/v2c via rusticata snmp-parser — community + PDU + varbinds |
+| `radius` | RADIUS RFC 2865/2866 — identity attributes for NAC / wireless-auth correlation |
+| `asset` | Composition layer over the L2/L3/L4 discovery parsers — `Asset` + LRU `Inventory` |
+| `dnp3` | DNP3 (IEEE 1815-2012) — OT/SCADA link header + first-block app header + IIN bits |
+| `kerberos` | Kerberos AS/TGS/KRB-ERROR — `kerberoast_suspect` boolean (TGS-REQ + RC4 → T1558.003) |
+| `ldap` | LDAP RFC 4511 — Bind/Search/Result + `search_attributes_spn_query` (BloodHound / GetUserSPNs) |
+| `smb` | SMB2/3 — dialect + tree-connect + CREATE filename + READ/WRITE size + NTLM identity + DCE-RPC BIND UUIDs |
+| `quic` | QUIC Initial (RFC 9001) — passive Initial-secret decrypt → ClientHello SNI/ALPN |
+| `ipfix` | IANA IPFIX IE registry + `FlowRecord` IE-keyed canonical record |
+| `ipfix-export` | RFC 7011/7012 binary IPFIX Message encoder — `MessageBuilder` + `TemplateRegistry` |
+| `ml-features` | CICFlowMeter parity — totals + per-direction means + per-packet IAT + Active/Idle |
+| `ml-features-nprint` | nPrint (CCS 2021) per-packet ternary header-bit matrix for model-agnostic ML |
+| `fingerprint` | First-N packet-length + IAT baseline (`FlowFingerprint`) |
+
 Plus always-on modules that don't need a feature flag:
 
 - **`flowscope::driver`** — typed `Driver<E>` with per-parser

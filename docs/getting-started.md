@@ -19,7 +19,7 @@ After each, the right doc to read next is called out.
 
 ```toml
 [dependencies]
-flowscope = "0.14"
+flowscope = "0.18"
 ```
 
 MSRV is Rust 1.88 (June 2025).
@@ -29,7 +29,7 @@ The default features cover the core stack (`extractors`,
 and observability piecemeal:
 
 ```toml
-flowscope = { version = "0.14", features = ["l7", "pcap", "metrics", "tracing", "emit-eve"] }
+flowscope = { version = "0.18", features = ["l7", "pcap", "metrics", "tracing", "emit-eve"] }
 ```
 
 | Feature | What it adds |
