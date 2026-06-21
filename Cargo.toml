@@ -600,6 +600,11 @@ name = "ipfix_wire_export"
 path = "examples/05-export/ipfix_wire_export.rs"
 required-features = ["pcap", "ipfix-export"]
 
+[[example]]
+name = "detector_to_eve"
+path = "examples/05-export/detector_to_eve.rs"
+required-features = ["pcap", "extractors", "tracker", "emit-eve"]
+
 # ── 06 custom protocols ──────────────────────────────
 [[example]]
 name = "length_prefixed_pcap"

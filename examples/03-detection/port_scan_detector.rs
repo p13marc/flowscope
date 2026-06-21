@@ -1,91 +1,102 @@
-//! Detect TCP SYN-scan-shaped activity by counting distinct
-//! destination ports per (src, dst) pair within a sliding
-//! window.
+//! Detect TCP port scanners using [`PortScanDetector`] (TRW —
+//! Threshold Random Walk, Jung 2004).
 //!
-//! Real-world pattern: a source that issues SYNs to many
-//! different destination ports on the same target in a short
-//! window is almost certainly probing.
+//! For each source IP observed in a pcap, accumulates a log-
+//! likelihood ratio over SYN connections — a connection that
+//! gets RST'd or times out is evidence against (the source is
+//! probing unused ports); a successful 3-way handshake is
+//! evidence for (the source is browsing real services). When
+//! the ratio crosses a threshold the source is classified as
+//! either `Scanner` or `Benign`.
 //!
-//! Migrated to [`flowscope::correlate::TimeBucketedSet`] (0.10)
-//! — the distinct-values-per-key over-a-window primitive
-//! replaces the hand-rolled `HashMap<ScanKey, BTreeSet<u16>>` of
-//! the 0.9 version, complementing the existing
-//! [`flowscope::correlate::TimeBucketedCounter`] used for SYN
-//! rate.
+//! ## MITRE ATT&CK
+//!
+//! [T1046](https://attack.mitre.org/techniques/T1046/) — Network
+//! Service Discovery.
+//!
+//! ## Known false positives
+//!
+//! - Internal vulnerability scanners (Qualys, Nessus, OpenVAS,
+//!   Tenable, Rapid7) — these are legitimate tools that look
+//!   identical to attacker scans on the wire.
+//! - Asset-inventory tools (Lansweeper, Tanium, internal Shodan
+//!   deployments) — same.
+//! - VPN clients probing for available routes after re-connect.
+//! - Some load-balancer health checks (HAProxy / NLB / GWLB)
+//!   that periodically RST to confirm the backend is up.
+//!
+//! Multicast + link-local destinations are excluded by default
+//! (broadcast probes aren't operator-meaningful scans).
+//!
+//! ## Usage
 //!
 //! ```bash
-//! cargo run --features pcap,extractors,tracker --example port_scan_detector
+//! cargo run --features pcap,extractors,tracker --example port_scan_detector -- trace.pcap
 //! ```
 //!
-//! Plan 102 sub-A migration.
+//! Closes #52.
 
-use std::{net::IpAddr, time::Duration};
+use std::net::IpAddr;
 
-use flowscope::{
-    PacketView, Timestamp,
-    correlate::{TimeBucketedCounter, TimeBucketedSet},
-    layers::TcpFlagsView,
-    pcap::PcapFlowSource,
-};
+use flowscope::PacketView;
+use flowscope::detect::patterns::{PortScanDetector, ScanVerdict};
+use flowscope::layers::TcpFlagsView;
+use flowscope::pcap::PcapFlowSource;
 
-const WINDOW: Duration = Duration::from_secs(10);
-const BUCKET: Duration = Duration::from_secs(1);
-const SYN_THRESHOLD: u64 = 5;
-const PORT_DIVERSITY_THRESHOLD: usize = 5;
-
-type ScanKey = (IpAddr, IpAddr); // (src, dst)
-
-fn main() -> flowscope::Result<()> {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     let path = std::env::args()
         .nth(1)
         .unwrap_or_else(|| "tests/data/mixed_short.pcap".to_string());
 
-    let mut syn_counter: TimeBucketedCounter<ScanKey> =
-        TimeBucketedCounter::new(WINDOW, BUCKET, 100_000);
-    let mut distinct_ports: TimeBucketedSet<ScanKey, u16> =
-        TimeBucketedSet::new(WINDOW, BUCKET, 100_000);
+    let mut detector: PortScanDetector<IpAddr> = PortScanDetector::default();
+    let mut scanners = 0u64;
 
-    for owned in PcapFlowSource::open(&path)?.views() {
-        let owned = owned?;
-        let pv = PacketView::new(&owned.frame, owned.timestamp);
+    for view in PcapFlowSource::open(&path)?.views() {
+        let view = view?;
+        let pv = PacketView::new(&view.frame, view.timestamp);
         let Ok(layers) = pv.layers() else { continue };
-
         let Some(tcp) = layers.tcp() else { continue };
         let flags: TcpFlagsView = tcp.flags();
-        // Initial probe = SYN without ACK.
-        if !flags.syn || flags.ack {
-            continue;
-        }
         let (src, dst) = match (layers.ipv4(), layers.ipv6()) {
             (Some(v4), _) => (IpAddr::V4(v4.source()), IpAddr::V4(v4.destination())),
             (None, Some(v6)) => (IpAddr::V6(v6.source()), IpAddr::V6(v6.destination())),
             _ => continue,
         };
-        let key = (src, dst);
-        let now = owned.timestamp;
+        // Skip multicast + link-local destinations (broadcast
+        // probes aren't operator-meaningful scans).
+        if dst.is_multicast() {
+            continue;
+        }
 
-        syn_counter.bump(key, now);
-        distinct_ports.insert(key, tcp.dst_port(), now);
+        // Classify the connection outcome:
+        // - SYN+ACK → success (handshake completing).
+        // - SYN-only / lone RST → failure (no acknowledgement).
+        let outcome = if flags.syn && flags.ack {
+            Some(true)
+        } else if !flags.ack && (flags.syn || flags.rst) {
+            Some(false)
+        } else {
+            None
+        };
 
-        let count = syn_counter.count(&key, now);
-        let distinct = distinct_ports.cardinality(&key, now);
-        if count >= SYN_THRESHOLD && distinct >= PORT_DIVERSITY_THRESHOLD {
-            report_scan(now, src, dst, count, distinct);
-            // Re-insert empty to suppress duplicate reports on the
-            // next packet — the TimeBucketedSet will refill as new
-            // ports arrive.
-            distinct_ports.evict_expired(Timestamp::MAX);
+        if let Some(success) = outcome {
+            let score = detector.observe(src, success);
+            if matches!(score.verdict, ScanVerdict::Scanner) {
+                scanners += 1;
+                println!(
+                    "[scanner]  {src}  log-likelihood={:.3}  n={}  (last probed: {dst}:{})",
+                    score.log_likelihood,
+                    score.n_observed,
+                    tcp.dst_port(),
+                );
+            }
         }
     }
 
-    println!("--- scan done");
-    Ok(())
-}
-
-fn report_scan(now: Timestamp, src: IpAddr, dst: IpAddr, syns: u64, distinct: usize) {
-    println!(
-        "[{}.{:09}] suspected scan: src={src} dst={dst} \
-         {syns} SYN-only in {WINDOW:?}, {distinct} distinct dst ports",
-        now.sec, now.nsec
+    eprintln!(
+        "\n--- {scanners} source(s) classified as Scanner.  \
+         {} source(s) still being tracked (Inconclusive).",
+        detector.tracked(),
     );
+    Ok(())
 }
