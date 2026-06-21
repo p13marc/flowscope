@@ -154,6 +154,15 @@ pub struct FlowTrackerConfig {
     /// [`crate::event::MemcapPolicy::Ignore`] mirrors
     /// Suricata's `memcap-policy: ignore` default.
     pub reassembly_memcap_policy: crate::event::MemcapPolicy,
+    /// IAT threshold for the per-flow active/idle period
+    /// classification (issue #15, CICFlowMeter parity). Any
+    /// inter-arrival time longer than this closes the
+    /// current "active" period and opens an "idle" gap.
+    /// Default `Some(Duration::from_secs(1))` matches the
+    /// CICFlowMeter convention; `None` disables the
+    /// active/idle accounting entirely (saves a few cycles
+    /// per packet).
+    pub active_idle_threshold: Option<Duration>,
 }
 
 impl Default for FlowTrackerConfig {
@@ -173,6 +182,7 @@ impl Default for FlowTrackerConfig {
             tcp_overlap_policy: crate::event::TcpOverlapPolicy::First,
             reassembly_memcap: None,
             reassembly_memcap_policy: crate::event::MemcapPolicy::Ignore,
+            active_idle_threshold: Some(Duration::from_secs(1)),
         }
     }
 }
@@ -416,6 +426,29 @@ impl<E: FlowExtractor, S: Send + 'static> FlowTracker<E, S> {
             let iat_us = ts.saturating_sub(entry.stats.last_seen).as_micros() as f64;
             entry.stats.iat_flow.observe(iat_us);
         }
+        // Active/Idle period accounting (issue #15). Runs
+        // on the same `!is_new` gate as the whole-flow IAT
+        // and uses the same prev_ts (`entry.stats.last_seen`).
+        if !is_new && let Some(threshold) = self.config.active_idle_threshold {
+            let iat_dur = ts.saturating_sub(entry.stats.last_seen);
+            if iat_dur > threshold {
+                // Active period ended (the gap is too long).
+                // Close out the active period that includes
+                // the previous packet, then start a fresh
+                // one on the current packet.
+                if let Some(start) = entry.stats.active_period_start {
+                    let active_us = entry.stats.last_seen.saturating_sub(start).as_micros() as f64;
+                    entry.stats.active_periods.observe(active_us);
+                }
+                entry.stats.idle_periods.observe(iat_dur.as_micros() as f64);
+                entry.stats.active_period_start = Some(ts);
+            }
+            // Else: still in the same active period — no
+            // observation, just keep accumulating bytes/packets.
+        } else if is_new {
+            entry.stats.active_period_start = Some(ts);
+        }
+
         // Gate IAT on the per-direction packet count (not on
         // a sentinel timestamp — a real packet at ts=0 would
         // be misclassified as the prior-default).

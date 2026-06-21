@@ -220,6 +220,100 @@ fn iat_stats_populated_by_tracker() {
     assert_eq!(feats.bwd_iat_mean_us, 0.0);
 }
 
+#[test]
+fn active_idle_periods_split_on_threshold_gap() {
+    // Two bursts of two packets each, 2 seconds apart.
+    // CICFlowMeter default threshold is 1 second, so the
+    // 2-second gap should close the first active period
+    // and observe one idle gap. End-of-flow doesn't close
+    // the final active period (no closing IAT) — that's
+    // CICFlowMeter behaviour too.
+    use flowscope::extract::FiveTuple;
+    use flowscope::extract::parse::test_frames::ipv4_tcp;
+    use flowscope::{FlowExtractor, FlowTracker, PacketView};
+    let mac = [0u8; 6];
+    let mut t: FlowTracker<FiveTuple, ()> = FlowTracker::new(FiveTuple::bidirectional());
+    // Two same-direction packets at ts=0/10ms (1 active period),
+    // then two more at ts=2_010ms/2_020ms (next active period
+    // after a 2-second gap).
+    let frames = [
+        ipv4_tcp(
+            mac,
+            mac,
+            [10, 0, 0, 1],
+            [10, 0, 0, 2],
+            1234,
+            80,
+            1,
+            0,
+            0x02,
+            b"",
+        ),
+        ipv4_tcp(
+            mac,
+            mac,
+            [10, 0, 0, 1],
+            [10, 0, 0, 2],
+            1234,
+            80,
+            2,
+            0,
+            0x18,
+            b"a",
+        ),
+        ipv4_tcp(
+            mac,
+            mac,
+            [10, 0, 0, 1],
+            [10, 0, 0, 2],
+            1234,
+            80,
+            3,
+            0,
+            0x18,
+            b"b",
+        ),
+        ipv4_tcp(
+            mac,
+            mac,
+            [10, 0, 0, 1],
+            [10, 0, 0, 2],
+            1234,
+            80,
+            4,
+            0,
+            0x18,
+            b"c",
+        ),
+    ];
+    let ts = [
+        Timestamp::new(0, 0),
+        Timestamp::new(0, 10_000_000),
+        Timestamp::new(2, 10_000_000),
+        Timestamp::new(2, 20_000_000),
+    ];
+    let mut key_opt = None;
+    for (i, f) in frames.iter().enumerate() {
+        let pv = PacketView::new(f, ts[i]);
+        if key_opt.is_none() {
+            key_opt = Some(FiveTuple::bidirectional().extract(pv).expect("ext").key);
+        }
+        t.track(pv);
+    }
+    let key = key_opt.unwrap();
+    let stats = t.snapshot_stats(&key).expect("stats");
+    let rec = FlowRecord::from_parts(&stats, &key, Some(EndReason::Fin));
+    let feats = CicFlowFeatures::from_flow_record(&rec).with_iat(&stats);
+
+    // Active periods: 1 completed (10ms first burst). Second
+    // burst is still "open" at flow-end — not observed.
+    assert_eq!(stats.active_periods.count(), 1);
+    assert!((feats.active_mean_us - 10_000.0).abs() < 1e-6);
+    // Idle periods: 1 (the 2 second gap = 2_000_000 µs).
+    assert_eq!(stats.idle_periods.count(), 1);
+    assert!((feats.idle_mean_us - 2_000_000.0).abs() < 1e-6);
+}
+
 #[cfg(feature = "serde")]
 #[test]
 fn features_serialize_to_json() {

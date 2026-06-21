@@ -95,6 +95,29 @@ pub struct CicFlowFeatures {
     pub bwd_iat_min_us: f64,
     /// Maximum observed backward-only IAT.
     pub bwd_iat_max_us: f64,
+
+    // ── Active / Idle (CICFlowMeter threshold-bucketed) ──
+    //
+    // Active = stretch where consecutive packets arrived
+    // within the per-flow `active_idle_threshold` (default
+    // 1 second). Idle = the longer-than-threshold gap that
+    // closes one active period and opens the next.
+    /// Mean duration of completed active periods (µs).
+    pub active_mean_us: f64,
+    /// Std-dev of active-period durations.
+    pub active_std_us: f64,
+    /// Minimum observed active-period duration.
+    pub active_min_us: f64,
+    /// Maximum observed active-period duration.
+    pub active_max_us: f64,
+    /// Mean duration of idle gaps (µs).
+    pub idle_mean_us: f64,
+    /// Std-dev of idle-gap durations.
+    pub idle_std_us: f64,
+    /// Minimum observed idle-gap duration.
+    pub idle_min_us: f64,
+    /// Maximum observed idle-gap duration.
+    pub idle_max_us: f64,
 }
 
 impl CicFlowFeatures {
@@ -163,6 +186,14 @@ impl CicFlowFeatures {
             bwd_iat_std_us: 0.0,
             bwd_iat_min_us: 0.0,
             bwd_iat_max_us: 0.0,
+            active_mean_us: 0.0,
+            active_std_us: 0.0,
+            active_min_us: 0.0,
+            active_max_us: 0.0,
+            idle_mean_us: 0.0,
+            idle_std_us: 0.0,
+            idle_min_us: 0.0,
+            idle_max_us: 0.0,
         }
     }
 
@@ -194,6 +225,16 @@ impl CicFlowFeatures {
         self.bwd_iat_std_us = stats.iat_responder.std();
         self.bwd_iat_min_us = stats.iat_responder.min();
         self.bwd_iat_max_us = stats.iat_responder.max();
+
+        self.active_mean_us = stats.active_periods.mean();
+        self.active_std_us = stats.active_periods.std();
+        self.active_min_us = stats.active_periods.min();
+        self.active_max_us = stats.active_periods.max();
+
+        self.idle_mean_us = stats.idle_periods.mean();
+        self.idle_std_us = stats.idle_periods.std();
+        self.idle_min_us = stats.idle_periods.min();
+        self.idle_max_us = stats.idle_periods.max();
         self
     }
 }

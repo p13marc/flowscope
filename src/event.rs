@@ -334,6 +334,24 @@ pub struct FlowStats {
     /// initiator-side or responder-side packets respectively.
     pub iat_initiator: crate::correlate::WelfordStats,
     pub iat_responder: crate::correlate::WelfordStats,
+    /// New in 0.18.0 (issue #15): CICFlowMeter-style
+    /// active/idle period stats. Each "active" period is
+    /// a stretch where consecutive packets arrived within
+    /// [`crate::FlowTrackerConfig::active_idle_threshold`];
+    /// any longer gap closes the active period and opens
+    /// an idle gap.
+    ///
+    /// `active_periods` records the *duration* of each
+    /// completed active period (µs); `idle_periods`
+    /// records the *duration* of each idle gap.
+    pub active_periods: crate::correlate::WelfordStats,
+    pub idle_periods: crate::correlate::WelfordStats,
+    /// First packet of the currently-open active period.
+    /// `None` until the first packet arrives. Internal
+    /// accounting — useful for consumers that want to
+    /// inspect mid-flow state. `Option` to avoid the
+    /// "real packet at ts=0 vs sentinel default" trap.
+    pub active_period_start: Option<Timestamp>,
 }
 
 impl FlowStats {
