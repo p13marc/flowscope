@@ -160,6 +160,32 @@ pub struct SmbMessage {
     /// `NETLOGON`, `SYSVOL`) — the lateral-movement
     /// signal.
     pub tree_connect_is_admin_share: bool,
+    /// For SMB2 CREATE requests, the requested file or
+    /// pipe path (UTF-16LE on the wire, decoded to UTF-8).
+    /// For named-pipe opens this is the pipe name
+    /// (`svcctl`, `lsarpc`, `samr`, `spoolss`, ...).
+    /// **M2 (issue #12).**
+    pub create_path: Option<String>,
+    /// `true` when `create_path` matches a well-known
+    /// named-pipe endpoint historically abused for
+    /// lateral movement / credential dumping
+    /// (`svcctl` → service creation, `lsarpc` / `samr`
+    /// → cred-dump, `spoolss` → PrintNightmare, etc.).
+    /// **M2 (issue #12).**
+    pub create_is_admin_named_pipe: bool,
+    /// For SMB2 READ requests, the requested byte
+    /// length. Large reads concentrated on a single file
+    /// suggest data exfiltration. **M2 (issue #12).**
+    pub read_length: Option<u32>,
+    /// For SMB2 READ requests, the file offset.
+    /// **M2 (issue #12).**
+    pub read_offset: Option<u64>,
+    /// For SMB2 WRITE requests, the byte length.
+    /// **M2 (issue #12).**
+    pub write_length: Option<u32>,
+    /// For SMB2 WRITE requests, the file offset.
+    /// **M2 (issue #12).**
+    pub write_offset: Option<u64>,
 }
 
 impl SmbMessage {
@@ -173,6 +199,12 @@ impl SmbMessage {
             encrypted: matches!(dialect, SmbDialect::EncryptedTransform),
             tree_connect_path: None,
             tree_connect_is_admin_share: false,
+            create_path: None,
+            create_is_admin_named_pipe: false,
+            read_length: None,
+            read_offset: None,
+            write_length: None,
+            write_offset: None,
         }
     }
 }

@@ -127,6 +127,63 @@ fn parse_smb2(payload: &[u8]) -> Option<SmbMessage> {
         }
     }
 
+    // M2: SMB2 CREATE request body (§2.2.13).
+    // StructureSize(2)=57 + SecurityFlags(1) +
+    // RequestedOplockLevel(1) + ImpersonationLevel(4) +
+    // SmbCreateFlags(8) + Reserved(8) + DesiredAccess(4) +
+    // FileAttributes(4) + ShareAccess(4) +
+    // CreateDisposition(4) + CreateOptions(4) +
+    // NameOffset(2) + NameLength(2) +
+    // CreateContextsOffset(4) + CreateContextsLength(4)
+    // + Buffer.
+    if matches!(command, SmbCommand::Create) {
+        let body = &payload[64..];
+        if body.len() >= 56 {
+            let name_offset = u16::from_le_bytes([body[44], body[45]]) as usize;
+            let name_length = u16::from_le_bytes([body[46], body[47]]) as usize;
+            if name_offset >= 64
+                && name_offset + name_length <= payload.len()
+                && name_length.is_multiple_of(2)
+            {
+                let name_bytes = &payload[name_offset..name_offset + name_length];
+                if let Some(name) = utf16le_to_string(name_bytes) {
+                    msg.create_is_admin_named_pipe = is_admin_named_pipe(&name);
+                    msg.create_path = Some(name);
+                }
+            }
+        }
+    }
+
+    // M2: SMB2 READ request body (§2.2.19).
+    // StructureSize(2)=49 + Padding(1) + Flags(1) +
+    // Length(4) + Offset(8) + ... (rest not needed).
+    if matches!(command, SmbCommand::Read) {
+        let body = &payload[64..];
+        if body.len() >= 16 {
+            let length = u32::from_le_bytes([body[4], body[5], body[6], body[7]]);
+            let offset = u64::from_le_bytes([
+                body[8], body[9], body[10], body[11], body[12], body[13], body[14], body[15],
+            ]);
+            msg.read_length = Some(length);
+            msg.read_offset = Some(offset);
+        }
+    }
+
+    // M2: SMB2 WRITE request body (§2.2.21).
+    // StructureSize(2)=49 + DataOffset(2) + Length(4) +
+    // Offset(8) + ... (rest not needed).
+    if matches!(command, SmbCommand::Write) {
+        let body = &payload[64..];
+        if body.len() >= 16 {
+            let length = u32::from_le_bytes([body[4], body[5], body[6], body[7]]);
+            let offset = u64::from_le_bytes([
+                body[8], body[9], body[10], body[11], body[12], body[13], body[14], body[15],
+            ]);
+            msg.write_length = Some(length);
+            msg.write_offset = Some(offset);
+        }
+    }
+
     Some(msg)
 }
 
@@ -150,6 +207,38 @@ fn is_admin_share(path: &str) -> bool {
     matches!(
         trailing.to_ascii_uppercase().as_str(),
         "C$" | "ADMIN$" | "IPC$" | "NETLOGON" | "SYSVOL" | "D$" | "E$" | "F$"
+    )
+}
+
+/// `true` when the CREATE name targets a well-known
+/// named-pipe endpoint historically abused for lateral
+/// movement, credential dumping, or remote service
+/// creation. Pipe names appear bare (e.g. `svcctl`) when
+/// the parent tree is IPC$ — the SMB2 CREATE path is
+/// relative to the tree root.
+///
+/// Sources: Zeek `dpd_smb_pipe`, MITRE T1021.002 (SMB
+/// admin shares), T1003 (OS credential dumping), T1569
+/// (system services), T1574.002 (DLL side-loading via
+/// admin pipes), PrintNightmare (CVE-2021-34527).
+fn is_admin_named_pipe(name: &str) -> bool {
+    // Strip optional leading backslash (some clients
+    // include it, some don't).
+    let bare = name.trim_start_matches('\\');
+    matches!(
+        bare.to_ascii_lowercase().as_str(),
+        "svcctl"      // service control — PsExec, service creation
+            | "winreg" // remote registry
+            | "lsarpc" // LSA — secrets / cred dump
+            | "samr"   // SAMR — user enum, cred dump
+            | "netlogon" // domain auth pipe
+            | "spoolss" // printer — PrintNightmare
+            | "atsvc"  // task scheduler
+            | "eventlog"
+            | "ntsvcs" // plug-and-play / service control
+            | "wkssvc" // workstation
+            | "srvsvc" // server — share enumeration
+            | "drsuapi" // directory replication — DCSync
     )
 }
 
@@ -254,5 +343,125 @@ mod tests {
         assert_eq!(SmbCommand::Create.as_str(), "create");
         assert_eq!(SmbCommand::Other(0x99).as_str(), "other");
         assert_eq!(SmbCommand::OtherSmb1(0x72).as_str(), "smb1");
+    }
+
+    /// SMB2 CREATE request: surface filename + flag
+    /// well-known admin pipe (svcctl → PsExec / service
+    /// creation signal, MITRE T1569.002 / T1021.002).
+    #[test]
+    fn create_decodes_named_pipe_path() {
+        let name = "svcctl";
+        let name_utf16: Vec<u8> = name.encode_utf16().flat_map(|u| u.to_le_bytes()).collect();
+        let name_offset = 64 + 56;
+        let name_length = name_utf16.len();
+        let mut frame = vec![0u8; name_offset + name_length];
+        frame[0..4].copy_from_slice(&[0xFE, b'S', b'M', b'B']);
+        // command = 0x0005 (CREATE)
+        frame[12] = 0x05;
+        frame[13] = 0x00;
+        // CREATE body header: StructureSize=57.
+        frame[64] = 57;
+        frame[65] = 0;
+        // NameOffset (body[44..46]) and NameLength
+        // (body[46..48]).
+        let off_bytes = (name_offset as u16).to_le_bytes();
+        let len_bytes = (name_length as u16).to_le_bytes();
+        frame[64 + 44] = off_bytes[0];
+        frame[64 + 45] = off_bytes[1];
+        frame[64 + 46] = len_bytes[0];
+        frame[64 + 47] = len_bytes[1];
+        frame[name_offset..name_offset + name_length].copy_from_slice(&name_utf16);
+
+        let msg = parse(&frame).expect("parse");
+        assert_eq!(msg.command, SmbCommand::Create);
+        assert_eq!(msg.create_path.as_deref(), Some("svcctl"));
+        assert!(
+            msg.create_is_admin_named_pipe,
+            "svcctl must classify as admin named pipe"
+        );
+    }
+
+    #[test]
+    fn create_path_on_file_share_not_admin_pipe() {
+        let name = "Users\\bob\\Documents\\report.docx";
+        let name_utf16: Vec<u8> = name.encode_utf16().flat_map(|u| u.to_le_bytes()).collect();
+        let name_offset = 64 + 56;
+        let name_length = name_utf16.len();
+        let mut frame = vec![0u8; name_offset + name_length];
+        frame[0..4].copy_from_slice(&[0xFE, b'S', b'M', b'B']);
+        frame[12] = 0x05; // CREATE
+        frame[64] = 57; // StructureSize
+        let off_bytes = (name_offset as u16).to_le_bytes();
+        let len_bytes = (name_length as u16).to_le_bytes();
+        frame[64 + 44] = off_bytes[0];
+        frame[64 + 45] = off_bytes[1];
+        frame[64 + 46] = len_bytes[0];
+        frame[64 + 47] = len_bytes[1];
+        frame[name_offset..name_offset + name_length].copy_from_slice(&name_utf16);
+
+        let msg = parse(&frame).expect("parse");
+        assert_eq!(msg.create_path.as_deref(), Some(name));
+        assert!(!msg.create_is_admin_named_pipe);
+    }
+
+    #[test]
+    fn is_admin_named_pipe_classifies_correctly() {
+        assert!(is_admin_named_pipe("svcctl"));
+        assert!(is_admin_named_pipe("\\svcctl"));
+        assert!(is_admin_named_pipe("SVCCTL"));
+        assert!(is_admin_named_pipe("lsarpc"));
+        assert!(is_admin_named_pipe("samr"));
+        assert!(is_admin_named_pipe("spoolss"));
+        assert!(is_admin_named_pipe("drsuapi"));
+        assert!(!is_admin_named_pipe("notepad.exe"));
+        assert!(!is_admin_named_pipe("Documents\\report.docx"));
+    }
+
+    /// SMB2 READ request: surface offset + length.
+    /// Large `length` on a single file is the data-exfil
+    /// signal.
+    #[test]
+    fn read_surfaces_offset_and_length() {
+        let mut frame = vec![0u8; 64 + 16];
+        frame[0..4].copy_from_slice(&[0xFE, b'S', b'M', b'B']);
+        frame[12] = 0x08; // READ
+        // body[4..8] = Length = 0x0010_0000 (1 MiB).
+        frame[64 + 4] = 0x00;
+        frame[64 + 5] = 0x00;
+        frame[64 + 6] = 0x10;
+        frame[64 + 7] = 0x00;
+        // body[8..16] = Offset = 0x12345678.
+        frame[64 + 8] = 0x78;
+        frame[64 + 9] = 0x56;
+        frame[64 + 10] = 0x34;
+        frame[64 + 11] = 0x12;
+
+        let msg = parse(&frame).expect("parse");
+        assert_eq!(msg.command, SmbCommand::Read);
+        assert_eq!(msg.read_length, Some(0x0010_0000));
+        assert_eq!(msg.read_offset, Some(0x1234_5678));
+    }
+
+    /// SMB2 WRITE request: surface offset + length.
+    /// Mass writes concentrated in a short window is the
+    /// ransomware signal.
+    #[test]
+    fn write_surfaces_offset_and_length() {
+        let mut frame = vec![0u8; 64 + 16];
+        frame[0..4].copy_from_slice(&[0xFE, b'S', b'M', b'B']);
+        frame[12] = 0x09; // WRITE
+        frame[64 + 4] = 0x00;
+        frame[64 + 5] = 0x10;
+        frame[64 + 6] = 0x00;
+        frame[64 + 7] = 0x00;
+        frame[64 + 8] = 0xAA;
+        frame[64 + 9] = 0xBB;
+        frame[64 + 10] = 0xCC;
+        frame[64 + 11] = 0xDD;
+
+        let msg = parse(&frame).expect("parse");
+        assert_eq!(msg.command, SmbCommand::Write);
+        assert_eq!(msg.write_length, Some(0x0000_1000));
+        assert_eq!(msg.write_offset, Some(0xDDCC_BBAA));
     }
 }
