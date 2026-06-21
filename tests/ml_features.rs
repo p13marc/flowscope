@@ -125,6 +125,101 @@ fn five_tuple_app_label_populates_application_name() {
     let _feats = CicFlowFeatures::from_flow_record(&rec);
 }
 
+#[test]
+fn iat_stats_populated_by_tracker() {
+    // Drive a 4-packet flow with explicit 1ms / 2ms / 3ms
+    // inter-arrival gaps to verify the per-packet IAT
+    // observation actually fires inside the tracker and
+    // ends up in CicFlowFeatures via `with_iat`.
+    use flowscope::extract::FiveTuple;
+    use flowscope::extract::parse::test_frames::ipv4_tcp;
+    use flowscope::{FlowExtractor, FlowTracker, PacketView};
+    let mac = [0u8; 6];
+    let mut t: FlowTracker<FiveTuple, ()> = FlowTracker::new(FiveTuple::bidirectional());
+    let frames = [
+        ipv4_tcp(
+            mac,
+            mac,
+            [10, 0, 0, 1],
+            [10, 0, 0, 2],
+            1234,
+            80,
+            1,
+            0,
+            0x02,
+            b"",
+        ),
+        ipv4_tcp(
+            mac,
+            mac,
+            [10, 0, 0, 2],
+            [10, 0, 0, 1],
+            80,
+            1234,
+            5000,
+            1,
+            0x12,
+            b"",
+        ),
+        ipv4_tcp(
+            mac,
+            mac,
+            [10, 0, 0, 1],
+            [10, 0, 0, 2],
+            1234,
+            80,
+            1,
+            5001,
+            0x10,
+            b"",
+        ),
+        ipv4_tcp(
+            mac,
+            mac,
+            [10, 0, 0, 1],
+            [10, 0, 0, 2],
+            1234,
+            80,
+            1,
+            5001,
+            0x18,
+            b"hi",
+        ),
+    ];
+    // Timestamps in 1ms / 3ms / 6ms (1ms / 2ms / 3ms gaps).
+    let ts = [
+        Timestamp::new(0, 0),
+        Timestamp::new(0, 1_000_000),
+        Timestamp::new(0, 3_000_000),
+        Timestamp::new(0, 6_000_000),
+    ];
+    let mut key_opt = None;
+    for (i, f) in frames.iter().enumerate() {
+        let pv = PacketView::new(f, ts[i]);
+        if key_opt.is_none() {
+            key_opt = Some(FiveTuple::bidirectional().extract(pv).expect("ext").key);
+        }
+        t.track(pv);
+    }
+    let key = key_opt.unwrap();
+    let stats = t.snapshot_stats(&key).expect("stats");
+    let rec = FlowRecord::from_parts(&stats, &key, Some(EndReason::Fin));
+    let feats = CicFlowFeatures::from_flow_record(&rec).with_iat(&stats);
+
+    // 4 packets → 3 flow-IAT observations.
+    assert_eq!(stats.iat_flow.count(), 3);
+    // IAT mean = (1000 + 2000 + 3000) / 3 = 2000 µs.
+    assert!((feats.flow_iat_mean_us - 2000.0).abs() < 1e-9);
+    assert!((feats.flow_iat_min_us - 1000.0).abs() < 1e-9);
+    assert!((feats.flow_iat_max_us - 3000.0).abs() < 1e-9);
+    // Forward direction: 3 packets at ts 0 / 3ms / 6ms → 2 IAT (3000, 3000).
+    assert_eq!(stats.iat_initiator.count(), 2);
+    assert!((feats.fwd_iat_mean_us - 3000.0).abs() < 1e-9);
+    // Backward direction: 1 packet → 0 IAT (need 2+).
+    assert_eq!(stats.iat_responder.count(), 0);
+    assert_eq!(feats.bwd_iat_mean_us, 0.0);
+}
+
 #[cfg(feature = "serde")]
 #[test]
 fn features_serialize_to_json() {

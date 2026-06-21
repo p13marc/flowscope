@@ -60,6 +60,41 @@ pub struct CicFlowFeatures {
     /// [`crate::EndReason::as_zeek_state`].
     /// `None` when the record was built without an end reason.
     pub conn_state: Option<&'static str>,
+
+    // ── Inter-arrival time (issue #15 follow-up) ──
+    //
+    // CICFlowMeter's IAT features. Populated by
+    // [`Self::with_iat`] / [`Self::from_flow_stats`] only —
+    // FlowRecord doesn't carry per-packet timestamps.
+    // Default zero when populated only from a FlowRecord
+    // via [`Self::from_flow_record`].
+    /// Mean inter-arrival time across all consecutive
+    /// packets in the flow (any direction). Units: µs.
+    pub flow_iat_mean_us: f64,
+    /// Sample standard deviation of the flow IAT distribution.
+    pub flow_iat_std_us: f64,
+    /// Minimum observed IAT in the flow.
+    pub flow_iat_min_us: f64,
+    /// Maximum observed IAT in the flow.
+    pub flow_iat_max_us: f64,
+
+    /// Mean IAT between consecutive forward packets only.
+    pub fwd_iat_mean_us: f64,
+    /// Sample std-dev of the forward-only IAT distribution.
+    pub fwd_iat_std_us: f64,
+    /// Minimum observed forward-only IAT.
+    pub fwd_iat_min_us: f64,
+    /// Maximum observed forward-only IAT.
+    pub fwd_iat_max_us: f64,
+
+    /// Mean IAT between consecutive backward packets only.
+    pub bwd_iat_mean_us: f64,
+    /// Sample std-dev of the backward-only IAT distribution.
+    pub bwd_iat_std_us: f64,
+    /// Minimum observed backward-only IAT.
+    pub bwd_iat_min_us: f64,
+    /// Maximum observed backward-only IAT.
+    pub bwd_iat_max_us: f64,
 }
 
 impl CicFlowFeatures {
@@ -116,7 +151,50 @@ impl CicFlowFeatures {
             down_up_ratio,
             tcp_flag_counts: count_tcp_flags(rec),
             conn_state,
+            flow_iat_mean_us: 0.0,
+            flow_iat_std_us: 0.0,
+            flow_iat_min_us: 0.0,
+            flow_iat_max_us: 0.0,
+            fwd_iat_mean_us: 0.0,
+            fwd_iat_std_us: 0.0,
+            fwd_iat_min_us: 0.0,
+            fwd_iat_max_us: 0.0,
+            bwd_iat_mean_us: 0.0,
+            bwd_iat_std_us: 0.0,
+            bwd_iat_min_us: 0.0,
+            bwd_iat_max_us: 0.0,
         }
+    }
+
+    /// Populate the IAT fields from a [`crate::FlowStats`].
+    /// FlowStats carries the per-direction WelfordStats
+    /// updated per-packet by the tracker (issue #15
+    /// follow-up). Use this when you also hold the original
+    /// FlowStats — typically pulled from the
+    /// `FlowEvent::Ended { stats, .. }` event.
+    ///
+    /// Returns `self` for builder chaining:
+    ///
+    /// ```rust,ignore
+    /// let feats = CicFlowFeatures::from_flow_record(&rec)
+    ///     .with_iat(&stats);
+    /// ```
+    pub fn with_iat(mut self, stats: &crate::FlowStats) -> Self {
+        self.flow_iat_mean_us = stats.iat_flow.mean();
+        self.flow_iat_std_us = stats.iat_flow.std();
+        self.flow_iat_min_us = stats.iat_flow.min();
+        self.flow_iat_max_us = stats.iat_flow.max();
+
+        self.fwd_iat_mean_us = stats.iat_initiator.mean();
+        self.fwd_iat_std_us = stats.iat_initiator.std();
+        self.fwd_iat_min_us = stats.iat_initiator.min();
+        self.fwd_iat_max_us = stats.iat_initiator.max();
+
+        self.bwd_iat_mean_us = stats.iat_responder.mean();
+        self.bwd_iat_std_us = stats.iat_responder.std();
+        self.bwd_iat_min_us = stats.iat_responder.min();
+        self.bwd_iat_max_us = stats.iat_responder.max();
+        self
     }
 }
 

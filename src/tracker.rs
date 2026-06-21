@@ -407,14 +407,40 @@ impl<E: FlowExtractor, S: Send + 'static> FlowTracker<E, S> {
         }
 
         // ── update stats ─────────────────────────────────────────
+        // Per-direction IAT observation must run BEFORE the
+        // per-direction `last_seen_*` is updated. Whole-flow
+        // IAT skips packet 1 (no prior packet) — gate on
+        // `!is_new` since the new-flow path initialised
+        // `last_seen = ts` defensively.
+        if !is_new {
+            let iat_us = ts.saturating_sub(entry.stats.last_seen).as_micros() as f64;
+            entry.stats.iat_flow.observe(iat_us);
+        }
+        // Gate IAT on the per-direction packet count (not on
+        // a sentinel timestamp — a real packet at ts=0 would
+        // be misclassified as the prior-default).
         match side {
             FlowSide::Initiator => {
+                if entry.stats.packets_initiator > 0 {
+                    let iat_us = ts
+                        .saturating_sub(entry.stats.last_seen_initiator)
+                        .as_micros() as f64;
+                    entry.stats.iat_initiator.observe(iat_us);
+                }
                 entry.stats.packets_initiator += 1;
                 entry.stats.bytes_initiator += len as u64;
+                entry.stats.last_seen_initiator = ts;
             }
             FlowSide::Responder => {
+                if entry.stats.packets_responder > 0 {
+                    let iat_us = ts
+                        .saturating_sub(entry.stats.last_seen_responder)
+                        .as_micros() as f64;
+                    entry.stats.iat_responder.observe(iat_us);
+                }
                 entry.stats.packets_responder += 1;
                 entry.stats.bytes_responder += len as u64;
+                entry.stats.last_seen_responder = ts;
             }
         }
         entry.stats.last_seen = ts;

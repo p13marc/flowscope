@@ -316,6 +316,24 @@ pub struct FlowStats {
     /// [`crate::Reassembler::retransmits`].
     pub retransmits_initiator: u64,
     pub retransmits_responder: u64,
+    /// New in 0.18.0 (issue #15): per-direction last-seen
+    /// timestamps. The whole-flow [`Self::last_seen`] is the
+    /// max of the two. Defaults to [`Timestamp::default`]
+    /// (zero) when no packet has been observed on that side.
+    pub last_seen_initiator: Timestamp,
+    pub last_seen_responder: Timestamp,
+    /// New in 0.18.0 (issue #15): inter-arrival-time stats
+    /// between consecutive packets in either direction.
+    /// IAT values are stored as floating-point microseconds.
+    /// Empty (`count() == 0`) until the second packet of the
+    /// flow arrives.
+    pub iat_flow: crate::correlate::WelfordStats,
+    /// Per-direction IAT stats — same units (µs), same
+    /// "second-packet-on-this-side wins" semantics. Each
+    /// receives observations only between consecutive
+    /// initiator-side or responder-side packets respectively.
+    pub iat_initiator: crate::correlate::WelfordStats,
+    pub iat_responder: crate::correlate::WelfordStats,
 }
 
 impl FlowStats {

@@ -67,6 +67,7 @@ mod indexed;
 mod sequence;
 mod set;
 mod topk;
+mod welford;
 
 pub use bucketed::TimeBucketedCounter;
 pub use burst::{BurstDetector, BurstHit};
@@ -83,3 +84,4 @@ pub use rolling_rate::{RateValue, RollingRate};
 pub use sequence::{KeylessSequencePattern, SequencePattern};
 pub use set::TimeBucketedSet;
 pub use topk::TopK;
+pub use welford::WelfordStats;
