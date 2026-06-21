@@ -341,6 +341,13 @@ pub use ldap::{LDAP_PORT, LdapMessage, LdapOperation, LdapParser};
 pub mod smb;
 #[cfg(feature = "smb")]
 pub use smb::{SMB_PORT, SmbCommand, SmbDialect, SmbMessage, SmbParser};
+// Issue #3 (0.18): QUIC Initial parser — ClientHello
+// visibility via RFC 9001 §5.2 Initial-secret derivation
+// + AEAD decrypt (passive-decryptable).
+#[cfg(feature = "quic")]
+pub mod quic;
+#[cfg(feature = "quic")]
+pub use quic::{QUIC_PORT, QuicInitial, QuicUdpParser};
 // Issue #7 (0.18): SSH handshake parser + HASSH fingerprint.
 #[cfg(feature = "ssh")]
 pub mod ssh;

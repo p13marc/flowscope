@@ -86,6 +86,7 @@ jobs:
           - "kerberos"          # 0.18: Kerberos parser (issue #13)
           - "ldap"              # 0.18: LDAP parser (issue #13)
           - "smb"               # 0.18: SMB2/3 parser M1 (issue #12)
+          - "quic"              # 0.18: QUIC Initial parser (issue #3)
     steps:
       - uses: actions/checkout@v4
       - name: Build (--no-default-features --features "${{ matrix.features }}")
