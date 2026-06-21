@@ -314,6 +314,14 @@ pub use ipfix::FlowRecord;
 pub mod ml_features;
 #[cfg(feature = "ml-features")]
 pub use ml_features::CicFlowFeatures;
+// Issue #30 (0.18): nPrint per-packet ternary header-bit matrix
+// for model-agnostic ML pipelines. Separate Cargo feature
+// because per-packet storage is non-trivial (vs. ml-features
+// which is O(1) per flow).
+#[cfg(feature = "ml-features-nprint")]
+pub mod nprint;
+#[cfg(feature = "ml-features-nprint")]
+pub use nprint::{NPrintConfig, NPrintMatrix, NPrintRow};
 // Issue #7 (0.18): SSH handshake parser + HASSH fingerprint.
 #[cfg(feature = "ssh")]
 pub mod ssh;

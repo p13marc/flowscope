@@ -101,7 +101,7 @@ static_assertions = "1"
 default = ["extractors", "tracker", "reassembler", "session"]
 
 # Core layers — start small or take the lot.
-extractors = ["dep:etherparse"]
+extractors = ["dep:etherparse", "dep:smallvec"]
 tracker = ["dep:ahash", "dep:smallvec", "dep:arrayvec", "dep:lru"]
 reassembler = ["tracker"]
 session = ["tracker"]
@@ -265,6 +265,14 @@ rdp = ["session", "dep:bytes"]
 # Pairs with `ipfix` for the FlowRecord source-of-truth.
 # Issue #15 scoped sub-piece.
 ml-features = ["ipfix", "tracker", "extractors"]
+# ml-features-nprint — nPrint (CCS 2021) model-agnostic per-
+# packet ternary header-bit matrix. Each packet becomes a
+# fixed-width row of -1 / 0 / 1 per header bit; downstream ML
+# learns directly from wire bits without feature engineering.
+# Bounded per flow (default 100 packets). Separate from
+# `ml-features` because the per-packet storage cost is
+# non-trivial. Issue #30.
+ml-features-nprint = ["extractors"]
 # p0f-style passive TCP/IP fingerprint — extracts initial TTL,
 # window size, MSS, window-scale, TCP option order, DF bit, and
 # quirks from cleartext SYN / SYN-ACK packets. Operates over the

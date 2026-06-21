@@ -103,6 +103,10 @@ pub use crate::FlowRecord;
 // vector (totals + per-packet IAT + active/idle).
 #[cfg(feature = "ml-features")]
 pub use crate::ml_features::CicFlowFeatures;
+// Issue #30 (0.18): nPrint per-packet ternary header-bit
+// matrix (raw-bit ML mode).
+#[cfg(feature = "ml-features-nprint")]
+pub use crate::nprint::{NPrintConfig, NPrintMatrix, NPrintRow};
 // Issue #15 sub-piece (0.18): running statistics primitive
 // (used by FlowStats IAT + Active/Idle).
 #[cfg(feature = "tracker")]
