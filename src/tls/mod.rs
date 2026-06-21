@@ -86,6 +86,8 @@ pub mod ja4s;
 #[cfg(feature = "ja4plus")]
 pub mod ja4x;
 mod parser;
+#[cfg(feature = "pcap")]
+mod pcap_iter;
 mod session;
 mod types;
 
@@ -97,6 +99,8 @@ pub use ja4::{Ja4Parts, ja4 as ja4_fingerprint, ja4_parts};
 pub use ja4s::{Ja4sParts, ja4s as ja4s_fingerprint, ja4s_parts};
 #[cfg(feature = "ja4plus")]
 pub use ja4x::{ja4x_for_chain, ja4x_for_der};
+#[cfg(feature = "pcap")]
+pub use pcap_iter::{client_hellos_from_pcap, handshakes_from_pcap};
 pub use session::{TlsMessage, TlsParser};
 pub use types::*;
 

@@ -111,6 +111,26 @@ where
         n
     }
 
+    /// Clear `out` and drain all queued messages into it in
+    /// one call. Eliminates the `out.clear(); slot.drain(&mut
+    /// out);` two-step that every per-packet drain loop ends
+    /// up writing. Returns the number drained.
+    ///
+    /// Equivalent to:
+    ///
+    /// ```ignore
+    /// out.clear();
+    /// let n = slot.drain(&mut out);
+    /// ```
+    ///
+    /// but reads at the call site as the single thing it is.
+    ///
+    /// New in 0.18.
+    pub fn drain_replacing(&mut self, out: &mut Vec<SlotMessage<M, K>>) -> usize {
+        out.clear();
+        self.drain(out)
+    }
+
     /// Approximate message count currently in the queue. Cheap
     /// inspection; result may be slightly stale under
     /// concurrent push/pop.

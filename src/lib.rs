@@ -328,7 +328,8 @@ pub use nprint::{NPrintConfig, NPrintMatrix, NPrintRow};
 pub mod kerberos;
 #[cfg(feature = "kerberos")]
 pub use kerberos::{
-    KERBEROS_PORT, KerberosMessage, KerberosMessageKind, KerberosTcpParser, KerberosUdpParser,
+    KERBEROS_PORT, KerberosEtype, KerberosMessage, KerberosMessageKind, KerberosTcpParser,
+    KerberosUdpParser,
 };
 // Issue #13 (0.18): LDAP passive metadata parser
 // (rusticata ldap-parser).
@@ -340,14 +341,16 @@ pub use ldap::{LDAP_PORT, LdapAuthKind, LdapMessage, LdapOperation, LdapParser};
 #[cfg(feature = "smb")]
 pub mod smb;
 #[cfg(feature = "smb")]
-pub use smb::{NtlmAuth, SMB_PORT, SmbCommand, SmbDialect, SmbMessage, SmbParser};
+pub use smb::{
+    DceRpcInterfaceUuid, NtlmAuth, SMB_PORT, SmbCommand, SmbDialect, SmbMessage, SmbParser,
+};
 // Issue #3 (0.18): QUIC Initial parser — ClientHello
 // visibility via RFC 9001 §5.2 Initial-secret derivation
 // + AEAD decrypt (passive-decryptable).
 #[cfg(feature = "quic")]
 pub mod quic;
 #[cfg(feature = "quic")]
-pub use quic::{QUIC_PORT, QuicInitial, QuicUdpParser};
+pub use quic::{QUIC_PORT, QuicInitial, QuicUdpParser, QuicVersion};
 // Issue #7 (0.18): SSH handshake parser + HASSH fingerprint.
 #[cfg(feature = "ssh")]
 pub mod ssh;

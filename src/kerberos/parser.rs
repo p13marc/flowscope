@@ -5,7 +5,7 @@
 use kerberos_parser::krb5::{KdcRep, KdcReq, KrbError};
 use kerberos_parser::krb5_parser as kp;
 
-use super::types::{KerberosMessage, KerberosMessageKind};
+use super::types::{KerberosEtype, KerberosMessage, KerberosMessageKind};
 
 pub const PARSER_KIND_STR: &str = "kerberos";
 
@@ -13,8 +13,6 @@ pub const PARSER_KIND_STR: &str = "kerberos";
 pub fn parser_kind() -> &'static str {
     PARSER_KIND_STR
 }
-
-const KERBEROAST_ETYPE_RC4: i32 = 23;
 
 /// Decode one Kerberos message from the front of `payload`.
 /// Returns `None` if the outer tag isn't a known Kerberos
@@ -58,10 +56,15 @@ fn from_kdc_req(req: KdcReq<'_>, kind: KerberosMessageKind) -> KerberosMessage {
     let mut msg = KerberosMessage::new(kind, req.pvno, realm);
     msg.cname = req.req_body.cname.as_ref().map(|p| p.name_string.join("/"));
     msg.sname = req.req_body.sname.as_ref().map(|p| p.name_string.join("/"));
-    msg.etypes = req.req_body.etype.iter().map(|e| e.0).collect();
+    msg.etypes = req
+        .req_body
+        .etype
+        .iter()
+        .map(|e| KerberosEtype::from_raw(e.0))
+        .collect();
     msg.padata_types = req.padata.iter().map(|p| p.padata_type.0).collect();
     msg.kerberoast_suspect =
-        matches!(kind, KerberosMessageKind::TgsReq) && msg.etypes.contains(&KERBEROAST_ETYPE_RC4);
+        matches!(kind, KerberosMessageKind::TgsReq) && msg.etypes.iter().any(KerberosEtype::is_rc4);
     msg
 }
 

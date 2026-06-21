@@ -53,40 +53,50 @@ flowscope::ml_features::CicFlowFeatures::from_flow_record(rec).with_iat(stats)
 Or write your own consumer over `FlowEvent` + typed L7 messages.
 That's the whole shape.
 
-## From pcap to SNI in 20 lines
+## From pcap to SNI in five lines
 
 ```rust,no_run
-use flowscope::driver::{Driver, Event, SlotMessage};
-use flowscope::extract::{FiveTuple, FiveTupleKey};
-use flowscope::pcap::PcapFlowSource;
-use flowscope::tls::{TlsMessage, TlsParser};
-
 # fn main() -> flowscope::Result<()> {
-let mut builder = Driver::builder(FiveTuple::bidirectional());
-let mut tls = builder.session_on_ports(TlsParser::default(), [443, 8443]);
-let mut driver = builder.build();
+for (key, hello) in flowscope::tls::client_hellos_from_pcap("trace.pcap")? {
+    let sni = hello.sni.as_deref().unwrap_or("(none)");
+    println!("{key:?} → SNI={sni}");
+}
+# Ok(()) }
+```
 
-let mut events: Vec<Event<FiveTupleKey>> = Vec::new();
-let mut msgs:   Vec<SlotMessage<TlsMessage, FiveTupleKey>> = Vec::new();
+Same one-call shape for the marquee parsers:
 
-for view in PcapFlowSource::open("trace.pcap")?.views() {
-    let view = view?;
-    events.clear(); msgs.clear();
-    driver.track_into(&view, &mut events);
-    tls.drain(&mut msgs);
-    for m in &msgs {
-        if let TlsMessage::ClientHello(h) = &m.message {
-            println!("{:?} → SNI={:?} ALPN={:?}", m.key, h.sni, h.alpn);
+```rust,no_run
+# fn main() -> flowscope::Result<()> {
+// HTTP/3 + DoQ ClientHello via RFC 9001 §5.2 passive decrypt.
+for (key, init) in flowscope::quic::initials_from_pcap("trace.pcap")? {
+    println!("{key:?} {} sni={:?}", init.version, init.sni);
+}
+
+// SMB lateral-movement events with the typed admin-share /
+// admin-pipe predicates and DCE-RPC bind UUIDs.
+for (key, msg) in flowscope::smb::messages_from_pcap("trace.pcap")? {
+    if msg.tree_connect_is_admin_share {
+        println!("{key:?} admin-share TREE_CONNECT to {:?}", msg.tree_connect_path);
+    }
+    for uuid in &msg.dcerpc_bind_uuids {
+        if let Some(name) = uuid.well_known_name() {
+            println!("{key:?} DCE-RPC bind to {name} ({uuid})");
         }
     }
 }
 # Ok(()) }
 ```
 
-Run `cargo run --features tls,pcap --example tls_observer -- trace.pcap`.
-For QUIC ClientHello visibility (RFC 9001 §5.2 passive decrypt — same shape, UDP/443),
-swap `TlsParser` for `QuicUdpParser` and `session_on_ports` for
-`datagram_on_ports`.
+For protocols without a dedicated `*_from_pcap` helper, use
+`PcapFlowSource::sessions(extractor, parser)` /
+`.datagrams(extractor, parser)` to compose the same shape
+with any `SessionParser` / `DatagramParser` impl.
+
+For per-port filtering, multiple parsers per pcap, or live
+NIC capture, drop down to `Driver::builder(ext)` — the typed
+low-level driver with `SlotHandle<M, K>` per parser. See
+[`examples/07-multi-protocol/`](examples/07-multi-protocol/).
 
 ---
 

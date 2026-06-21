@@ -938,9 +938,21 @@ Two driver helpers:
 
 Both produce the same `SessionEvent`s for the same wire bytes.
 
-For the highest-level convenience, the 0.9 `flowscope::Pipeline`
-wraps both `FlowSessionDriver` + `FlowDatagramDriver` behind one
-builder chain — see `docs/getting-started.md`.
+For the highest-level convenience, marquee parsers each ship
+a one-call pcap iterator:
+
+```rust,no_run
+for (key, hello) in flowscope::tls::client_hellos_from_pcap("trace.pcap")? { … }
+for (key, init)  in flowscope::quic::initials_from_pcap("trace.pcap")? { … }
+for (key, msg)   in flowscope::smb::messages_from_pcap("trace.pcap")? { … }
+```
+
+These wrap `PcapFlowSource::sessions` / `.datagrams` (the
+generic offline pipeline helpers) with the appropriate
+parser. For unsurveyed parsers, use
+`PcapFlowSource::sessions(extractor, parser)` directly. The
+old 0.10-era `flowscope::Pipeline` type was removed in
+plan 121 (0.11); the typed-driver shape replaced it.
 
 ### Reassembly observability (0.2.0)
 

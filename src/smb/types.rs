@@ -1,5 +1,107 @@
 //! Public SMB message types.
 
+use std::fmt;
+
+/// 16-byte DCE-RPC interface UUID, the value advertised
+/// in a BIND PDU's abstract-syntax field. Wraps the raw
+/// bytes with a canonical hyphenated-hex [`std::fmt::Display`]
+/// form and a [`Self::well_known_name`] reverse lookup
+/// for the famous lateral-movement / cred-dump / DCSync
+/// interfaces.
+///
+/// **Why a newtype:** `Vec<String>` of UUIDs invites
+/// stringly-typed comparison + duplicate `format!`
+/// allocations. The newtype carries the bytes (16) and
+/// formats once when displayed.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct DceRpcInterfaceUuid(pub [u8; 16]);
+
+impl DceRpcInterfaceUuid {
+    /// Construct from raw bytes as they appear in the
+    /// abstract-syntax field of an MS-RPCE bind request.
+    /// Per MS-DTYP the first three fields are
+    /// little-endian, the last two big-endian; this
+    /// struct preserves the raw byte order — formatting
+    /// reorders for display.
+    #[inline]
+    pub const fn from_bytes(bytes: [u8; 16]) -> Self {
+        Self(bytes)
+    }
+
+    /// Raw 16 bytes (MS-DTYP wire order).
+    #[inline]
+    pub const fn as_bytes(&self) -> &[u8; 16] {
+        &self.0
+    }
+
+    /// Reverse lookup against the curated table of
+    /// well-known lateral-movement / cred-dump UUIDs.
+    /// Returns the IDL interface name (e.g. `"svcctl"`,
+    /// `"lsarpc"`, `"drsuapi"`) or `None` for unknown
+    /// interfaces.
+    ///
+    /// Source: Microsoft MS-* spec interface UUIDs.
+    pub fn well_known_name(&self) -> Option<&'static str> {
+        match self.canonical_string().as_str() {
+            "367abb81-9844-35f1-ad32-98f038001003" => Some("svcctl"), // MS-SCMR
+            "338cd001-2244-31f1-aaaa-900038001003" => Some("winreg"), // MS-RRP
+            "12345778-1234-abcd-ef00-0123456789ab" => Some("lsarpc"), // MS-LSAD/LSAT
+            "12345778-1234-abcd-ef00-0123456789ac" => Some("samr"),   // MS-SAMR
+            "12345678-1234-abcd-ef00-01234567cffb" => Some("netlogon"), // MS-NRPC
+            "12345678-1234-abcd-ef00-0123456789ab" => Some("spoolss"), // MS-RPRN
+            "1ff70682-0a51-30e8-076d-740be8cee98b" => Some("atsvc"),  // MS-TSCH
+            "82273fdc-e32a-18c3-3f78-827929dc23ea" => Some("eventlog"), // MS-EVEN
+            "6bffd098-a112-3610-9833-46c3f87e345a" => Some("wkssvc"), // MS-WKST
+            "4b324fc8-1670-01d3-1278-5a47bf6ee188" => Some("srvsvc"), // MS-SRVS
+            "e3514235-4b06-11d1-ab04-00c04fc2dcd2" => Some("drsuapi"), // MS-DRSR (DCSync)
+            _ => None,
+        }
+    }
+
+    /// Canonical hyphenated-hex form per MS-DTYP — first
+    /// three fields little-endian, last two big-endian.
+    /// Same format Wireshark / Zeek emit.
+    pub fn canonical_string(&self) -> String {
+        let b = &self.0;
+        format!(
+            "{:02x}{:02x}{:02x}{:02x}-\
+             {:02x}{:02x}-\
+             {:02x}{:02x}-\
+             {:02x}{:02x}-\
+             {:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
+            b[3],
+            b[2],
+            b[1],
+            b[0],
+            b[5],
+            b[4],
+            b[7],
+            b[6],
+            b[8],
+            b[9],
+            b[10],
+            b[11],
+            b[12],
+            b[13],
+            b[14],
+            b[15],
+        )
+    }
+}
+
+impl fmt::Display for DceRpcInterfaceUuid {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.canonical_string())
+    }
+}
+
+impl fmt::Debug for DceRpcInterfaceUuid {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "DceRpcInterfaceUuid({})", self.canonical_string())
+    }
+}
+
 /// SMB wire-level dialect family detected from the
 /// 4-byte protocol marker.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -197,8 +299,11 @@ pub struct SmbMessage {
     /// For SMB2 WRITE requests whose payload is a
     /// DCE-RPC PDU, the parsed bind information when the
     /// PDU type is BIND (0x0B). One entry per offered
-    /// abstract-syntax UUID. **M3 (issue #12).**
-    pub dcerpc_bind_uuids: Vec<String>,
+    /// abstract-syntax UUID. Use
+    /// [`DceRpcInterfaceUuid::well_known_name`] for the
+    /// curated lateral-movement-interface lookup.
+    /// **M3 (issue #12).**
+    pub dcerpc_bind_uuids: Vec<DceRpcInterfaceUuid>,
 }
 
 /// Identity tuple extracted from an NTLM Type 3

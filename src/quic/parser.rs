@@ -3,7 +3,7 @@
 use quic_parser::{decrypt_initial, parse_crypto_frames, parse_initial, reassemble_crypto_stream};
 use tls_parser::{TlsClientHelloContents, TlsExtension, TlsMessage, TlsMessageHandshake};
 
-use super::types::QuicInitial;
+use super::types::{QuicInitial, QuicVersion};
 
 pub const PARSER_KIND_STR: &str = "quic";
 
@@ -22,7 +22,7 @@ pub fn parse(datagram: &[u8]) -> Option<QuicInitial> {
     let crypto_stream = reassemble_crypto_stream(&frames);
 
     let mut out = QuicInitial {
-        version: header.version,
+        version: QuicVersion::from_raw(header.version),
         dcid: header.dcid.to_vec(),
         scid: header.scid.to_vec(),
         token_present: !header.token.is_empty(),

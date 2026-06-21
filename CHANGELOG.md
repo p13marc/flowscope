@@ -104,6 +104,28 @@ hardening, `#20` fuzz harnesses, `#23` LLDP, `#24` JA4X,
 - **`write_flow_record(&FlowRecord)`** on CSV / Zeek / NDJSON / EVE — gated on `ipfix`. Each emitter now accepts a `FlowRecord` directly; the user-visible "every emitter is a view over FlowRecord" surface from issue `#16` lands.
 - New `EveOptions::custom_anomaly_type` field, `EveJsonWriter::write_owned_anomaly`.
 
+### Added — strong types on marquee security signals
+
+- **`flowscope::kerberos::KerberosEtype`** — typed enum over the IANA `etype` registry (DES / 3DES / AES-128/256 / RC4-HMAC / etc.) with `is_aes()` / `is_rc4()` / `is_weak()` / `is_des()` predicates, `Display`, `From<i32>` / `Into<i32>`. `KerberosMessage::etypes` is now `Vec<KerberosEtype>` instead of `Vec<i32>` — the security-relevant question "is this Kerberoasting-prone?" reduces to `etype.is_rc4()` at the call site.
+- **`flowscope::quic::QuicVersion`** — typed enum over RFC 9000 v1, RFC 9369 v2, IETF drafts (`0xff000000..0xff00007f`), and `Other(u32)`. `is_v1()` / `is_v2()` / `is_draft()` predicates, `Display` (renders `v1` / `v2` / `draft-NN` / `0x...`), `From<u32>` / `Into<u32>`. `QuicInitial::version` is now `QuicVersion` instead of `u32`.
+- **`flowscope::smb::DceRpcInterfaceUuid`** — `#[repr(transparent)]` 16-byte newtype with canonical hyphenated-hex `Display`, `Hash`, `Eq`, and a `well_known_name()` reverse lookup over 11 curated lateral-movement / cred-dump / DCSync interfaces (`svcctl` / `winreg` / `lsarpc` / `samr` / `netlogon` / `spoolss` / `atsvc` / `eventlog` / `wkssvc` / `srvsvc` / `drsuapi`). `SmbMessage::dcerpc_bind_uuids` is now `Vec<DceRpcInterfaceUuid>` instead of `Vec<String>` — eliminates duplicate `format!` allocations and enables typed-equality comparison.
+
+### Added — high-level one-call helpers
+
+- **`flowscope::tls::client_hellos_from_pcap`** + **`handshakes_from_pcap`** — yield `(FiveTupleKey, TlsClientHello)` / `(FiveTupleKey, TlsHandshake)` over the full pcap → tracker → reassembler → TlsParser pipeline in one call. For TLS visibility examples this collapses the manual `Driver::builder + SlotHandle + clear+drain` quartet to 3 lines.
+- **`flowscope::quic::initials_from_pcap`** — same shape for QUIC Initial decode → ClientHello SNI/ALPN.
+- **`flowscope::smb::messages_from_pcap`** — same shape for SMB lateral-movement signals.
+- **`SlotHandle::drain_replacing(&mut Vec<_>)`** — eliminates the `out.clear(); slot.drain(&mut out);` two-step in every per-packet drain loop. Pure additive; reads at the call site as the single thing it is.
+
+### Added — prelude
+
+- `FiveTupleKey` — used as `Event<FiveTupleKey>` / `SlotMessage<_, FiveTupleKey>` annotations in every consumer; previously required `use flowscope::extract::FiveTupleKey;`.
+- `KerberosEtype`, `QuicVersion`, `DceRpcInterfaceUuid` — the new strong-typed enums above.
+
+### Removed — stale `Pipeline` references
+
+- The 0.10-era `flowscope::Pipeline` type was deleted in plan 121 (0.11 typed-driver collapse) but CLAUDE.md still described it as the "highest-level entry point". Swept the references; replaced with the actual current shape (`*_from_pcap` per-parser iterators + `PcapFlowSource::sessions` for unsurveyed parsers).
+
 ### Added — TLS handshake fields
 
 - `TlsHandshake::certificate_chain: Vec<Bytes>` — leaf-first TLS 1.2 cert chain. Issue `#24` prereq.
@@ -132,7 +154,7 @@ hardening, `#20` fuzz harnesses, `#23` LLDP, `#24` JA4X,
 
 ### Stats
 
-- **1615 tests passing** (up from 809 at 0.13.0 start; +806 over the cycle).
+- **1619 tests passing** (up from 809 at 0.13.0 start; +810 over the cycle).
 - Zero clippy warnings under `--all-features --all-targets -D warnings`.
 - Zero rustdoc warnings under `RUSTDOCFLAGS=-D warnings`.
 - `cargo machete` clean (no unused deps).

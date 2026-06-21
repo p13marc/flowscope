@@ -99,18 +99,20 @@ pub use crate::dnp3::{
 // (AS-REQ / TGS-REQ / RC4 Kerberoast signal).
 #[cfg(feature = "kerberos")]
 pub use crate::kerberos::{
-    KerberosMessage, KerberosMessageKind, KerberosTcpParser, KerberosUdpParser,
+    KerberosEtype, KerberosMessage, KerberosMessageKind, KerberosTcpParser, KerberosUdpParser,
 };
 // Issue #13 (0.18): LDAP — AD recon + SPN-query detection.
 #[cfg(feature = "ldap")]
 pub use crate::ldap::{LdapAuthKind, LdapMessage, LdapOperation, LdapParser};
 // Issue #12 (0.18): SMB2/3 — lateral-movement visibility.
 #[cfg(feature = "smb")]
-pub use crate::smb::{NtlmAuth, SmbCommand, SmbDialect, SmbMessage, SmbParser};
+pub use crate::smb::{
+    DceRpcInterfaceUuid, NtlmAuth, SmbCommand, SmbDialect, SmbMessage, SmbParser,
+};
 // Issue #3 (0.18): QUIC Initial — passive-decryptable SNI /
 // ALPN extraction for HTTP/3 + DoQ visibility.
 #[cfg(feature = "quic")]
-pub use crate::quic::{QuicInitial, QuicUdpParser};
+pub use crate::quic::{QuicInitial, QuicUdpParser, QuicVersion};
 // Issue #16 / #28 (0.18): IPFIX canonical record + binary
 // wire encoder.
 #[cfg(feature = "ipfix")]
@@ -149,7 +151,7 @@ pub use crate::driver::{Driver, DriverBuilder, Event, SlotHandle, SlotMessage};
 #[cfg(feature = "tracker")]
 pub use crate::event::{AnomalyKind, EndReason, FlowEvent, FlowSide, FlowStats};
 #[cfg(feature = "extractors")]
-pub use crate::extract::{FiveTuple, Tagged, TaggedKey};
+pub use crate::extract::{FiveTuple, FiveTupleKey, Tagged, TaggedKey};
 #[cfg(feature = "extractors")]
 pub use crate::extractor::{Extracted, FlowExtractor, L4Proto, Orientation, TcpFlags, TcpInfo};
 // Plan 162 (0.14): ICMP error classification — frequently

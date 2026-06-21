@@ -84,9 +84,13 @@
 //! Issue #12 (0.18).
 
 mod parser;
+#[cfg(feature = "pcap")]
+mod pcap_iter;
 mod session;
 mod types;
 
 pub use parser::{parse, parser_kind};
+#[cfg(feature = "pcap")]
+pub use pcap_iter::messages_from_pcap;
 pub use session::{SMB_PORT, SmbParser};
-pub use types::{NtlmAuth, SmbCommand, SmbDialect, SmbMessage};
+pub use types::{DceRpcInterfaceUuid, NtlmAuth, SmbCommand, SmbDialect, SmbMessage};

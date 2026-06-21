@@ -1,6 +1,6 @@
 //! SMB wire decoder.
 
-use super::types::{NtlmAuth, SmbCommand, SmbDialect, SmbMessage};
+use super::types::{DceRpcInterfaceUuid, NtlmAuth, SmbCommand, SmbDialect, SmbMessage};
 
 pub const PARSER_KIND_STR: &str = "smb";
 
@@ -304,7 +304,7 @@ fn read_security_buffer_string(msg: &[u8], field_off: usize, unicode: bool) -> O
 ///   reserved(1) + abstract_syntax(20) +
 ///   transfer_syntaxes[n_transfer_syn * 20]
 /// abstract_syntax = if_uuid(16) + if_version(4).
-fn decode_dcerpc_bind(data: &[u8]) -> Option<Vec<String>> {
+fn decode_dcerpc_bind(data: &[u8]) -> Option<Vec<DceRpcInterfaceUuid>> {
     if data.len() < 28 {
         return None;
     }
@@ -319,44 +319,14 @@ fn decode_dcerpc_bind(data: &[u8]) -> Option<Vec<String>> {
             break;
         }
         let n_transfer = data[cursor + 2] as usize;
-        let uuid_bytes = &data[cursor + 4..cursor + 20];
-        uuids.push(format_uuid_le(uuid_bytes));
+        let mut bytes = [0u8; 16];
+        bytes.copy_from_slice(&data[cursor + 4..cursor + 20]);
+        uuids.push(DceRpcInterfaceUuid::from_bytes(bytes));
         cursor = cursor
             .saturating_add(24)
             .saturating_add(n_transfer.saturating_mul(20));
     }
     Some(uuids)
-}
-
-/// Render 16 raw bytes as the canonical UUID hyphenated
-/// hex form (with the first three fields little-endian
-/// per MS-RPCE / MS-DTYP). Helper for
-/// [`decode_dcerpc_bind`].
-fn format_uuid_le(b: &[u8]) -> String {
-    debug_assert_eq!(b.len(), 16);
-    format!(
-        "{:02x}{:02x}{:02x}{:02x}-\
-         {:02x}{:02x}-\
-         {:02x}{:02x}-\
-         {:02x}{:02x}-\
-         {:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
-        b[3],
-        b[2],
-        b[1],
-        b[0],
-        b[5],
-        b[4],
-        b[7],
-        b[6],
-        b[8],
-        b[9],
-        b[10],
-        b[11],
-        b[12],
-        b[13],
-        b[14],
-        b[15],
-    )
 }
 
 /// Decode UTF-16LE bytes to a Rust `String`. Returns
@@ -775,10 +745,9 @@ mod tests {
         let msg = parse(&frame).expect("parse");
         assert_eq!(msg.command, SmbCommand::Write);
         assert_eq!(msg.dcerpc_bind_uuids.len(), 1);
-        assert_eq!(
-            msg.dcerpc_bind_uuids[0],
-            "367abb81-9844-35f1-ad32-98f038001003"
-        );
+        let uuid = &msg.dcerpc_bind_uuids[0];
+        assert_eq!(uuid.to_string(), "367abb81-9844-35f1-ad32-98f038001003");
+        assert_eq!(uuid.well_known_name(), Some("svcctl"));
     }
 
     #[test]

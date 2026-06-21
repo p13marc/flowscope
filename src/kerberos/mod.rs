@@ -48,4 +48,4 @@ mod types;
 pub use datagram::{KERBEROS_PORT, KerberosUdpParser};
 pub use parser::{parse, parser_kind};
 pub use session::KerberosTcpParser;
-pub use types::{KerberosMessage, KerberosMessageKind};
+pub use types::{KerberosEtype, KerberosMessage, KerberosMessageKind};

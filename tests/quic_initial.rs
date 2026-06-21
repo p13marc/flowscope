@@ -5,7 +5,7 @@
 
 #![cfg(feature = "quic")]
 
-use flowscope::quic::parse;
+use flowscope::quic::{QuicVersion, parse};
 
 fn hex_decode(s: &str) -> Vec<u8> {
     (0..s.len())
@@ -104,7 +104,9 @@ fn parses_rfc9001_client_initial_with_sni() {
     let datagram = rfc9001_client_initial();
     assert_eq!(datagram.len(), 1200);
     let msg = parse(&datagram).expect("parse should yield a QuicInitial");
-    assert_eq!(msg.version, 0x0000_0001);
+    assert_eq!(msg.version, QuicVersion::V1);
+    assert!(msg.version.is_v1());
+    assert_eq!(msg.version.as_u32(), 0x0000_0001);
     assert_eq!(msg.dcid, hex_decode("8394c8f03e515708"));
     assert!(msg.scid.is_empty());
     assert!(!msg.token_present);
