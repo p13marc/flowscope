@@ -213,6 +213,18 @@ wireguard = ["session"]
 # observation mode for ICS networks. Issue #14 (Tier-2
 # row 6 — ICS).
 modbus = ["session", "dep:bytes"]
+# DNP3 — TCP/20000 OT protocol per IEEE 1815-2012. Passive
+# observation only: parses the data link layer header (start
+# bytes / length / control / 16-bit src+dst addresses) and
+# the application layer header (function code + Internal
+# Indications + first object group/variation) when present
+# in the first user-data block.
+#
+# **Link-layer reassembly is OUT OF SCOPE** — that's the
+# part Suricata had CVE-2026-22259 in. We surface metadata
+# from the first link frame and leave deeper decoding to
+# specialised tools. MIT-clean (no stepfunc dep). Issue #29.
+dnp3 = ["session", "dep:bytes"]
 # SNMP v1/v2c — UDP/161 (queries) + UDP/162 (traps) per
 # RFC 1157 (v1) / RFC 1905 (v2c). ASN.1 BER via the
 # rusticata `snmp-parser` crate. Surfaces cleartext

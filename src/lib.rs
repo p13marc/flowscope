@@ -278,6 +278,16 @@ pub use snmp::{SnmpMessage, SnmpParser, SnmpPduKind, SnmpVersion};
 pub mod radius;
 #[cfg(feature = "radius")]
 pub use radius::{RadiusCodeKind, RadiusMessage, RadiusParser};
+// Issue #29 (0.18): DNP3 — TCP/20000 OT visibility.
+// Metadata-only — link-layer reassembly out of scope to
+// avoid the Suricata CVE class.
+#[cfg(feature = "dnp3")]
+pub mod dnp3;
+#[cfg(feature = "dnp3")]
+pub use dnp3::{
+    DnpAppFunctionKind, DnpApplication, DnpInternalIndications, DnpLinkFunctionKind, DnpMessage,
+    DnpParser,
+};
 // Issue #27 (0.18): unified Asset record + Inventory over
 // the asset-discovery parsers.
 #[cfg(feature = "asset")]

@@ -88,6 +88,13 @@ pub use crate::snmp::{SnmpMessage, SnmpParser, SnmpPduKind, SnmpVersion};
 // NAC / wireless-auth visibility.
 #[cfg(feature = "radius")]
 pub use crate::radius::{RadiusCodeKind, RadiusMessage, RadiusParser};
+// Issue #29 (0.18): DNP3 — OT/SCADA visibility,
+// metadata-only.
+#[cfg(feature = "dnp3")]
+pub use crate::dnp3::{
+    DnpAppFunctionKind, DnpApplication, DnpInternalIndications, DnpLinkFunctionKind, DnpMessage,
+    DnpParser,
+};
 // Issue #16 / #28 (0.18): IPFIX canonical record + binary
 // wire encoder.
 #[cfg(feature = "ipfix")]
