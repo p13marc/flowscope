@@ -50,6 +50,48 @@ pub use crate::tcp_fingerprint::{TcpDirection, TcpFingerprint};
 // Issue #7 (0.18): SSH handshake + HASSH fingerprint.
 #[cfg(feature = "ssh")]
 pub use crate::ssh::{SshKexInit, SshMessage, SshParser};
+// Issue #14 sub-piece (0.18): mDNS — RFC 6762 multicast DNS.
+#[cfg(feature = "mdns")]
+pub use crate::mdns::{MdnsParser, ServiceRecord};
+// Issue #14 sub-piece (0.18): NetBIOS Name Service —
+// Windows-side broadcast name service.
+#[cfg(feature = "netbios-ns")]
+pub use crate::netbios_ns::{NbnsMessage, NbnsOpcode, NbnsParser};
+// Issue #14 sub-piece (0.18): FTP control channel —
+// cleartext credentials + transfer detection.
+#[cfg(feature = "ftp")]
+pub use crate::ftp::{FtpCommand, FtpMessage, FtpParser, FtpReplyClass, TransferKind};
+// Issue #14 sub-piece (0.18): SMTP control channel — cleartext
+// AUTH PLAIN/LOGIN + named-exfil (MAIL FROM/RCPT TO).
+#[cfg(feature = "smtp")]
+pub use crate::smtp::{SmtpCommand, SmtpMessage, SmtpParser};
+// Issue #14 sub-piece (0.18): WireGuard — passive
+// VPN-handshake detection.
+#[cfg(feature = "wireguard")]
+pub use crate::wireguard::{WireGuardKind, WireGuardMessage, WireGuardParser};
+// Issue #14 sub-piece (0.18): Modbus/TCP — ICS visibility.
+#[cfg(feature = "modbus")]
+pub use crate::modbus::{ModbusExceptionCode, ModbusFunction, ModbusMessage, ModbusParser};
+// Issue #14 sub-piece (0.18): STUN — WebRTC peer / NAT
+// discovery.
+#[cfg(feature = "stun")]
+pub use crate::stun::{StunClass, StunMessage, StunParser};
+// Issue #14 sub-piece (0.18): RDP X.224 negotiation —
+// metadata-only lateral-movement (T1021.001) detection.
+#[cfg(feature = "rdp")]
+pub use crate::rdp::{RdpFailureCode, RdpMessage, RdpParser, RdpProtocols};
+// Issue #16 / #28 (0.18): IPFIX canonical record + binary
+// wire encoder.
+#[cfg(feature = "ipfix")]
+pub use crate::FlowRecord;
+// Issue #15 (0.18): CICFlowMeter-compatible ML feature
+// vector (totals + per-packet IAT + active/idle).
+#[cfg(feature = "ml-features")]
+pub use crate::ml_features::CicFlowFeatures;
+// Issue #15 sub-piece (0.18): running statistics primitive
+// (used by FlowStats IAT + Active/Idle).
+#[cfg(feature = "tracker")]
+pub use crate::correlate::WelfordStats;
 // Plan 167 (0.14): discoverability sweep — surface the
 // `correlate::*` primitives in the prelude so users don't
 // have to know the module path to find them.
