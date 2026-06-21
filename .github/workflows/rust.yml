@@ -73,6 +73,7 @@ jobs:
           - "netbios-ns"        # 0.18: NetBIOS-NS parser (issue #14 sub-piece)
           - "asset,netbios-ns"  # 0.18: NetBIOS-NS asset adapter
           - "ftp"               # 0.18: FTP control-channel parser (issue #14 sub-piece)
+          - "smtp"              # 0.18: SMTP control-channel parser (issue #14 sub-piece)
     steps:
       - uses: actions/checkout@v4
       - name: Build (--no-default-features --features "${{ matrix.features }}")

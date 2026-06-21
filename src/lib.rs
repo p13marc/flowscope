@@ -232,6 +232,13 @@ pub use netbios_ns::{NbnsMessage, NbnsOpcode, NbnsParser};
 pub mod ftp;
 #[cfg(feature = "ftp")]
 pub use ftp::{FtpCommand, FtpMessage, FtpParser, FtpReplyClass, TransferKind};
+// Issue #14 sub-piece (0.18): SMTP — TCP/25 + 587. Cleartext
+// AUTH PLAIN/LOGIN credential capture + named-exfil
+// (MAIL FROM / RCPT TO) + STARTTLS upgrade detection.
+#[cfg(feature = "smtp")]
+pub mod smtp;
+#[cfg(feature = "smtp")]
+pub use smtp::{SmtpCommand, SmtpMessage, SmtpParser};
 // Issue #27 (0.18): unified Asset record + Inventory over
 // the asset-discovery parsers.
 #[cfg(feature = "asset")]

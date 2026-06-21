@@ -24,15 +24,20 @@ fn end_to_end_login_flow() {
     p.feed_initiator(b"PASS hunter2\r\n", ts(), &mut events);
     p.feed_responder(b"230 Login successful.\r\n", ts(), &mut events);
 
-    assert!(events.iter().any(|m| matches!(m, FtpMessage::Banner { .. })));
+    assert!(
+        events
+            .iter()
+            .any(|m| matches!(m, FtpMessage::Banner { .. }))
+    );
     assert!(events.iter().any(|m| matches!(
         m,
         FtpMessage::Credentials { user, pass } if user == "alice" && pass == "hunter2"
     )));
-    assert!(events.iter().any(|m| matches!(
-        m,
-        FtpMessage::Reply { code: 230, .. }
-    )));
+    assert!(
+        events
+            .iter()
+            .any(|m| matches!(m, FtpMessage::Reply { code: 230, .. }))
+    );
 }
 
 #[test]
@@ -67,11 +72,26 @@ fn transfer_command_aggregation() {
 
 #[test]
 fn reply_class_classification() {
-    assert_eq!(FtpReplyClass::classify(220), FtpReplyClass::PositiveCompletion);
-    assert_eq!(FtpReplyClass::classify(331), FtpReplyClass::PositiveIntermediate);
-    assert_eq!(FtpReplyClass::classify(425), FtpReplyClass::TransientNegative);
-    assert_eq!(FtpReplyClass::classify(530), FtpReplyClass::PermanentNegative);
-    assert_eq!(FtpReplyClass::classify(150), FtpReplyClass::PositivePreliminary);
+    assert_eq!(
+        FtpReplyClass::classify(220),
+        FtpReplyClass::PositiveCompletion
+    );
+    assert_eq!(
+        FtpReplyClass::classify(331),
+        FtpReplyClass::PositiveIntermediate
+    );
+    assert_eq!(
+        FtpReplyClass::classify(425),
+        FtpReplyClass::TransientNegative
+    );
+    assert_eq!(
+        FtpReplyClass::classify(530),
+        FtpReplyClass::PermanentNegative
+    );
+    assert_eq!(
+        FtpReplyClass::classify(150),
+        FtpReplyClass::PositivePreliminary
+    );
     assert_eq!(FtpReplyClass::classify(999), FtpReplyClass::Other);
 }
 
@@ -93,7 +113,13 @@ fn malformed_lines_are_skipped() {
     p.feed_initiator(b"\r\n", ts(), &mut events);
     // Valid line that follows.
     p.feed_initiator(b"USER bob\r\n", ts(), &mut events);
-    assert!(events.iter().any(|m| matches!(m, FtpMessage::Command { verb: FtpCommand::User, .. })));
+    assert!(events.iter().any(|m| matches!(
+        m,
+        FtpMessage::Command {
+            verb: FtpCommand::User,
+            ..
+        }
+    )));
 }
 
 #[test]

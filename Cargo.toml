@@ -37,6 +37,9 @@ lru = { version = "0.16", optional = true }
 httparse = { version = "1.10", optional = true }
 bytes = { version = "1", optional = true }
 
+# `smtp` feature — base64 for AUTH PLAIN/LOGIN credential decode.
+base64 = { version = "0.22", optional = true, default-features = false, features = ["alloc"] }
+
 # `tls` feature
 tls-parser = { version = "0.12", optional = true }
 
@@ -174,6 +177,15 @@ netbios-ns = ["session", "dep:smallvec"]
 # detection (T1078) + data-transfer visibility (T1048).
 # Issue #14 (Tier-2 row 2 sub-piece).
 ftp = ["session", "dep:bytes"]
+# SMTP — TCP/25 + submission (TCP/587) per RFC 5321 +
+# RFC 4954 (AUTH). Cleartext-creds capture (AUTH
+# PLAIN/LOGIN base64-decoded), named-exfil detection
+# (MAIL FROM / RCPT TO addresses + envelope size),
+# STARTTLS upgrade detection. Pre-STARTTLS attachment
+# metadata is out of scope (DATA-body parsing requires
+# MIME).  Issue #14 (Tier-2 row 1 sub-piece — the highest-
+# value remaining parser).
+smtp = ["session", "dep:bytes", "dep:base64"]
 # ml-features — `flowscope::ml_features` CICFlowMeter-style
 # per-flow feature vector. The totals/throughput/per-direction
 # subset of the ~80 CICFlowMeter features that's computable
