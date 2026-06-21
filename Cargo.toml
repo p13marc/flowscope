@@ -522,6 +522,16 @@ name = "tcp_retransmit_audit"
 path = "examples/03-detection/tcp_retransmit_audit.rs"
 required-features = ["pcap", "extractors", "reassembler"]
 
+[[example]]
+name = "tcp_evasion_detector"
+path = "examples/03-detection/tcp_evasion_detector.rs"
+required-features = ["pcap", "extractors", "tracker", "reassembler"]
+
+[[example]]
+name = "composite_c2"
+path = "examples/03-detection/composite_c2.rs"
+required-features = ["pcap", "extractors", "tracker", "dns", "tls", "emit-eve"]
+
 # ── 04 observability / SRE ───────────────────────────
 [[example]]
 name = "top_talkers"
