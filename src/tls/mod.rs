@@ -81,6 +81,10 @@ pub mod ja4;
 // behind the opt-in `ja4plus` feature. See LICENSE-FoxIO-1.1 + NOTICE.
 #[cfg(feature = "ja4plus")]
 pub mod ja4s;
+// JA4X is also FoxIO License 1.1 — gated behind `ja4plus`.
+// Pulls `x509-parser` + `sha2` as opt-in deps.
+#[cfg(feature = "ja4plus")]
+pub mod ja4x;
 mod parser;
 mod session;
 mod types;
@@ -91,6 +95,8 @@ pub use handshake::{EchOutcome, HandshakeOutcome, TlsHandshake, TlsHandshakePars
 pub use ja4::{Ja4Parts, ja4 as ja4_fingerprint, ja4_parts};
 #[cfg(feature = "ja4plus")]
 pub use ja4s::{Ja4sParts, ja4s as ja4s_fingerprint, ja4s_parts};
+#[cfg(feature = "ja4plus")]
+pub use ja4x::{ja4x_for_chain, ja4x_for_der};
 pub use session::{TlsMessage, TlsParser};
 pub use types::*;
 

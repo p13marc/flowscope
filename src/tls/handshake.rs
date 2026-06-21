@@ -87,6 +87,14 @@ pub struct TlsHandshake {
     /// record was observed before the parser stopped. New in
     /// 0.18.0 (issue #24 prereq).
     pub certificate_chain: Vec<Bytes>,
+    /// JA4X server-certificate fingerprint of the **leaf**
+    /// (first) cert in [`Self::certificate_chain`]. Behind
+    /// the FoxIO-licensed `ja4plus` feature. `None` when no
+    /// cert chain was observed (TLS 1.3 / truncated /
+    /// `ja4plus` off) or the DER failed to parse.
+    /// Issue #24 (0.18.0).
+    #[cfg(feature = "ja4plus")]
+    pub ja4x: Option<String>,
 }
 
 /// Aggregate ECH outcome on a [`TlsHandshake`]. Plan 144, 0.12.0.
@@ -155,6 +163,8 @@ impl Default for TlsHandshake {
             ech_outcome: EchOutcome::NotOffered,
             ech_config_id: None,
             certificate_chain: Vec::new(),
+            #[cfg(feature = "ja4plus")]
+            ja4x: None,
         }
     }
 }
@@ -281,6 +291,11 @@ impl TlsHandshakeParser {
                 // TLS 1.2 cert chain — accumulate; the ServerHello
                 // arm will take it via std::mem::take.
                 TlsMessage::Certificate { chain } => {
+                    // JA4X over the leaf cert (FoxIO ja4plus).
+                    #[cfg(feature = "ja4plus")]
+                    if let Some(leaf) = chain.first() {
+                        self.accumulator.ja4x = super::ja4x::ja4x_for_der(leaf);
+                    }
                     self.accumulator.certificate_chain = chain;
                 }
             }

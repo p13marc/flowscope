@@ -40,6 +40,11 @@ bytes = { version = "1", optional = true }
 # `smtp` feature — base64 for AUTH PLAIN/LOGIN credential decode.
 base64 = { version = "0.22", optional = true, default-features = false, features = ["alloc"] }
 
+# `ja4plus` JA4X — x509 cert parsing. Gated behind the
+# combination of `tls-fingerprints` + `ja4plus`. MIT-licensed
+# rusticata crate; small surface, no transport / no async.
+x509-parser = { version = "0.18", optional = true }
+
 # `tls` feature
 tls-parser = { version = "0.12", optional = true }
 
@@ -111,7 +116,7 @@ tls-fingerprints = ["tls", "dep:md-5", "dep:sha2", "dep:hex"]
 # NOT MIT/Apache like the rest of flowscope. OFF BY DEFAULT and deliberately
 # excluded from `l7` / `full` so the default build stays royalty-free.
 # Commercial use requires a FoxIO OEM license. See LICENSE-FoxIO-1.1 + NOTICE.
-ja4plus = ["tls-fingerprints"]
+ja4plus = ["tls-fingerprints", "dep:x509-parser", "dep:sha2"]
 dns = ["extractors", "tracker", "session", "dep:simple-dns", "dep:bytes"]
 icmp = ["extractors", "tracker", "session", "dep:bytes"]
 # ARP visibility — datagram-style parser for EtherType 0x0806 (Issue #1, 0.17).
