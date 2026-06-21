@@ -166,6 +166,14 @@ mdns = ["dns"]
 # discovery trio. Pairs with `asset` for IoT/Windows
 # inventory. Issue #14 (Tier-2 row 5 sub-piece).
 netbios-ns = ["session", "dep:smallvec"]
+# FTP — TCP/21 control channel. Text protocol (RFC 959 +
+# RFC 2228 AUTH + RFC 2389 FEAT + RFC 2428 EPRT/EPSV).
+# Surfaces cleartext credentials (USER+PASS), AUTH-TLS
+# upgrade detection, server banner, transfer-direction
+# commands (RETR/STOR/MKD/DELE). Useful for credential-leak
+# detection (T1078) + data-transfer visibility (T1048).
+# Issue #14 (Tier-2 row 2 sub-piece).
+ftp = ["session", "dep:bytes"]
 # ml-features — `flowscope::ml_features` CICFlowMeter-style
 # per-flow feature vector. The totals/throughput/per-direction
 # subset of the ~80 CICFlowMeter features that's computable

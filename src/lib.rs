@@ -225,6 +225,13 @@ pub use mdns::{MdnsParser, ServiceRecord};
 pub mod netbios_ns;
 #[cfg(feature = "netbios-ns")]
 pub use netbios_ns::{NbnsMessage, NbnsOpcode, NbnsParser};
+// Issue #14 sub-piece (0.18): FTP — TCP/21 control channel.
+// Cleartext credential capture + AUTH-TLS upgrade detection +
+// transfer-command visibility.
+#[cfg(feature = "ftp")]
+pub mod ftp;
+#[cfg(feature = "ftp")]
+pub use ftp::{FtpCommand, FtpMessage, FtpParser, FtpReplyClass, TransferKind};
 // Issue #27 (0.18): unified Asset record + Inventory over
 // the asset-discovery parsers.
 #[cfg(feature = "asset")]
