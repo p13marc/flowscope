@@ -258,6 +258,13 @@ pub use modbus::{ModbusExceptionCode, ModbusFunction, ModbusMessage, ModbusParse
 pub mod stun;
 #[cfg(feature = "stun")]
 pub use stun::{StunClass, StunMessage, StunParser};
+// Issue #14 sub-piece (0.18): RDP — TCP/3389 X.224 negotiation
+// metadata-only (the lateral-movement T1021.001 vector).
+// Pairs with `tls` for the wrapper handshake.
+#[cfg(feature = "rdp")]
+pub mod rdp;
+#[cfg(feature = "rdp")]
+pub use rdp::{RdpFailureCode, RdpMessage, RdpParser, RdpProtocols};
 // Issue #27 (0.18): unified Asset record + Inventory over
 // the asset-discovery parsers.
 #[cfg(feature = "asset")]

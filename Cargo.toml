@@ -208,6 +208,15 @@ modbus = ["session", "dep:bytes"]
 # byte header + TLV attributes. Issue #14 (Tier-2 sub-piece
 # adjacent to WireGuard for VPN/overlay visibility).
 stun = ["session"]
+# RDP — TCP/3389 X.224 Connection Request/Confirm only,
+# per MS-RDPBCGR §2.2.1. Metadata-only by design: we
+# surface the `Cookie: mstshash=USERNAME` line + RDP
+# negotiation flags (TLS/CredSSP/RDSTLS). Do NOT parse
+# the RDP payload — FreeRDP codec history shows CVE
+# minefield. Pairs with `tls` for the wrapper handshake.
+# Issue #14 (Tier-2 row 8 — top interactive lateral-
+# movement vector T1021.001).
+rdp = ["session", "dep:bytes"]
 # ml-features — `flowscope::ml_features` CICFlowMeter-style
 # per-flow feature vector. The totals/throughput/per-direction
 # subset of the ~80 CICFlowMeter features that's computable
