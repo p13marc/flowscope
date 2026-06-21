@@ -272,6 +272,12 @@ pub use rdp::{RdpFailureCode, RdpMessage, RdpParser, RdpProtocols};
 pub mod snmp;
 #[cfg(feature = "snmp")]
 pub use snmp::{SnmpMessage, SnmpParser, SnmpPduKind, SnmpVersion};
+// Issue #14 sub-piece (0.18): RADIUS — UDP/1812 + UDP/1813.
+// Identity correlation, NAC / wireless-auth visibility.
+#[cfg(feature = "radius")]
+pub mod radius;
+#[cfg(feature = "radius")]
+pub use radius::{RadiusCodeKind, RadiusMessage, RadiusParser};
 // Issue #27 (0.18): unified Asset record + Inventory over
 // the asset-discovery parsers.
 #[cfg(feature = "asset")]

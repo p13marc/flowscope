@@ -48,6 +48,9 @@ x509-parser = { version = "0.18", optional = true }
 # `snmp` feature — rusticata SNMPv1/v2c ASN.1 BER parser.
 snmp-parser = { version = "0.11", optional = true }
 
+# `radius` feature — rusticata RADIUS parser.
+radius-parser = { version = "0.5", optional = true }
+
 # `tls` feature
 tls-parser = { version = "0.12", optional = true }
 
@@ -218,6 +221,15 @@ modbus = ["session", "dep:bytes"]
 # encryption) is out of scope for the initial ship.
 # Issue #14 (Tier-2 row 3 — asset enum + DDoS amplification).
 snmp = ["session", "dep:snmp-parser"]
+# RADIUS — UDP/1812 (auth) + UDP/1813 (accounting) per
+# RFC 2865 / 2866. Cleartext UserName, NAS-IP-Address,
+# Called/Calling-Station-Id (MAC), Framed-IP-Address;
+# the User-Password attribute is hashed with the shared
+# secret + Authenticator so cleartext recovery requires
+# the secret (out of scope). Useful for identity
+# correlation, NAC / wireless-auth visibility, AAA flow
+# topology. Issue #14 (Tier-2 row 4).
+radius = ["session", "dep:radius-parser"]
 # STUN — RFC 5389 over UDP (no IANA port; 3478 is the
 # convention; TURN uses 3478/5349). Useful for WebRTC peer
 # detection, NAT-type discovery, TURN identification. 20-

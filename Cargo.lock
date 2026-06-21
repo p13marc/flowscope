@@ -457,6 +457,7 @@ dependencies = [
  "metrics-util",
  "pcap-file",
  "proptest",
+ "radius-parser",
  "serde",
  "serde_json",
  "sha2",
@@ -1103,6 +1104,15 @@ name = "r-efi"
 version = "6.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
+
+[[package]]
+name = "radius-parser"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7253cb65bbc67e1be200a6259973e02c54d018acda6201db45bc4755bd69d420"
+dependencies = [
+ "nom",
+]
 
 [[package]]
 name = "radix_trie"

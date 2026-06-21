@@ -84,6 +84,10 @@ pub use crate::rdp::{RdpFailureCode, RdpMessage, RdpParser, RdpProtocols};
 // DDoS amplification + cleartext community-string capture.
 #[cfg(feature = "snmp")]
 pub use crate::snmp::{SnmpMessage, SnmpParser, SnmpPduKind, SnmpVersion};
+// Issue #14 sub-piece (0.18): RADIUS — identity correlation,
+// NAC / wireless-auth visibility.
+#[cfg(feature = "radius")]
+pub use crate::radius::{RadiusCodeKind, RadiusMessage, RadiusParser};
 // Issue #16 / #28 (0.18): IPFIX canonical record + binary
 // wire encoder.
 #[cfg(feature = "ipfix")]
