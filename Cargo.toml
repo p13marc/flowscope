@@ -473,6 +473,11 @@ name = "eve_writer"
 path = "examples/05-export/eve_writer.rs"
 required-features = ["pcap", "emit-eve"]
 
+[[example]]
+name = "ipfix_wire_export"
+path = "examples/05-export/ipfix_wire_export.rs"
+required-features = ["pcap", "ipfix-export"]
+
 # ── 06 custom protocols ──────────────────────────────
 [[example]]
 name = "length_prefixed_pcap"
