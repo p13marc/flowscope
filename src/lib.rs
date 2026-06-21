@@ -239,6 +239,19 @@ pub use ftp::{FtpCommand, FtpMessage, FtpParser, FtpReplyClass, TransferKind};
 pub mod smtp;
 #[cfg(feature = "smtp")]
 pub use smtp::{SmtpCommand, SmtpMessage, SmtpParser};
+// Issue #14 sub-piece (0.18): WireGuard handshake detection.
+// Passive tunnel-fingerprint for shadow-VPN / mesh-VPN
+// evasion detection.
+#[cfg(feature = "wireguard")]
+pub mod wireguard;
+#[cfg(feature = "wireguard")]
+pub use wireguard::{WireGuardKind, WireGuardMessage, WireGuardParser};
+// Issue #14 sub-piece (0.18): Modbus/TCP. ICS passive
+// observability (the only safe mode for SCADA networks).
+#[cfg(feature = "modbus")]
+pub mod modbus;
+#[cfg(feature = "modbus")]
+pub use modbus::{ModbusExceptionCode, ModbusFunction, ModbusMessage, ModbusParser};
 // Issue #27 (0.18): unified Asset record + Inventory over
 // the asset-discovery parsers.
 #[cfg(feature = "asset")]

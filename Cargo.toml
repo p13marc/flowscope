@@ -186,6 +186,22 @@ ftp = ["session", "dep:bytes"]
 # MIME).  Issue #14 (Tier-2 row 1 sub-piece — the highest-
 # value remaining parser).
 smtp = ["session", "dep:bytes", "dep:base64"]
+# WireGuard handshake metadata — UDP, no well-known port
+# (51820 is the convention). 4 message types per the
+# WireGuard whitepaper: Handshake Initiation (148B,
+# type=1), Handshake Response (92B, type=2), Cookie Reply
+# (64B, type=3), Transport Data (var, type=4). Passive
+# detection of VPN tunneling. Issue #14 (rising 2025-26
+# evasion signal).
+wireguard = ["session"]
+# Modbus/TCP — TCP/502, the OT/SCADA workhorse per
+# RFC-style Open Modbus spec. MBAP header + function code
+# + data. Surfaces function codes (read/write
+# coils/registers/diagnostics), unit_id, exception
+# responses. Passive observability — the ONLY safe
+# observation mode for ICS networks. Issue #14 (Tier-2
+# row 6 — ICS).
+modbus = ["session", "dep:bytes"]
 # ml-features — `flowscope::ml_features` CICFlowMeter-style
 # per-flow feature vector. The totals/throughput/per-direction
 # subset of the ~80 CICFlowMeter features that's computable
