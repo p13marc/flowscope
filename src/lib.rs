@@ -234,6 +234,16 @@ pub use tcp_fingerprint::{TcpDirection, TcpFingerprint};
 // FlowRecord re-key stays open in #16.
 #[cfg(feature = "ipfix")]
 pub mod ipfix;
+#[cfg(feature = "ipfix")]
+pub use ipfix::FlowRecord;
+// Issue #15 scoped sub-piece (0.18): CICFlowMeter-compatible
+// feature vector. Subset that's derivable from a finalised
+// FlowRecord alone (no per-packet IAT tracking). Gated on
+// ipfix (the FlowRecord source-of-truth).
+#[cfg(feature = "ml-features")]
+pub mod ml_features;
+#[cfg(feature = "ml-features")]
+pub use ml_features::CicFlowFeatures;
 // Issue #7 (0.18): SSH handshake parser + HASSH fingerprint.
 #[cfg(feature = "ssh")]
 pub mod ssh;

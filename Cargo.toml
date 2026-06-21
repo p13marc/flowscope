@@ -160,6 +160,14 @@ asset = ["tracker"]
 # an asset-inventory adapter. Issue #14 (Tier-2 row 5
 # sub-piece). Pairs with `asset` for full IoT discovery.
 mdns = ["dns"]
+# ml-features — `flowscope::ml_features` CICFlowMeter-style
+# per-flow feature vector. The totals/throughput/per-direction
+# subset of the ~80 CICFlowMeter features that's computable
+# from `FlowRecord` alone (no per-packet IAT tracking). Plus
+# Zeek `conn_state` + `history` already on every Ended event.
+# Pairs with `ipfix` for the FlowRecord source-of-truth.
+# Issue #15 scoped sub-piece.
+ml-features = ["ipfix", "tracker", "extractors"]
 # p0f-style passive TCP/IP fingerprint — extracts initial TTL,
 # window size, MSS, window-scale, TCP option order, DF bit, and
 # quirks from cleartext SYN / SYN-ACK packets. Operates over the

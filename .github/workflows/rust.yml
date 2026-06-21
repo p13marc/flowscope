@@ -69,6 +69,7 @@ jobs:
           - "asset,arp,ndp,dhcp,lldp,cdp,ssdp"  # 0.18: asset adapters require parsers
           - "mdns"              # 0.18: mDNS module (issue #14 sub-piece)
           - "asset,mdns"        # 0.18: mDNS asset adapter
+          - "ml-features"       # 0.18: CICFlowMeter ml-features subset (issue #15 sub-piece)
     steps:
       - uses: actions/checkout@v4
       - name: Build (--no-default-features --features "${{ matrix.features }}")
