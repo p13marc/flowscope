@@ -31,8 +31,9 @@
 //!
 //! Per-packet storage is non-trivial. With 100 packets per flow
 //! and a row of 14+20+20 = 54 bytes = 432 bits per row stored
-//! as `Vec<i8>`, the per-flow cost is ~43 KiB. The aggregated
-//! stats in [`crate::ml_features`] are O(1) per flow.
+//! as `Vec<NPrintBit>` (one byte per bit), the per-flow cost is
+//! ~43 KiB. The aggregated stats in [`crate::ml_features`] are
+//! O(1) per flow.
 //!
 //! ## Reference
 //!
@@ -57,4 +58,4 @@ mod matrix;
 mod row;
 
 pub use matrix::{NPrintConfig, NPrintMatrix};
-pub use row::{NPrintRow, bits_per_row};
+pub use row::{NPrintBit, NPrintRow, bits_per_row};

@@ -146,6 +146,14 @@ hardening, `#20` fuzz harnesses, `#23` LLDP, `#24` JA4X,
 
 - `AssetSourceSet` bitflag added `MDNS` (bit 6) and `NBNS` (bit 7); `OTHER` reserved-for-future-parsers comment updated.
 - `FieldSpec::wire_length()` const — 4 bytes for IANA IEs, 8 with enterprise number set.
+- **Strong-type lifts across LDAP / Kerberos / DNP3 / nPrint** ([#66](https://github.com/p13marc/flowscope/issues/66)). Four primitive-typed fields graduated to dedicated enums modelled on the existing 0.18 `QuicVersion` / `KerberosEtype` / `DceRpcInterfaceUuid` shape:
+  - `flowscope::ldap::LdapMessage::result_code: Option<u32>` → `Option<LdapResultCode>` (RFC 4511 §4.1.9 codes; 14 spelled-out variants + `Other(u32)`).
+  - `flowscope::ldap::LdapMessage::search_scope: Option<u32>` → `Option<LdapSearchScope>` (`BaseObject` / `SingleLevel` / `WholeSubtree` + `Other`).
+  - `flowscope::kerberos::KerberosMessage::error_code: Option<i32>` → `Option<KerberosErrorCode>` (RFC 4120 §7.5.9 codes; 8 spelled-out variants including the brute-force / password-spray signals + `Other(i32)` + an `is_brute_force_signal()` predicate).
+  - `flowscope::nprint::NPrintRow::bits: Vec<i8>` → `Vec<NPrintBit>` (`Absent` / `Zero` / `One`; per-row memory footprint unchanged — still one byte per bit).
+  - `flowscope::dnp3::DnpMessage::link_dir: bool` → `DnpLinkDirection` (`ToOutstation` / `ToMaster`).
+  - `flowscope::dnp3::DnpMessage::link_prm: bool` → `DnpLinkRole` (`Primary` / `Secondary`).
+  Each enum: `from_raw(value)` + `as_raw()` / `as_bit()` round-trip + `as_str()` (stable lowercase slug for metric labels) + `Display` (alias for `as_str()`). All enums are `#[non_exhaustive]`. Migration: replace `if result_code == Some(0)` with `result_code == Some(LdapResultCode::Success)`; replace `if bit == 0` with `if matches!(bit, NPrintBit::Zero)`; replace `link_dir` boolean checks with `matches!(link_dir, DnpLinkDirection::ToOutstation)`.
 - **`parse()` Option → Result sweep across new modules** ([#65](https://github.com/p13marc/flowscope/issues/65)). The 0.18 parsers each now return `Result<T, ParseError>` instead of `Option<T>`, with a per-module `ParseError` enum exposing the operationally-distinct failure mode:
   - `flowscope::dnp3::{parse, ParseError}` — `Truncated { need, have }` / `BadStartBytes` / `InvalidLength(u8)`.
   - `flowscope::kerberos::{parse, ParseError}` — `Empty` / `UnknownTag(u8)` / `AsnDecode`.

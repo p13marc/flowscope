@@ -192,11 +192,19 @@ mod tests {
         assert_eq!(row.bits.len(), 112 + 160 + 160 + 64);
 
         // Ethernet dst byte 0 (0xAA = 10101010) is bits 0..8.
-        assert_eq!(&row.bits[0..8], &[1, 0, 1, 0, 1, 0, 1, 0]);
+        use crate::nprint::NPrintBit::{One, Zero};
+        assert_eq!(
+            &row.bits[0..8],
+            &[One, Zero, One, Zero, One, Zero, One, Zero]
+        );
 
-        // UDP region is all -1 (no UDP in this packet).
+        // UDP region is all Absent (no UDP in this packet).
         let udp_off = 112 + 160 + 160;
-        assert!(row.bits[udp_off..].iter().all(|&b| b == -1));
+        assert!(
+            row.bits[udp_off..]
+                .iter()
+                .all(|b| *b == crate::nprint::NPrintBit::Absent)
+        );
     }
 
     #[test]
@@ -230,11 +238,16 @@ mod tests {
     }
 
     #[test]
-    fn push_absent_pads_with_minus_ones() {
+    fn push_absent_pads_with_absent_bits() {
         let mut m = NPrintMatrix::with_default_config();
         assert!(m.push_absent());
         assert_eq!(m.len(), 1);
-        assert!(m.rows()[0].bits.iter().all(|&b| b == -1));
+        assert!(
+            m.rows()[0]
+                .bits
+                .iter()
+                .all(|b| *b == crate::nprint::NPrintBit::Absent)
+        );
     }
 
     #[test]

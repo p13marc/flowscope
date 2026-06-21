@@ -42,5 +42,6 @@ mod types;
 pub use parser::{ParseError, parse};
 pub use session::{DNP3_PORT, DnpParser, PARSER_KIND};
 pub use types::{
-    DnpAppFunctionKind, DnpApplication, DnpInternalIndications, DnpLinkFunctionKind, DnpMessage,
+    DnpAppFunctionKind, DnpApplication, DnpInternalIndications, DnpLinkDirection,
+    DnpLinkFunctionKind, DnpLinkRole, DnpMessage,
 };

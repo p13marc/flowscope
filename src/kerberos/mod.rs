@@ -52,4 +52,4 @@ pub use parser::{ParseError, parse, parser_kind};
 #[cfg(feature = "pcap")]
 pub use pcap_iter::messages_from_pcap;
 pub use session::KerberosTcpParser;
-pub use types::{KerberosEtype, KerberosMessage, KerberosMessageKind};
+pub use types::{KerberosErrorCode, KerberosEtype, KerberosMessage, KerberosMessageKind};

@@ -27,26 +27,63 @@ pub fn bits_per_row(eth: bool, ipv4: bool, tcp: bool, udp: bool) -> usize {
     n
 }
 
+/// Ternary nPrint bit value — `Absent` (-1 on the wire),
+/// `Zero`, or `One`. Per-bit memory footprint is one byte;
+/// total per-row memory is identical to the old `Vec<i8>` shape.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
+#[non_exhaustive]
+pub enum NPrintBit {
+    Absent,
+    Zero,
+    One,
+}
+
+impl NPrintBit {
+    /// Convert from the legacy `i8` encoding (`-1`, `0`, `1`).
+    /// Any other value maps to `Absent` defensively.
+    pub fn from_raw(raw: i8) -> Self {
+        match raw {
+            0 => Self::Zero,
+            1 => Self::One,
+            _ => Self::Absent,
+        }
+    }
+    /// Round-trip back to the `-1` / `0` / `1` encoding for
+    /// CSV / NumPy export.
+    pub fn as_raw(&self) -> i8 {
+        match self {
+            Self::Absent => -1,
+            Self::Zero => 0,
+            Self::One => 1,
+        }
+    }
+    /// `true` when the bit is observed (Zero or One) — handy
+    /// when scoring "coverage" per header region.
+    pub fn is_present(&self) -> bool {
+        !matches!(self, Self::Absent)
+    }
+}
+
 /// One nPrint row — ternary per-bit encoding of one packet's
 /// headers.
 ///
-/// `-1` = absent, `0` = bit clear, `1` = bit set. Width is
-/// fixed by the parent matrix's [`super::NPrintConfig`].
+/// Width is fixed by the parent matrix's [`super::NPrintConfig`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct NPrintRow {
     /// Ternary bits, MSB-first within each byte of each header
     /// region (Eth → IPv4 → TCP → UDP, in that order, when
     /// enabled by the config).
-    pub bits: Vec<i8>,
+    pub bits: Vec<NPrintBit>,
 }
 
 impl NPrintRow {
-    /// Create an all-absent row (`-1` everywhere) of the given
-    /// bit width.
+    /// Create an all-absent row of the given bit width.
     pub fn absent(width: usize) -> Self {
         Self {
-            bits: vec![-1; width],
+            bits: vec![NPrintBit::Absent; width],
         }
     }
 
@@ -59,7 +96,7 @@ impl NPrintRow {
     pub(crate) fn fill_ipv4(&mut self, off: usize, ip: &Ipv4Slice<'_>) {
         // Encode only the 20-byte base header to keep the row
         // width fixed. If the on-wire header is < 20 bytes (a
-        // malformed packet), trailing bits stay -1.
+        // malformed packet), trailing bits stay Absent.
         let h = ip.header();
         let n = h.len().min(20);
         encode_bytes(&mut self.bits, off, &h[..n]);
@@ -79,7 +116,7 @@ impl NPrintRow {
 }
 
 /// Encode `src` bytes MSB-first into `dst[off..off+8*src.len()]`.
-fn encode_bytes(dst: &mut [i8], off: usize, src: &[u8]) {
+fn encode_bytes(dst: &mut [NPrintBit], off: usize, src: &[u8]) {
     for (i, byte) in src.iter().enumerate() {
         for bit in 0..8 {
             let dst_idx = off + i * 8 + bit;
@@ -88,7 +125,11 @@ fn encode_bytes(dst: &mut [i8], off: usize, src: &[u8]) {
             }
             // MSB first: bit 0 = top bit of byte.
             let val = (byte >> (7 - bit)) & 0x01;
-            dst[dst_idx] = val as i8;
+            dst[dst_idx] = if val == 1 {
+                NPrintBit::One
+            } else {
+                NPrintBit::Zero
+            };
         }
     }
 }
@@ -140,27 +181,44 @@ mod tests {
     use super::*;
 
     #[test]
-    fn absent_row_is_all_minus_one() {
+    fn absent_row_is_all_absent() {
         let r = NPrintRow::absent(32);
         assert_eq!(r.bits.len(), 32);
-        assert!(r.bits.iter().all(|&b| b == -1));
+        assert!(r.bits.iter().all(|b| *b == NPrintBit::Absent));
     }
 
     #[test]
     fn encode_bytes_msb_first() {
-        let mut buf = vec![-1i8; 16];
+        let mut buf = vec![NPrintBit::Absent; 16];
         encode_bytes(&mut buf, 0, &[0b10110010]);
-        assert_eq!(buf[..8], [1, 0, 1, 1, 0, 0, 1, 0]);
-        // Remaining stay -1.
-        assert!(buf[8..].iter().all(|&b| b == -1));
+        let expected = [
+            NPrintBit::One,
+            NPrintBit::Zero,
+            NPrintBit::One,
+            NPrintBit::One,
+            NPrintBit::Zero,
+            NPrintBit::Zero,
+            NPrintBit::One,
+            NPrintBit::Zero,
+        ];
+        assert_eq!(&buf[..8], &expected);
+        assert!(buf[8..].iter().all(|b| *b == NPrintBit::Absent));
     }
 
     #[test]
     fn encode_bytes_truncates_at_dst_end() {
-        let mut buf = vec![-1i8; 4];
+        let mut buf = vec![NPrintBit::Absent; 4];
         encode_bytes(&mut buf, 0, &[0xFF, 0xFF]); // would need 16 bits
-        // Only first 4 written.
-        assert_eq!(buf, vec![1, 1, 1, 1]);
+        assert_eq!(buf, vec![NPrintBit::One; 4]);
+    }
+
+    #[test]
+    fn bit_round_trip() {
+        for raw in [-1i8, 0, 1] {
+            assert_eq!(NPrintBit::from_raw(raw).as_raw(), raw);
+        }
+        // Defensive: unknown values map to Absent.
+        assert_eq!(NPrintBit::from_raw(42).as_raw(), -1);
     }
 
     #[test]

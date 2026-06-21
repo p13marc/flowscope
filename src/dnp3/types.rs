@@ -14,14 +14,85 @@ pub struct DnpMessage {
     pub dst_addr: u16,
     /// Link function (the low 4 bits of the control byte).
     pub link_function: DnpLinkFunctionKind,
-    /// DIR bit — `true` when sent toward an outstation
-    /// (master → outstation).
-    pub link_dir: bool,
-    /// PRM bit — primary station message vs secondary.
-    pub link_prm: bool,
+    /// DIR bit lift — direction of travel relative to the
+    /// outstation.
+    pub link_dir: DnpLinkDirection,
+    /// PRM bit lift — primary-station vs secondary-station
+    /// message.
+    pub link_prm: DnpLinkRole,
     /// Application-layer payload, when the first user-data
     /// block contains a parsable application frame.
     pub application: Option<DnpApplication>,
+}
+
+/// IEEE 1815-2012 §9.1.2.1 DIR bit. The bit is `1` when sent
+/// from a master toward an outstation; `0` in the reverse
+/// direction.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
+#[non_exhaustive]
+pub enum DnpLinkDirection {
+    ToOutstation,
+    ToMaster,
+}
+
+impl DnpLinkDirection {
+    pub fn from_bit(bit: bool) -> Self {
+        if bit {
+            Self::ToOutstation
+        } else {
+            Self::ToMaster
+        }
+    }
+    pub fn as_bit(&self) -> bool {
+        matches!(self, Self::ToOutstation)
+    }
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::ToOutstation => "to_outstation",
+            Self::ToMaster => "to_master",
+        }
+    }
+}
+
+impl std::fmt::Display for DnpLinkDirection {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// IEEE 1815-2012 §9.1.2.1 PRM bit. The bit is `1` for
+/// primary-station messages (the initiating side); `0` for
+/// secondary-station (responder) messages.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
+#[non_exhaustive]
+pub enum DnpLinkRole {
+    Primary,
+    Secondary,
+}
+
+impl DnpLinkRole {
+    pub fn from_bit(bit: bool) -> Self {
+        if bit { Self::Primary } else { Self::Secondary }
+    }
+    pub fn as_bit(&self) -> bool {
+        matches!(self, Self::Primary)
+    }
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Primary => "primary",
+            Self::Secondary => "secondary",
+        }
+    }
+}
+
+impl std::fmt::Display for DnpLinkRole {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
 }
 
 /// IEEE 1815-2012 §9.1.2.1 data-link function vocabulary.

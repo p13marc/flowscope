@@ -4,7 +4,7 @@ use ldap_parser::ldap::{AuthenticationChoice, ProtocolOp};
 #[allow(deprecated)]
 use ldap_parser::parse_ldap_message;
 
-use super::types::{LdapAuthKind, LdapMessage, LdapOperation};
+use super::types::{LdapAuthKind, LdapMessage, LdapOperation, LdapResultCode, LdapSearchScope};
 
 pub const PARSER_KIND_STR: &str = "ldap";
 
@@ -67,12 +67,12 @@ fn from_parsed(msg: &ldap_parser::ldap::LdapMessage<'_>) -> LdapMessage {
             });
         }
         ProtocolOp::BindResponse(rep) => {
-            out.result_code = Some(rep.result.result_code.0);
+            out.result_code = Some(LdapResultCode::from_raw(rep.result.result_code.0));
             out.result_matched_dn = Some(rep.result.matched_dn.0.to_string());
         }
         ProtocolOp::SearchRequest(req) => {
             out.search_base = Some(req.base_object.0.to_string());
-            out.search_scope = Some(req.scope.0);
+            out.search_scope = Some(LdapSearchScope::from_raw(req.scope.0));
             out.search_attributes = req.attributes.iter().map(|a| a.0.to_string()).collect();
             out.search_attributes_spn_query = out
                 .search_attributes
@@ -84,15 +84,15 @@ fn from_parsed(msg: &ldap_parser::ldap::LdapMessage<'_>) -> LdapMessage {
         | ProtocolOp::DelResponse(result)
         | ProtocolOp::ModDnResponse(result)
         | ProtocolOp::CompareResponse(result) => {
-            out.result_code = Some(result.result_code.0);
+            out.result_code = Some(LdapResultCode::from_raw(result.result_code.0));
             out.result_matched_dn = Some(result.matched_dn.0.to_string());
         }
         ProtocolOp::ModifyResponse(rep) => {
-            out.result_code = Some(rep.result.result_code.0);
+            out.result_code = Some(LdapResultCode::from_raw(rep.result.result_code.0));
             out.result_matched_dn = Some(rep.result.matched_dn.0.to_string());
         }
         ProtocolOp::ExtendedResponse(rep) => {
-            out.result_code = Some(rep.result.result_code.0);
+            out.result_code = Some(LdapResultCode::from_raw(rep.result.result_code.0));
             out.result_matched_dn = Some(rep.result.matched_dn.0.to_string());
         }
         _ => {}

@@ -206,9 +206,95 @@ pub struct KerberosMessage {
     /// RC4-HMAC (etype 23) — the classic Kerberoasting
     /// downgrade signal.
     pub kerberoast_suspect: bool,
-    /// KRB-ERROR error code (e.g. KDC_ERR_PREAUTH_REQUIRED
-    /// = 25). `None` for non-error messages.
-    pub error_code: Option<i32>,
+    /// KRB-ERROR error code (e.g. `KdcErrPreauthRequired`).
+    /// `None` for non-error messages.
+    pub error_code: Option<KerberosErrorCode>,
+}
+
+/// Kerberos KRB-ERROR `error-code` per RFC 4120 §7.5.9.
+///
+/// Only the most operationally-relevant codes are spelled out;
+/// the rest fall through to [`Self::Other`] preserving the raw
+/// `i32`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[non_exhaustive]
+pub enum KerberosErrorCode {
+    /// 6 — client principal unknown (often password-spray).
+    KdcErrCPrincipalUnknown,
+    /// 7 — server principal unknown.
+    KdcErrSPrincipalUnknown,
+    /// 18 — account locked (often brute-force result).
+    KdcErrClientRevoked,
+    /// 24 — pre-auth failed (wrong password — every wrong
+    /// password attempt fires this).
+    KdcErrPreauthFailed,
+    /// 25 — pre-auth required (probe / enumeration signal).
+    KdcErrPreauthRequired,
+    /// 28 — TGT revoked (post-compromise indicator).
+    KdcErrTgtRevoked,
+    /// 51 — service ticket request after a TGT lifetime ended.
+    KdcErrTgsRevoked,
+    /// 52 — service ticket was rejected by the server.
+    KrbApErrTktNyv,
+    Other(i32),
+}
+
+impl KerberosErrorCode {
+    pub fn from_raw(raw: i32) -> Self {
+        match raw {
+            6 => Self::KdcErrCPrincipalUnknown,
+            7 => Self::KdcErrSPrincipalUnknown,
+            18 => Self::KdcErrClientRevoked,
+            24 => Self::KdcErrPreauthFailed,
+            25 => Self::KdcErrPreauthRequired,
+            28 => Self::KdcErrTgtRevoked,
+            51 => Self::KdcErrTgsRevoked,
+            52 => Self::KrbApErrTktNyv,
+            other => Self::Other(other),
+        }
+    }
+    pub fn as_raw(&self) -> i32 {
+        match self {
+            Self::KdcErrCPrincipalUnknown => 6,
+            Self::KdcErrSPrincipalUnknown => 7,
+            Self::KdcErrClientRevoked => 18,
+            Self::KdcErrPreauthFailed => 24,
+            Self::KdcErrPreauthRequired => 25,
+            Self::KdcErrTgtRevoked => 28,
+            Self::KdcErrTgsRevoked => 51,
+            Self::KrbApErrTktNyv => 52,
+            Self::Other(v) => *v,
+        }
+    }
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::KdcErrCPrincipalUnknown => "kdc_err_c_principal_unknown",
+            Self::KdcErrSPrincipalUnknown => "kdc_err_s_principal_unknown",
+            Self::KdcErrClientRevoked => "kdc_err_client_revoked",
+            Self::KdcErrPreauthFailed => "kdc_err_preauth_failed",
+            Self::KdcErrPreauthRequired => "kdc_err_preauth_required",
+            Self::KdcErrTgtRevoked => "kdc_err_tgt_revoked",
+            Self::KdcErrTgsRevoked => "kdc_err_tgs_revoked",
+            Self::KrbApErrTktNyv => "krb_ap_err_tkt_nyv",
+            Self::Other(_) => "other",
+        }
+    }
+    /// `true` if this code is commonly observed during password
+    /// spray / brute-force campaigns (PreauthFailed +
+    /// ClientRevoked + CPrincipalUnknown).
+    pub fn is_brute_force_signal(&self) -> bool {
+        matches!(
+            self,
+            Self::KdcErrPreauthFailed | Self::KdcErrClientRevoked | Self::KdcErrCPrincipalUnknown
+        )
+    }
+}
+
+impl std::fmt::Display for KerberosErrorCode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
 }
 
 impl KerberosMessage {

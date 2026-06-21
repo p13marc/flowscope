@@ -10,7 +10,8 @@
 //! end of the first block, but we don't verify the CRC.
 
 use super::types::{
-    DnpAppFunctionKind, DnpApplication, DnpInternalIndications, DnpLinkFunctionKind, DnpMessage,
+    DnpAppFunctionKind, DnpApplication, DnpInternalIndications, DnpLinkDirection,
+    DnpLinkFunctionKind, DnpLinkRole, DnpMessage,
 };
 
 const START_BYTES: [u8; 2] = [0x05, 0x64];
@@ -69,8 +70,8 @@ pub fn parse(payload: &[u8]) -> Result<DnpMessage, ParseError> {
     // module doc.
 
     let link_function = DnpLinkFunctionKind::from_raw(control);
-    let link_dir = (control & 0x80) != 0;
-    let link_prm = (control & 0x40) != 0;
+    let link_dir = DnpLinkDirection::from_bit((control & 0x80) != 0);
+    let link_prm = DnpLinkRole::from_bit((control & 0x40) != 0);
 
     // User-data bytes count = length - 5 (subtract the
     // ctrl + dst(2) + src(2)).
@@ -165,8 +166,8 @@ mod tests {
         assert_eq!(msg.src_addr, 2);
         assert_eq!(msg.dst_addr, 1);
         assert_eq!(msg.link_function, DnpLinkFunctionKind::ResetLinkStates);
-        assert!(msg.link_dir);
-        assert!(msg.link_prm);
+        assert_eq!(msg.link_dir, DnpLinkDirection::ToOutstation);
+        assert_eq!(msg.link_prm, DnpLinkRole::Primary);
         assert!(msg.application.is_none());
     }
 
@@ -238,7 +239,7 @@ mod tests {
         let buf = build_frame(0x00, 1, 2, &[]);
         let msg = parse(&buf).expect("parse");
         assert_eq!(msg.link_function, DnpLinkFunctionKind::Ack);
-        assert!(!msg.link_prm);
+        assert_eq!(msg.link_prm, DnpLinkRole::Secondary);
     }
 
     #[test]

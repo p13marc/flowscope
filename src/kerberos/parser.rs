@@ -5,7 +5,7 @@
 use kerberos_parser::krb5::{KdcRep, KdcReq, KrbError};
 use kerberos_parser::krb5_parser as kp;
 
-use super::types::{KerberosEtype, KerberosMessage, KerberosMessageKind};
+use super::types::{KerberosErrorCode, KerberosEtype, KerberosMessage, KerberosMessageKind};
 
 pub const PARSER_KIND_STR: &str = "kerberos";
 
@@ -108,7 +108,7 @@ fn from_krb_error(err: KrbError<'_>) -> KerberosMessage {
     let mut msg = KerberosMessage::new(KerberosMessageKind::KrbError, err.pvno, realm);
     msg.cname = err.cname.as_ref().map(|p| p.name_string.join("/"));
     msg.sname = Some(err.sname.name_string.join("/"));
-    msg.error_code = Some(err.error_code.0);
+    msg.error_code = Some(KerberosErrorCode::from_raw(err.error_code.0));
     msg
 }
 
