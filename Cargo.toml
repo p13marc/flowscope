@@ -263,6 +263,13 @@ kerberos = ["session", "dep:kerberos-parser", "dep:bytes"]
 # (SPN-query → GetUserSPNs / BloodHound enumeration signal).
 # Wraps the rusticata ldap-parser. Issue #13 sub-piece.
 ldap = ["session", "dep:ldap-parser", "dep:bytes"]
+# SMB2/3 parser (TCP/445) — dialect detection + command
+# decode + tree-connect target (highest lateral-movement
+# visibility per MITRE T1021.002). Hand-rolled; no mature
+# rusticata crate exists. M1 scope per issue #12 — dialect,
+# command, message/tree/session IDs, encryption presence,
+# tree-connect path (C$/ADMIN$/IPC$ signal).
+smb = ["session", "dep:bytes"]
 # STUN — RFC 5389 over UDP (no IANA port; 3478 is the
 # convention; TURN uses 3478/5349). Useful for WebRTC peer
 # detection, NAT-type discovery, TURN identification. 20-

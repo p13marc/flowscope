@@ -336,6 +336,11 @@ pub use kerberos::{
 pub mod ldap;
 #[cfg(feature = "ldap")]
 pub use ldap::{LDAP_PORT, LdapMessage, LdapOperation, LdapParser};
+// Issue #12 (0.18): SMB2/3 passive parser (hand-rolled).
+#[cfg(feature = "smb")]
+pub mod smb;
+#[cfg(feature = "smb")]
+pub use smb::{SMB_PORT, SmbCommand, SmbDialect, SmbMessage, SmbParser};
 // Issue #7 (0.18): SSH handshake parser + HASSH fingerprint.
 #[cfg(feature = "ssh")]
 pub mod ssh;

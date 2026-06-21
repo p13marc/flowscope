@@ -104,6 +104,9 @@ pub use crate::kerberos::{
 // Issue #13 (0.18): LDAP — AD recon + SPN-query detection.
 #[cfg(feature = "ldap")]
 pub use crate::ldap::{LdapAuthKind, LdapMessage, LdapOperation, LdapParser};
+// Issue #12 (0.18): SMB2/3 — lateral-movement visibility.
+#[cfg(feature = "smb")]
+pub use crate::smb::{SmbCommand, SmbDialect, SmbMessage, SmbParser};
 // Issue #16 / #28 (0.18): IPFIX canonical record + binary
 // wire encoder.
 #[cfg(feature = "ipfix")]
