@@ -2,11 +2,11 @@
 //!
 //! Reads a pcap file, runs every frame through a `FlowTracker` with
 //! a `FiveTuple::bidirectional()` extractor, and prints a one-line
-//! summary for each ended flow. Demonstrates that `netring-flow`
+//! summary for each ended flow. Demonstrates that `flowscope`
 //! works without `netring` and without tokio.
 //!
 //! Usage:
-//!     cargo run -p netring-flow --example pcap_flow_summary -- trace.pcap
+//!     cargo run --features pcap,extractors,tracker --example pcap_flow_summary -- trace.pcap
 
 use std::{env, fs::File, io::BufReader};
 

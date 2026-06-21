@@ -97,18 +97,9 @@ the categories sort logically in `ls`.
 
 | Example | Features | What it shows |
 |---|---|---|
-| **`length_prefixed_pcap`** | `pcap,session` | Custom binary protocol (`PFX2,`/`PFX4,` length-prefixed) using `FlowSessionDriver` directly. |
-| **`accumulating_line_parser`** | `pcap,extractors,session` | Same shape via `AccumulatingSessionParser` (plan 106) — one constructor call replaces the 25-LoC manual `SessionParser` impl. |
+| **`accumulating_line_parser`** | `pcap,extractors,session` | Helper-based: one constructor call (`AccumulatingSessionParser`, plan 106) replaces a 25-LoC manual `SessionParser` impl. **Start here.** |
+| **`length_prefixed_pcap`** | `pcap,session` | Hand-written `SessionParser`: a custom binary protocol (`PFX2,`/`PFX4,` length-prefixed) using `FlowSessionDriver` directly. |
 | **`redis_protocol`** | `pcap,extractors,reassembler` | RESP protocol parser as `SessionParser`. Demonstrates the splitting-invariance contract and a real recursive parser. |
-
-## 08 — performance
-
-[`examples/08-performance/`](./08-performance/)
-
-| Example | Features | What it shows |
-|---|---|---|
-| **`layer_fast_path`** | `pcap,extractors` | Zero-allocation `LayerParser` + `LayerStack` for the per-packet view (plan 94 Tier 3 fast path). |
-| **`threaded_slot_drain`** | `pcap,http` | Cross-thread slot drain — `SlotHandle: Send + Sync` (0.12). Worker thread drains an HTTP slot while the capture loop runs on main. |
 
 ## 07 — multi-protocol pipelines
 
@@ -116,12 +107,8 @@ the categories sort logically in `ls`.
 
 | Example | Features | What it shows |
 |---|---|---|
-| **`multi_parser_pipeline`** | `pcap,extractors,reassembler,session` | Multiple session parsers under one `Driver<E>` — each registration call returns its own typed slot handle. No closed-`M` sum type required. |
-| **`multi_protocol_monitor`** | `l7,pcap` | The older "open the source N times, one driver per parser" pattern; kept as a comparison reference. |
-
-> For the 0.10 unified `Driver<E, M>` equivalent of the
-> multi-protocol shape, see
-> [`00-getting-started/unified_driver_demo.rs`](./00-getting-started/unified_driver_demo.rs).
+| **`multi_parser_pipeline`** | `pcap,extractors,reassembler,session` | Multiple session parsers under one `Driver<E>` — each registration call returns its own typed slot handle. |
+| **`multi_protocol_monitor`** | `l7,pcap` | Real-world HTTP + TLS + DNS + ICMP on one pcap walk, with one `Driver<E>`. |
 
 ## 08 — performance
 
@@ -130,6 +117,7 @@ the categories sort logically in `ls`.
 | Example | Features | What it shows |
 |---|---|---|
 | **`layer_fast_path`** | `pcap,extractors` | Wall-clock comparison of `Layers::parse_ethernet` (ergonomic, per-frame alloc) vs `LayerParser` + `LayerStack` (zero-allocation fast path). Run with `--release` to see the real numbers. |
+| **`threaded_slot_drain`** | `pcap,http` | Cross-thread slot drain — `SlotHandle: Send + Sync` since 0.12, `Driver<E>` `Send + Sync` since 0.13. Worker thread drains an HTTP slot while the capture loop runs on main. |
 
 ## 09 — reassembly / low-level
 
@@ -165,11 +153,18 @@ so the generation logic stays close to the fixtures.
   so the examples stay portable and consumable in scripts.
 - Anything emitting structured data writes to stdout —
   redirect with `> output.{csv,ndjson,log}`.
-- The 0.11 cycle ships the typed `flowscope::driver::Driver<E>`
-  + `SlotHandle<M, K>` surface — the
+- The typed `flowscope::driver::Driver<E>` + `SlotHandle<M, K>`
+  surface is the canonical multi-parser shape since 0.11; the
   [`00-getting-started/unified_driver_demo.rs`](./00-getting-started/unified_driver_demo.rs)
-  example showcases it. The 0.9-era closed-`M`
-  `Driver<E, M>` + lift-closure pattern and the legacy
-  `FlowSessionDriver` / `FlowDatagramDriver` /
-  `FlowMultiSessionDriver` / `Pipeline` types are deleted in
-  0.11.
+  example showcases it. The bare `FlowSessionDriver` /
+  `FlowDatagramDriver` types remain shipped for single-parser
+  shapes that don't need the typed-slot surface; the legacy
+  closed-`M` `Driver<E, M>` and `FlowMultiSessionDriver` types
+  were removed in plan 121 (0.11.0).
+- For the highest-level common-case demos (TLS / QUIC / SMB
+  ClientHello extraction), reach for the per-parser
+  `*_from_pcap` helpers (`flowscope::tls::client_hellos_from_pcap`,
+  `flowscope::quic::initials_from_pcap`,
+  `flowscope::smb::messages_from_pcap`) — they wrap the whole
+  pcap → tracker → parser pipeline into a single
+  `impl Iterator<Item = (FiveTupleKey, Message)>` call.

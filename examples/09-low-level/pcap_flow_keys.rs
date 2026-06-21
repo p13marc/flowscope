@@ -2,11 +2,11 @@
 //! `FiveTuple::bidirectional()` extractor over each frame, print
 //! the canonical flow keys.
 //!
-//! Demonstrates that `netring-flow` works without `netring` —
+//! Demonstrates that `flowscope` works without `netring` —
 //! pcap input only, no Linux capture, no tokio.
 //!
 //! Usage:
-//!     cargo run -p netring-flow --example pcap_flow_keys -- path/to/trace.pcap
+//!     cargo run --features pcap,extractors,tracker --example pcap_flow_keys -- path/to/trace.pcap
 
 use std::{env, fs::File, io::BufReader};
 

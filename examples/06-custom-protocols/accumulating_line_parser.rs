@@ -18,7 +18,7 @@
 //! internally and threads the `parser_kind` label through.
 //!
 //! ```bash
-//! cargo run --features pcap,extractors,session,test-helpers \
+//! cargo run --features pcap,extractors,session \
 //!     --example accumulating_line_parser
 //! ```
 

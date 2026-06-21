@@ -2,7 +2,7 @@
 //!
 //! Run with:
 //!
-//!     cargo run --example generate_length_prefixed_pcap \
+//!     cargo run --example gen_length_prefixed_pcap \
 //!         --features test-helpers -- tests/fixtures/length_prefixed/sample.pcap
 //!
 //! Output is deterministic — re-running produces a byte-identical

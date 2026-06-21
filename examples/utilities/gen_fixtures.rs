@@ -1,12 +1,12 @@
 //! Generate the pcap fixtures committed to `tests/data/`.
 //!
 //! Run with:
-//!     cargo run -p netring-flow --example generate_fixtures --features test-helpers
+//!     cargo run --features test-helpers --example gen_fixtures
 //!
 //! Writes:
-//!     netring-flow/tests/data/http_session.pcap
-//!     netring-flow/tests/data/dns_queries.pcap
-//!     netring-flow/tests/data/mixed_short.pcap
+//!     tests/data/http_session.pcap
+//!     tests/data/dns_queries.pcap
+//!     tests/data/mixed_short.pcap
 //!
 //! The fixtures are deterministic — running the example again
 //! produces byte-identical files. Re-run only when you want to
@@ -25,7 +25,7 @@ use pcap_file::{
 };
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let dir = std::path::Path::new("netring-flow/tests/data");
+    let dir = std::path::Path::new("tests/data");
     create_dir_all(dir)?;
 
     write_http_session(&dir.join("http_session.pcap"))?;

@@ -8,8 +8,10 @@
 //! Architecture:
 //!
 //! - Main thread drives the capture loop: `driver.track_into(view,
-//!   &mut events)` per packet. The `Driver<E>` itself remains
-//!   `!Send` — its central `FlowTracker` holds `Rc<RefCell>`.
+//!   &mut events)` per packet. The `Driver<E>` is `Send + Sync`
+//!   since 0.13 (plan 156 — no `unsafe`, no opt-in knob), so you
+//!   can `tokio::spawn(driver_task)` or hand it across threads
+//!   directly if your shape prefers.
 //! - Worker thread holds a clone of the typed `SlotHandle`, drains
 //!   it in a tight loop, and forwards messages via an
 //!   `std::sync::mpsc` channel for further processing.

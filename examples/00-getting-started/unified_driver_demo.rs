@@ -9,7 +9,7 @@
 //! zero per-message Box.
 //!
 //! ```bash
-//! cargo run --features pcap,http,dns,test-helpers --example unified_driver_demo
+//! cargo run --features pcap,http,dns --example unified_driver_demo
 //! ```
 
 use flowscope::{

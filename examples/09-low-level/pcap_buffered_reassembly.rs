@@ -3,11 +3,11 @@
 //! Reads a pcap file, runs every frame through a `FlowDriver` with
 //! a `BufferedReassemblerFactory`, prints each Started/Ended event.
 //! On Ended (FIN), the per-(flow, side) reassembler buffers are
-//! drained and sizes printed. Demonstrates that `netring-flow` does
+//! drained and sizes printed. Demonstrates that `flowscope` does
 //! sync reassembly without tokio or netring.
 //!
 //! Usage:
-//!     cargo run -p netring-flow --example pcap_buffered_reassembly -- trace.pcap
+//!     cargo run --features pcap,extractors,tracker,reassembler --example pcap_buffered_reassembly -- trace.pcap
 
 use std::{env, fs::File, io::BufReader};
 
