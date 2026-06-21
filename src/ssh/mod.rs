@@ -39,11 +39,15 @@
 //! Issue #7 (0.18).
 
 mod parser;
+#[cfg(feature = "pcap")]
+mod pcap_iter;
 mod session;
 mod types;
 
 pub use parser::{
     compute_hassh, kexinit_message_byte, parse_kexinit_payload, version_banner_prefix,
 };
+#[cfg(feature = "pcap")]
+pub use pcap_iter::messages_from_pcap;
 pub use session::{PARSER_KIND, SshParser};
 pub use types::{SshKexInit, SshMessage};

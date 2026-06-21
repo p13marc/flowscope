@@ -93,12 +93,16 @@ mod exchange;
 #[cfg(feature = "ja4plus")]
 pub mod ja4h;
 mod parser;
+#[cfg(feature = "pcap")]
+mod pcap_iter;
 mod session;
 mod types;
 
 pub use exchange::{HttpExchange, HttpExchangeParser, HttpOutcome};
 #[cfg(feature = "ja4plus")]
 pub use ja4h::{Ja4hParts, ja4h as ja4h_fingerprint, ja4h_parts};
+#[cfg(feature = "pcap")]
+pub use pcap_iter::{exchanges_from_pcap, requests_from_pcap, responses_from_pcap};
 pub use session::{HttpMessage, HttpParser};
 pub use types::{HttpConfig, HttpRequest, HttpResponse, HttpVersion};
 

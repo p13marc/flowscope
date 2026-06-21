@@ -44,9 +44,13 @@
 //! Issue #13 (0.18).
 
 mod parser;
+#[cfg(feature = "pcap")]
+mod pcap_iter;
 mod session;
 mod types;
 
 pub use parser::{parse, parser_kind};
+#[cfg(feature = "pcap")]
+pub use pcap_iter::messages_from_pcap;
 pub use session::{LDAP_PORT, LdapParser};
 pub use types::{LdapAuthKind, LdapMessage, LdapOperation};

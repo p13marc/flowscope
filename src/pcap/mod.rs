@@ -21,5 +21,9 @@
 //! ```
 
 mod source;
+#[cfg(feature = "tracker")]
+mod summaries;
 
 pub use source::{EventIter, OwnedPacketView, PcapFlowSource, ViewIter};
+#[cfg(feature = "tracker")]
+pub use summaries::{FlowSummary, flow_summaries_from_pcap};

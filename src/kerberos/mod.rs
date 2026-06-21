@@ -42,10 +42,14 @@
 
 mod datagram;
 mod parser;
+#[cfg(feature = "pcap")]
+mod pcap_iter;
 mod session;
 mod types;
 
 pub use datagram::{KERBEROS_PORT, KerberosUdpParser};
 pub use parser::{parse, parser_kind};
+#[cfg(feature = "pcap")]
+pub use pcap_iter::messages_from_pcap;
 pub use session::KerberosTcpParser;
 pub use types::{KerberosEtype, KerberosMessage, KerberosMessageKind};
