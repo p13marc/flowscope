@@ -416,7 +416,7 @@ required-features = ["pcap", "extractors", "reassembler", "session"]
 
 [[example]]
 name = "inspect_packet"
-path = "examples/00-getting-started/inspect_packet.rs"
+path = "examples/09-low-level/inspect_packet.rs"
 required-features = ["pcap", "extractors"]
 
 [[example]]
@@ -519,7 +519,7 @@ required-features = ["pcap", "http"]
 
 [[example]]
 name = "tcp_retransmit_audit"
-path = "examples/03-detection/tcp_retransmit_audit.rs"
+path = "examples/04-observability/tcp_retransmit_audit.rs"
 required-features = ["pcap", "extractors", "reassembler"]
 
 [[example]]
@@ -655,7 +655,7 @@ required-features = ["pcap", "http"]
 
 [[example]]
 name = "sharded_capture"
-path = "examples/00-getting-started/sharded_capture.rs"
+path = "examples/08-performance/sharded_capture.rs"
 required-features = ["pcap", "http"]
 
 [[example]]

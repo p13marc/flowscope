@@ -26,10 +26,10 @@ the categories sort logically in `ls`.
 | Example | Features | What it shows |
 |---|---|---|
 | **`hello_pipeline`** | `pcap,extractors,reassembler,session` | Shortest `flowscope::driver::Driver<E>` program — one builder chain, one slot drain. The recommended starting point. |
-| **`inspect_packet`** | `pcap,extractors` | Dump a layered view of every packet: L2 / L3 / L4 / tunnel headers via the dynamic walk on `flowscope::layers`. |
 | **`unified_driver_demo`** | `pcap,http,dns` | Plan-121 typed `Driver<E>` showcase — port-routed HTTP + DNS slots plus a signature-based heuristic catch-all. Drain each parser slot independently. |
-| **`sharded_capture`** | `pcap,http` | N-thread sharded driver pattern with cross-shard aggregation via `AtomicU64` counters (0.13, plan 155). Built on `Driver<E>: Send + Sync` — each shard owns its own dispatcher. See [`docs/sharded.md`](../docs/sharded.md) for the recipe. |
 | **`broadcast_subscribers`** | `pcap,http` | `BroadcastSlotHandle` fan-out delivery (0.13, plan 150) — one HTTP parser, three subscribers (logger / metrics / alerter), each sees every message. Contrast with `SlotHandle::clone`'s competitive-consumer semantics. |
+
+> *For sharded multi-thread capture, see [`examples/08-performance/sharded_capture.rs`](./08-performance/sharded_capture.rs). For a packet-walker tour over the `layers` module, see [`examples/09-low-level/inspect_packet.rs`](./09-low-level/inspect_packet.rs).*
 
 ## 01 — L7 message logging
 
@@ -62,7 +62,8 @@ the categories sort logically in `ls`.
 | **`failed_auth_burst`** | `pcap,http` | HTTP 401/403 burst followed by 200 — credential-stuffing pattern via `BurstDetector` (plan 102 sub-A). |
 | **`c2_beacon_finder`** | `pcap,extractors,tracker` | RITA-style CV beacon detector via `flowscope::detect::patterns::BeaconDetector` (plan 143). |
 | **`dga_finder`** | `pcap,dns,extractors` | Bigram log-likelihood DGA scoring on DNS query SLDs via `flowscope::detect::patterns::DgaScorer` (plan 143). |
-| **`tcp_retransmit_audit`** | `pcap,extractors,reassembler` | Per-flow retransmit-rate ranking. Production reliability signal. |
+| **`composite_c2`** | `pcap,extractors,tracker,dns,tls,emit-eve` | Composite AND of `BeaconDetector` ∧ `DgaScorer` ∧ weak-TLS-version per source IP; ≥2-of-3 legs → Suricata EVE anomaly via `write_owned_anomaly`. |
+| **`tcp_evasion_detector`** | `pcap,extractors,tracker,reassembler` | Ptacek-Newsham TCP overlap IOC via `AnomalyKind::TcpRexmitInconsistency` surfaced by `FlowDriver::with_emit_anomalies(true)`. |
 
 ## 04 — observability / SRE
 
@@ -78,6 +79,7 @@ the categories sort logically in `ls`.
 | **`bandwidth_by_app`** *(0.14)* | `pcap,extractors,tracker` | Per-app bytes/sec via `RollingRate` + `top_k` (plan 171), keyed by `FiveTupleKey::app_label_with(&LabelTable)` (plan 165). |
 | **`icmp_explained_drops`** *(0.14)* | `pcap,icmp,extractors,tracker` | Join every ICMP error back to a live flow via `FlowTracker::lookup_inner` (plan 161); classify v4/v6 unreachable + MTU events via `DestUnreachableKind` (plan 162) + `MtuSignalKind` (plan 170). |
 | **`direction_skew_anomaly`** *(0.14)* | `pcap,extractors,tracker` | One-sided-flow detection via `FlowStats::direction_skew` (plan 168) + per-side `bytes_for` / `throughput_bps_for` (plans 168 + 173). |
+| **`tcp_retransmit_audit`** | `pcap,extractors,reassembler` | Per-flow retransmit-rate ranking. Production reliability signal. |
 
 ## 05 — data export
 
@@ -89,6 +91,9 @@ the categories sort logically in `ls`.
 | **`flow_json_export`** | `pcap,emit-ndjson` | NDJSON via `FlowEventNdjsonWriter` — drop-in for Elasticsearch / Loki / ClickHouse. |
 | **`zeek_style_conn_log`** | `pcap,emit` | Tab-separated Zeek `conn.log` via `ZeekConnLogWriter` (with `#fields` / `#types` / `#close` headers + UID generation). |
 | **`eve_writer`** | `pcap,emit-eve` | Suricata EVE JSON via `EveJsonWriter` (0.12) — drop-in for Filebeat / Splunk Suricata TA / Tenzir / ECS pipelines. Every record carries a deterministic 16-char `flow_hash`. |
+| **`detector_to_eve`** | `pcap,extractors,tracker,emit-eve` | Plan-147 single-detector → SIEM pipeline: `PortScanDetector` scores route through `EveJsonWriter::write_owned_anomaly`. |
+| **`prometheus_exporter`** | `pcap,extractors,tracker,reassembler,metrics` | Render the `metrics` feature's counters / gauges / summaries as Prometheus text-exposition. Doc-comment shows the canonical production wiring via `metrics-exporter-prometheus`. |
+| **`ipfix_wire_export`** | `pcap,extractors,tracker,ipfix-export` | Build RFC 7011 IPFIX Messages via `flowscope::ipfix::wire::MessageBuilder` + default IPv4/IPv6 templates. Pure-bytes (no UDP / SCTP I/O). |
 
 ## 06 — custom protocols
 
@@ -117,6 +122,7 @@ the categories sort logically in `ls`.
 |---|---|---|
 | **`layer_fast_path`** | `pcap,extractors` | Wall-clock comparison of `Layers::parse_ethernet` (ergonomic, per-frame alloc) vs `LayerParser` + `LayerStack` (zero-allocation fast path). Run with `--release` to see the real numbers. |
 | **`threaded_slot_drain`** | `pcap,http` | Cross-thread slot drain — `SlotHandle: Send + Sync` since 0.12, `Driver<E>` `Send + Sync` since 0.13. Worker thread drains an HTTP slot while the capture loop runs on main. |
+| **`sharded_capture`** | `pcap,http` | N-thread sharded driver pattern with cross-shard aggregation via `AtomicU64` counters (0.13, plan 155). Built on `Driver<E>: Send + Sync` — each shard owns its own dispatcher. See [`docs/sharded.md`](../docs/sharded.md) for the recipe. |
 
 ## 09 — reassembly / low-level
 
@@ -127,6 +133,7 @@ the categories sort logically in `ls`.
 | **`pcap_flow_summary`** | `pcap` | Minimal flow accounting via `FlowTracker` directly. |
 | **`pcap_flow_keys`** | `pcap` | Just print flow keys as packets arrive. |
 | **`pcap_buffered_reassembly`** | `pcap,reassembler` | Configure a `BufferedReassembler` with caps + overflow policy. |
+| **`inspect_packet`** | `pcap,extractors` | Packet-walker tour over `flowscope::layers` — dump every L2 / L3 / L4 / tunnel slice via the dynamic walk. Reference for the layers module. |
 
 ## utilities — fixture generators
 
