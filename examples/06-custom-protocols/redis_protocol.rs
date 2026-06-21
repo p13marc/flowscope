@@ -159,7 +159,7 @@ fn read_line(buf: &[u8]) -> Option<(&[u8], usize)> {
     None
 }
 
-fn main() -> flowscope::Result<()> {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     let Some(path) = std::env::args().nth(1) else {
         eprintln!("Demo without input: synthetic command/reply.");
         eprintln!("Provide a Redis pcap to drive the parser against real traffic:");

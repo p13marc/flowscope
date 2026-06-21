@@ -33,7 +33,7 @@ const WINDOW: Duration = Duration::from_secs(60);
 const BUCKET: Duration = Duration::from_secs(10);
 const RATE_THRESHOLD: u64 = 20;
 
-fn main() -> flowscope::Result<()> {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     let path = std::env::args()
         .nth(1)
         .unwrap_or_else(|| "tests/data/dns_queries.pcap".to_string());

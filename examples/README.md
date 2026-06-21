@@ -73,7 +73,6 @@ the categories sort logically in `ls`.
 | **`top_talkers`** | `pcap,extractors,tracker` | Top-N source IPs by bytes and packets (HashMap-of-everything). |
 | **`top_talkers_topk`** | `pcap,extractors,tracker` | Same shape but bounded-memory via `TopK` (Misra-Gries) — exact for the top, approximate for the long tail (plan 102 sub-A). |
 | **`http_error_rate`** | `pcap,http` | Per-host 1xx/2xx/3xx/4xx/5xx counts and error-rate ranking. |
-| **`bandwidth_by_protocol`** | `pcap,extractors,tracker` | Bytes / kbps per recognised L7 protocol via `flowscope::well_known::protocol_label`. |
 | **`flow_duration_histogram`** | `pcap,aggregate` | Distribution of flow durations with p50 / p99 / max via `Histogram` (plan 102 sub-B). |
 | **`conversation_timeline`** | `pcap,extractors,reassembler` | Timeline of a single TCP conversation — every state transition, every direction-marked packet. |
 | **`bandwidth_by_app`** *(0.14)* | `pcap,extractors,tracker` | Per-app bytes/sec via `RollingRate` + `top_k` (plan 171), keyed by `FiveTupleKey::app_label_with(&LabelTable)` (plan 165). |

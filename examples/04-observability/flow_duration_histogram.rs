@@ -22,7 +22,7 @@ const LABELS: &[&str] = &[
 ];
 const BOUNDARIES: &[f64] = &[0.1, 1.0, 10.0, 60.0, 600.0, 3600.0];
 
-fn main() -> flowscope::Result<()> {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     let path = std::env::args()
         .nth(1)
         .unwrap_or_else(|| "tests/data/mixed_short.pcap".to_string());

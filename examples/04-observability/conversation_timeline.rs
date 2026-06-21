@@ -17,7 +17,7 @@ use flowscope::extract::FiveTuple;
 use flowscope::pcap::PcapFlowSource;
 use flowscope::{FlowEvent, FlowTracker};
 
-fn main() -> flowscope::Result<()> {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut args = std::env::args().skip(1);
     let path = args
         .next()

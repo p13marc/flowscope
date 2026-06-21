@@ -549,11 +549,6 @@ path = "examples/04-observability/http_error_rate.rs"
 required-features = ["pcap", "http"]
 
 [[example]]
-name = "bandwidth_by_protocol"
-path = "examples/04-observability/bandwidth_by_protocol.rs"
-required-features = ["pcap", "extractors", "tracker"]
-
-[[example]]
 name = "flow_duration_histogram"
 path = "examples/04-observability/flow_duration_histogram.rs"
 required-features = ["pcap", "aggregate"]
@@ -603,7 +598,7 @@ required-features = ["pcap", "emit"]
 [[example]]
 name = "eve_writer"
 path = "examples/05-export/eve_writer.rs"
-required-features = ["pcap", "emit-eve"]
+required-features = ["pcap", "extractors", "tracker", "reassembler", "emit-eve"]
 
 [[example]]
 name = "ipfix_wire_export"

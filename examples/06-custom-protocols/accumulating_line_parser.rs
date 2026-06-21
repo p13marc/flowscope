@@ -35,7 +35,7 @@ fn parse_one(buf: &[u8]) -> Option<(String, usize)> {
     Some((line, nl + 1))
 }
 
-fn main() -> flowscope::Result<()> {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     let path = std::env::args()
         .nth(1)
         .unwrap_or_else(|| "tests/data/http_session.pcap".to_string());

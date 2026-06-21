@@ -32,7 +32,7 @@ impl Rollup {
     }
 }
 
-fn main() -> flowscope::Result<()> {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     let path = std::env::args()
         .nth(1)
         .unwrap_or_else(|| "tests/data/mixed_short.pcap".to_string());
