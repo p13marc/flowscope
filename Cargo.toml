@@ -462,6 +462,19 @@ path = "examples/02-forensics/tls_inventory.rs"
 required-features = ["tls", "tls-fingerprints", "pcap"]
 
 [[example]]
+name = "client_fingerprint_catalog"
+path = "examples/02-forensics/client_fingerprint_catalog.rs"
+required-features = [
+  "pcap",
+  "extractors",
+  "tracker",
+  "tls",
+  "tls-fingerprints",
+  "http",
+  "ssh",
+]
+
+[[example]]
 name = "arp_spoof_detector"
 path = "examples/02-forensics/arp_spoof_detector.rs"
 required-features = ["arp", "pcap"]
@@ -614,6 +627,11 @@ required-features = ["pcap", "extractors", "tracker", "reassembler", "tracing"]
 name = "nprint_export"
 path = "examples/05-export/nprint_export.rs"
 required-features = ["pcap", "extractors", "tracker", "ml-features-nprint"]
+
+[[example]]
+name = "ml_features_libsvm"
+path = "examples/05-export/ml_features_libsvm.rs"
+required-features = ["pcap", "extractors", "tracker", "ml-features"]
 
 [[example]]
 name = "ipfix_wire_export"
