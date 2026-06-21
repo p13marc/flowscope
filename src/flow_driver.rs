@@ -4,13 +4,13 @@
 //!
 //! The async equivalent lives in `netring`'s `FlowStream::with_async_reassembler`.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
 use ahash::RandomState;
 
 use crate::Timestamp;
-use crate::event::{AnomalyKind, EndReason, FlowEvent, FlowSide, OverflowPolicy};
+use crate::event::{AnomalyKind, EndReason, FlowEvent, FlowSide, MemcapPolicy, OverflowPolicy};
 use crate::extractor::FlowExtractor;
 use crate::reassembler::{Reassembler, ReassemblerFactory};
 use crate::tracker::{FlowEvents, FlowTracker, FlowTrackerConfig};
@@ -72,6 +72,18 @@ where
     /// this max. `None` means monotonisation is off (raw NIC
     /// timestamps flow through unmodified).
     monotonic_ts: Option<Timestamp>,
+    /// Cross-flow reassembly memcap accounting (issue #26).
+    /// Running total of bytes currently buffered across every
+    /// live reassembler. Updated inline on each
+    /// `Reassembler::segment` call (via the
+    /// [`crate::Reassembler::current_bytes`] hook) and on
+    /// reassembler drop in [`Self::finalize_ended_flows`].
+    global_memcap_bytes: u64,
+    /// Driver-side "memcap killed me" markers, populated when
+    /// [`MemcapPolicy::DropFlow`] / `PassThrough` fires. The
+    /// `synthesise_buffer_overflow_ends` path picks these up
+    /// in addition to reassembler-internal poison flags.
+    memcap_killed: HashSet<(E::Key, FlowSide), RandomState>,
 }
 
 // Common path — `S = ()`. Constructors live on this pinned impl
@@ -97,6 +109,8 @@ where
             emit_anomalies: false,
             dedup: None,
             monotonic_ts: None,
+            global_memcap_bytes: 0,
+            memcap_killed: HashSet::with_hasher(RandomState::new()),
         }
     }
 }
@@ -125,6 +139,8 @@ where
             emit_anomalies: false,
             dedup: None,
             monotonic_ts: None,
+            global_memcap_bytes: 0,
+            memcap_killed: HashSet::with_hasher(RandomState::new()),
         }
     }
 }
@@ -167,6 +183,8 @@ where
             emit_anomalies: false,
             dedup: None,
             monotonic_ts: None,
+            global_memcap_bytes: 0,
+            memcap_killed: HashSet::with_hasher(RandomState::new()),
         }
     }
 
@@ -285,15 +303,61 @@ where
         let view = self.clamp_view(view);
         let ts = view.timestamp;
         let snapshot = self.snapshot_anomaly_state();
+        let memcap_cap = self.tracker.config().reassembly_memcap;
+        let memcap_policy = self.tracker.config().reassembly_memcap_policy;
         let factory = &mut self.factory;
         let reassemblers = &mut self.reassemblers;
+        let global_bytes = &mut self.global_memcap_bytes;
+        let memcap_killed = &mut self.memcap_killed;
+        // Per-tick latch: at most one `GlobalMemcapHit` anomaly
+        // per `track_pending` call regardless of how many segments
+        // cross the line. Captures the bytes-in-flight at the
+        // first crossing.
+        let mut memcap_tripped: Option<u64> = None;
         let mut events = self
             .tracker
             .track_with_payload(view, |key, side, seq, payload| {
                 let r = reassemblers
                     .entry((key.clone(), side))
                     .or_insert_with(|| factory.new_reassembler(key, side));
+                // Pre-/post-segment byte deltas drive the running
+                // global total. Use saturating arithmetic — a
+                // bookkeeping bug should never panic in
+                // production.
+                let old_bytes = r.current_bytes();
                 r.segment(seq, payload, ts);
+                let new_bytes = r.current_bytes();
+                if new_bytes >= old_bytes {
+                    *global_bytes = global_bytes.saturating_add(new_bytes - old_bytes);
+                } else {
+                    *global_bytes = global_bytes.saturating_sub(old_bytes - new_bytes);
+                }
+                // Memcap enforcement (issue #26). When the cap is
+                // configured and we've exceeded it, apply the
+                // declared policy and latch the trip for anomaly
+                // emission outside the closure.
+                if let Some(cap) = memcap_cap
+                    && *global_bytes > cap
+                {
+                    if memcap_tripped.is_none() {
+                        memcap_tripped = Some(*global_bytes);
+                    }
+                    match memcap_policy {
+                        MemcapPolicy::Ignore | MemcapPolicy::DropPacket => {
+                            // Ignore: anomaly only, leave bytes.
+                            // DropPacket: spec — "leave the bytes
+                            // but emit the anomaly" (rollback path
+                            // doesn't exist for arbitrary impls).
+                        }
+                        MemcapPolicy::DropFlow | MemcapPolicy::PassThrough => {
+                            // Mark this side memcap-killed; the
+                            // `synthesise_buffer_overflow_ends`
+                            // path will emit the terminal
+                            // `Ended { reason: BufferOverflow }`.
+                            memcap_killed.insert((key.clone(), side));
+                        }
+                    }
+                }
             });
 
         // Emit anomaly events (per-tick coalesced) before synthesising
@@ -308,12 +372,29 @@ where
                 }
                 events.push(a);
             }
+            // One `GlobalMemcapHit` per tick at the configured
+            // policy. Emitted regardless of which (or how many)
+            // flows tripped it — it is a tracker-global signal.
+            if let (Some(bytes_in_flight), Some(cap)) = (memcap_tripped, memcap_cap) {
+                let kind = AnomalyKind::GlobalMemcapHit {
+                    bytes_in_flight,
+                    cap,
+                    policy: memcap_policy,
+                };
+                crate::obs::record_anomaly(&kind);
+                crate::obs::trace_anomaly(&kind);
+                events.push(FlowEvent::TrackerAnomaly { kind, ts });
+            }
         }
 
         // Synthesise `Ended { reason: BufferOverflow }` for any
         // reassembler that just poisoned and isn't already ending.
-        let synthesised =
-            Self::synthesise_buffer_overflow_ends(&events, reassemblers, &mut self.tracker);
+        let synthesised = Self::synthesise_buffer_overflow_ends(
+            &events,
+            reassemblers,
+            &mut self.tracker,
+            memcap_killed,
+        );
         for ev in synthesised {
             events.push(ev);
         }
@@ -398,7 +479,18 @@ where
         // Pop the reassembler slots BEFORE the tracker forgets the
         // entry so we can record any per-tick anomaly deltas the
         // existing snapshot machinery would surface on a normal end.
-        self.reassemblers.retain(|(k, _), _| k != key);
+        // Refund their residual bytes back to the global memcap
+        // pool (issue #26).
+        let gbytes = &mut self.global_memcap_bytes;
+        self.reassemblers.retain(|(k, _), r| {
+            if k == key {
+                let residual = r.current_bytes();
+                *gbytes = gbytes.saturating_sub(residual);
+                false
+            } else {
+                true
+            }
+        });
         // Tracker emits the Ended event with ForceClosed reason.
         let Some(ended) = self.tracker.force_close(key, now) else {
             return Vec::new();
@@ -437,6 +529,7 @@ where
             &events,
             &mut self.reassemblers,
             &mut self.tracker,
+            &mut self.memcap_killed,
         );
         events.extend(synthesised);
         events
@@ -448,7 +541,21 @@ where
     /// callers using [`Self::track_pending`] / [`Self::sweep_pending`]
     /// must call this before the next `track*` / `sweep*` call.
     pub fn finalize(&mut self, events: &mut [FlowEvent<E::Key>]) {
-        Self::finalize_ended_flows(events, &mut self.reassemblers);
+        Self::finalize_ended_flows(
+            events,
+            &mut self.reassemblers,
+            &mut self.global_memcap_bytes,
+        );
+    }
+
+    /// Inspector for the cross-flow reassembly memcap accounting
+    /// (issue #26). Returns the running total of bytes
+    /// currently buffered across every live reassembler. Useful
+    /// for dashboards and tests; the value mirrors what the
+    /// [`AnomalyKind::GlobalMemcapHit`] `bytes_in_flight` field
+    /// would report at the trip moment.
+    pub fn reassembly_memcap_bytes(&self) -> u64 {
+        self.global_memcap_bytes
     }
 
     /// Borrow the per-(flow, side) reassembler. Returns `None` when
@@ -593,12 +700,24 @@ where
         existing: &[FlowEvent<E::Key>],
         reassemblers: &mut HashMap<(E::Key, FlowSide), F::Reassembler, RandomState>,
         tracker: &mut FlowTracker<E, S>,
+        memcap_killed: &mut HashSet<(E::Key, FlowSide), RandomState>,
     ) -> Vec<FlowEvent<E::Key>> {
         // Collect keys whose reassembler is poisoned.
         let mut poisoned_keys: Vec<E::Key> = Vec::new();
         for ((key, _side), r) in reassemblers.iter() {
             if r.is_poisoned() && !poisoned_keys.contains(key) {
                 poisoned_keys.push(key.clone());
+            }
+        }
+        // Plus any key the driver itself memcap-killed this
+        // tick — they may not have set the reassembler-internal
+        // poison flag (issue #26 lets us terminate the flow
+        // via the configured `MemcapPolicy::DropFlow` /
+        // `PassThrough` without touching the reassembler's own
+        // overflow path).
+        for (key, _side) in memcap_killed.drain() {
+            if !poisoned_keys.contains(&key) {
+                poisoned_keys.push(key);
             }
         }
         if poisoned_keys.is_empty() {
@@ -642,6 +761,7 @@ where
     fn finalize_ended_flows(
         events: &mut [FlowEvent<E::Key>],
         reassemblers: &mut HashMap<(E::Key, FlowSide), F::Reassembler, RandomState>,
+        global_memcap_bytes: &mut u64,
     ) {
         for ev in events.iter_mut() {
             // Patch in reassembly diagnostics + drop reassemblers.
@@ -651,6 +771,12 @@ where
             {
                 for side in [FlowSide::Initiator, FlowSide::Responder] {
                     if let Some(mut r) = reassemblers.remove(&(key.clone(), side)) {
+                        // Issue #26: decrement the running
+                        // cross-flow memcap pool by this
+                        // reassembler's residual byte occupancy
+                        // before dropping it.
+                        let residual = r.current_bytes();
+                        *global_memcap_bytes = global_memcap_bytes.saturating_sub(residual);
                         let dropped = r.dropped_segments();
                         let oversize = r.bytes_dropped_oversize();
                         let watermark = r.high_watermark();

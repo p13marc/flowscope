@@ -135,10 +135,7 @@ mod tests {
 
     #[test]
     fn parses_typical_airplay_record() {
-        let resp = response_with_ptr(
-            "_airplay._tcp.local",
-            "Living Room TV._airplay._tcp.local",
-        );
+        let resp = response_with_ptr("_airplay._tcp.local", "Living Room TV._airplay._tcp.local");
         let services = extract_services(&resp);
         assert_eq!(services.len(), 1);
         let s = &services[0];
