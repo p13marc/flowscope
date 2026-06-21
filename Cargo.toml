@@ -606,6 +606,16 @@ path = "examples/05-export/prometheus_exporter.rs"
 required-features = ["pcap", "extractors", "tracker", "reassembler", "metrics"]
 
 [[example]]
+name = "tracing_subscriber"
+path = "examples/05-export/tracing_subscriber.rs"
+required-features = ["pcap", "extractors", "tracker", "reassembler", "tracing"]
+
+[[example]]
+name = "nprint_export"
+path = "examples/05-export/nprint_export.rs"
+required-features = ["pcap", "extractors", "tracker", "ml-features-nprint"]
+
+[[example]]
 name = "ipfix_wire_export"
 path = "examples/05-export/ipfix_wire_export.rs"
 required-features = ["pcap", "ipfix-export"]
@@ -673,6 +683,11 @@ required-features = ["pcap"]
 name = "pcap_flow_keys"
 path = "examples/09-low-level/pcap_flow_keys.rs"
 required-features = ["pcap"]
+
+[[example]]
+name = "overflow_policy"
+path = "examples/09-low-level/overflow_policy.rs"
+required-features = ["pcap", "extractors", "tracker", "reassembler"]
 
 [[example]]
 name = "pcap_buffered_reassembly"
