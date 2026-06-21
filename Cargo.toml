@@ -402,6 +402,11 @@ name = "arp_spoof_detector"
 path = "examples/02-forensics/arp_spoof_detector.rs"
 required-features = ["arp", "pcap"]
 
+[[example]]
+name = "smtp_credentials"
+path = "examples/02-forensics/smtp_credentials.rs"
+required-features = ["smtp", "pcap"]
+
 # ── 03 security / detection ──────────────────────────
 [[example]]
 name = "port_scan_detector"
@@ -479,6 +484,11 @@ required-features = ["pcap", "icmp", "extractors", "tracker"]
 name = "direction_skew_anomaly"
 path = "examples/04-observability/direction_skew_anomaly.rs"
 required-features = ["pcap", "extractors", "tracker"]
+
+[[example]]
+name = "ml_features_pipeline"
+path = "examples/04-observability/ml_features_pipeline.rs"
+required-features = ["pcap", "ml-features", "serde"]
 
 # ── 05 data export ───────────────────────────────────
 [[example]]

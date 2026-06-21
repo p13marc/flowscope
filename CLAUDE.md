@@ -21,6 +21,108 @@ the core.
 
 ## Implementation Status
 
+**0.18.0 cycle** (Tier-2 protocol completion + ML features +
+IPFIX self-sufficiency, in progress).
+
+Drove every named row in the `#14` Tier-2 protocol epic to
+completion (except DNP3 — spun off to `#29` for its license +
+CVE complexity), closed the asset-inventory composition
+layer (`#27`), shipped CICFlowMeter parity in
+`flowscope::ml_features` (`#15`), finished `#17`'s
+cross-flow memcap enforcement story (`#26`), and added the
+binary IPFIX wire encoder (`#28`) so flowscope is
+self-sufficient for IPFIX export without depending on
+netring.
+
+### Cycle headlines
+
+- **Tier-2 parsers shipped** (gated by their own Cargo
+  features, all behind `l7`):
+  `arp` / `ndp` / `dhcp` / `lldp` / `cdp` / `ssh` /
+  `tcp_fingerprint` / `ntp` / `ssdp` / `tftp` / `mdns` /
+  `netbios-ns` / `ftp` / `smtp` / `wireguard` / `modbus` /
+  `stun` / `rdp` / `snmp` / `radius`. SNMP and RADIUS use
+  the rusticata crates (snmp-parser / radius-parser);
+  everything else is hand-rolled.
+- **Asset inventory** (`asset` feature) — composition
+  layer over the L2/L3/L4 asset-discovery parsers
+  (arp/ndp/dhcp/lldp/cdp/ssdp/mdns/netbios-ns). MAC-keyed
+  `Asset` records + LRU-bounded `Inventory` + per-parser
+  `from_*` adapters. `AssetSourceSet` bitflag tracks
+  contributing sources.
+- **`flowscope::ml_features`** (`#15` closed) — full
+  CICFlowMeter feature vector parity:
+  - Totals + throughput + per-direction packet-length
+    means + down/up ratio + TCP flag presence + Zeek
+    `conn_state` derivation (commit `34c60cb`).
+  - Per-packet IAT (Flow / Fwd / Bwd, mean+std+min+max)
+    via new `correlate::WelfordStats` + per-direction
+    tracker plumbing (commit `99f00ee`).
+  - Active/Idle period accounting via
+    `FlowTrackerConfig::active_idle_threshold` (default
+    1s per CICFlowMeter convention; commit `78ce7a9`).
+  - Builder chain:
+    `CicFlowFeatures::from_flow_record(&rec).with_iat(&stats)`.
+  - nPrint raw-mode is the only piece still open —
+    separate scope from running-stats; tracked in `#30`.
+- **`#17` close** — TCP overlap-policy enum (First / Last /
+  LowerSeq / HigherSeq) + cross-flow `reassembly_memcap`
+  + `MemcapPolicy` enum (Ignore / DropFlow / DropPacket /
+  PassThrough). Full enforcement in `FlowDriver` per
+  `#26`: inline per-segment delta accounting, per-tick
+  coalesced `GlobalMemcapHit` anomaly, refund on
+  `finalize_ended_flows` + `force_close`. New
+  `Reassembler::rexmit_inconsistencies()` for the
+  Ptacek-Newsham overlap-evasion IOC.
+- **`#16` scoped close** — `flowscope::FlowRecord` IPFIX
+  IE-keyed canonical record + emitter unification.
+  `write_flow_record(&FlowRecord)` shipped on
+  CSV / Zeek / NDJSON / EVE (gated on `ipfix`); the
+  user-visible "every emitter is a view over FlowRecord"
+  surface lands. Two flowscope-extension fields
+  (`retransmits_initiator`/`responder`) added to FlowRecord
+  so CSV can reproduce its existing schema through the
+  unified path. Internal `IntoFlowRecord` routing (route
+  `write_event(Ended)` through `write_flow_record`) is
+  the only piece still open — pure mechanical cleanup
+  with no user-visible change.
+- **`#28` close** — `flowscope::ipfix::wire` binary
+  IPFIX Message encoder (RFC 7011/7012). `MessageBuilder`
+  + `TemplateRegistry` + `TemplateDefinition` + `FieldSpec`
+  + default IPv4/IPv6 templates. Pure-bytes — UDP/SCTP
+  I/O explicitly out of scope. Lives in flowscope, NOT
+  netring (per the dependency-direction rule in this
+  doc). Example: `examples/05-export/ipfix_wire_export.rs`.
+- **`#24` close** — JA4X x509 server-certificate
+  fingerprint via the rusticata `x509-parser`. Gated
+  behind `ja4plus` (FoxIO License 1.1, same as JA4S —
+  off by default).
+- **Welford running stats** — new
+  `flowscope::correlate::WelfordStats` primitive
+  (count + mean + sample/population variance + min + max +
+  parallel-merge). Used by FlowStats IAT + Active/Idle
+  but generally useful.
+- **NeighborTable** (`arp` feature) —
+  `correlate::NeighborTable<L3, L4>` IP → link-layer
+  binding tracker with `ArpTable = NeighborTable<Ipv4Addr,
+  MacAddr>` type alias. Asset/spoof-detection helper.
+- **Prelude expansion** — all new modules surfaced through
+  `flowscope::prelude::*` so consumers don't have to know
+  the module path.
+
+Test count after the 0.18 cycle: **1541 passing** (up from
+920 at 0.14.0 release). Zero clippy warnings under
+`--all-features --all-targets -D warnings`. Zero rustdoc
+warnings. 19 CI feature-matrix entries.
+
+New modules registered in `src/`:
+`arp/`, `ndp/`, `dhcp/`, `lldp/`, `cdp/`, `ssh/`,
+`tcp_fingerprint/`, `ntp/`, `ssdp/`, `tftp/`, `mdns/`,
+`netbios_ns/`, `ftp/`, `smtp/`, `wireguard/`, `modbus/`,
+`stun/`, `rdp/`, `snmp/`, `radius/`, `asset/`,
+`ipfix/wire/`, `ml_features/`, `correlate/welford.rs`,
+`correlate/neighbor_table.rs`.
+
 **0.14.0 cycle** (netring 0.22 adoption — operations-layer
 ergonomics: ICMP error correlation + bandwidth-by-app
 primitives + site-custom labels + discoverability,
@@ -534,7 +636,10 @@ src/
 │   ├── rolling_rate.rs          # RollingRate<K, V> + RateValue trait — per-key per-second rate (plan 164, 0.14.0)
 │   ├── sequence.rs              # SequencePattern + KeylessSequencePattern
 │   ├── set.rs                   # TimeBucketedSet<K, V>                         (plan 102 sub-A, 0.10)
-│   └── topk.rs                  # TopK<K> (Misra-Gries)                         (plan 102 sub-A, 0.10)
+│   ├── topk.rs                  # TopK<K> (Misra-Gries)                         (plan 102 sub-A, 0.10)
+│   ├── hyperloglog.rs           # HyperLogLog<K> cardinality sketch
+│   ├── mergeable.rs             # Mergeable trait
+│   └── welford.rs               # WelfordStats — running stats (count/mean/var/min/max) (issue #15, 0.18)
 ├── detect/                      # flowscope::detect (plan 102 sub-C, 0.10)
 │   ├── mod.rs                   # shannon_entropy + 5 light primitives + NgramDist
 │   ├── signatures.rs            # 10 magic-byte recognizers + registry          (plan 113 sub-A, 0.10)
@@ -616,9 +721,11 @@ src/
 ├── tls/                         # `tls` feature
 │   ├── parser.rs                # internal step() machine (tls-parser-based)
 │   ├── session.rs               # TlsParser (SessionParser, the only public shape since 0.9.0)
-│   ├── handshake.rs             # TlsHandshakeParser aggregator (plan 97, 0.9.0)
+│   ├── handshake.rs             # TlsHandshakeParser aggregator (plan 97, 0.9.0); adds `certificate_chain` + `ja4x` field (issue #24, 0.18)
 │   ├── fingerprint.rs           # JA3 (gated by `tls-fingerprints` feature; was `ja3` pre-0.12)
 │   ├── ja4.rs                   # JA4 (gated by `tls-fingerprints` feature; was `ja4`; plan 97, 0.9.0)
+│   ├── ja4s.rs                  # JA4S server-fingerprint (gated by `ja4plus`, FoxIO License 1.1; 0.15)
+│   ├── ja4x.rs                  # JA4X x509 cert fingerprint (gated by `ja4plus`; issue #24, 0.18)
 │   └── types.rs                 # TlsClientHello / TlsServerHello / TlsAlert / TlsConfig
 ├── dns/                         # `dns` feature
 │   ├── parser.rs                # parse_message / parse_message_at (simple-dns-based)
@@ -635,6 +742,45 @@ src/
 │   ├── mod.rs                   # public re-exports + module doc
 │   ├── parser.rs                # arp::parse(payload) + arp::parse_frame(frame) + ArpParser marker
 │   └── types.rs                 # ArpMessage + ArpOp + is_gratuitous + is_likely_spoof
+├── ndp/                         # `ndp` feature (issue #6, 0.18)
+├── dhcp/                        # `dhcp` feature — RFC 2132 + Fingerbank fingerprint (issue #11, 0.18)
+├── lldp/                        # `lldp` feature — L2 asset discovery (issue #23, 0.18)
+├── cdp/                         # `cdp` feature — Cisco Discovery Protocol (issue #25, 0.18)
+├── ssh/                         # `ssh` feature — banner + KEXINIT + HASSH (issue #7, 0.18)
+├── tcp_fingerprint/             # `tcp_fingerprint` feature — p0f-style passive OS (issue #9, 0.18)
+├── ntp/                         # `ntp` feature — UDP/123 monlist amplification detection (issue #14, 0.18)
+├── ssdp/                        # `ssdp` feature — UPnP / IoT asset discovery (issue #14, 0.18)
+├── tftp/                        # `tftp` feature — device-config theft visibility (issue #14, 0.18)
+├── mdns/                        # `mdns` feature — RFC 6762 + RFC 6763 DNS-SD service walker (issue #14, 0.18)
+│   ├── mod.rs                   # MDNS_PORT + MDNS_MULTICAST_V4/V6 + looks_like_mdns
+│   ├── service.rs               # ServiceRecord + extract_services (PTR walker)
+│   └── datagram.rs              # MdnsParser (thin DnsUdpParser wrapper)
+├── netbios_ns/                  # `netbios-ns` feature — NBNS RFC 1002 §4.2 (issue #14, 0.18)
+│   ├── mod.rs                   # NBNS_PORT + types
+│   ├── name.rs                  # RFC 1001 §14.1 first-level encoding
+│   └── parser.rs                # parse(payload) → NbnsMessage with opcode/queried_name/answer_addresses
+├── ftp/                         # `ftp` feature — TCP/21 USER/PASS aggregation + AUTH-TLS upgrade (issue #14, 0.18)
+├── smtp/                        # `smtp` feature — TCP/25+587 MAIL FROM/RCPT TO + AUTH PLAIN/LOGIN base64 decode + STARTTLS (issue #14, 0.18)
+├── wireguard/                   # `wireguard` feature — passive WG handshake detection (issue #14, 0.18)
+├── modbus/                      # `modbus` feature — TCP/502 ICS visibility (issue #14, 0.18)
+├── stun/                        # `stun` feature — RFC 5389 WebRTC peer / NAT discovery (issue #14, 0.18)
+├── rdp/                         # `rdp` feature — X.224 negotiation metadata-only (issue #14, 0.18)
+├── snmp/                        # `snmp` feature — v1/v2c via rusticata snmp-parser (issue #14, 0.18)
+├── radius/                      # `radius` feature — RFC 2865/2866 via rusticata radius-parser (issue #14, 0.18)
+├── asset/                       # `asset` feature — Asset + Inventory composition (issue #27, 0.18)
+│   ├── core.rs                  # Asset + AssetCapabilities + AssetSourceSet + per-parser from_* adapters
+│   └── inventory.rs             # LRU-bounded Inventory<MacAddr, Asset>
+├── ipfix/                       # `ipfix` feature (scoped piece of #16, 0.18)
+│   ├── registry.rs              # IANA IE table + lookup_by_id/name
+│   ├── types.rs                 # FlowEndReason + encode_tcp_control_bits
+│   ├── record.rs                # FlowRecord IE-keyed canonical flow record + from_parts
+│   └── wire/                    # `ipfix-export` feature — RFC 7011 binary encoder (issue #28, 0.18)
+│       ├── constants.rs         # IPFIX_VERSION + MESSAGE_HEADER_LEN + Set IDs + FIELD_LENGTH_VARIABLE
+│       ├── templates.rs         # TemplateDefinition + FieldSpec + TemplateRegistry + default IPv4/IPv6 templates
+│       └── builder.rs           # MessageBuilder + EncodeError
+├── ml_features/                 # `ml-features` feature — CICFlowMeter feature vector (issue #15, 0.18)
+│   ├── conn_state.rs            # TcpFlagCounts + count_tcp_flags
+│   └── features.rs              # CicFlowFeatures + from_flow_record + with_iat
 └── pcap/                        # `pcap` feature
     └── source.rs                # PcapFlowSource — offline replay
 ```

@@ -1,5 +1,117 @@
 # Changelog
 
+## 0.18.0 — Tier-2 protocol cycle + ML features + IPFIX export (in progress)
+
+The biggest cycle since 0.10. Drove every named row in the
+`#14` Tier-2 protocol epic to completion (except DNP3 — split
+off into [#29](https://github.com/p13marc/flowscope/issues/29)
+for its license/CVE considerations), closed the asset-inventory
+composition layer (`#27`), shipped CICFlowMeter parity in
+`flowscope::ml_features`, finished `#17`'s cross-flow memcap
+enforcement story, and added the binary IPFIX wire encoder so
+flowscope is self-sufficient for IPFIX export (no netring
+dependency in that direction).
+
+Issues closed this cycle: `#6` NDP, `#7` SSH+HASSH, `#8` ECH,
+`#9` p0f, `#10` JA4H, `#11` DHCP, `#14` Tier-2 epic (above),
+`#15` ml-features, `#17` reassembler hardening, `#20` fuzz
+harnesses, `#23` LLDP, `#24` JA4X, `#25` CDP, `#26` memcap
+enforcement, `#27` asset inventory, `#28` IPFIX wire encoder.
+
+### Added — new feature gates
+
+| Feature | Module | Highlights |
+|---|---|---|
+| `arp` | `flowscope::arp` | ARP parser + `is_gratuitous` / `is_likely_spoof` predicates. Issue `#1`. |
+| `ndp` | `flowscope::ndp` | IPv6 Neighbor Discovery — ARP sibling. Issue `#6`. |
+| `dhcp` | `flowscope::dhcp` | RFC 2132 options + Fingerbank-style fingerprint. Issue `#11`. |
+| `lldp` | `flowscope::lldp` | L2 asset discovery + rogue-switch detection. Issue `#23`. |
+| `cdp` | `flowscope::cdp` | Cisco Discovery Protocol — LLDP sibling. Issue `#25`. |
+| `ssh` | `flowscope::ssh` | Banner + KEXINIT + HASSH client fingerprint. Issue `#7`. |
+| `tcp_fingerprint` | `flowscope::tcp_fingerprint` | p0f-style passive TCP/IP OS fingerprint. Issue `#9`. |
+| `ntp` | `flowscope::ntp` | UDP/123 monlist / amplification detection. |
+| `ssdp` | `flowscope::ssdp` | UPnP / IoT asset discovery. |
+| `tftp` | `flowscope::tftp` | Device-config-theft visibility. |
+| `mdns` | `flowscope::mdns` | RFC 6762 multicast DNS + RFC 6763 DNS-SD service walker. Pairs with `asset`. |
+| `netbios-ns` | `flowscope::netbios_ns` | NBNS RFC 1002 §4.2 with name encoding/suffix decode. Pairs with `asset`. |
+| `ftp` | `flowscope::ftp` | TCP/21 control channel — USER/PASS aggregation, AUTH-TLS upgrade, RETR/STOR transfer events. |
+| `smtp` | `flowscope::smtp` | TCP/25+587 — MAIL FROM / RCPT TO envelope addresses, AUTH PLAIN/LOGIN base64 decode, STARTTLS upgrade, DATA body byte counting. |
+| `wireguard` | `flowscope::wireguard` | Passive WG handshake detection (Donenfeld 2017). |
+| `modbus` | `flowscope::modbus` | TCP/502 OT visibility — function codes + exception codes + read/write decode. |
+| `stun` | `flowscope::stun` | RFC 5389 — WebRTC peer detection + NAT-type discovery via XOR-MAPPED-ADDRESS. |
+| `rdp` | `flowscope::rdp` | X.224 negotiation metadata-only (T1021.001) — `Cookie: mstshash=USER` capture + RDP protocol flags. |
+| `snmp` | `flowscope::snmp` | v1/v2c via rusticata snmp-parser — community string + PDU + varbind OIDs. |
+| `radius` | `flowscope::radius` | RFC 2865/2866 via rusticata radius-parser — identity attributes for NAC/wireless-auth correlation. |
+| `asset` | `flowscope::asset` | Unified `Asset` + LRU-bounded `Inventory` composition layer over `arp`/`ndp`/`dhcp`/`lldp`/`cdp`/`ssdp`/`mdns`/`netbios-ns`. Issue `#27`. |
+| `ipfix` | `flowscope::ipfix` | IANA IE registry constants + `FlowRecord` IE-keyed canonical record + `flowEndReason` + `tcpControlBits` helpers. Scoped piece of `#16`. |
+| `ipfix-export` | `flowscope::ipfix::wire` | RFC 7011/7012 binary IPFIX Message encoder — `MessageBuilder` + `TemplateRegistry` + default IPv4/IPv6 templates. Issue `#28`. |
+| `ml-features` | `flowscope::ml_features` | CICFlowMeter parity — totals/throughput + per-packet IAT + Active/Idle period accounting. Issue `#15`. |
+| `fingerprint` | `flowscope::detect::fingerprint` | First-N packet-length + IAT baseline. Issue `#4`. |
+
+### Added — new infrastructure
+
+- **`flowscope::correlate::WelfordStats`** — Welford's online running statistics primitive (count, mean, sample/population variance, min, max, parallel merge). Used by FlowStats IAT + Active/Idle but generally useful.
+- **`flowscope::correlate::NeighborTable`** + `ArpTable` alias — IP → link-layer binding tracker for spoof detection. Issue `#1`.
+- **TCP overlap-policy reassembler hardening** — `TcpOverlapPolicy` enum (First/Last/LowerSeq/HigherSeq) + tracker-wide config. Cross-flow `reassembly_memcap` + `MemcapPolicy` enforced in `FlowDriver`. Issue `#17` + `#26`.
+- **`Reassembler::rexmit_inconsistencies()`** — Ptacek-Newsham TCP overlap-evasion IOC. Scoped piece of `#17`.
+- **`Driver<E>`: `Send + Sync`** — structural fix (commit 5b53a6b earlier); composes with `Arc` sharing.
+
+### Added — FlowStats fields (additive — struct is `#[non_exhaustive]`)
+
+- `last_seen_initiator` / `last_seen_responder: Timestamp`
+- `iat_flow` / `iat_initiator` / `iat_responder: WelfordStats`
+- `active_periods` / `idle_periods: WelfordStats`
+- `active_period_start: Option<Timestamp>`
+
+### Added — FlowRecord fields (`#[non_exhaustive]`)
+
+- `retransmits_initiator` / `retransmits_responder: u64` — flowscope-specific extension fields so the CSV emitter can fully reproduce its existing schema through the `write_flow_record` path.
+
+### Added — FlowTrackerConfig fields
+
+- `tcp_overlap_policy: TcpOverlapPolicy` (default `First`)
+- `reassembly_memcap: Option<u64>`
+- `reassembly_memcap_policy: MemcapPolicy` (default `Ignore`)
+- `active_idle_threshold: Option<Duration>` (default `Some(1s)` per CICFlowMeter)
+
+### Added — emit module
+
+- **`write_flow_record(&FlowRecord)`** on CSV / Zeek / NDJSON / EVE — gated on `ipfix`. Each emitter now accepts a `FlowRecord` directly; the user-visible "every emitter is a view over FlowRecord" surface from issue `#16` lands.
+- New `EveOptions::custom_anomaly_type` field, `EveJsonWriter::write_owned_anomaly`.
+
+### Added — TLS handshake fields
+
+- `TlsHandshake::certificate_chain: Vec<Bytes>` — leaf-first TLS 1.2 cert chain. Issue `#24` prereq.
+- `TlsHandshake::ja4x: Option<String>` (behind `ja4plus`) — JA4X server-cert fingerprint computed automatically from the leaf cert.
+
+### Added — IPFIX module
+
+- `FlowRecord` IE-keyed canonical flow record with `from_parts(&FlowStats, &FiveTupleKey, Option<EndReason>)` constructor.
+- `FlowEndReason` + `From<EndReason>` mapping (5-state IPFIX-canonical vocabulary).
+- `encode_tcp_control_bits` helper (RFC 7125).
+- `flowscope::ipfix::wire` binary encoder (`MessageBuilder`, `TemplateRegistry`, `TemplateDefinition`, `FieldSpec`, `EncodeError`, default `FLOWSCOPE_TEMPLATE_FLOW_IPV4` / `_IPV6`).
+
+### Added — examples
+
+- `examples/05-export/ipfix_wire_export.rs` — end-to-end pcap → FlowRecord → IPFIX Message bytes.
+
+### Changed (pre-1.0 breaking)
+
+- `AssetSourceSet` bitflag added `MDNS` (bit 6) and `NBNS` (bit 7); `OTHER` reserved-for-future-parsers comment updated.
+- `FieldSpec::wire_length()` const — 4 bytes for IANA IEs, 8 with enterprise number set.
+
+### Fixed
+
+- pre-existing test-feature-gate bugs in `error.rs` / `test_helpers.rs` that broke partial-feature `cargo test` builds (mDNS commit f9c1df9 caught + fixed in passing).
+- ipfix `timestamp_to_unix_ms` cfg-gating so `ipfix`-only builds without `tracker` stop dead-code warning (commit 40ca1fe).
+
+### Stats
+
+- 1541 tests passing (up from 809 at 0.13.0 start of 0.18 cycle).
+- Zero clippy warnings under `--all-features --all-targets -D warnings`.
+- Zero rustdoc warnings.
+- 19 CI feature-matrix entries (new: `ipfix`, `ntp`, `ssdp`, `tftp`, `asset`, `mdns`, `netbios-ns`, `ftp`, `smtp`, `wireguard`, `modbus`, `stun`, `rdp`, `ml-features`, `ipfix-export`, `snmp`, `radius` + the `asset,*` combo entries).
+
 ## 0.17.0 — multi-source / RX-metadata / ARP / fingerprint cycle (in progress)
 
 Driven by the four netring-flagged issues
