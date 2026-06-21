@@ -14,7 +14,7 @@ pub fn parser_kind() -> &'static str {
 
 const SPN_ATTRIBUTE_LOWER: &str = "serviceprincipalname";
 
-/// Failure mode for [`parse`] / [`parse_with_len`].
+/// Failure mode for [`parse`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum ParseError {
