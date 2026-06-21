@@ -324,3 +324,38 @@ impl<'de> serde::Deserialize<'de> for DnpInternalIndications {
         Ok(DnpInternalIndications::from_bits_truncate(bits))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn link_direction_round_trip() {
+        for bit in [true, false] {
+            assert_eq!(DnpLinkDirection::from_bit(bit).as_bit(), bit);
+        }
+        assert_eq!(
+            DnpLinkDirection::from_bit(true),
+            DnpLinkDirection::ToOutstation
+        );
+        assert_eq!(
+            DnpLinkDirection::from_bit(false),
+            DnpLinkDirection::ToMaster
+        );
+    }
+
+    #[test]
+    fn link_role_round_trip() {
+        for bit in [true, false] {
+            assert_eq!(DnpLinkRole::from_bit(bit).as_bit(), bit);
+        }
+        assert_eq!(DnpLinkRole::from_bit(true), DnpLinkRole::Primary);
+        assert_eq!(DnpLinkRole::from_bit(false), DnpLinkRole::Secondary);
+    }
+
+    #[test]
+    fn slugs_are_stable() {
+        assert_eq!(DnpLinkDirection::ToOutstation.as_str(), "to_outstation");
+        assert_eq!(DnpLinkRole::Secondary.as_str(), "secondary");
+    }
+}

@@ -209,7 +209,8 @@ size. Per-feature dependency tree is documented inline in
 | [`docs/discoverability.md`](docs/discoverability.md) | one-page prelude tour grouped by use case |
 | [`docs/performance.md`](docs/performance.md) | criterion bench methodology + numbers |
 | [`docs/design.md`](docs/design.md) | why flowscope is shaped the way it is |
-| [`examples/`](examples/) | 40+ runnable examples grouped by use case (l7 logging, forensics, detection, observability, export, custom protocols, multi-protocol, performance, low-level) |
+| [`docs/migration-0.17-to-0.18.md`](docs/migration-0.17-to-0.18.md) | the two BREAKING 0.18 changes (`parse() → Result<T, ParseError>` across new parsers + primitive→enum lifts for LDAP / Kerberos / nPrint / DNP3) with migration recipes |
+| [`examples/`](examples/) | 60+ runnable examples grouped by use case (l7 logging, forensics, detection, observability, export, custom protocols, multi-protocol, performance, low-level) |
 | [`CHANGELOG.md`](CHANGELOG.md) | release history + migration recipes |
 
 ## License

@@ -260,3 +260,39 @@ impl LdapMessage {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn search_scope_round_trip_canonical() {
+        for raw in [0u32, 1, 2, 99] {
+            assert_eq!(LdapSearchScope::from_raw(raw).as_raw(), raw);
+        }
+        assert_eq!(LdapSearchScope::from_raw(0), LdapSearchScope::BaseObject);
+        assert_eq!(LdapSearchScope::from_raw(2), LdapSearchScope::WholeSubtree);
+        assert!(matches!(
+            LdapSearchScope::from_raw(99),
+            LdapSearchScope::Other(99)
+        ));
+    }
+
+    #[test]
+    fn result_code_round_trip_named_variants() {
+        let cases = [0u32, 1, 2, 8, 10, 32, 34, 49, 50, 51, 52, 53, 1234];
+        for raw in cases {
+            assert_eq!(LdapResultCode::from_raw(raw).as_raw(), raw);
+        }
+        assert!(LdapResultCode::from_raw(0).is_success());
+        assert!(!LdapResultCode::from_raw(49).is_success());
+        assert_eq!(
+            LdapResultCode::from_raw(49),
+            LdapResultCode::InvalidCredentials
+        );
+        assert_eq!(
+            LdapResultCode::from_raw(50),
+            LdapResultCode::InsufficientAccessRights
+        );
+    }
+}

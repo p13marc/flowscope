@@ -28,6 +28,7 @@ the categories sort logically in `ls`.
 | **`hello_pipeline`** | `pcap,extractors,reassembler,session` | Shortest `flowscope::driver::Driver<E>` program — one builder chain, one slot drain. The recommended starting point. |
 | **`unified_driver_demo`** | `pcap,http,dns` | Plan-121 typed `Driver<E>` showcase — port-routed HTTP + DNS slots plus a signature-based heuristic catch-all. Drain each parser slot independently. |
 | **`broadcast_subscribers`** | `pcap,http` | `BroadcastSlotHandle` fan-out delivery (0.13, plan 150) — one HTTP parser, three subscribers (logger / metrics / alerter), each sees every message. Contrast with `SlotHandle::clone`'s competitive-consumer semantics. |
+| **`from_stdin`** *(0.18)* | `pcap,http` | Read pcap bytes from `stdin` via `PcapFlowSource::from_reader` — the `tcpdump -w - \| ...` pipe-mode pattern. |
 
 > *For sharded multi-thread capture, see [`examples/08-performance/sharded_capture.rs`](./08-performance/sharded_capture.rs). For a packet-walker tour over the `layers` module, see [`examples/09-low-level/inspect_packet.rs`](./09-low-level/inspect_packet.rs).*
 
@@ -48,8 +49,12 @@ the categories sort logically in `ls`.
 
 | Example | Features | What it shows |
 |---|---|---|
-| **`extract_iocs`** | `pcap,http,tls,tls-fingerprints,dns,extractors` | Dedup'd list of hostnames (SNI + HTTP Host + DNS qnames), IPs, JA3/JA4 fingerprints, user-agents — the starting point for IR enrichment. |
-| **`tls_inventory`** | `tls,tls-fingerprints,pcap` | Aggregated TLS handshake catalog via `TlsHandshakeParser` — outcomes, top SNIs, top JA3/JA4. |
+| **`extract_iocs`** *(0.18)* | `pcap,http,tls,tls-fingerprints,dns,extractors,tracker,smtp,ftp,smb,kerberos,ldap` | Dedup'd hostnames + JA3/JA4 + UAs + 0.18-cycle identity sources (SMTP envelope, FTP USERs, SMB NTLM tuple, Kerberos cnames, LDAP Bind DNs). IPs split into external vs internal buckets. |
+| **`tls_inventory`** *(0.18)* | `tls,tls-fingerprints,pcap` | Aggregated TLS handshake catalog via `TlsHandshakeParser` — versions, ECH outcomes, cert chains, JA4X (gated on `ja4plus`), AlertDescription codes. |
+| **`kerberoast_hunter`** *(0.18)* | `pcap,kerberos` | Detect TGS-REQ for RC4-HMAC service tickets (T1558.003) via `KerberosMessage::kerberoast_suspect`. |
+| **`ldap_recon_hunter`** *(0.18)* | `pcap,ldap` | BloodHound / GetUserSPNs enumeration (T1087.002) — flags LDAP searches for `servicePrincipalName` + Simple binds with cleartext credentials. |
+| **`asset_inventory`** *(0.18)* | `pcap,asset,arp` | Build a MAC-keyed `flowscope::asset::Inventory` from ARP traffic. |
+| **`client_fingerprint_catalog`** *(0.18)* | `pcap,tls,tls-fingerprints,http,ssh,extractors,tracker` | Per-source-IP join of JA3 / JA4 / JA4H (gated on `ja4plus`) / HASSH / HTTP User-Agent — the cross-protocol client identity catalog. |
 
 ## 03 — security / detection
 
@@ -94,6 +99,11 @@ the categories sort logically in `ls`.
 | **`detector_to_eve`** | `pcap,extractors,tracker,emit-eve` | Plan-147 single-detector → SIEM pipeline: `PortScanDetector` scores route through `EveJsonWriter::write_owned_anomaly`. |
 | **`prometheus_exporter`** | `pcap,extractors,tracker,reassembler,metrics` | Render the `metrics` feature's counters / gauges / summaries as Prometheus text-exposition. Doc-comment shows the canonical production wiring via `metrics-exporter-prometheus`. |
 | **`ipfix_wire_export`** | `pcap,extractors,tracker,ipfix-export` | Build RFC 7011 IPFIX Messages via `flowscope::ipfix::wire::MessageBuilder` + default IPv4/IPv6 templates. Pure-bytes (no UDP / SCTP I/O). |
+| **`ipfix_udp_collector`** *(0.18)* | `pcap,extractors,tracker,ipfix-export` | Wraps `ipfix_wire_export` in a `std::net::UdpSocket` send loop targeting IANA port 4739; re-emits the template set every 64 Data records. |
+| **`tracing_subscriber`** *(0.18)* | `pcap,extractors,tracker,reassembler,tracing` | First example for the `tracing` Cargo feature — wires `tracing_subscriber::fmt` + `EnvFilter` so `flowscope.flow` / `.anomaly` / `.tracker` events fire to stderr. |
+| **`nprint_export`** *(0.18)* | `pcap,extractors,tracker,ml-features-nprint` | Materialise per-flow `NPrintMatrix` ternary-bit rows into CSV files (loadable by `numpy.loadtxt` / `pandas.read_csv`). |
+| **`ml_features_libsvm`** *(0.18)* | `pcap,extractors,tracker,ml-features` | libsvm / svmlight sibling of `ml_features_pipeline.rs` — one row per finalized flow, loadable by `sklearn.datasets.load_svmlight_file`. |
+| **`pcap_dir_tail`** *(0.18)* | `pcap,extractors,tracker,reassembler,emit-eve` | Poll a directory for rotating pcap fragments (tcpdump `-G` / dumpcap `-b`) — process each through `FlowDriver` + EVE writer, move to `processed/`. |
 
 ## 06 — custom protocols
 
@@ -123,6 +133,7 @@ the categories sort logically in `ls`.
 | **`layer_fast_path`** | `pcap,extractors` | Wall-clock comparison of `Layers::parse_ethernet` (ergonomic, per-frame alloc) vs `LayerParser` + `LayerStack` (zero-allocation fast path). Run with `--release` to see the real numbers. |
 | **`threaded_slot_drain`** | `pcap,http` | Cross-thread slot drain — `SlotHandle: Send + Sync` since 0.12, `Driver<E>` `Send + Sync` since 0.13. Worker thread drains an HTTP slot while the capture loop runs on main. |
 | **`sharded_capture`** | `pcap,http` | N-thread sharded driver pattern with cross-shard aggregation via `AtomicU64` counters (0.13, plan 155). Built on `Driver<E>: Send + Sync` — each shard owns its own dispatcher. See [`docs/sharded.md`](../docs/sharded.md) for the recipe. |
+| **`allocations_per_packet`** *(0.18)* | `pcap,extractors,tracker` | Counting global allocator wrapping `System` — warms up a bare driver, then measures steady-state allocs/packet to verify the zero-allocation claim. Run `--release`. |
 
 ## 09 — reassembly / low-level
 
@@ -134,6 +145,7 @@ the categories sort logically in `ls`.
 | **`pcap_flow_keys`** | `pcap` | Just print flow keys as packets arrive. |
 | **`pcap_buffered_reassembly`** | `pcap,reassembler` | Configure a `BufferedReassembler` with caps + overflow policy. |
 | **`inspect_packet`** | `pcap,extractors` | Packet-walker tour over `flowscope::layers` — dump every L2 / L3 / L4 / tunnel slice via the dynamic walk. Reference for the layers module. |
+| **`overflow_policy`** *(0.18)* | `pcap,extractors,tracker,reassembler` | Side-by-side comparison of `OverflowPolicy::{SlidingWindow,DropFlow}` + cross-flow `MemcapPolicy::DropFlow` (issues #17 / #26). |
 
 ## utilities — fixture generators
 

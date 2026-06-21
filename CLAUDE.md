@@ -123,6 +123,43 @@ New modules registered in `src/`:
 `ipfix/wire/`, `ml_features/`, `correlate/welford.rs`,
 `correlate/neighbor_table.rs`.
 
+### Pre-publish hardening (post Tier-2 ship)
+
+- **Pre-1.0 breaking 1 — `parse()` Option→Result sweep** (#65). The
+  five new wire parsers (`dnp3` / `kerberos` / `ldap` / `smb` /
+  `quic`) now return `Result<T, ParseError>` with a per-module
+  `ParseError` enum exposing the operationally-distinct failure
+  mode. `SessionParser` / `DatagramParser` wrappers and the
+  `*_from_pcap` helpers are unaffected — only direct callers of
+  `parse()` need migration. See
+  `docs/migration-0.17-to-0.18.md` for recipes.
+- **Pre-1.0 breaking 2 — primitive→enum lifts** (#66). Six fields
+  graduated from `bool` / `u32` / `i32` / `i8` to dedicated
+  `#[non_exhaustive]` enums modelled on the existing 0.18
+  `KerberosEtype` / `QuicVersion` / `DceRpcInterfaceUuid`
+  strong-types: `LdapResultCode`, `LdapSearchScope`,
+  `KerberosErrorCode`, `NPrintBit`, `DnpLinkDirection`,
+  `DnpLinkRole`. Each provides `from_raw(value)` +
+  `as_raw()` / `as_bit()` round-trip + `as_str()` stable
+  lowercase slug + `Display`.
+- **Additive — `Driver::run_pcap()`** (#64). One-call iterator
+  over a pcap file on the typed driver. Yields the `Event<K>`
+  stream; per-parser typed messages still flow through
+  registered `SlotHandle`s. Gated on `pcap`.
+- **Additive — per-parser `*_from_pcap` helpers** (#62, #63).
+  `flowscope::http::{requests,responses,exchanges}_from_pcap`,
+  `flowscope::dns::messages_from_pcap`,
+  `flowscope::{kerberos,ldap,ssh}::messages_from_pcap`, and
+  `flowscope::pcap::flow_summaries_from_pcap` (returns
+  `(FiveTupleKey, FlowStats, EndReason)` tuples).
+- **Examples** — 16 new examples across the 0.18 cycle covering
+  every new feature surface; see `examples/README.md` for the
+  full catalogue. Total examples now > 60.
+- Test count after the pre-publish hardening: **1099 passing**
+  (1089 lib + 10 integration), zero clippy warnings under
+  `--all-features --all-targets -D warnings`, zero rustdoc
+  warnings.
+
 **0.14.0 cycle** (netring 0.22 adoption — operations-layer
 ergonomics: ICMP error correlation + bandwidth-by-app
 primitives + site-custom labels + discoverability,

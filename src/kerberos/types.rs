@@ -313,3 +313,37 @@ impl KerberosMessage {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn error_code_round_trip_named() {
+        let named = [6, 7, 18, 24, 25, 28, 51, 52];
+        for raw in named {
+            let code = KerberosErrorCode::from_raw(raw);
+            assert_eq!(code.as_raw(), raw);
+            assert!(!matches!(code, KerberosErrorCode::Other(_)));
+        }
+    }
+
+    #[test]
+    fn error_code_other_preserves_value() {
+        let oddballs = [0i32, -1, 9999, i32::MAX, i32::MIN];
+        for raw in oddballs {
+            let code = KerberosErrorCode::from_raw(raw);
+            assert!(matches!(code, KerberosErrorCode::Other(_)));
+            assert_eq!(code.as_raw(), raw);
+        }
+    }
+
+    #[test]
+    fn brute_force_signal_predicate() {
+        assert!(KerberosErrorCode::KdcErrPreauthFailed.is_brute_force_signal());
+        assert!(KerberosErrorCode::KdcErrClientRevoked.is_brute_force_signal());
+        assert!(KerberosErrorCode::KdcErrCPrincipalUnknown.is_brute_force_signal());
+        assert!(!KerberosErrorCode::KdcErrPreauthRequired.is_brute_force_signal());
+        assert!(!KerberosErrorCode::Other(0).is_brute_force_signal());
+    }
+}
