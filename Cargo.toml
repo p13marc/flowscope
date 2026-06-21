@@ -410,6 +410,11 @@ ignored = ["md-5"]
 
 # ── 00 getting started ──────────────────────────────
 [[example]]
+name = "from_stdin"
+path = "examples/00-getting-started/from_stdin.rs"
+required-features = ["pcap", "http"]
+
+[[example]]
 name = "hello_pipeline"
 path = "examples/00-getting-started/hello_pipeline.rs"
 required-features = ["pcap", "extractors", "reassembler", "session"]
@@ -632,6 +637,21 @@ required-features = ["pcap", "extractors", "tracker", "ml-features-nprint"]
 name = "ml_features_libsvm"
 path = "examples/05-export/ml_features_libsvm.rs"
 required-features = ["pcap", "extractors", "tracker", "ml-features"]
+
+[[example]]
+name = "ipfix_udp_collector"
+path = "examples/05-export/ipfix_udp_collector.rs"
+required-features = ["pcap", "extractors", "tracker", "ipfix-export"]
+
+[[example]]
+name = "pcap_dir_tail"
+path = "examples/05-export/pcap_dir_tail.rs"
+required-features = ["pcap", "extractors", "tracker", "reassembler", "emit-eve"]
+
+[[example]]
+name = "allocations_per_packet"
+path = "examples/08-performance/allocations_per_packet.rs"
+required-features = ["pcap", "extractors", "tracker"]
 
 [[example]]
 name = "ipfix_wire_export"
