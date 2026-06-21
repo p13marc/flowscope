@@ -75,9 +75,7 @@ fn flag_count_helper_compiles_through_public_api() {
     // shape.
     let mut rec = end_to_end_record(10, EndReason::Fin);
     rec.observe_tcp_flags(true, false, true, false, false, false, false, false, false);
-    rec.observe_tcp_flags(
-        false, false, true, false, false, true, false, false, false,
-    );
+    rec.observe_tcp_flags(false, false, true, false, false, true, false, false, false);
     let counts = count_tcp_flags(&rec);
     assert_eq!(counts.fwd_syn, 1);
     assert_eq!(counts.bwd_syn, 1);
