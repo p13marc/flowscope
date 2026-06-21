@@ -601,6 +601,11 @@ path = "examples/05-export/eve_writer.rs"
 required-features = ["pcap", "extractors", "tracker", "reassembler", "emit-eve"]
 
 [[example]]
+name = "prometheus_exporter"
+path = "examples/05-export/prometheus_exporter.rs"
+required-features = ["pcap", "extractors", "tracker", "reassembler", "metrics"]
+
+[[example]]
 name = "ipfix_wire_export"
 path = "examples/05-export/ipfix_wire_export.rs"
 required-features = ["pcap", "ipfix-export"]
