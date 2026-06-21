@@ -14,23 +14,41 @@ pub fn parser_kind() -> &'static str {
 
 const SPN_ATTRIBUTE_LOWER: &str = "serviceprincipalname";
 
+/// Failure mode for [`parse`] / [`parse_with_len`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ParseError {
+    /// The rusticata ASN.1 decoder failed — buffer didn't
+    /// begin with a valid LDAPMessage SEQUENCE, or the
+    /// SEQUENCE contained malformed fields.
+    AsnDecode,
+}
+
+impl std::fmt::Display for ParseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::AsnDecode => f.write_str("LDAP ASN.1 decode failed"),
+        }
+    }
+}
+
+impl std::error::Error for ParseError {}
+
 /// Decode one LDAP message from the front of `payload`.
-/// Returns `None` if the buffer doesn't begin with a valid
-/// ASN.1 LDAPMessage SEQUENCE.
-pub fn parse(payload: &[u8]) -> Option<LdapMessage> {
+pub fn parse(payload: &[u8]) -> Result<LdapMessage, ParseError> {
     #[allow(deprecated)]
-    let (_, msg) = parse_ldap_message(payload).ok()?;
-    Some(from_parsed(&msg))
+    let (_, msg) = parse_ldap_message(payload).map_err(|_| ParseError::AsnDecode)?;
+    Ok(from_parsed(&msg))
 }
 
 /// Decode one LDAP message AND report how many bytes the
 /// LDAPMessage actually consumed, so a streaming session
 /// parser can advance past it.
-pub fn parse_with_len(payload: &[u8]) -> Option<(LdapMessage, usize)> {
+pub fn parse_with_len(payload: &[u8]) -> Result<(LdapMessage, usize), ParseError> {
     #[allow(deprecated)]
-    let (rest, msg) = parse_ldap_message(payload).ok()?;
+    let (rest, msg) = parse_ldap_message(payload).map_err(|_| ParseError::AsnDecode)?;
     let consumed = payload.len() - rest.len();
-    Some((from_parsed(&msg), consumed))
+    Ok((from_parsed(&msg), consumed))
 }
 
 fn from_parsed(msg: &ldap_parser::ldap::LdapMessage<'_>) -> LdapMessage {
@@ -138,8 +156,8 @@ mod tests {
 
     #[test]
     fn rejects_garbage() {
-        assert!(parse(&[]).is_none());
-        assert!(parse(&[0xFF; 8]).is_none());
+        assert_eq!(parse(&[]).unwrap_err(), ParseError::AsnDecode);
+        assert_eq!(parse(&[0xFF; 8]).unwrap_err(), ParseError::AsnDecode);
     }
 
     #[test]

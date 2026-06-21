@@ -14,40 +14,66 @@ pub fn parser_kind() -> &'static str {
     PARSER_KIND_STR
 }
 
+/// Failure mode for [`parse`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ParseError {
+    /// Payload was empty — no outer ASN.1 tag byte.
+    Empty,
+    /// First byte wasn't a known Kerberos APPLICATION tag.
+    /// Recognized tags: 0x6A..=0x6F (AS/TGS-REQ/REP, AP-REQ/REP)
+    /// and 0x7E (KRB-ERROR).
+    UnknownTag(u8),
+    /// Outer tag was recognized but the rusticata ASN.1
+    /// decoder failed on the body.
+    AsnDecode,
+}
+
+impl std::fmt::Display for ParseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Empty => f.write_str("empty payload"),
+            Self::UnknownTag(b) => write!(f, "unknown Kerberos APPLICATION tag: 0x{b:02x}"),
+            Self::AsnDecode => f.write_str("Kerberos ASN.1 decode failed"),
+        }
+    }
+}
+
+impl std::error::Error for ParseError {}
+
 /// Decode one Kerberos message from the front of `payload`.
-/// Returns `None` if the outer tag isn't a known Kerberos
-/// message or the ASN.1 decode fails.
-pub fn parse(payload: &[u8]) -> Option<KerberosMessage> {
+pub fn parse(payload: &[u8]) -> Result<KerberosMessage, ParseError> {
     // Kerberos messages start with a constructed
     // application-class ASN.1 tag (binary 01_1x_xxxx with
     // the constructed bit set). APP tags 10..=15 map to
     // 0x6A..=0x6F; APP tag 30 (KRB-ERROR) maps to 0x7E.
-    let first = *payload.first()?;
+    let first = *payload.first().ok_or(ParseError::Empty)?;
     match first {
         0x6A => {
-            let (_, req) = kp::parse_as_req(payload).ok()?;
-            Some(from_kdc_req(req, KerberosMessageKind::AsReq))
+            let (_, req) = kp::parse_as_req(payload).map_err(|_| ParseError::AsnDecode)?;
+            Ok(from_kdc_req(req, KerberosMessageKind::AsReq))
         }
         0x6B => {
-            let (_, rep) = kp::parse_as_rep(payload).ok()?;
-            Some(from_kdc_rep(rep, KerberosMessageKind::AsRep))
+            let (_, rep) = kp::parse_as_rep(payload).map_err(|_| ParseError::AsnDecode)?;
+            Ok(from_kdc_rep(rep, KerberosMessageKind::AsRep))
         }
         0x6C => {
-            let (_, req) = kp::parse_tgs_req(payload).ok()?;
-            Some(from_kdc_req(req, KerberosMessageKind::TgsReq))
+            let (_, req) = kp::parse_tgs_req(payload).map_err(|_| ParseError::AsnDecode)?;
+            Ok(from_kdc_req(req, KerberosMessageKind::TgsReq))
         }
         0x6D => {
-            let (_, rep) = kp::parse_tgs_rep(payload).ok()?;
-            Some(from_kdc_rep(rep, KerberosMessageKind::TgsRep))
+            let (_, rep) = kp::parse_tgs_rep(payload).map_err(|_| ParseError::AsnDecode)?;
+            Ok(from_kdc_rep(rep, KerberosMessageKind::TgsRep))
         }
-        0x6E => Some(simple_ap_message(KerberosMessageKind::ApReq)),
-        0x6F => Some(simple_ap_message(KerberosMessageKind::ApRep)),
+        0x6E => Ok(simple_ap_message(KerberosMessageKind::ApReq)),
+        0x6F => Ok(simple_ap_message(KerberosMessageKind::ApRep)),
         0x7E => {
             #[allow(deprecated)]
-            let (_, err): (_, KrbError<'_>) = kp::parse_krb_error(payload).ok()?;
-            Some(from_krb_error(err))
+            let (_, err): (_, KrbError<'_>) =
+                kp::parse_krb_error(payload).map_err(|_| ParseError::AsnDecode)?;
+            Ok(from_krb_error(err))
         }
-        _ => None,
+        other => Err(ParseError::UnknownTag(other)),
     }
 }
 
@@ -96,11 +122,14 @@ mod tests {
 
     #[test]
     fn dispatcher_rejects_unknown_first_byte() {
-        assert!(parse(&[0x00]).is_none());
-        assert!(parse(&[]).is_none());
-        // 0x6A is AS-REQ but the body is bogus; should return
-        // None from the rusticata parse error.
-        assert!(parse(&[0x6A, 0x01, 0x00]).is_none());
+        assert_eq!(parse(&[0x00]).unwrap_err(), ParseError::UnknownTag(0x00));
+        assert_eq!(parse(&[]).unwrap_err(), ParseError::Empty);
+        // 0x6A is AS-REQ but the body is bogus; rusticata
+        // surfaces the AsnDecode variant.
+        assert_eq!(
+            parse(&[0x6A, 0x01, 0x00]).unwrap_err(),
+            ParseError::AsnDecode
+        );
     }
 
     #[test]

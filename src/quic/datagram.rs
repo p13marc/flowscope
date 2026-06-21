@@ -34,7 +34,7 @@ impl DatagramParser for QuicUdpParser {
         _ts: Timestamp,
         out: &mut Vec<Self::Message>,
     ) {
-        if let Some(msg) = parse(payload) {
+        if let Ok(msg) = parse(payload) {
             out.push(msg);
         }
     }

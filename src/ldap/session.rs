@@ -39,7 +39,7 @@ impl LdapParser {
                 return;
             }
             match parse_with_len(buf) {
-                Some((msg, consumed)) if consumed > 0 => {
+                Ok((msg, consumed)) if consumed > 0 => {
                     out.push(msg);
                     bytes::Buf::advance(buf, consumed);
                 }

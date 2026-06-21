@@ -8,48 +8,79 @@ pub fn parser_kind() -> &'static str {
     PARSER_KIND_STR
 }
 
+/// Failure mode for [`parse`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ParseError {
+    /// Payload shorter than the 4-byte protocol marker.
+    Truncated { need: usize, have: usize },
+    /// Bytes 0..4 weren't a known SMB protocol marker
+    /// (`0xFF 'SMB'`, `0xFE 'SMB'`, `0xFD 'SMB'`, `0xFC 'SMB'`).
+    UnknownProtocol,
+}
+
+impl std::fmt::Display for ParseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Truncated { need, have } => {
+                write!(f, "truncated SMB header: need {need}, have {have}")
+            }
+            Self::UnknownProtocol => f.write_str("unknown SMB protocol marker"),
+        }
+    }
+}
+
+impl std::error::Error for ParseError {}
+
 /// Decode one SMB message from the front of `payload`
 /// (the bytes *after* the NetBIOS Session Service
-/// 4-byte length header). Returns `None` if the buffer
-/// doesn't start with a known SMB protocol marker or is
-/// too short for the header.
-pub fn parse(payload: &[u8]) -> Option<SmbMessage> {
-    let header = payload.get(..4)?;
+/// 4-byte length header).
+pub fn parse(payload: &[u8]) -> Result<SmbMessage, ParseError> {
+    let header = payload.get(..4).ok_or(ParseError::Truncated {
+        need: 4,
+        have: payload.len(),
+    })?;
     let dialect = match header {
         [0xFF, b'S', b'M', b'B'] => SmbDialect::V1,
         [0xFE, b'S', b'M', b'B'] => SmbDialect::V2,
         [0xFD, b'S', b'M', b'B'] => SmbDialect::EncryptedTransform,
         [0xFC, b'S', b'M', b'B'] => SmbDialect::CompressedTransform,
-        _ => return None,
+        _ => return Err(ParseError::UnknownProtocol),
     };
     match dialect {
         SmbDialect::V1 => parse_smb1(payload),
         SmbDialect::V2 => parse_smb2(payload),
         SmbDialect::EncryptedTransform | SmbDialect::CompressedTransform => {
-            Some(SmbMessage::new(dialect, SmbCommand::NotApplicable))
+            Ok(SmbMessage::new(dialect, SmbCommand::NotApplicable))
         }
     }
 }
 
 /// Parse the bare SMB1 header — we only need to recognise
 /// it so we can surface the downgrade signal.
-fn parse_smb1(payload: &[u8]) -> Option<SmbMessage> {
+fn parse_smb1(payload: &[u8]) -> Result<SmbMessage, ParseError> {
     // SMB1 header is 32 bytes: protocol(4) + command(1) +
     // status(4) + flags(1) + flags2(2) + pidhigh(2) +
     // sec(8) + reserved(2) + tid(2) + pidlow(2) + uid(2) +
     // mid(2).
-    let cmd = *payload.get(4)?;
-    Some(SmbMessage::new(SmbDialect::V1, SmbCommand::OtherSmb1(cmd)))
+    let cmd = *payload.get(4).ok_or(ParseError::Truncated {
+        need: 5,
+        have: payload.len(),
+    })?;
+    Ok(SmbMessage::new(SmbDialect::V1, SmbCommand::OtherSmb1(cmd)))
 }
 
 /// Parse the 64-byte SMB2 header + optionally walk the
 /// payload for TREE_CONNECT path.
-fn parse_smb2(payload: &[u8]) -> Option<SmbMessage> {
+fn parse_smb2(payload: &[u8]) -> Result<SmbMessage, ParseError> {
     if payload.len() < 64 {
-        return None;
+        return Err(ParseError::Truncated {
+            need: 64,
+            have: payload.len(),
+        });
     }
-    let command_lo = *payload.get(12)?;
-    let command_hi = *payload.get(13)?;
+    let command_lo = payload[12];
+    let command_hi = payload[13];
     let command_raw = u16::from_le_bytes([command_lo, command_hi]);
     let command = SmbCommand::from_smb2(command_raw);
 
@@ -216,7 +247,7 @@ fn parse_smb2(payload: &[u8]) -> Option<SmbMessage> {
         }
     }
 
-    Some(msg)
+    Ok(msg)
 }
 
 /// Scan a SESSION_SETUP security buffer for an NTLMSSP
@@ -390,8 +421,14 @@ mod tests {
 
     #[test]
     fn rejects_garbage() {
-        assert!(parse(&[]).is_none());
-        assert!(parse(&[0xAA, 0xBB, 0xCC, 0xDD]).is_none());
+        assert_eq!(
+            parse(&[]).unwrap_err(),
+            ParseError::Truncated { need: 4, have: 0 }
+        );
+        assert_eq!(
+            parse(&[0xAA, 0xBB, 0xCC, 0xDD]).unwrap_err(),
+            ParseError::UnknownProtocol
+        );
     }
 
     #[test]

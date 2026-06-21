@@ -48,7 +48,7 @@ mod session;
 mod types;
 
 pub use datagram::{KERBEROS_PORT, KerberosUdpParser};
-pub use parser::{parse, parser_kind};
+pub use parser::{ParseError, parse, parser_kind};
 #[cfg(feature = "pcap")]
 pub use pcap_iter::messages_from_pcap;
 pub use session::KerberosTcpParser;

@@ -38,7 +38,7 @@ impl KerberosTcpParser {
                 return;
             }
             let frame = &buf[4..4 + len];
-            if let Some(msg) = parse(frame) {
+            if let Ok(msg) = parse(frame) {
                 out.push(msg);
             }
             bytes::Buf::advance(buf, 4 + len);

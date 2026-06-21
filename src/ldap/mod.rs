@@ -49,7 +49,7 @@ mod pcap_iter;
 mod session;
 mod types;
 
-pub use parser::{parse, parser_kind};
+pub use parser::{ParseError, parse, parser_kind};
 #[cfg(feature = "pcap")]
 pub use pcap_iter::messages_from_pcap;
 pub use session::{LDAP_PORT, LdapParser};

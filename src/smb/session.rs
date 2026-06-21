@@ -52,7 +52,7 @@ impl SmbParser {
             }
             let pdu = &buf[NBSS_HEADER_LEN..NBSS_HEADER_LEN + len];
             if nbss_type == NBSS_TYPE_SESSION_MESSAGE
-                && let Some(msg) = parse(pdu)
+                && let Ok(msg) = parse(pdu)
             {
                 out.push(msg);
             }

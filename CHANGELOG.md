@@ -146,6 +146,13 @@ hardening, `#20` fuzz harnesses, `#23` LLDP, `#24` JA4X,
 
 - `AssetSourceSet` bitflag added `MDNS` (bit 6) and `NBNS` (bit 7); `OTHER` reserved-for-future-parsers comment updated.
 - `FieldSpec::wire_length()` const — 4 bytes for IANA IEs, 8 with enterprise number set.
+- **`parse()` Option → Result sweep across new modules** ([#65](https://github.com/p13marc/flowscope/issues/65)). The 0.18 parsers each now return `Result<T, ParseError>` instead of `Option<T>`, with a per-module `ParseError` enum exposing the operationally-distinct failure mode:
+  - `flowscope::dnp3::{parse, ParseError}` — `Truncated { need, have }` / `BadStartBytes` / `InvalidLength(u8)`.
+  - `flowscope::kerberos::{parse, ParseError}` — `Empty` / `UnknownTag(u8)` / `AsnDecode`.
+  - `flowscope::ldap::{parse, parse_with_len, ParseError}` — `AsnDecode` (single variant — rusticata ldap-parser doesn't surface granular causes).
+  - `flowscope::smb::{parse, ParseError}` — `Truncated { need, have }` / `UnknownProtocol`.
+  - `flowscope::quic::{parse, ParseError}` — `NotInitial` / `AeadDecryptFailed` / `CryptoFrameDecode` (with a reserved future `_NoClientHello` variant — currently `parse` returns the metadata-only `QuicInitial` when CRYPTO is empty).
+  Migration: replace `if let Some(msg) = parse(...)` with `if let Ok(msg) = parse(...)`. The SessionParser / DatagramParser wrappers handle this internally — no behavioral regression for users of the typed-driver path.
 
 ### Fixed
 

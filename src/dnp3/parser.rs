@@ -18,21 +18,49 @@ const LINK_HEADER_LEN: usize = 10;
 /// First user-data block max payload (16 bytes + 2 CRC).
 const FIRST_BLOCK_DATA: usize = 16;
 
+/// Failure mode for [`parse`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ParseError {
+    /// Payload shorter than the 10-byte link header.
+    Truncated { need: usize, have: usize },
+    /// Bytes 0..2 weren't the `0x05 0x64` start-bytes magic.
+    BadStartBytes,
+    /// Link-layer length byte was < 5 (the minimum valid).
+    InvalidLength(u8),
+}
+
+impl std::fmt::Display for ParseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Truncated { need, have } => {
+                write!(f, "truncated DNP3 link header: need {need}, have {have}")
+            }
+            Self::BadStartBytes => f.write_str("bad start bytes (expected 0x0564)"),
+            Self::InvalidLength(n) => write!(f, "invalid link-layer length: {n} (min 5)"),
+        }
+    }
+}
+
+impl std::error::Error for ParseError {}
+
 /// Parse a single DNP3 frame from the front of `payload`.
-/// Returns the parsed message on success.
-pub fn parse(payload: &[u8]) -> Option<DnpMessage> {
+pub fn parse(payload: &[u8]) -> Result<DnpMessage, ParseError> {
     if payload.len() < LINK_HEADER_LEN {
-        return None;
+        return Err(ParseError::Truncated {
+            need: LINK_HEADER_LEN,
+            have: payload.len(),
+        });
     }
     if payload[0..2] != START_BYTES {
-        return None;
+        return Err(ParseError::BadStartBytes);
     }
     let length = payload[2] as usize;
     // RFC: length covers ctrl + dst + src + payload, NOT the
     // length byte itself, the start bytes, or the CRCs.
     // Minimum valid value is 5 (just the link header).
     if length < 5 {
-        return None;
+        return Err(ParseError::InvalidLength(payload[2]));
     }
     let control = payload[3];
     let dst_addr = u16::from_le_bytes([payload[4], payload[5]]);
@@ -58,7 +86,7 @@ pub fn parse(payload: &[u8]) -> Option<DnpMessage> {
         }
     }
 
-    Some(DnpMessage {
+    Ok(DnpMessage {
         src_addr,
         dst_addr,
         link_function,
@@ -176,19 +204,22 @@ mod tests {
     fn rejects_wrong_start_bytes() {
         let mut buf = build_frame(0xC0, 1, 2, &[]);
         buf[0] = 0x99;
-        assert!(parse(&buf).is_none());
+        assert_eq!(parse(&buf).unwrap_err(), ParseError::BadStartBytes);
     }
 
     #[test]
     fn rejects_too_short() {
-        assert!(parse(&[0u8; 9]).is_none());
+        assert_eq!(
+            parse(&[0u8; 9]).unwrap_err(),
+            ParseError::Truncated { need: 10, have: 9 }
+        );
     }
 
     #[test]
     fn rejects_invalid_length() {
         let mut buf = build_frame(0xC0, 1, 2, &[]);
         buf[2] = 0x02; // length < 5 is invalid
-        assert!(parse(&buf).is_none());
+        assert_eq!(parse(&buf).unwrap_err(), ParseError::InvalidLength(0x02));
     }
 
     #[test]

@@ -61,11 +61,11 @@ impl DnpParser {
                 return;
             }
             let consumed = match parse(&buf[..frame_len]) {
-                Some(msg) => {
+                Ok(msg) => {
                     out.push(msg);
                     frame_len
                 }
-                None => 2, // skip past the bad magic
+                Err(_) => 2, // skip past the bad magic
             };
             bytes::Buf::advance(buf, consumed);
         }
