@@ -179,6 +179,61 @@ where
     /// See [`crate::OwnedAnomaly`] for canonical detector-
     /// shaped emission. Use [`Self::write_event`] for
     /// flowscope-internal `FlowEvent` variants.
+    /// Write one finalised [`crate::FlowRecord`] as an
+    /// `event_type: "flow"` EVE JSON record. Same schema
+    /// shape as a `FlowEvent::Ended`-derived flow event;
+    /// the per-direction byte/packet counts come from the
+    /// `octet_delta_count_*` / `packet_delta_count_*` IEs
+    /// and the protocol slug from the IPFIX
+    /// `protocolIdentifier`.
+    ///
+    /// Timestamps are converted from
+    /// `flowStartMilliseconds` / `flowEndMilliseconds` (IEs
+    /// 152/153) to ISO-8601 strings.
+    ///
+    /// `flow_id` is auto-incremented as for `write_event`.
+    /// The `flow_hash` is recomputed from the FlowRecord
+    /// (proto + sorted-endpoint addresses + ports) — same
+    /// algorithm as the event-driven path.
+    ///
+    /// Issue #16 — emitter unification at the FlowRecord
+    /// layer. Requires the `ipfix` feature.
+    #[cfg(feature = "ipfix")]
+    pub fn write_flow_record(&mut self, rec: &crate::FlowRecord) -> io::Result<()> {
+        let start_ts = ms_to_iso8601(rec.flow_start_milliseconds);
+        let end_ts = ms_to_iso8601(rec.flow_end_milliseconds);
+        let flow_id = self.next_flow_id();
+        let mut obj = serde_json::Map::with_capacity(10);
+        obj.insert("timestamp".into(), json!(end_ts));
+        obj.insert("flow_id".into(), json!(flow_id));
+        obj.insert("event_type".into(), json!("flow"));
+        if !self.options.in_iface.is_empty() {
+            obj.insert("in_iface".into(), json!(self.options.in_iface));
+        }
+        insert_flow_record_5tuple(&mut obj, rec);
+        let age_secs = rec
+            .flow_end_milliseconds
+            .saturating_sub(rec.flow_start_milliseconds)
+            / 1000;
+        let reason = super::csv::flow_record_reason_str(rec);
+        obj.insert(
+            "flow".into(),
+            json!({
+                "pkts_toserver": rec.packet_delta_count_initiator,
+                "pkts_toclient": rec.packet_delta_count_responder,
+                "bytes_toserver": rec.octet_delta_count_initiator,
+                "bytes_toclient": rec.octet_delta_count_responder,
+                "start": start_ts,
+                "end": end_ts,
+                "age": age_secs,
+                "reason": reason,
+                "alerted": false,
+            }),
+        );
+        obj.insert("flow_hash".into(), json!(flow_record_hash(rec)));
+        self.write_line(&obj)
+    }
+
     pub fn write_owned_anomaly(&mut self, a: &crate::OwnedAnomaly) -> io::Result<()> {
         use crate::anomaly_fields::AnomalyFields;
         self.ts_buf.clear();
@@ -364,6 +419,112 @@ where
         self.flow_id_counter += 1;
         self.flow_id_counter
     }
+}
+
+/// Same shape as [`insert_5tuple`] but populating from a
+/// [`crate::FlowRecord`] instead of a `KeyFields`-impl
+/// key. Used by [`EveJsonWriter::write_flow_record`].
+#[cfg(feature = "ipfix")]
+fn insert_flow_record_5tuple(
+    obj: &mut serde_json::Map<String, serde_json::Value>,
+    rec: &crate::FlowRecord,
+) {
+    let src_ip = super::csv::flow_record_src_ip(rec);
+    if !src_ip.is_empty() {
+        obj.insert("src_ip".into(), json!(src_ip));
+    }
+    obj.insert("src_port".into(), json!(rec.source_transport_port));
+    let dst_ip = super::csv::flow_record_dst_ip(rec);
+    if !dst_ip.is_empty() {
+        obj.insert("dest_ip".into(), json!(dst_ip));
+    }
+    obj.insert("dest_port".into(), json!(rec.destination_transport_port));
+    let proto = super::csv::flow_record_proto_str(rec);
+    if !proto.is_empty() {
+        obj.insert("proto".into(), json!(proto.to_uppercase()));
+    }
+    if let Some(app) = rec.application_name.as_deref() {
+        obj.insert("app_proto".into(), json!(app));
+    }
+}
+
+/// FNV-1a hash over the FlowRecord's canonical 5-tuple.
+/// Same algorithm as [`flow_hash`] (the KeyFields variant);
+/// produces the same hex value for the same 5-tuple
+/// regardless of construction path.
+#[cfg(feature = "ipfix")]
+fn flow_record_hash(rec: &crate::FlowRecord) -> Option<String> {
+    let proto = super::csv::flow_record_proto_str(rec);
+    if proto.is_empty() {
+        return None;
+    }
+    let src_ip = rec
+        .source_ipv4_address
+        .map(IpAddr::V4)
+        .or_else(|| rec.source_ipv6_address.map(IpAddr::V6))?;
+    let dest_ip = rec
+        .destination_ipv4_address
+        .map(IpAddr::V4)
+        .or_else(|| rec.destination_ipv6_address.map(IpAddr::V6))?;
+    let src_port = rec.source_transport_port;
+    let dest_port = rec.destination_transport_port;
+
+    let (lo_ip, lo_port, hi_ip, hi_port) = if (src_ip, src_port) <= (dest_ip, dest_port) {
+        (src_ip, src_port, dest_ip, dest_port)
+    } else {
+        (dest_ip, dest_port, src_ip, src_port)
+    };
+    // Proto-uppercase to match `KeyFields::proto_str()`
+    // which yields "TCP" / "UDP" / etc.
+    let proto_upper = proto.to_uppercase();
+
+    const FNV_OFFSET: u64 = 0xcbf29ce484222325;
+    const FNV_PRIME: u64 = 0x100000001b3;
+    let mut h = FNV_OFFSET;
+    fn feed(b: u8, h: &mut u64) {
+        *h ^= b as u64;
+        *h = h.wrapping_mul(FNV_PRIME);
+    }
+    for &b in proto_upper.as_bytes() {
+        feed(b, &mut h);
+    }
+    fn feed_ip(ip: IpAddr, h: &mut u64) {
+        match ip {
+            IpAddr::V4(v4) => {
+                for &b in &v4.octets() {
+                    feed(b, h);
+                }
+            }
+            IpAddr::V6(v6) => {
+                for &b in &v6.octets() {
+                    feed(b, h);
+                }
+            }
+        }
+    }
+    fn feed_port(p: u16, h: &mut u64) {
+        for &b in &p.to_be_bytes() {
+            feed(b, h);
+        }
+    }
+    feed_ip(lo_ip, &mut h);
+    feed_port(lo_port, &mut h);
+    feed_ip(hi_ip, &mut h);
+    feed_port(hi_port, &mut h);
+    Some(format!("{h:016x}"))
+}
+
+/// Convert Unix milliseconds → ISO 8601 string by going via
+/// [`crate::Timestamp`].
+#[cfg(feature = "ipfix")]
+fn ms_to_iso8601(ms: u64) -> String {
+    use crate::Timestamp;
+    let secs = (ms / 1000) as u32;
+    let nsec = ((ms % 1000) as u32) * 1_000_000;
+    let ts = Timestamp::new(secs, nsec);
+    let mut buf = String::new();
+    let _ = ts.write_iso8601(&mut buf);
+    buf
 }
 
 fn insert_5tuple<K: KeyFields>(obj: &mut serde_json::Map<String, serde_json::Value>, key: &K) {

@@ -117,6 +117,33 @@ impl<W: Write> FlowEventNdjsonWriter<W> {
         }
     }
 
+    /// Write one finalised [`crate::FlowRecord`] as a JSON
+    /// line. The serialization is whatever `FlowRecord`'s
+    /// `#[derive(Serialize)]` produces — the full IPFIX IE
+    /// field set, IE-named keys.
+    ///
+    /// Issue #16 — emitter unification at the FlowRecord
+    /// layer. Pairs with `write_event` for the FlowEvent
+    /// shape. The two outputs have different schemas:
+    /// `write_event(FlowEnded)` emits the flowscope
+    /// `FlowEvent::Ended` JSON shape; `write_flow_record`
+    /// emits the IPFIX-keyed shape that downstream
+    /// IPFIX-consuming pipelines expect.
+    ///
+    /// Requires the `ipfix` feature.
+    #[cfg(feature = "ipfix")]
+    pub fn write_flow_record(&mut self, rec: &crate::FlowRecord) -> io::Result<()> {
+        let result = if self.options.pretty {
+            serde_json::to_string_pretty(rec)
+        } else {
+            serde_json::to_string(rec)
+        };
+        let s = result.map_err(io::Error::other)?;
+        self.sink.write_all(s.as_bytes())?;
+        self.sink.write_all(b"\n")?;
+        Ok(())
+    }
+
     /// Flush buffered output to the sink.
     pub fn flush(&mut self) -> io::Result<()> {
         self.sink.flush()

@@ -143,6 +143,52 @@ impl<W: Write> FlowEventCsvWriter<W> {
         Ok(())
     }
 
+    /// Write one finalised `FlowRecord` as a CSV row in the
+    /// same schema as a `FlowEvent::Ended`-derived row. Use
+    /// this when the consumer already has a `FlowRecord`
+    /// in hand (e.g. from `FlowRecord::from_parts` or an
+    /// upstream IPFIX-compatible producer).
+    ///
+    /// Issue #16 — emitter unification at the FlowRecord
+    /// layer. Pairs `write_flow_record` with `write_event`;
+    /// both produce identical rows for the same flow data.
+    ///
+    /// Requires the `ipfix` feature.
+    #[cfg(feature = "ipfix")]
+    pub fn write_flow_record(&mut self, rec: &crate::FlowRecord) -> io::Result<()> {
+        let sep = self.options.sep();
+        if self.options.emit_started {
+            write!(self.sink, "ended{sep}")?;
+        }
+        let start = (rec.flow_start_milliseconds as f64) / 1000.0;
+        let end = (rec.flow_end_milliseconds as f64) / 1000.0;
+        let dur = (end - start).max(0.0);
+        let proto = flow_record_proto_str(rec).to_string();
+        let src_ip = flow_record_src_ip(rec);
+        let src_port = rec.source_transport_port;
+        let dst_ip = flow_record_dst_ip(rec);
+        let dst_port = rec.destination_transport_port;
+        let reason = flow_record_reason_str(rec);
+        writeln!(
+            self.sink,
+            "{start:.6}{sep}{end:.6}{sep}{dur:.6}{sep}{}{sep}{}{sep}{}{sep}{}{sep}{}{sep}\
+             {}{sep}{}{sep}{}{sep}{}{sep}{}{sep}{}{sep}{}",
+            quote(&proto, sep),
+            quote(&src_ip, sep),
+            src_port,
+            quote(&dst_ip, sep),
+            dst_port,
+            rec.packet_delta_count_initiator,
+            rec.packet_delta_count_responder,
+            rec.octet_delta_count_initiator,
+            rec.octet_delta_count_responder,
+            rec.retransmits_initiator,
+            rec.retransmits_responder,
+            reason,
+        )?;
+        Ok(())
+    }
+
     /// Flush buffered output to the sink.
     pub fn flush(&mut self) -> io::Result<()> {
         self.sink.flush()
@@ -152,6 +198,54 @@ impl<W: Write> FlowEventCsvWriter<W> {
     pub fn finish(mut self) -> io::Result<W> {
         self.flush()?;
         Ok(self.sink)
+    }
+}
+
+/// Map an IPFIX `protocolIdentifier` to the lowercase
+/// protocol slug the emitters use. Same vocabulary as
+/// `L4Proto::proto_str` but lowercased and inlined to keep
+/// the emit module independent of the extract layer.
+#[cfg(feature = "ipfix")]
+pub(super) fn flow_record_proto_str(rec: &crate::FlowRecord) -> &'static str {
+    match rec.protocol_identifier {
+        6 => "tcp",
+        17 => "udp",
+        1 => "icmp",
+        58 => "icmpv6",
+        132 => "sctp",
+        _ => "",
+    }
+}
+
+#[cfg(feature = "ipfix")]
+pub(super) fn flow_record_src_ip(rec: &crate::FlowRecord) -> String {
+    rec.source_ipv4_address
+        .map(|ip| ip.to_string())
+        .or_else(|| rec.source_ipv6_address.map(|ip| ip.to_string()))
+        .unwrap_or_default()
+}
+
+#[cfg(feature = "ipfix")]
+pub(super) fn flow_record_dst_ip(rec: &crate::FlowRecord) -> String {
+    rec.destination_ipv4_address
+        .map(|ip| ip.to_string())
+        .or_else(|| rec.destination_ipv6_address.map(|ip| ip.to_string()))
+        .unwrap_or_default()
+}
+
+/// Map IPFIX `flowEndReason` back to the flowscope
+/// `EndReason::as_str()` slug. Lossy because IPFIX has 5
+/// reasons and flowscope has 8 — best-effort.
+#[cfg(feature = "ipfix")]
+pub(super) fn flow_record_reason_str(rec: &crate::FlowRecord) -> &'static str {
+    use crate::ipfix::FlowEndReason as R;
+    match rec.flow_end_reason {
+        Some(R::IdleTimeout) => "idle_timeout",
+        Some(R::ActiveTimeout) => "idle_timeout",
+        Some(R::EndOfFlowDetected) => "fin",
+        Some(R::ForcedEnd) => "force_closed",
+        Some(R::LackOfResources) => "evicted",
+        None => "",
     }
 }
 

@@ -158,6 +158,22 @@ pub struct FlowRecord {
     /// IANA IE 5 — `ipClassOfService` (IPv4 TOS byte or IPv6
     /// Traffic Class).
     pub ip_class_of_service: Option<u8>,
+
+    // ── flowscope private-enterprise extensions ──────────────
+    //
+    // The IPFIX private-enterprise IE namespace (32768+) is
+    // assigned per-vendor; rather than register a vendor ID
+    // we surface these as struct fields the emitter writers
+    // consume. Documented as flowscope-specific so consumers
+    // of FlowRecord interop don't expect IANA-standard names
+    // for them.
+    /// flowscope ext — TCP retransmit count on the initiator
+    /// side. Populated from `FlowStats::retransmits_initiator`
+    /// by [`Self::from_parts`].
+    pub retransmits_initiator: u64,
+    /// flowscope ext — TCP retransmit count on the responder
+    /// side.
+    pub retransmits_responder: u64,
 }
 
 impl FlowRecord {
@@ -198,6 +214,8 @@ impl FlowRecord {
             flow_start_milliseconds: timestamp_to_unix_ms(stats.started),
             flow_end_milliseconds: timestamp_to_unix_ms(stats.last_seen),
             flow_end_reason: end_reason.map(FlowEndReason::from),
+            retransmits_initiator: stats.retransmits_initiator,
+            retransmits_responder: stats.retransmits_responder,
             ..Self::default()
         };
         match key.a.ip() {

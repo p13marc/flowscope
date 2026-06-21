@@ -16,6 +16,22 @@ use std::io::{self, Write};
 
 use crate::{FlowEvent, KeyFields};
 
+/// Best-effort Zeek `conn_state` derivation from the
+/// IPFIX-reduced `FlowEndReason`. Mirrors
+/// `EndReason::as_zeek_state()` for the cases we can
+/// recover; everything else falls back to `OTH`.
+#[cfg(feature = "ipfix")]
+fn flow_record_zeek_state(rec: &crate::FlowRecord) -> &'static str {
+    use crate::ipfix::FlowEndReason as R;
+    match rec.flow_end_reason {
+        Some(R::EndOfFlowDetected) => "SF",
+        Some(R::IdleTimeout) | Some(R::ActiveTimeout) => "OTH",
+        Some(R::ForcedEnd) => "OTH",
+        Some(R::LackOfResources) => "OTH",
+        None => "OTH",
+    }
+}
+
 /// Tab-separated Zeek `conn.log` writer for
 /// [`FlowEvent`](crate::FlowEvent) streams.
 pub struct ZeekConnLogWriter<W: Write> {
@@ -118,6 +134,44 @@ impl<W: Write> ZeekConnLogWriter<W> {
             history.as_str(),
             stats.packets_initiator,
             stats.packets_responder,
+        )?;
+        Ok(())
+    }
+
+    /// Write one finalised `FlowRecord` as a Zeek conn.log row
+    /// in the same schema as a `FlowEvent::Ended`-derived row.
+    ///
+    /// **Limit:** the `history` column is emitted as `-` (unset)
+    /// because `FlowRecord` doesn't carry the per-packet TCP-
+    /// state-transition string. Consumers that need history
+    /// should keep using [`Self::write_event`] until FlowRecord
+    /// grows a history field.
+    ///
+    /// Issue #16 — emitter unification at the FlowRecord layer.
+    /// Requires the `ipfix` feature.
+    #[cfg(feature = "ipfix")]
+    pub fn write_flow_record(&mut self, rec: &crate::FlowRecord) -> io::Result<()> {
+        self.uid_seq += 1;
+        let uid = format!("{}{:016x}", self.options.uid_prefix, self.uid_seq);
+        let ts = (rec.flow_start_milliseconds as f64) / 1000.0;
+        let duration = ((rec
+            .flow_end_milliseconds
+            .saturating_sub(rec.flow_start_milliseconds)) as f64)
+            / 1000.0;
+        let proto = super::csv::flow_record_proto_str(rec);
+        let conn_state = flow_record_zeek_state(rec);
+        let src_ip = super::csv::flow_record_src_ip(rec);
+        let src_port = rec.source_transport_port;
+        let dst_ip = super::csv::flow_record_dst_ip(rec);
+        let dst_port = rec.destination_transport_port;
+
+        writeln!(
+            self.sink,
+            "{ts:.6}\t{uid}\t{src_ip}\t{src_port}\t{dst_ip}\t{dst_port}\t{proto}\t{duration:.6}\t{}\t{}\t{conn_state}\t-\t{}\t{}",
+            rec.octet_delta_count_initiator,
+            rec.octet_delta_count_responder,
+            rec.packet_delta_count_initiator,
+            rec.packet_delta_count_responder,
         )?;
         Ok(())
     }
