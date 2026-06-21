@@ -22,6 +22,9 @@ use crate::{FlowEvent, KeyFields};
 /// recover; everything else falls back to `OTH`.
 #[cfg(feature = "ipfix")]
 fn flow_record_zeek_state(rec: &crate::FlowRecord) -> &'static str {
+    if let Some(reason) = rec.original_end_reason {
+        return reason.as_zeek_state();
+    }
     use crate::ipfix::FlowEndReason as R;
     match rec.flow_end_reason {
         Some(R::EndOfFlowDetected) => "SF",

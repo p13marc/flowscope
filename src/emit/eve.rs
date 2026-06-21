@@ -348,39 +348,53 @@ where
     where
         K: KeyFields,
     {
-        // EVE convention: `timestamp` is the close time.
-        self.ts_buf.clear();
-        let _ = stats.last_seen.write_iso8601(&mut self.ts_buf);
-        let end_ts = self.ts_buf.clone();
-
-        self.ts_buf.clear();
-        let _ = stats.started.write_iso8601(&mut self.ts_buf);
-        let start_ts = self.ts_buf.clone();
-
-        let flow_id = self.next_flow_id();
-        let mut obj = serde_json::Map::with_capacity(10);
-        obj.insert("timestamp".into(), json!(end_ts));
-        obj.insert("flow_id".into(), json!(flow_id));
-        obj.insert("event_type".into(), json!("flow"));
-        if !self.options.in_iface.is_empty() {
-            obj.insert("in_iface".into(), json!(self.options.in_iface));
+        // Issue #16 close — when the ipfix feature is on, route
+        // through the canonical FlowRecord so the two emit paths
+        // can't drift. The shadow `original_end_reason` field
+        // preserves the 8-variant EndReason fidelity that IPFIX
+        // IE 136 would otherwise collapse.
+        #[cfg(feature = "ipfix")]
+        {
+            let rec = crate::FlowRecord::from_key_fields(stats, key, Some(reason));
+            self.write_flow_record(&rec)
         }
-        insert_5tuple(&mut obj, key);
-        obj.insert(
-            "flow".into(),
-            json!({
-                "pkts_toserver": stats.packets_initiator,
-                "pkts_toclient": stats.packets_responder,
-                "bytes_toserver": stats.bytes_initiator,
-                "bytes_toclient": stats.bytes_responder,
-                "start": start_ts,
-                "end": end_ts,
-                "age": stats.duration().as_secs(),
-                "reason": reason.as_str(),
-                "alerted": false,
-            }),
-        );
-        self.write_line(&obj)
+        #[cfg(not(feature = "ipfix"))]
+        {
+            // EVE convention: `timestamp` is the close time.
+            self.ts_buf.clear();
+            let _ = stats.last_seen.write_iso8601(&mut self.ts_buf);
+            let end_ts = self.ts_buf.clone();
+
+            self.ts_buf.clear();
+            let _ = stats.started.write_iso8601(&mut self.ts_buf);
+            let start_ts = self.ts_buf.clone();
+
+            let flow_id = self.next_flow_id();
+            let mut obj = serde_json::Map::with_capacity(10);
+            obj.insert("timestamp".into(), json!(end_ts));
+            obj.insert("flow_id".into(), json!(flow_id));
+            obj.insert("event_type".into(), json!("flow"));
+            if !self.options.in_iface.is_empty() {
+                obj.insert("in_iface".into(), json!(self.options.in_iface));
+            }
+            insert_5tuple(&mut obj, key);
+            obj.insert(
+                "flow".into(),
+                json!({
+                    "pkts_toserver": stats.packets_initiator,
+                    "pkts_toclient": stats.packets_responder,
+                    "bytes_toserver": stats.bytes_initiator,
+                    "bytes_toclient": stats.bytes_responder,
+                    "start": start_ts,
+                    "end": end_ts,
+                    "age": stats.duration().as_secs(),
+                    "reason": reason.as_str(),
+                    "alerted": false,
+                }),
+            );
+            self.write_line(&obj)?;
+            Ok(())
+        }
     }
 
     fn write_stats<K>(&mut self, key: &K, stats: &FlowStats, ts: crate::Timestamp) -> io::Result<()>

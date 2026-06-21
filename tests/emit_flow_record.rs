@@ -209,6 +209,113 @@ fn eve_write_flow_record_matches_event_shape() {
     assert_eq!(ev_value["dest_ip"], rec_value["dest_ip"]);
 }
 
+/// Issue #16 close — verify CSV preserves full 8-variant
+/// `EndReason` fidelity across every variant after the
+/// `write_event(FlowEnded)` → `write_flow_record` routing.
+/// Before the `original_end_reason` shadow field, `Rst` would
+/// have collapsed to `fin` via the IPFIX 5-state mapping.
+#[test]
+fn csv_routed_through_flow_record_preserves_all_end_reasons() {
+    use flowscope::EndReason;
+    let cases = [
+        (EndReason::Fin, "fin"),
+        (EndReason::Rst, "rst"),
+        (EndReason::IdleTimeout, "idle"),
+        (EndReason::Evicted, "evicted"),
+        (EndReason::BufferOverflow, "buffer_overflow"),
+        (EndReason::ParseError, "parse_error"),
+        (EndReason::ParserDone, "parser_done"),
+        (EndReason::ForceClosed, "force_closed"),
+    ];
+    for (reason, want) in cases {
+        let (_, ev) = build_finalised_record();
+        let FlowEvent::Ended {
+            key,
+            stats,
+            history,
+            l4,
+            ..
+        } = ev
+        else {
+            unreachable!()
+        };
+        let ev = FlowEvent::Ended {
+            key,
+            reason,
+            stats,
+            history,
+            l4,
+        };
+        let mut buf = Vec::new();
+        let mut w = FlowEventCsvWriter::new(&mut buf).expect("ctor");
+        w.write_event(&ev).expect("event");
+        w.flush().expect("flush");
+        let _ = w;
+        let s = std::str::from_utf8(&buf).unwrap();
+        let row = s.lines().nth(1).expect("data row");
+        let cols: Vec<_> = row.split(',').collect();
+        let got = cols.last().unwrap().trim();
+        assert_eq!(
+            got, want,
+            "EndReason::{:?} should serialize as {:?}, got {:?}",
+            reason, want, got
+        );
+    }
+}
+
+/// Issue #16 close — same fidelity check for EVE's `flow.reason`
+/// field. EVE routes through `write_flow_record` when `ipfix` is
+/// on, so the IPFIX 5→8 collapse is what the shadow field
+/// rescues.
+#[cfg(feature = "emit-eve")]
+#[test]
+fn eve_routed_through_flow_record_preserves_all_end_reasons() {
+    use flowscope::EndReason;
+    use flowscope::emit::EveJsonWriter;
+    let cases = [
+        (EndReason::Fin, "fin"),
+        (EndReason::Rst, "rst"),
+        (EndReason::IdleTimeout, "idle"),
+        (EndReason::Evicted, "evicted"),
+        (EndReason::BufferOverflow, "buffer_overflow"),
+        (EndReason::ParseError, "parse_error"),
+        (EndReason::ParserDone, "parser_done"),
+        (EndReason::ForceClosed, "force_closed"),
+    ];
+    for (reason, want) in cases {
+        let (_, ev) = build_finalised_record();
+        let FlowEvent::Ended {
+            key,
+            stats,
+            history,
+            l4,
+            ..
+        } = ev
+        else {
+            unreachable!()
+        };
+        let ev = FlowEvent::Ended {
+            key,
+            reason,
+            stats,
+            history,
+            l4,
+        };
+        let mut buf = Vec::new();
+        let mut w = EveJsonWriter::new(&mut buf);
+        w.write_event(&ev).expect("event");
+        let _ = w;
+        let line = std::str::from_utf8(&buf).unwrap().trim_end();
+        let v: serde_json::Value = serde_json::from_str(line).expect("json");
+        let got = v["flow"]["reason"].as_str().unwrap_or("");
+        assert_eq!(
+            got, want,
+            "EVE EndReason::{:?} should serialize as {:?}",
+            reason, want
+        );
+    }
+}
+
 /// Issue #16 — the generic `FlowRecord::from_key_fields<K: KeyFields>`
 /// constructor produces an identical FlowRecord to the
 /// `FiveTupleKey`-specialised `from_parts` when called on a

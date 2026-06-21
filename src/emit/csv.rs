@@ -89,35 +89,49 @@ impl<W: Write> FlowEventCsvWriter<W> {
             FlowEvent::Ended {
                 key, reason, stats, ..
             } => {
-                let sep = self.options.sep();
-                if self.options.emit_started {
-                    write!(self.sink, "ended{sep}")?;
+                // Issue #16 close — route through the canonical
+                // FlowRecord so emit writers can't drift from
+                // the IE-keyed shape. The shadow
+                // `original_end_reason` field preserves the
+                // 8-variant EndReason fidelity that IPFIX IE
+                // 136 would otherwise collapse.
+                #[cfg(feature = "ipfix")]
+                {
+                    let rec = crate::FlowRecord::from_key_fields(stats, key, Some(*reason));
+                    return self.write_flow_record(&rec);
                 }
-                let start = stats.started.to_unix_f64();
-                let end = stats.last_seen.to_unix_f64();
-                let dur = stats.duration_secs();
-                let proto = key.proto_str().unwrap_or("").to_lowercase();
-                let src_ip = key.src_ip().map(|ip| ip.to_string()).unwrap_or_default();
-                let src_port = key.src_port().unwrap_or(0);
-                let dst_ip = key.dest_ip().map(|ip| ip.to_string()).unwrap_or_default();
-                let dst_port = key.dest_port().unwrap_or(0);
-                writeln!(
-                    self.sink,
-                    "{start:.6}{sep}{end:.6}{sep}{dur:.6}{sep}{}{sep}{}{sep}{}{sep}{}{sep}{}{sep}\
-                     {}{sep}{}{sep}{}{sep}{}{sep}{}{sep}{}{sep}{}",
-                    quote(&proto, sep),
-                    quote(&src_ip, sep),
-                    src_port,
-                    quote(&dst_ip, sep),
-                    dst_port,
-                    stats.packets_initiator,
-                    stats.packets_responder,
-                    stats.bytes_initiator,
-                    stats.bytes_responder,
-                    stats.retransmits_initiator,
-                    stats.retransmits_responder,
-                    reason.as_str(),
-                )?;
+                #[cfg(not(feature = "ipfix"))]
+                {
+                    let sep = self.options.sep();
+                    if self.options.emit_started {
+                        write!(self.sink, "ended{sep}")?;
+                    }
+                    let start = stats.started.to_unix_f64();
+                    let end = stats.last_seen.to_unix_f64();
+                    let dur = stats.duration_secs();
+                    let proto = key.proto_str().unwrap_or("").to_lowercase();
+                    let src_ip = key.src_ip().map(|ip| ip.to_string()).unwrap_or_default();
+                    let src_port = key.src_port().unwrap_or(0);
+                    let dst_ip = key.dest_ip().map(|ip| ip.to_string()).unwrap_or_default();
+                    let dst_port = key.dest_port().unwrap_or(0);
+                    writeln!(
+                        self.sink,
+                        "{start:.6}{sep}{end:.6}{sep}{dur:.6}{sep}{}{sep}{}{sep}{}{sep}{}{sep}{}{sep}\
+                         {}{sep}{}{sep}{}{sep}{}{sep}{}{sep}{}{sep}{}",
+                        quote(&proto, sep),
+                        quote(&src_ip, sep),
+                        src_port,
+                        quote(&dst_ip, sep),
+                        dst_port,
+                        stats.packets_initiator,
+                        stats.packets_responder,
+                        stats.bytes_initiator,
+                        stats.bytes_responder,
+                        stats.retransmits_initiator,
+                        stats.retransmits_responder,
+                        reason.as_str(),
+                    )?;
+                }
             }
             FlowEvent::Started { key, ts, .. } if self.options.emit_started => {
                 let sep = self.options.sep();
@@ -233,11 +247,19 @@ pub(super) fn flow_record_dst_ip(rec: &crate::FlowRecord) -> String {
         .unwrap_or_default()
 }
 
-/// Map IPFIX `flowEndReason` back to the flowscope
-/// `EndReason::as_str()` slug. Lossy because IPFIX has 5
-/// reasons and flowscope has 8 — best-effort.
+/// Map a [`crate::FlowRecord`] back to the flowscope
+/// `EndReason::as_str()` slug. When the record carries a
+/// `original_end_reason` shadow field (set by
+/// `from_key_fields` / `from_parts`), full 8-variant
+/// fidelity is preserved. Otherwise falls back to the
+/// lossy IPFIX 5→8 mapping.
+///
+/// Issue #16 close.
 #[cfg(feature = "ipfix")]
 pub(super) fn flow_record_reason_str(rec: &crate::FlowRecord) -> &'static str {
+    if let Some(reason) = rec.original_end_reason {
+        return reason.as_str();
+    }
     use crate::ipfix::FlowEndReason as R;
     match rec.flow_end_reason {
         Some(R::IdleTimeout) => "idle_timeout",

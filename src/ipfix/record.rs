@@ -174,6 +174,28 @@ pub struct FlowRecord {
     /// flowscope ext — TCP retransmit count on the responder
     /// side.
     pub retransmits_responder: u64,
+
+    /// flowscope ext — the unmapped, 8-variant
+    /// [`crate::EndReason`] as observed by the tracker.
+    ///
+    /// IPFIX [`Self::flow_end_reason`] (IE 136) is by design
+    /// limited to 5 RFC 7011 standard values, so it cannot
+    /// distinguish e.g. `Fin` from `Rst` or
+    /// `BufferOverflow` from `ParseError` —
+    /// both pairs collapse to `EndOfFlowDetected` /
+    /// `ForcedEnd` respectively. Internal flowscope
+    /// consumers (CSV / Zeek / NDJSON writers) prefer this
+    /// field when present to preserve the 8-variant
+    /// fidelity; pure-IPFIX consumers continue to read
+    /// `flow_end_reason`.
+    ///
+    /// `None` only when the record was constructed without
+    /// a lifecycle reason (e.g. a `from_parts` call with
+    /// `end_reason = None` for a mid-flight snapshot).
+    ///
+    /// Issue #16 close.
+    #[cfg(feature = "tracker")]
+    pub original_end_reason: Option<crate::EndReason>,
 }
 
 impl FlowRecord {
@@ -234,8 +256,21 @@ impl FlowRecord {
     where
         K: crate::KeyFields + ?Sized,
     {
+        // If the key didn't override protocol_identifier, derive
+        // it from the proto_str string label so emit writers
+        // routed through FlowRecord don't drop the L4 protocol
+        // column for KeyFields impls that only provide one of
+        // the two accessors.
+        let proto_id = key.protocol_identifier().unwrap_or_else(|| match key.proto_str() {
+            Some("TCP") => 6,
+            Some("UDP") => 17,
+            Some("ICMP") => 1,
+            Some("ICMPv6") => 58,
+            Some("SCTP") => 132,
+            _ => 0,
+        });
         let mut rec = Self {
-            protocol_identifier: key.protocol_identifier().unwrap_or(0),
+            protocol_identifier: proto_id,
             source_transport_port: key.src_port().unwrap_or(0),
             destination_transport_port: key.dest_port().unwrap_or(0),
             octet_delta_count_initiator: stats.bytes_initiator,
@@ -247,6 +282,7 @@ impl FlowRecord {
             flow_start_milliseconds: timestamp_to_unix_ms(stats.started),
             flow_end_milliseconds: timestamp_to_unix_ms(stats.last_seen),
             flow_end_reason: end_reason.map(FlowEndReason::from),
+            original_end_reason: end_reason,
             retransmits_initiator: stats.retransmits_initiator,
             retransmits_responder: stats.retransmits_responder,
             ..Self::default()
