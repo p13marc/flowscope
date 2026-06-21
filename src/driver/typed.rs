@@ -362,6 +362,48 @@ where
         }
     }
 
+    /// One-call iterator over a pcap file — drives every packet
+    /// through this driver and yields the lifecycle event
+    /// stream. Per-parser typed messages still flow through
+    /// the registered [`SlotHandle`](super::SlotHandle)s; drain
+    /// them yourself between iterator pulls if you need them
+    /// in-line.
+    ///
+    /// This is the multi-parser sibling of the per-protocol
+    /// `*_from_pcap` helpers (`flowscope::http::requests_from_pcap`,
+    /// `flowscope::dns::messages_from_pcap`, etc.) — those work
+    /// when one parser owns the whole walk; this works when you
+    /// want HTTP + TLS + DNS slots on the same `Driver` and
+    /// process the combined event stream in one pass.
+    ///
+    /// ```no_run
+    /// # #[cfg(all(feature = "pcap", feature = "extractors", feature = "tracker"))]
+    /// # fn run() -> Result<(), Box<dyn std::error::Error>> {
+    /// use flowscope::driver::Driver;
+    /// use flowscope::extract::FiveTuple;
+    /// # use flowscope::http::HttpParser;
+    /// let mut builder = Driver::builder(FiveTuple::bidirectional());
+    /// let _http_slot = builder.session_on_ports(HttpParser::default(), [80]);
+    /// let driver = builder.build();
+    /// for ev in driver.run_pcap("trace.pcap")? {
+    ///     let _ev = ev?;
+    /// }
+    /// # Ok(()) }
+    /// ```
+    ///
+    /// Issue #64 (0.18).
+    #[cfg(feature = "pcap")]
+    pub fn run_pcap<P: AsRef<std::path::Path>>(self, path: P) -> crate::Result<RunPcap<E>> {
+        let source = crate::pcap::PcapFlowSource::open(path)?;
+        Ok(RunPcap {
+            driver: self,
+            views: source.views(),
+            buf: Vec::with_capacity(32),
+            cursor: 0,
+            finished: false,
+        })
+    }
+
     /// Force-end the flow with this key. Mirror of
     /// [`crate::FlowTracker::force_close`] /
     /// [`crate::FlowDriver::force_close`] at the typed-driver
@@ -1090,5 +1132,54 @@ fn map_flow_event<K>(ev: FlowEvent<K>, tcp: Option<TcpInfo>) -> Option<Event<K>>
         FlowEvent::FlowAnomaly { key, kind, ts } => Some(Event::FlowAnomaly { key, kind, ts }),
         FlowEvent::TrackerAnomaly { kind, ts } => Some(Event::TrackerAnomaly { kind, ts }),
         FlowEvent::StateChange { .. } => None,
+    }
+}
+
+#[cfg(feature = "pcap")]
+pub struct RunPcap<E>
+where
+    E: FlowExtractor + Clone + Send + 'static,
+    E::Key: Hash + Eq + Clone + Send + Sync + 'static,
+{
+    driver: Driver<E>,
+    views: crate::pcap::ViewIter<std::io::BufReader<std::fs::File>>,
+    buf: Vec<Event<E::Key>>,
+    cursor: usize,
+    finished: bool,
+}
+
+#[cfg(feature = "pcap")]
+impl<E> Iterator for RunPcap<E>
+where
+    E: FlowExtractor + Clone + Send + 'static,
+    E::Key: Hash + Eq + Clone + Send + Sync + 'static,
+{
+    type Item = crate::Result<Event<E::Key>>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            // Drain any buffered events first.
+            if self.cursor < self.buf.len() {
+                let ev = self.buf[self.cursor].clone();
+                self.cursor += 1;
+                return Some(Ok(ev));
+            }
+            self.buf.clear();
+            self.cursor = 0;
+            // Pull the next packet.
+            match self.views.next() {
+                Some(Ok(view)) => {
+                    self.driver.track_into(&view, &mut self.buf);
+                }
+                Some(Err(e)) => return Some(Err(e)),
+                None => {
+                    if self.finished {
+                        return None;
+                    }
+                    self.finished = true;
+                    self.driver.finish_into(&mut self.buf);
+                }
+            }
+        }
     }
 }

@@ -459,7 +459,20 @@ required-features = ["dns", "pcap"]
 [[example]]
 name = "extract_iocs"
 path = "examples/02-forensics/extract_iocs.rs"
-required-features = ["pcap", "http", "tls", "tls-fingerprints", "dns", "extractors"]
+required-features = [
+  "pcap",
+  "http",
+  "tls",
+  "tls-fingerprints",
+  "dns",
+  "extractors",
+  "tracker",
+  "smtp",
+  "ftp",
+  "smb",
+  "kerberos",
+  "ldap",
+]
 
 [[example]]
 name = "tls_inventory"
