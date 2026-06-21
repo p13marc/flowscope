@@ -271,6 +271,11 @@ impl FlowRecord {
 
 /// Convert a flowscope [`crate::Timestamp`] to Unix
 /// milliseconds — the wire form for IPFIX IEs 152/153.
+///
+/// Only used by [`FlowRecord::from_parts`] today; cfg-gated
+/// on `tracker` to keep the `ipfix`-only build (no tracker /
+/// no Timestamp consumer) free of dead-code warnings.
+#[cfg(feature = "tracker")]
 #[inline]
 fn timestamp_to_unix_ms(ts: crate::Timestamp) -> u64 {
     let secs = ts.sec as u64;
