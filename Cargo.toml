@@ -476,6 +476,21 @@ name = "smb_lateral_movement"
 path = "examples/02-forensics/smb_lateral_movement.rs"
 required-features = ["smb", "pcap"]
 
+[[example]]
+name = "kerberoast_hunter"
+path = "examples/02-forensics/kerberoast_hunter.rs"
+required-features = ["kerberos", "pcap"]
+
+[[example]]
+name = "ldap_recon_hunter"
+path = "examples/02-forensics/ldap_recon_hunter.rs"
+required-features = ["ldap", "pcap"]
+
+[[example]]
+name = "asset_inventory"
+path = "examples/02-forensics/asset_inventory.rs"
+required-features = ["asset", "arp", "pcap"]
+
 # ── 03 security / detection ──────────────────────────
 [[example]]
 name = "port_scan_detector"
