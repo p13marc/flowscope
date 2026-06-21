@@ -236,6 +236,13 @@ tcp_fingerprint = ["extractors", "tracker"]
 # FlowRecord re-key to IPFIX IEs stays open in #16. No new
 # transitive deps.
 ipfix = []
+# IPFIX binary wire encoder (RFC 7011/7012). Pure-bytes
+# encoder over the typed `FlowRecord` from `ipfix`. Produces
+# Message records ready for UDP/SCTP transport — but the
+# transport layer (sockets, template lifecycle, retransmit
+# scheduling) is out of scope here and left to consumer
+# crates. Issue #28.
+ipfix-export = ["ipfix", "dep:bytes"]
 # SSH parser — version banner + SSH_MSG_KEXINIT decode +
 # HASSH / HASSHServer fingerprints (Salesforce spec, MIT-
 # equivalent licensed). SessionParser over TCP/22.

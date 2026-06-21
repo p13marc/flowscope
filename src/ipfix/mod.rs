@@ -42,6 +42,9 @@ mod record;
 mod registry;
 mod types;
 
+#[cfg(feature = "ipfix-export")]
+pub mod wire;
+
 pub use record::FlowRecord;
 pub use registry::{IES, lookup_by_id, lookup_by_name};
 pub use types::{FlowEndReason, IeAbstractType, InformationElement, encode_tcp_control_bits};
