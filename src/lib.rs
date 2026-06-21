@@ -252,6 +252,12 @@ pub use wireguard::{WireGuardKind, WireGuardMessage, WireGuardParser};
 pub mod modbus;
 #[cfg(feature = "modbus")]
 pub use modbus::{ModbusExceptionCode, ModbusFunction, ModbusMessage, ModbusParser};
+// Issue #14 sub-piece (0.18): STUN — RFC 5389. WebRTC peer
+// detection, NAT-type discovery, TURN identification.
+#[cfg(feature = "stun")]
+pub mod stun;
+#[cfg(feature = "stun")]
+pub use stun::{StunClass, StunMessage, StunParser};
 // Issue #27 (0.18): unified Asset record + Inventory over
 // the asset-discovery parsers.
 #[cfg(feature = "asset")]

@@ -202,6 +202,12 @@ wireguard = ["session"]
 # observation mode for ICS networks. Issue #14 (Tier-2
 # row 6 — ICS).
 modbus = ["session", "dep:bytes"]
+# STUN — RFC 5389 over UDP (no IANA port; 3478 is the
+# convention; TURN uses 3478/5349). Useful for WebRTC peer
+# detection, NAT-type discovery, TURN identification. 20-
+# byte header + TLV attributes. Issue #14 (Tier-2 sub-piece
+# adjacent to WireGuard for VPN/overlay visibility).
+stun = ["session"]
 # ml-features — `flowscope::ml_features` CICFlowMeter-style
 # per-flow feature vector. The totals/throughput/per-direction
 # subset of the ~80 CICFlowMeter features that's computable
