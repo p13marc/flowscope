@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.19.0 — RITA-style robust beacon detector
+
+Additive over 0.18.
+
+- **`detect::patterns::RitaBeaconDetector`** + `RitaBeaconScore` — a
+  robust periodicity detector using the quartile/median statistics from
+  [RITA](https://github.com/activecm/rita) v5 (`analysis/beacons.go`):
+  **Bowley skewness** + **median absolute deviation (MADM)** on the
+  inter-arrival intervals and payload sizes, plus a duration-coverage
+  bonus. Unlike the coefficient-of-variation `BeaconDetector`, the
+  median-based scoring survives outliers — a single missed beacon or a
+  retransmit storm barely moves the score, where a mean/stddev CV craters
+  — so it scores jittered C2 (e.g. Cobalt Strike's default jitter) far
+  better. Same `observe(key, ts, bytes) -> Option<Score>` /
+  `forget` / `tracked` shape as `BeaconDetector`, and a `DetectorScore`
+  impl emitting a `BeaconRita` anomaly. The two statistical scores are
+  bit-faithful to RITA's `calculateStatisticalScore` (verified against the
+  upstream source); RITA's additional histogram/modal-fit score is not
+  reproduced. Pure stats, no new dependency.
+
 ## 0.18.0 — Tier-2 protocol cycle + ML features + IPFIX export + AD recon + lateral movement + QUIC
 
 The biggest cycle since 0.10. Drove every named row in the
