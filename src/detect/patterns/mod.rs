@@ -13,6 +13,11 @@
 //! - [`BeaconDetector`] — periodicity scoring via
 //!   coefficient-of-variation on inter-arrival times, with a
 //!   RITA-style composite score on bytes consistency.
+//! - [`RitaBeaconDetector`] — robust periodicity scoring via
+//!   Bowley skewness + median absolute deviation (RITA v5
+//!   `analysis/beacons.go`); survives outliers (a missed beacon /
+//!   retransmit) where the CV detector craters — better for
+//!   jittered C2.
 //! - [`DgaScorer`] — DGA likelihood via bigram log-likelihood
 //!   over a small embedded English-baseline table; auxiliary
 //!   features (length, vowel ratio, digit ratio,
@@ -21,7 +26,9 @@
 pub mod beacon;
 pub mod dga;
 pub mod portscan;
+pub mod rita_beacon;
 
 pub use beacon::{BeaconDetector, BeaconScore};
 pub use dga::{DgaScore, DgaScorer};
 pub use portscan::{PortScanDetector, ScanScore, ScanVerdict};
+pub use rita_beacon::{RitaBeaconDetector, RitaBeaconScore};
