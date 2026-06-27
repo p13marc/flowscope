@@ -70,6 +70,17 @@ impl std::fmt::Display for ParseError {
 
 impl std::error::Error for ParseError {}
 
+impl From<ParseError> for crate::Error {
+    fn from(e: ParseError) -> Self {
+        use crate::error::{ErrorCode, Module};
+        let code = match &e {
+            ParseError::Truncated { .. } => ErrorCode::Truncated,
+            ParseError::BadStartBytes | ParseError::InvalidLength(_) => ErrorCode::Parse,
+        };
+        crate::Error::with_code(Module::Dnp3, code, e.to_string())
+    }
+}
+
 /// Parse a single DNP3 frame from the front of `payload`.
 pub fn parse(payload: &[u8]) -> Result<DnpMessage, ParseError> {
     if payload.len() < LINK_HEADER_LEN {

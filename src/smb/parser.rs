@@ -32,6 +32,17 @@ impl std::fmt::Display for ParseError {
 
 impl std::error::Error for ParseError {}
 
+impl From<ParseError> for crate::Error {
+    fn from(e: ParseError) -> Self {
+        use crate::error::{ErrorCode, Module};
+        let code = match &e {
+            ParseError::Truncated { .. } => ErrorCode::Truncated,
+            ParseError::UnknownProtocol => ErrorCode::Parse,
+        };
+        crate::Error::with_code(Module::Smb, code, e.to_string())
+    }
+}
+
 /// Decode one SMB message from the front of `payload`
 /// (the bytes *after* the NetBIOS Session Service
 /// 4-byte length header).

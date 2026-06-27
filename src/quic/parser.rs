@@ -47,6 +47,18 @@ impl std::fmt::Display for ParseError {
 
 impl std::error::Error for ParseError {}
 
+impl From<ParseError> for crate::Error {
+    fn from(e: ParseError) -> Self {
+        use crate::error::{ErrorCode, Module};
+        let code = match &e {
+            ParseError::NotInitial => ErrorCode::Parse,
+            ParseError::AeadDecryptFailed | ParseError::CryptoFrameDecode => ErrorCode::Parse,
+            ParseError::_NoClientHello => ErrorCode::Parse,
+        };
+        crate::Error::with_code(Module::Quic, code, e.to_string())
+    }
+}
+
 /// Decode one QUIC Initial datagram. Returns the parsed
 /// [`QuicInitial`] on success, or a [`ParseError`] indicating
 /// which stage of the pipeline failed.
