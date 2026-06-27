@@ -237,9 +237,11 @@ impl FiveTupleKey {
     ///
     /// This is the infallible companion to
     /// [`crate::KeyFields::stable_hash`] (a `FiveTupleKey` always
-    /// carries a full 5-tuple), and equals the value the EVE
-    /// writer emits as `flow_hash`. Use it to shard a merged flow
-    /// table so both legs of a flow land on the same worker — see
+    /// carries a full 5-tuple). It is a fast, **non-portable**
+    /// in-process hash — for the portable cross-tool flow id (what the
+    /// EVE / NDJSON writers emit since 0.19) use
+    /// [`Self::community_id`]. Use this to shard a merged flow table so
+    /// both legs of a flow land on the same worker — see
     /// [`Self::shard_index`].
     ///
     /// Issue #76 (folds #70).
@@ -651,8 +653,7 @@ mod tests {
     fn stable_hash_matches_keyfields_trait() {
         use crate::KeyFields;
         let k = key(L4Proto::Udp, [10, 0, 0, 1], 5000, [8, 8, 8, 8], 53);
-        // The inherent infallible value equals the trait's Option value
-        // (and therefore the EVE `flow_hash`).
+        // The inherent infallible value equals the trait's Option value.
         assert_eq!(Some(k.stable_hash()), KeyFields::stable_hash(&k));
     }
 

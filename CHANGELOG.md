@@ -4,6 +4,37 @@
 
 Additive over 0.19. Pure, no-async — fits the runtime-free lib rule.
 
+### 1.0-prep issue batch (#69, #87, #88)
+
+- **BREAKING — `flow_hash` dropped from EVE output, `community_id` is
+  canonical** (#88). The proprietary 64-bit FNV-1a `flow_hash` field is
+  no longer emitted by `EveJsonWriter` (event-driven *or* FlowRecord
+  path). The standard Corelight **Community ID** (`community_id`) is now
+  the sole, portable flow identifier — emitted when built with the
+  `community-id` feature. `FlowRecord` gains a `community_id:
+  Option<String>` field (populated by `from_parts` / `from_key_fields`),
+  so NDJSON / CSV / EVE FlowRecord output all carry it. The FNV hash
+  stays available in-process as `KeyFields::stable_hash()` for sharding
+  / keying but is non-portable. *Migration:* dashboards keying on
+  `flow_hash` must pivot to `community_id` (enable the `community-id`
+  feature). See `docs/migration-0.19-to-0.20.md`.
+- **BUGFIX — `l7` / `full` feature umbrellas corrected** (#87 part 1).
+  `full` previously carried *fewer* parsers than `l7` and was not a
+  superset. `l7` now enables every license-clean protocol parser; `full`
+  is `l7` + every license-clean capability (ml / ipfix / asset /
+  fingerprint / observability / emit), excluding only the FoxIO-licensed
+  `ja4plus`. Compile-time `compile_error!` guards
+  (`src/feature_umbrellas.rs`) + new `l7` / `full` CI matrix entries
+  prevent silent drift.
+- **`PacketView::with_source_idx(u32)` / `OwnedPacketView::with_source_idx`
+  + `RxMetadata::from_source_idx(u32)`** (#69) — one-call per-packet
+  source-index builders (cross-crate-friendly given `RxMetadata` is
+  `#[non_exhaustive]`). Fixes the stale `Tagged` module doc to a live
+  doctest.
+- **docs/design.md reconciled with the shipped surface** (#88 part A) —
+  IPFIX + `ml_features` are in-crate (non-goals updated), parsers use the
+  `&mut Vec` sink, and `Driver<E>` is `Send + Sync`.
+
 - **`detect::IocSet`** (#72) — typed threat-intel membership over
   `{ipv4, ipv6, domain, url, sha256, md5, ja3, ja4}` with optional
   per-entry reputation (Suricata `datarep`) and a feed-file loader.
@@ -46,7 +77,7 @@ Additive over 0.19. Pure, no-async — fits the runtime-free lib rule.
   `IocMatch` gains a `serde` derive (additive) so hits serialize.
   - **`EveJsonWriter::write_analyzed_flow`** (with `analysis` +
     `emit-eve`) — the SIEM-ready single-pass emit: an EVE `flow`
-    event carrying the 5-tuple (+ `community_id` / `flow_hash`),
+    event carrying the 5-tuple (+ `community_id`),
     counters, observed L7 (`tls` / `http` / `dns` objects), and a
     `flowscope` extension object with the risk slug array + aggregate
     `score` + `severity` and the threat-intel `ioc` hits.
@@ -59,8 +90,9 @@ Additive over 0.19. Pure, no-async — fits the runtime-free lib rule.
 - **Stable shard hash** (#76, folds #70) — always-on (no crypto)
   `FiveTupleKey::stable_hash()` / `shard_index(n)` and the generic
   `KeyFields` equivalents: seed-fixed, process-stable, direction-
-  invariant — both legs of a flow map to the same shard. The EVE
-  `flow_hash` now shares this helper (value unchanged). `docs/sharded.md`
+  invariant — both legs of a flow map to the same shard. This is a
+  fast, non-portable in-process identifier (the portable cross-tool id
+  is `community_id`); it is **not** emitted by the writers. `docs/sharded.md`
   and the `sharded_capture` example updated to use it.
 - **`correlate::CountMinSketch` + `BloomFilter`** (#75) — mergeable
   streaming sketches alongside `HyperLogLog` (heavy-hitter frequency;

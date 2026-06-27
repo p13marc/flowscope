@@ -94,6 +94,8 @@ jobs:
           - "ja4plus,ssh"       # 0.19: JA4SSH session fingerprint (issue #77)
           - "analysis"          # 0.19: analysis layer, no parser observe_* gated in (issue #83)
           - "analysis,tls,dns"  # 0.19: analysis layer with the gated observe_* adapters (issue #83)
+          - "l7"                # 0.19: L7 umbrella builds on its own (issue #87)
+          - "full"              # 0.19: `full` ⊇ `l7` + all license-clean caps (issue #87)
     steps:
       - uses: actions/checkout@v4
       - name: Build (--no-default-features --features "${{ matrix.features }}")

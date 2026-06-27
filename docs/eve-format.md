@@ -64,12 +64,23 @@ Every emitted record carries:
 | `src_ip` / `src_port` / `dest_ip` / `dest_port` | string / u16 | `KeyFields` accessors on the key (each field omitted if `None`) |
 | `proto`      | string (optional)     | `KeyFields::proto_str` — uppercase EVE convention                 |
 | `app_proto`  | string (optional)     | `KeyFields::app_proto_str` — well-known port label                |
-| `flow_hash`  | string (16-char hex)  | FNV-1a over `(proto, sorted endpoints)` — direction-invariant         |
+| `community_id` | string (`"1:"`+base64) | Corelight Community ID v1 — the canonical cross-tool flow id |
 
-`flow_hash` is omitted if `proto_str` or any of the four
-endpoint accessors return `None`. Two flowscope runs over the
-same pcap produce the same `flow_hash` for the same flow
-(deterministic). A→B and B→A produce the same `flow_hash`.
+`community_id` is the portable flow identifier the ecosystem
+pivots on (Zeek, Suricata, Security Onion, Arkime all key on it).
+It is `"1:"`-prefixed SHA-1 + base64 over the canonical 5-tuple,
+direction-invariant (A→B and B→A produce the same value) and
+deterministic across runs. It is emitted **only when flowscope is
+built with the `community-id` feature**, and is omitted if the key
+lacks a full 5-tuple.
+
+> **Changed in 0.19 (issue #88):** the proprietary 64-bit FNV-1a
+> `flow_hash` field was **removed** from default EVE output in favour
+> of the standard `community_id`. If you have dashboards keying on
+> `flow_hash`, pivot them to `community_id` (and enable the
+> `community-id` feature). The FNV hash is still available
+> in-process as `KeyFields::stable_hash()` for sharding / keying, but
+> it is non-portable and no longer emitted.
 
 ## `event_type: "anomaly"`
 
@@ -82,7 +93,7 @@ same pcap produce the same `flow_hash` for the same flow
   "dest_ip": "10.0.0.2", "dest_port": 80,
   "proto": "TCP",
   "app_proto": "http",
-  "flow_hash": "9f3c0bb2a17f5048",
+  "community_id": "1:wCb3Oy8JZ7qWp0pXm1mUg6yQ7sE=",
   "anomaly": {
     "type": "stream",
     "event": "ooo_segment",
@@ -124,7 +135,7 @@ Emitted on `FlowEvent::Ended`:
   "src_ip": "10.0.0.1", "src_port": 33000,
   "dest_ip": "10.0.0.2", "dest_port": 80,
   "proto": "TCP",
-  "flow_hash": "9f3c0bb2a17f5048",
+  "community_id": "1:wCb3Oy8JZ7qWp0pXm1mUg6yQ7sE=",
   "flow": {
     "pkts_toserver": 7,
     "pkts_toclient": 5,
@@ -165,7 +176,7 @@ via `EveOptions::include_stats = true`:
   "src_ip": "10.0.0.1", "src_port": 33000,
   "dest_ip": "10.0.0.2", "dest_port": 80,
   "proto": "TCP",
-  "flow_hash": "9f3c0bb2a17f5048",
+  "community_id": "1:wCb3Oy8JZ7qWp0pXm1mUg6yQ7sE=",
   "stats": {
     "pkts_toserver": 7,
     "pkts_toclient": 5,
