@@ -138,10 +138,13 @@ pub use crate::correlate::FlowStateMap;
 pub use crate::correlate::{
     BurstDetector, Ewma, KeyIndexed, RollingRate, TimeBucketedCounter, TimeBucketedSet, TopK,
 };
-// Issue #75: mergeable streaming sketches (no tracker dependency —
-// pure correlate primitives, siblings of `HyperLogLog`).
+// Issue #75: mergeable streaming sketches — siblings of
+// `HyperLogLog`. The whole `correlate` module is `tracker`-gated,
+// so these re-exports must be too.
+#[cfg(feature = "tracker")]
 pub use crate::correlate::{BloomFilter, CountMinSketch};
 // Issue #74: xbits/hostbits-style named-bit TTL store.
+#[cfg(feature = "tracker")]
 pub use crate::correlate::BitStore;
 // Issue #1 (0.17): NeighborTable IP→link-layer binding tracker.
 #[cfg(feature = "tracker")]

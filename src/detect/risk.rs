@@ -263,6 +263,11 @@ impl FlowRisk {
 /// alias token (case-insensitive) — otherwise TLS on 443 would
 /// read as a port/protocol mismatch against its own `"tls/https"`
 /// label.
+///
+/// Used by [`FlowRisk::from_port_proto`] (`extractors`) and the
+/// `analysis` layer's risk computation — gated to match so it
+/// isn't dead code in builds with neither.
+#[cfg(any(feature = "extractors", feature = "analysis"))]
 pub(crate) fn label_matches(label: &str, detected: &str) -> bool {
     label
         .split('/')
