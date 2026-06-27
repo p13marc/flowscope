@@ -589,6 +589,11 @@ name = "flow_analysis"
 path = "examples/03-detection/flow_analysis.rs"
 required-features = ["analysis", "tls", "dns", "emit-eve"]
 
+[[example]]
+name = "flow_analysis_driver"
+path = "examples/03-detection/flow_analysis_driver.rs"
+required-features = ["analysis", "tls", "dns", "pcap", "emit-eve"]
+
 # ── 04 observability / SRE ───────────────────────────
 [[example]]
 name = "top_talkers"
