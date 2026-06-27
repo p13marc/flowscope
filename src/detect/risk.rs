@@ -153,6 +153,129 @@ impl FlowRisk {
     }
 }
 
+// ── Adapters: derive risk flags from parsed protocol data ──────
+//
+// The pure "verbs" that turn flowscope's parser output into risk
+// flags — the missing half of #73 (the flags existed; nothing
+// computed them). Each computes only the flags it can *prove*
+// from its input; OR several together for a flow's total risk.
+// Cert-based flags (self-signed / expired) need X.509 validation
+// the caller performs and ORs in.
+
+impl FlowRisk {
+    /// Risk flags derivable from a completed TLS handshake's
+    /// plaintext-observable fields: an obsolete negotiated version
+    /// (below TLS 1.2 → [`Self::TLS_OBSOLETE_VERSION`]) and a
+    /// weak / EXPORT / NULL / RC4 / DES cipher suite
+    /// (→ [`Self::TLS_WEAK_CIPHER`], via [`is_weak_cipher`]).
+    ///
+    /// Does **not** set [`Self::TLS_SELF_SIGNED`] /
+    /// [`Self::TLS_EXPIRED_CERT`] — those require validating the
+    /// X.509 chain ([`crate::tls::TlsHandshake::certificate_chain`]),
+    /// which the caller does and ORs in. Pure; no allocation.
+    #[cfg(feature = "tls")]
+    pub fn from_tls(hs: &crate::tls::TlsHandshake) -> FlowRisk {
+        use crate::tls::TlsVersion;
+        let mut r = FlowRisk::empty();
+        if let Some(v) = hs.version {
+            let obsolete = matches!(
+                v,
+                TlsVersion::Ssl3_0 | TlsVersion::Tls1_0 | TlsVersion::Tls1_1
+            ) || matches!(v, TlsVersion::Other(raw) if raw < 0x0303);
+            if obsolete {
+                r |= FlowRisk::TLS_OBSOLETE_VERSION;
+            }
+        }
+        if let Some(cs) = hs.cipher_suite
+            && is_weak_cipher(cs)
+        {
+            r |= FlowRisk::TLS_WEAK_CIPHER;
+        }
+        r
+    }
+
+    /// Risk flags derivable from a DNS query name: a DGA-looking
+    /// registrable label (scored with [`crate::detect::patterns::DgaScorer`]
+    /// → [`Self::DGA_DOMAIN`]) and any Punycode / IDN (`xn--`)
+    /// label (homograph-attack surface → [`Self::PUNYCODE_IDN`]).
+    ///
+    /// The label fed to the scorer is approximated as the
+    /// second-to-last dot-label (no embedded public-suffix list,
+    /// so multi-part suffixes like `co.uk` are scored
+    /// imperfectly). For precise control extract the SLD yourself
+    /// and call [`crate::detect::patterns::DgaScorer::is_dga`]
+    /// directly. Pure; no allocation beyond a lowercased copy.
+    pub fn from_dns(qname: &str, scorer: &crate::detect::patterns::DgaScorer) -> FlowRisk {
+        let mut r = FlowRisk::empty();
+        let trimmed = qname.trim().trim_end_matches('.');
+        if trimmed.is_empty() {
+            return r;
+        }
+        let lower = trimmed.to_ascii_lowercase();
+        if lower.split('.').any(|l| l.starts_with("xn--")) {
+            r |= FlowRisk::PUNYCODE_IDN;
+        }
+        let labels: Vec<&str> = lower.split('.').collect();
+        let sld = match labels.len() {
+            0 => return r,
+            1 => labels[0],
+            n => labels[n - 2],
+        };
+        if !sld.is_empty() && scorer.is_dga(sld) {
+            r |= FlowRisk::DGA_DOMAIN;
+        }
+        r
+    }
+
+    /// Port / protocol-consistency flags from a flow's 5-tuple and
+    /// the L7 protocol actually detected on it (an app-label slug
+    /// such as `"http"` / `"ssh"` — e.g. from a parser's
+    /// `parser_kind()` or [`crate::extract::FiveTupleKey::app_label`]).
+    ///
+    /// - [`Self::PORT_PROTO_MISMATCH`] — the port maps to a
+    ///   *different* well-known protocol than the one detected.
+    /// - [`Self::KNOWN_PROTO_NONSTD_PORT`] — a protocol was
+    ///   detected on a port with no well-known mapping (nDPI's
+    ///   "known protocol, non-standard port").
+    ///
+    /// No risk when the detected protocol matches the port's
+    /// well-known label. Pure; no allocation.
+    #[cfg(feature = "extractors")]
+    pub fn from_port_proto(key: &crate::extract::FiveTupleKey, detected: &str) -> FlowRisk {
+        let detected = detected.trim();
+        if detected.is_empty() {
+            return FlowRisk::empty();
+        }
+        match key.protocol_label() {
+            Some(label) if label.eq_ignore_ascii_case(detected) => FlowRisk::empty(),
+            Some(_) => FlowRisk::PORT_PROTO_MISMATCH,
+            None => FlowRisk::KNOWN_PROTO_NONSTD_PORT,
+        }
+    }
+}
+
+/// Heuristic weak / deprecated TLS cipher-suite test
+/// (NULL / EXPORT / RC4 / DES / 3DES / anonymous).
+///
+/// Conservative and **non-exhaustive** — a curated set of the
+/// canonical weak suite code points from the IANA TLS registry.
+/// OR in your own policy for site-specific bans (e.g. CBC-mode
+/// or SHA-1 MACs, which are deprecated but too common to flag by
+/// default).
+pub fn is_weak_cipher(suite: u16) -> bool {
+    matches!(
+        suite,
+        // NULL ciphers (no encryption)
+        0x0000 | 0x0001 | 0x0002 | 0x003B
+        // RC4
+        | 0x0004 | 0x0005 | 0x0018 | 0xC002 | 0xC007 | 0xC00C | 0xC011 | 0xC016
+        // DES / 3DES
+        | 0x000A | 0x0013 | 0x0016 | 0x001A | 0x001B | 0xC003 | 0xC008 | 0xC012
+        // EXPORT (40-bit) grade
+        | 0x0003 | 0x0006 | 0x0008 | 0x0014 | 0x0017 | 0x0019
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -207,5 +330,81 @@ mod tests {
         let r = FlowRisk::all();
         let _ = r.score(); // no panic / wrap
         assert!(r.score() > 0);
+    }
+
+    #[test]
+    fn weak_cipher_table() {
+        assert!(is_weak_cipher(0x0005)); // RSA_WITH_RC4_128_SHA
+        assert!(is_weak_cipher(0x000A)); // RSA_WITH_3DES_EDE_CBC_SHA
+        assert!(is_weak_cipher(0x0003)); // RSA_EXPORT_WITH_RC4_40_MD5
+        assert!(is_weak_cipher(0x0000)); // NULL_WITH_NULL_NULL
+        assert!(is_weak_cipher(0xC011)); // ECDHE_RSA_WITH_RC4_128_SHA
+        assert!(!is_weak_cipher(0x1301)); // TLS_AES_128_GCM_SHA256
+        assert!(!is_weak_cipher(0xC02F)); // ECDHE_RSA_WITH_AES_128_GCM_SHA256
+    }
+
+    #[cfg(feature = "tls")]
+    #[test]
+    fn from_tls_flags_obsolete_version_and_weak_cipher() {
+        use crate::tls::{TlsHandshake, TlsVersion};
+
+        let hs = TlsHandshake {
+            version: Some(TlsVersion::Tls1_0),
+            cipher_suite: Some(0x0005), // RC4
+            ..Default::default()
+        };
+        let r = FlowRisk::from_tls(&hs);
+        assert!(r.contains(FlowRisk::TLS_OBSOLETE_VERSION));
+        assert!(r.contains(FlowRisk::TLS_WEAK_CIPHER));
+
+        let modern = TlsHandshake {
+            version: Some(TlsVersion::Tls1_3),
+            cipher_suite: Some(0x1301), // AES-128-GCM
+            ..Default::default()
+        };
+        assert!(FlowRisk::from_tls(&modern).is_empty());
+    }
+
+    #[test]
+    fn from_dns_flags_dga_and_punycode() {
+        let scorer = crate::detect::patterns::DgaScorer::new();
+
+        // A clearly random-looking SLD trips DGA; a known good one doesn't.
+        let dga = FlowRisk::from_dns("kq3v9z7xj2wq.com", &scorer);
+        assert!(dga.contains(FlowRisk::DGA_DOMAIN));
+        let benign = FlowRisk::from_dns("www.google.com", &scorer);
+        assert!(!benign.contains(FlowRisk::DGA_DOMAIN));
+
+        // Punycode label.
+        let idn = FlowRisk::from_dns("xn--80ak6aa92e.com", &scorer);
+        assert!(idn.contains(FlowRisk::PUNYCODE_IDN));
+
+        // Empty / trivial input doesn't panic.
+        assert!(FlowRisk::from_dns("", &scorer).is_empty());
+        assert!(FlowRisk::from_dns(".", &scorer).is_empty());
+    }
+
+    #[cfg(feature = "extractors")]
+    #[test]
+    fn from_port_proto_mismatch_and_nonstd() {
+        use crate::extract::FiveTupleKey;
+        use std::net::SocketAddr;
+
+        let mk = |dport: u16| FiveTupleKey {
+            proto: crate::L4Proto::Tcp,
+            a: "10.0.0.1:54321".parse::<SocketAddr>().unwrap(),
+            b: format!("10.0.0.2:{dport}").parse::<SocketAddr>().unwrap(),
+        };
+
+        // SSH detected on port 443 (well-known https) → mismatch.
+        let mismatch = FlowRisk::from_port_proto(&mk(443), "ssh");
+        assert!(mismatch.contains(FlowRisk::PORT_PROTO_MISMATCH));
+
+        // HTTP detected on port 80 → consistent, no risk.
+        assert!(FlowRisk::from_port_proto(&mk(80), "http").is_empty());
+
+        // SSH on a random high port (no well-known mapping) → nonstd.
+        let nonstd = FlowRisk::from_port_proto(&mk(51000), "ssh");
+        assert!(nonstd.contains(FlowRisk::KNOWN_PROTO_NONSTD_PORT));
     }
 }

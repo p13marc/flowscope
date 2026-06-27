@@ -301,6 +301,40 @@ impl IocSet {
     }
 }
 
+// ── Adapter: check a parsed TLS handshake against the set ──────
+
+#[cfg(feature = "tls")]
+impl IocSet {
+    /// Check every threat-intel-relevant field of a TLS handshake
+    /// against this set in one call: the SNI (subdomain-aware
+    /// domain match) and the JA3 / JA4 client fingerprints.
+    /// Returns every hit (possibly empty), most-specific first per
+    /// field. Pure; allocates only the result vec.
+    ///
+    /// The missing "verb" that lets a consumer screen TLS traffic
+    /// against an intel feed without hand-rolling the three
+    /// per-field lookups (#83).
+    pub fn check_tls(&self, hs: &crate::tls::TlsHandshake) -> Vec<IocMatch> {
+        let mut hits = Vec::new();
+        if let Some(sni) = hs.sni.as_deref()
+            && let Some(m) = self.contains_domain(sni)
+        {
+            hits.push(m);
+        }
+        if let Some(ja3) = hs.ja3.as_deref()
+            && let Some(m) = self.contains(IocKind::Ja3, ja3)
+        {
+            hits.push(m);
+        }
+        if let Some(ja4) = hs.ja4.as_deref()
+            && let Some(m) = self.contains(IocKind::Ja4, ja4)
+        {
+            hits.push(m);
+        }
+        hits
+    }
+}
+
 /// Lowercase, strip a single trailing dot, trim. Empty if blank.
 fn normalize_domain(d: &str) -> String {
     d.trim().trim_end_matches('.').to_ascii_lowercase()
@@ -395,6 +429,42 @@ mod tests {
                 .reputation,
             Some(9)
         );
+    }
+
+    #[cfg(feature = "tls")]
+    #[test]
+    fn check_tls_screens_sni_ja3_ja4() {
+        use crate::tls::TlsHandshake;
+
+        let mut s = IocSet::new();
+        s.insert(IocKind::Domain, "evil.com", Some(90), Some("intel"));
+        s.insert(
+            IocKind::Ja4,
+            "t13d1516h2_8daaf6152771_b186095e22b6",
+            None,
+            None,
+        );
+
+        let hs = TlsHandshake {
+            sni: Some("cdn.evil.com".to_string()),
+            ja3: Some("769,4-5-10".to_string()), // not on the list
+            ja4: Some("t13d1516h2_8daaf6152771_b186095e22b6".to_string()),
+            ..Default::default()
+        };
+        let hits = s.check_tls(&hs);
+        assert_eq!(hits.len(), 2, "SNI + JA4 should hit, JA3 should not");
+        assert!(
+            hits.iter()
+                .any(|m| m.kind == IocKind::Domain && m.value == "evil.com")
+        );
+        assert!(hits.iter().any(|m| m.kind == IocKind::Ja4));
+
+        // A clean handshake yields no hits.
+        let clean = TlsHandshake {
+            sni: Some("good.example".to_string()),
+            ..Default::default()
+        };
+        assert!(s.check_tls(&clean).is_empty());
     }
 
     #[test]

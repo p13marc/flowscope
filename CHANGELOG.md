@@ -14,6 +14,15 @@ Additive over 0.19. Pure, no-async — fits the runtime-free lib rule.
   cleartext creds, suspicious JA4, …) with an aggregate `score()`,
   `max_severity()`, and stable slugs. Native model re-implementation,
   not an FFI binding.
+- **Risk/IOC adapters** (#83, first shippable slice) — the pure "verbs"
+  that turn parser output into the standalone primitives above:
+  `FlowRisk::from_tls` (obsolete version + weak cipher via the new
+  public `detect::is_weak_cipher`), `FlowRisk::from_dns` (DGA label +
+  Punycode/IDN, via `DgaScorer`), `FlowRisk::from_port_proto`
+  (port↔protocol mismatch / known-proto-nonstd-port), and
+  `IocSet::check_tls` (screens SNI + JA3 + JA4 of a `TlsHandshake` in
+  one call). All pure, independently testable; gated by the relevant
+  parser feature (`tls` / `extractors`).
 - **Community ID v1 flow hashing** (#76, folds #70) — behind the new
   `community-id` feature (SHA-1 + base64). `FiveTupleKey::community_id()`
   / `KeyFields::community_id()`, emitted as `community_id` in the EVE
