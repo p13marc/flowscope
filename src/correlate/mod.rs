@@ -70,6 +70,7 @@ mod sequence;
 mod set;
 mod topk;
 mod welford;
+mod xbits;
 
 pub use bloom::BloomFilter;
 pub use bucketed::TimeBucketedCounter;
@@ -89,3 +90,4 @@ pub use sequence::{KeylessSequencePattern, SequencePattern};
 pub use set::TimeBucketedSet;
 pub use topk::TopK;
 pub use welford::WelfordStats;
+pub use xbits::BitStore;

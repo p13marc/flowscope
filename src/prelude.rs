@@ -141,6 +141,8 @@ pub use crate::correlate::{
 // Issue #75: mergeable streaming sketches (no tracker dependency —
 // pure correlate primitives, siblings of `HyperLogLog`).
 pub use crate::correlate::{BloomFilter, CountMinSketch};
+// Issue #74: xbits/hostbits-style named-bit TTL store.
+pub use crate::correlate::BitStore;
 // Issue #1 (0.17): NeighborTable IP→link-layer binding tracker.
 #[cfg(feature = "tracker")]
 pub use crate::correlate::{NeighborBinding, NeighborEvent, NeighborTable};
