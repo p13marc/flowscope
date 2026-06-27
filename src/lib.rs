@@ -71,6 +71,8 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
 mod error;
+// Compile-time guards on the `l7` / `full` feature umbrellas (issue #87).
+mod feature_umbrellas;
 pub mod mac_addr;
 pub mod parser_kind;
 pub mod rx_metadata;

@@ -355,9 +355,19 @@ ssh = ["reassembler", "session", "dep:bytes", "dep:md-5", "dep:hex"]
 # zero-alloc per packet (fixed-size ArrayVec). Issue #4 (0.17).
 fingerprint = ["dep:arrayvec"]
 
-# Umbrella: enable every shipped L7 protocol parser at once. Strict
-# subset of `full` (no `pcap`, no observability).
-l7 = ["http", "tls", "tls-fingerprints", "dns", "icmp", "arp", "ndp", "dhcp", "lldp", "cdp", "ssh", "ntp", "ssdp", "tftp", "mdns"]
+# Umbrella: enable every shipped, license-clean protocol parser at once.
+# Strict subset of `full` (no `pcap`, no observability). Excludes only the
+# FoxIO-licensed `ja4plus` suite (off by default for licensing). Invariant
+# guarded by `src/feature_umbrellas.rs`: every parser feature below must be
+# a member here, and `full` must be a superset of `l7`.
+l7 = [
+    "http", "tls", "tls-fingerprints", "dns", "icmp",
+    "arp", "ndp", "dhcp", "lldp", "cdp",
+    "ssh", "ntp", "ssdp", "tftp", "mdns",
+    "netbios-ns", "ftp", "smtp", "wireguard", "modbus",
+    "stun", "rdp", "snmp", "radius", "quic",
+    "smb", "ldap", "kerberos", "dnp3",
+]
 
 # pcap source adapter (offline replay).
 pcap = ["extractors", "tracker", "dep:pcap-file"]
@@ -414,8 +424,31 @@ community-id = ["dep:sha1", "dep:base64"]
 # chrono can interop without a manual conversion.
 chrono = ["dep:chrono"]
 
-# Convenience: turn everything on.
-full = ["http", "tls", "tls-fingerprints", "dns", "icmp", "arp", "pcap", "metrics", "tracing", "serde", "emit", "emit-ndjson", "emit-eve", "aggregate", "chrono", "file-hash", "fingerprint", "community-id", "analysis"]
+# Convenience: turn everything license-clean on. Superset of `l7` (by
+# direct reference) plus every observability / emit / ml / ipfix / asset /
+# fingerprint capability. Deliberately EXCLUDES the FoxIO-licensed
+# `ja4plus` suite — `full` stays royalty-free-clean. `--all-features`
+# (docs.rs / CI) is the only build that also pulls `ja4plus`. Invariant
+# guarded by `src/feature_umbrellas.rs`.
+full = [
+    "l7",
+    # non-l7 parsers / passive fingerprints
+    "tcp_fingerprint",
+    # asset inventory + analysis composition
+    "asset", "analysis",
+    # ml feature extraction
+    "ml-features", "ml-features-nprint",
+    # ipfix vocabulary + binary export
+    "ipfix", "ipfix-export",
+    # pcap source
+    "pcap",
+    # observability
+    "metrics", "tracing",
+    # structured emitters
+    "serde", "emit", "emit-ndjson", "emit-eve",
+    # everything else license-clean
+    "aggregate", "chrono", "file-hash", "fingerprint", "community-id",
+]
 
 [package.metadata.docs.rs]
 all-features = true
