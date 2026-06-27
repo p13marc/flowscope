@@ -389,7 +389,12 @@ mod tests {
         // Updating an existing entry still works at capacity.
         assert!(s.insert(IocKind::Ipv4, "1.1.1.1", Some(9), None));
         assert_eq!(s.len(), 2);
-        assert_eq!(s.contains_ip("1.1.1.1".parse().unwrap()).unwrap().reputation, Some(9));
+        assert_eq!(
+            s.contains_ip("1.1.1.1".parse().unwrap())
+                .unwrap()
+                .reputation,
+            Some(9)
+        );
     }
 
     #[test]
@@ -407,11 +412,16 @@ bad,line,with,too,many → still takes first 3 fields as value,rep,source
         // 3 valid IPs; the "bad" line's value isn't an IP → skipped.
         assert_eq!(n, 3);
         assert_eq!(
-            s.contains_ip("9.9.9.9".parse().unwrap()).unwrap().source.as_deref(),
+            s.contains_ip("9.9.9.9".parse().unwrap())
+                .unwrap()
+                .source
+                .as_deref(),
             Some("abuse-ch")
         );
         assert_eq!(
-            s.contains_ip("5.6.7.8".parse().unwrap()).unwrap().reputation,
+            s.contains_ip("5.6.7.8".parse().unwrap())
+                .unwrap()
+                .reputation,
             Some(90)
         );
     }

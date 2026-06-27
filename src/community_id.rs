@@ -116,14 +116,7 @@ mod tests {
     fn tcp_golden_vector() {
         // Canonical published vector (community-id-spec README):
         // 128.232.110.120:34855 -> 66.35.250.204:80 TCP, seed 0.
-        let id = community_id_v1(
-            6,
-            ip("128.232.110.120"),
-            34855,
-            ip("66.35.250.204"),
-            80,
-            0,
-        );
+        let id = community_id_v1(6, ip("128.232.110.120"), 34855, ip("66.35.250.204"), 80, 0);
         assert_eq!(id, "1:LQU9qZlK+B5F3KDmev6m5PMibrg=");
     }
 

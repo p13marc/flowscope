@@ -683,10 +683,22 @@ mod tests {
     fn community_id_matches_golden_vector() {
         // Same published TCP vector as the community_id module test,
         // reached through the key method.
-        let k = key(L4Proto::Tcp, [128, 232, 110, 120], 34855, [66, 35, 250, 204], 80);
+        let k = key(
+            L4Proto::Tcp,
+            [128, 232, 110, 120],
+            34855,
+            [66, 35, 250, 204],
+            80,
+        );
         assert_eq!(k.community_id(), "1:LQU9qZlK+B5F3KDmev6m5PMibrg=");
         // Direction-invariant via the key too.
-        let rev = key(L4Proto::Tcp, [66, 35, 250, 204], 80, [128, 232, 110, 120], 34855);
+        let rev = key(
+            L4Proto::Tcp,
+            [66, 35, 250, 204],
+            80,
+            [128, 232, 110, 120],
+            34855,
+        );
         assert_eq!(k.community_id(), rev.community_id());
     }
 }

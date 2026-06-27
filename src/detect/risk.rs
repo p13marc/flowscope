@@ -132,7 +132,9 @@ impl FlowRisk {
     /// nDPI-style aggregate score: the sum of the per-flag scores
     /// for every flag set. Higher = riskier.
     pub fn score(self) -> u16 {
-        self.iter().map(|f| f.attrs().2).fold(0u16, u16::saturating_add)
+        self.iter()
+            .map(|f| f.attrs().2)
+            .fold(0u16, u16::saturating_add)
     }
 
     /// The highest severity among the flags set, or `None` if empty.
@@ -166,7 +168,8 @@ mod tests {
 
     #[test]
     fn score_sums_and_severity_maxes() {
-        let r = FlowRisk::TLS_SELF_SIGNED | FlowRisk::DGA_DOMAIN | FlowRisk::KNOWN_PROTO_NONSTD_PORT;
+        let r =
+            FlowRisk::TLS_SELF_SIGNED | FlowRisk::DGA_DOMAIN | FlowRisk::KNOWN_PROTO_NONSTD_PORT;
         assert_eq!(r.score(), 50 + 100 + 10);
         assert_eq!(r.max_severity(), Some(RiskSeverity::High));
         assert_eq!(r.count(), 3);
@@ -183,7 +186,10 @@ mod tests {
     fn single_flag_slug_and_severity() {
         assert_eq!(FlowRisk::DGA_DOMAIN.slug(), "dga_domain");
         assert_eq!(FlowRisk::DGA_DOMAIN.severity(), RiskSeverity::High);
-        assert_eq!(FlowRisk::CLEARTEXT_CREDENTIALS.slug(), "cleartext_credentials");
+        assert_eq!(
+            FlowRisk::CLEARTEXT_CREDENTIALS.slug(),
+            "cleartext_credentials"
+        );
     }
 
     #[test]
