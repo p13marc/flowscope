@@ -6,32 +6,73 @@
 
 use super::types::{WireGuardKind, WireGuardMessage};
 
+/// Failure mode for [`parse`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ParseError {
+    /// Payload shorter than the 4-byte header.
+    Truncated { need: usize, have: usize },
+    /// Reserved bytes (1..4) weren't all zero — not WireGuard.
+    NotWireGuard,
+    /// Type byte / length combination matched no defined shape.
+    UnknownType,
+}
+
+impl std::fmt::Display for ParseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Truncated { need, have } => {
+                write!(f, "truncated WireGuard datagram: need {need}, have {have}")
+            }
+            Self::NotWireGuard => f.write_str("reserved bytes non-zero (not WireGuard)"),
+            Self::UnknownType => f.write_str("unknown WireGuard message type / length"),
+        }
+    }
+}
+
+impl std::error::Error for ParseError {}
+
+impl From<ParseError> for crate::Error {
+    fn from(e: ParseError) -> Self {
+        use crate::error::{ErrorCode, Module};
+        let code = match &e {
+            ParseError::Truncated { .. } => ErrorCode::Truncated,
+            ParseError::NotWireGuard => ErrorCode::Parse,
+            ParseError::UnknownType => ErrorCode::Unsupported,
+        };
+        crate::Error::with_code(Module::Wireguard, code, e.to_string())
+    }
+}
+
 /// Parse a single UDP datagram as a WireGuard message.
-/// Returns `None` when the payload doesn't fit any of the
+/// Returns `Err` when the payload doesn't fit any of the
 /// four defined shapes (length + type-byte + reserved-zero
 /// match required).
-pub fn parse(payload: &[u8]) -> Option<WireGuardMessage> {
+pub fn parse(payload: &[u8]) -> Result<WireGuardMessage, ParseError> {
     if payload.len() < 4 {
-        return None;
+        return Err(ParseError::Truncated {
+            need: 4,
+            have: payload.len(),
+        });
     }
     // Reserved bytes must be zero per the whitepaper.
     if payload[1] != 0 || payload[2] != 0 || payload[3] != 0 {
-        return None;
+        return Err(ParseError::NotWireGuard);
     }
     match (payload[0], payload.len()) {
-        (1, 148) => Some(WireGuardMessage {
+        (1, 148) => Ok(WireGuardMessage {
             kind: WireGuardKind::HandshakeInitiation,
             sender_index: Some(le_u32(&payload[4..8])),
             receiver_index: None,
             payload_length: None,
         }),
-        (2, 92) => Some(WireGuardMessage {
+        (2, 92) => Ok(WireGuardMessage {
             kind: WireGuardKind::HandshakeResponse,
             sender_index: Some(le_u32(&payload[4..8])),
             receiver_index: Some(le_u32(&payload[8..12])),
             payload_length: None,
         }),
-        (3, 64) => Some(WireGuardMessage {
+        (3, 64) => Ok(WireGuardMessage {
             kind: WireGuardKind::CookieReply,
             sender_index: None,
             receiver_index: Some(le_u32(&payload[4..8])),
@@ -43,14 +84,14 @@ pub fn parse(payload: &[u8]) -> Option<WireGuardMessage> {
             let receiver = le_u32(&payload[4..8]);
             // Bytes 8..16 are the counter (LE u64); skip.
             let body = (n - 16) as u32;
-            Some(WireGuardMessage {
+            Ok(WireGuardMessage {
                 kind: WireGuardKind::TransportData,
                 sender_index: None,
                 receiver_index: Some(receiver),
                 payload_length: Some(body),
             })
         }
-        _ => None,
+        _ => Err(ParseError::UnknownType),
     }
 }
 
@@ -132,31 +173,31 @@ mod tests {
     fn wrong_length_handshake_rejected() {
         // Initiation should be exactly 148 bytes.
         let buf = build(1, 100, 0, 0);
-        assert!(parse(&buf).is_none());
+        assert!(parse(&buf).is_err());
     }
 
     #[test]
     fn non_zero_reserved_rejected() {
         let mut buf = build(1, 148, 0, 0);
         buf[2] = 0xff;
-        assert!(parse(&buf).is_none());
+        assert!(parse(&buf).is_err());
     }
 
     #[test]
     fn unknown_type_rejected() {
         let buf = build(99, 32, 0, 0);
-        assert!(parse(&buf).is_none());
+        assert!(parse(&buf).is_err());
     }
 
     #[test]
     fn too_short_rejected() {
-        assert!(parse(&[0u8; 3]).is_none());
+        assert!(parse(&[0u8; 3]).is_err());
     }
 
     #[test]
     fn transport_data_below_min_rejected() {
         let buf = build(4, 20, 0, 0);
-        assert!(parse(&buf).is_none());
+        assert!(parse(&buf).is_err());
     }
 
     #[test]

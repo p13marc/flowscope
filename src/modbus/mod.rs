@@ -46,6 +46,6 @@ mod parser;
 mod session;
 mod types;
 
-pub use parser::parse_one;
+pub use parser::{ParseError, parse_one};
 pub use session::{MODBUS_PORT, ModbusParser, PARSER_KIND};
 pub use types::{ModbusExceptionCode, ModbusFunction, ModbusMessage};

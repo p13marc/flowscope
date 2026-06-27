@@ -11,40 +11,93 @@ const RDP_NEG_REQ: u8 = 0x01;
 const RDP_NEG_RSP: u8 = 0x02;
 const RDP_NEG_FAILURE: u8 = 0x03;
 
-/// Parse a single TPKT-framed X.224 PDU. Returns `None` for
-/// any payload that doesn't match the RDP Connection
-/// Request/Confirm shape exactly.
-pub fn parse_frame(payload: &[u8]) -> Option<RdpMessage> {
+/// Failure mode for [`parse_frame`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ParseError {
+    /// The payload was shorter than the TPKT/X.224 structure
+    /// it claimed (or shorter than the minimum header).
+    Truncated { need: usize, have: usize },
+    /// Bytes 0..2 weren't the TPKT `0x03 0x00` version/reserved
+    /// magic.
+    NotTpkt,
+    /// The X.224 PDU type wasn't a Connection Request or
+    /// Connection Confirm (the only two RDP shapes we decode).
+    Unsupported,
+}
+
+impl std::fmt::Display for ParseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Truncated { need, have } => {
+                write!(f, "truncated RDP/TPKT frame: need {need}, have {have}")
+            }
+            Self::NotTpkt => f.write_str("not a TPKT frame (expected 0x0300)"),
+            Self::Unsupported => f.write_str("unsupported X.224 PDU type"),
+        }
+    }
+}
+
+impl std::error::Error for ParseError {}
+
+impl From<ParseError> for crate::Error {
+    fn from(e: ParseError) -> Self {
+        use crate::error::{ErrorCode, Module};
+        let code = match &e {
+            ParseError::Truncated { .. } => ErrorCode::Truncated,
+            ParseError::NotTpkt => ErrorCode::Parse,
+            ParseError::Unsupported => ErrorCode::Unsupported,
+        };
+        crate::Error::with_code(Module::Rdp, code, e.to_string())
+    }
+}
+
+/// Parse a single TPKT-framed X.224 PDU. Returns a
+/// [`ParseError`] for any payload that doesn't match the RDP
+/// Connection Request/Confirm shape exactly.
+pub fn parse_frame(payload: &[u8]) -> Result<RdpMessage, ParseError> {
     if payload.len() < TPKT_HEADER_LEN {
-        return None;
+        return Err(ParseError::Truncated {
+            need: TPKT_HEADER_LEN,
+            have: payload.len(),
+        });
     }
     // TPKT: version(0x03) | reserved(0x00) | length(2 BE).
     if payload[0] != 0x03 || payload[1] != 0x00 {
-        return None;
+        return Err(ParseError::NotTpkt);
     }
     let total_len = u16::from_be_bytes([payload[2], payload[3]]) as usize;
     if total_len > payload.len() || total_len < 7 {
-        return None;
+        return Err(ParseError::Truncated {
+            need: total_len,
+            have: payload.len(),
+        });
     }
     let x224 = &payload[TPKT_HEADER_LEN..total_len];
     // X.224 header: length(1) | code(1) | … . For CR/CC the
     // header is 7 bytes; user data follows.
     if x224.len() < 7 {
-        return None;
+        return Err(ParseError::Truncated {
+            need: 7,
+            have: x224.len(),
+        });
     }
     let x224_li = x224[0] as usize;
     let code = x224[1] & 0xf0;
     let header_total = 1 + x224_li;
     let user_data_start = header_total;
     if user_data_start > x224.len() {
-        return None;
+        return Err(ParseError::Truncated {
+            need: user_data_start,
+            have: x224.len(),
+        });
     }
     let user_data = &x224[user_data_start..];
 
     match code {
-        X224_CR => Some(decode_connection_request(&x224[7..header_total], user_data)),
-        X224_CC => Some(decode_connection_confirm(user_data)),
-        _ => None,
+        X224_CR => Ok(decode_connection_request(&x224[7..header_total], user_data)),
+        X224_CC => Ok(decode_connection_confirm(user_data)),
+        _ => Err(ParseError::Unsupported),
     }
 }
 
@@ -299,19 +352,19 @@ mod tests {
 
     #[test]
     fn rejects_non_tpkt_payload() {
-        assert!(parse_frame(b"GET / HTTP/1.1\r\n").is_none());
+        assert!(parse_frame(b"GET / HTTP/1.1\r\n").is_err());
     }
 
     #[test]
     fn rejects_too_short() {
-        assert!(parse_frame(&[0u8; 3]).is_none());
+        assert!(parse_frame(&[0u8; 3]).is_err());
     }
 
     #[test]
     fn rejects_wrong_tpkt_version() {
         let mut payload = build_cr_with_cookie(b"", 0);
         payload[0] = 0x04;
-        assert!(parse_frame(&payload).is_none());
+        assert!(parse_frame(&payload).is_err());
     }
 
     #[test]
@@ -319,8 +372,8 @@ mod tests {
         let mut payload = build_cr_with_cookie(b"", 0);
         payload.truncate(payload.len() - 4);
         let msg = parse_frame(&payload);
-        // Either rejected or partial — strict mode prefers None.
-        assert!(msg.is_none() || matches!(msg, Some(RdpMessage::ConnectionRequest { .. })));
+        // Either rejected or partial — strict mode prefers Err.
+        assert!(msg.is_err() || matches!(msg, Ok(RdpMessage::ConnectionRequest { .. })));
     }
 
     #[test]

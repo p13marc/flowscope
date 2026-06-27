@@ -36,5 +36,5 @@
 mod parser;
 mod types;
 
-pub use parser::{CDP_DST_MAC, CDP_OUI, CDP_PID, CdpParser, parse, parse_frame};
+pub use parser::{CDP_DST_MAC, CDP_OUI, CDP_PID, CdpParser, ParseError, parse, parse_frame};
 pub use types::{CdpAddress, CdpCapabilities, CdpMessage};

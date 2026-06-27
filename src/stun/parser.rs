@@ -15,26 +15,68 @@ const ATTR_USERNAME: u16 = 0x0006;
 const ATTR_XOR_MAPPED_ADDRESS: u16 = 0x0020;
 const ATTR_SOFTWARE: u16 = 0x8022;
 
+/// Failure mode for [`parse`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ParseError {
+    /// Payload shorter than the 20-byte STUN header, or the
+    /// length field claims more attribute bytes than present.
+    Truncated { need: usize, have: usize },
+    /// Top two type bits were set, or the RFC 5389 magic
+    /// cookie was absent — not a STUN message.
+    NotStun,
+}
+
+impl std::fmt::Display for ParseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Truncated { need, have } => {
+                write!(f, "truncated STUN message: need {need}, have {have}")
+            }
+            Self::NotStun => f.write_str("not a STUN message (bad type bits or magic cookie)"),
+        }
+    }
+}
+
+impl std::error::Error for ParseError {}
+
+impl From<ParseError> for crate::Error {
+    fn from(e: ParseError) -> Self {
+        use crate::error::{ErrorCode, Module};
+        let code = match &e {
+            ParseError::Truncated { .. } => ErrorCode::Truncated,
+            ParseError::NotStun => ErrorCode::Parse,
+        };
+        crate::Error::with_code(Module::Stun, code, e.to_string())
+    }
+}
+
 /// Parse a single UDP datagram as a STUN message. Returns
-/// `None` for any payload that doesn't match the STUN wire
+/// `Err` for any payload that doesn't match the STUN wire
 /// shape exactly (header length, magic cookie, length field
 /// internal consistency).
-pub fn parse(payload: &[u8]) -> Option<StunMessage> {
+pub fn parse(payload: &[u8]) -> Result<StunMessage, ParseError> {
     if payload.len() < HEADER_LEN {
-        return None;
+        return Err(ParseError::Truncated {
+            need: HEADER_LEN,
+            have: payload.len(),
+        });
     }
     let type_word = u16::from_be_bytes([payload[0], payload[1]]);
     // The top 2 bits MUST be zero per RFC 5389 §6.
     if (type_word & 0xc000) != 0 {
-        return None;
+        return Err(ParseError::NotStun);
     }
     let msg_len = u16::from_be_bytes([payload[2], payload[3]]) as usize;
     let cookie = u32::from_be_bytes([payload[4], payload[5], payload[6], payload[7]]);
     if cookie != MAGIC_COOKIE {
-        return None;
+        return Err(ParseError::NotStun);
     }
     if payload.len() < HEADER_LEN + msg_len {
-        return None;
+        return Err(ParseError::Truncated {
+            need: HEADER_LEN + msg_len,
+            have: payload.len(),
+        });
     }
     let class = StunClass::from_type_bits(type_word);
     let method = extract_method(type_word);
@@ -80,7 +122,7 @@ pub fn parse(payload: &[u8]) -> Option<StunMessage> {
         cursor += padded;
     }
 
-    Some(StunMessage {
+    Ok(StunMessage {
         class,
         method,
         transaction_id,
@@ -172,19 +214,19 @@ mod tests {
     fn rejects_wrong_magic_cookie() {
         let mut buf = build_binding_request([0u8; 12], &[]);
         buf[4..8].copy_from_slice(&0xdeadbeefu32.to_be_bytes());
-        assert!(parse(&buf).is_none());
+        assert!(parse(&buf).is_err());
     }
 
     #[test]
     fn rejects_top_two_bits_set() {
         let mut buf = build_binding_request([0u8; 12], &[]);
         buf[0] |= 0xc0;
-        assert!(parse(&buf).is_none());
+        assert!(parse(&buf).is_err());
     }
 
     #[test]
     fn rejects_too_short() {
-        assert!(parse(&[0u8; 19]).is_none());
+        assert!(parse(&[0u8; 19]).is_err());
     }
 
     #[test]

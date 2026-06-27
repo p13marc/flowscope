@@ -1,4 +1,4 @@
-//! NBNS wire-format parser. Returns `None` on any
+//! NBNS wire-format parser. Returns `Err` on any
 //! malformed input — we never panic and never partial-emit.
 
 use std::net::Ipv4Addr;
@@ -8,12 +8,50 @@ use smallvec::SmallVec;
 use super::name::{decode_first_level, split_name_suffix};
 use super::types::{NbnsMessage, NbnsOpcode};
 
-/// Parse a single UDP/137 datagram. Returns `None` when the
+/// Failure mode for [`parse`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ParseError {
+    /// Payload shorter than the 12-byte NBNS header.
+    Truncated { need: usize, have: usize },
+    /// The question section's NetBIOS name encoding diverged
+    /// from the RFC 1002 §4.2 flat 32-byte form.
+    MalformedQuestion,
+}
+
+impl std::fmt::Display for ParseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Truncated { need, have } => {
+                write!(f, "truncated NBNS header: need {need}, have {have}")
+            }
+            Self::MalformedQuestion => f.write_str("malformed NBNS question section"),
+        }
+    }
+}
+
+impl std::error::Error for ParseError {}
+
+impl From<ParseError> for crate::Error {
+    fn from(e: ParseError) -> Self {
+        use crate::error::{ErrorCode, Module};
+        let code = match &e {
+            ParseError::Truncated { .. } => ErrorCode::Truncated,
+            ParseError::MalformedQuestion => ErrorCode::Parse,
+        };
+        crate::Error::with_code(Module::NetbiosNs, code, e.to_string())
+    }
+}
+
+/// Parse a single UDP/137 datagram. Returns `Err` when the
 /// payload is too short for the 12-byte header or the
-/// question/answer encoding diverges from RFC 1002 §4.2.
-pub fn parse(payload: &[u8]) -> Option<NbnsMessage> {
+/// question encoding diverges from RFC 1002 §4.2.
+pub fn parse(payload: &[u8]) -> Result<NbnsMessage, ParseError> {
     if payload.len() < 12 {
-        return None;
+        return Err(ParseError::Truncated {
+            need: 12,
+            have: payload.len(),
+        });
     }
     let transaction_id = u16::from_be_bytes([payload[0], payload[1]]);
     let flags = u16::from_be_bytes([payload[2], payload[3]]);
@@ -26,7 +64,8 @@ pub fn parse(payload: &[u8]) -> Option<NbnsMessage> {
 
     let mut cursor = 12;
     let (queried_name, name_suffix) = if qdcount > 0 {
-        let (decoded, advance) = decode_question(&payload[cursor..])?;
+        let (decoded, advance) =
+            decode_question(&payload[cursor..]).ok_or(ParseError::MalformedQuestion)?;
         cursor += advance;
         let (name, suffix) = split_name_suffix(&decoded);
         if name.is_empty() {
@@ -45,7 +84,7 @@ pub fn parse(payload: &[u8]) -> Option<NbnsMessage> {
         answer_addresses.extend(addrs);
     }
 
-    Some(NbnsMessage {
+    Ok(NbnsMessage {
         transaction_id,
         opcode,
         is_response,
@@ -217,7 +256,7 @@ mod tests {
 
     #[test]
     fn too_short_returns_none() {
-        assert!(parse(&[0u8; 5]).is_none());
+        assert!(parse(&[0u8; 5]).is_err());
     }
 
     #[test]
@@ -261,6 +300,6 @@ mod tests {
         payload[12] = 33;
         // Header survives but question doesn't parse.
         let msg = parse(&payload);
-        assert!(msg.is_none(), "malformed question → reject entire msg");
+        assert!(msg.is_err(), "malformed question → reject entire msg");
     }
 }

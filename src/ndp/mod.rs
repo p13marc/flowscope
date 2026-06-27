@@ -22,5 +22,5 @@
 mod parser;
 mod types;
 
-pub use parser::{NdpParser, parse, parse_icmpv6};
+pub use parser::{NdpParser, ParseError, parse, parse_icmpv6};
 pub use types::{NdpKind, NdpMessage};

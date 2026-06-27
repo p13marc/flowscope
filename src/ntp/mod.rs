@@ -29,5 +29,5 @@ mod parser;
 mod types;
 
 pub use datagram::{NtpParser, PARSER_KIND};
-pub use parser::parse;
+pub use parser::{ParseError, parse};
 pub use types::{NtpLeapIndicator, NtpMessage, NtpMode, NtpTimestamp, REF_TIMESTAMP_EPOCH};

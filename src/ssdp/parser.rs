@@ -9,25 +9,61 @@ const MAX_LINE_LEN: usize = 4096;
 /// carry well under 20.
 const MAX_HEADERS: usize = 32;
 
+/// Failure mode for [`parse`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ParseError {
+    /// No `\r\n` line terminator, an over-long request line,
+    /// or a non-UTF-8 request line.
+    Malformed,
+    /// The request line didn't match any of the three known
+    /// SSDP shapes (`NOTIFY * HTTP/1.1`, `M-SEARCH * HTTP/1.1`,
+    /// `HTTP/1.1 200 OK`).
+    NotSsdp,
+}
+
+impl std::fmt::Display for ParseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Malformed => f.write_str("malformed SSDP request line"),
+            Self::NotSsdp => f.write_str("not an SSDP request line"),
+        }
+    }
+}
+
+impl std::error::Error for ParseError {}
+
+impl From<ParseError> for crate::Error {
+    fn from(e: ParseError) -> Self {
+        use crate::error::{ErrorCode, Module};
+        let code = match &e {
+            ParseError::Malformed | ParseError::NotSsdp => ErrorCode::Parse,
+        };
+        crate::Error::with_code(Module::Ssdp, code, e.to_string())
+    }
+}
+
 /// Parse a UDP/1900 payload as an SSDP message.
 ///
-/// Returns `None` when:
+/// Returns `Err` when:
+/// - No `\r\n` line terminator separates request-line from
+///   headers, the request line is over-long, or it isn't
+///   UTF-8 ([`ParseError::Malformed`]).
 /// - The payload doesn't start with one of the three known
 ///   request-line shapes (`NOTIFY * HTTP/1.1`,
-///   `M-SEARCH * HTTP/1.1`, `HTTP/1.1 200 OK`).
-/// - No `\r\n` line terminator separates request-line from
-///   headers.
+///   `M-SEARCH * HTTP/1.1`, `HTTP/1.1 200 OK`)
+///   ([`ParseError::NotSsdp`]).
 ///
 /// Header malformations don't fail the parse — the offending
 /// header is skipped.
-pub fn parse(payload: &[u8]) -> Option<SsdpMessage> {
+pub fn parse(payload: &[u8]) -> Result<SsdpMessage, ParseError> {
     // Find the end of the request line.
-    let crlf = find_crlf(payload, 0)?;
+    let crlf = find_crlf(payload, 0).ok_or(ParseError::Malformed)?;
     if crlf > MAX_LINE_LEN {
-        return None;
+        return Err(ParseError::Malformed);
     }
-    let request_line = std::str::from_utf8(&payload[..crlf]).ok()?;
-    let kind = classify_request_line(request_line)?;
+    let request_line = std::str::from_utf8(&payload[..crlf]).map_err(|_| ParseError::Malformed)?;
+    let kind = classify_request_line(request_line).ok_or(ParseError::NotSsdp)?;
 
     let mut msg = SsdpMessage {
         kind,
@@ -66,7 +102,7 @@ pub fn parse(payload: &[u8]) -> Option<SsdpMessage> {
         }
     }
 
-    Some(msg)
+    Ok(msg)
 }
 
 /// Find the next `\r\n` at-or-after `from` in `buf`. Returns
@@ -252,9 +288,9 @@ mod tests {
 
     #[test]
     fn rejects_non_ssdp_payload() {
-        assert!(parse(b"GET / HTTP/1.1\r\n\r\n").is_none());
-        assert!(parse(b"random garbage no CRLF").is_none());
-        assert!(parse(b"").is_none());
+        assert!(parse(b"GET / HTTP/1.1\r\n\r\n").is_err());
+        assert!(parse(b"random garbage no CRLF").is_err());
+        assert!(parse(b"").is_err());
     }
 
     #[test]
@@ -295,7 +331,7 @@ mod tests {
         // We don't care about the NTS in this case — what we
         // care is no panic / unbounded loop.
         let m = parse(payload.as_bytes());
-        assert!(m.is_some());
+        assert!(m.is_ok());
     }
 
     #[test]

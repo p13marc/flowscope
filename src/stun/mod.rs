@@ -58,6 +58,6 @@ mod parser;
 mod session;
 mod types;
 
-pub use parser::{MAGIC_COOKIE, parse};
+pub use parser::{MAGIC_COOKIE, ParseError, parse};
 pub use session::{PARSER_KIND, STUN_PORT, StunParser};
 pub use types::{StunClass, StunMessage};

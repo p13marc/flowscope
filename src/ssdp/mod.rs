@@ -50,5 +50,5 @@ mod parser;
 mod types;
 
 pub use datagram::{PARSER_KIND, SSDP_MULTICAST_PORT, SsdpParser};
-pub use parser::parse;
+pub use parser::{ParseError, parse};
 pub use types::{SsdpKind, SsdpMessage};

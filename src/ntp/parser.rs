@@ -7,14 +7,47 @@ use super::types::{NtpLeapIndicator, NtpMessage, NtpMode, NtpTimestamp};
 /// it but aren't surfaced.
 pub const NTP_HEADER_LEN: usize = 48;
 
+/// Failure mode for [`parse`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ParseError {
+    /// Payload shorter than the 48-byte NTP fixed header.
+    Truncated { need: usize, have: usize },
+}
+
+impl std::fmt::Display for ParseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Truncated { need, have } => {
+                write!(f, "truncated NTP header: need {need}, have {have}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for ParseError {}
+
+impl From<ParseError> for crate::Error {
+    fn from(e: ParseError) -> Self {
+        use crate::error::{ErrorCode, Module};
+        let code = match &e {
+            ParseError::Truncated { .. } => ErrorCode::Truncated,
+        };
+        crate::Error::with_code(Module::Ntp, code, e.to_string())
+    }
+}
+
 /// Parse a UDP/123 payload as an NTP message.
 ///
-/// Returns `None` when the payload is shorter than 48 bytes.
+/// Returns `Err` when the payload is shorter than 48 bytes.
 /// Larger payloads parse cleanly — the trailing bytes are
 /// extension fields / authentication, which we don't surface.
-pub fn parse(payload: &[u8]) -> Option<NtpMessage> {
+pub fn parse(payload: &[u8]) -> Result<NtpMessage, ParseError> {
     if payload.len() < NTP_HEADER_LEN {
-        return None;
+        return Err(ParseError::Truncated {
+            need: NTP_HEADER_LEN,
+            have: payload.len(),
+        });
     }
     let b0 = payload[0];
     let leap = NtpLeapIndicator::from_raw((b0 >> 6) & 0x03);
@@ -33,7 +66,7 @@ pub fn parse(payload: &[u8]) -> Option<NtpMessage> {
     let recv_timestamp = decode_timestamp(&payload[32..40]);
     let transmit_timestamp = decode_timestamp(&payload[40..48]);
 
-    Some(NtpMessage {
+    Ok(NtpMessage {
         leap,
         version,
         mode,
@@ -111,8 +144,8 @@ mod tests {
 
     #[test]
     fn rejects_truncated_payload() {
-        assert!(parse(&[]).is_none());
-        assert!(parse(&[0; 47]).is_none());
+        assert!(parse(&[]).is_err());
+        assert!(parse(&[0; 47]).is_err());
     }
 
     #[test]

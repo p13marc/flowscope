@@ -2,10 +2,39 @@
 
 use super::types::{RadiusCodeKind, RadiusMessage};
 
-/// Parse one RADIUS UDP datagram. Returns `None` on
+/// Failure mode for [`parse`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ParseError {
+    /// RADIUS wire decode failure (malformed / truncated /
+    /// non-RADIUS payload).
+    Decode,
+}
+
+impl std::fmt::Display for ParseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Decode => f.write_str("RADIUS decode failed"),
+        }
+    }
+}
+
+impl std::error::Error for ParseError {}
+
+impl From<ParseError> for crate::Error {
+    fn from(e: ParseError) -> Self {
+        use crate::error::{ErrorCode, Module};
+        let code = match &e {
+            ParseError::Decode => ErrorCode::Parse,
+        };
+        crate::Error::with_code(Module::Radius, code, e.to_string())
+    }
+}
+
+/// Parse one RADIUS UDP datagram. Returns a [`ParseError`] on
 /// malformed input.
-pub fn parse(payload: &[u8]) -> Option<RadiusMessage> {
-    let (_rem, data) = radius_parser::parse_radius_data(payload).ok()?;
+pub fn parse(payload: &[u8]) -> Result<RadiusMessage, ParseError> {
+    let (_rem, data) = radius_parser::parse_radius_data(payload).map_err(|_| ParseError::Decode)?;
     let code = RadiusCodeKind::from_raw(data.code.0);
     let mut msg = RadiusMessage {
         code,
@@ -44,7 +73,7 @@ pub fn parse(payload: &[u8]) -> Option<RadiusMessage> {
             }
         }
     }
-    Some(msg)
+    Ok(msg)
 }
 
 #[cfg(test)]
@@ -101,12 +130,12 @@ mod tests {
 
     #[test]
     fn rejects_truncated() {
-        assert!(parse(&[0u8; 5]).is_none());
+        assert!(parse(&[0u8; 5]).is_err());
     }
 
     #[test]
     fn rejects_garbage() {
-        assert!(parse(b"not radius").is_none());
+        assert!(parse(b"not radius").is_err());
     }
 
     #[test]

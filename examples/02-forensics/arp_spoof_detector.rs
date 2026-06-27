@@ -42,7 +42,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     for owned in PcapFlowSource::open(&path)?.views() {
         let owned = owned?;
         let frame = &owned.frame[..];
-        let Some(msg) = arp::parse_frame(frame) else {
+        let Ok(msg) = arp::parse_frame(frame) else {
             continue;
         };
         arp_count += 1;

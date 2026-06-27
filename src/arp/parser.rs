@@ -24,25 +24,74 @@ const IPV4_PTYPE: u16 = 0x0800;
 const HLEN_MAC: u8 = 6;
 const PLEN_IPV4: u8 = 4;
 
+/// Failure mode for the `parse*` functions (issue #85).
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ParseError {
+    /// Buffer shorter than the bytes required at this stage.
+    Truncated {
+        /// Bytes needed.
+        need: usize,
+        /// Bytes available.
+        have: usize,
+    },
+    /// Ethernet frame EtherType wasn't ARP (0x0806).
+    NotArp,
+    /// Hardware / protocol type or address-length fields don't
+    /// match Ethernet + IPv4 (htype != 1, ptype != 0x0800,
+    /// hlen != 6, or plen != 4).
+    UnsupportedHardware,
+}
+
+impl std::fmt::Display for ParseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Truncated { need, have } => {
+                write!(f, "truncated ARP message: need {need}, have {have}")
+            }
+            Self::NotArp => f.write_str("not an ARP frame (EtherType != 0x0806)"),
+            Self::UnsupportedHardware => {
+                f.write_str("unsupported ARP hardware/protocol (not Ethernet/IPv4)")
+            }
+        }
+    }
+}
+
+impl std::error::Error for ParseError {}
+
+impl From<ParseError> for crate::Error {
+    fn from(e: ParseError) -> Self {
+        use crate::error::{ErrorCode, Module};
+        let code = match &e {
+            ParseError::Truncated { .. } => ErrorCode::Truncated,
+            ParseError::NotArp => ErrorCode::Parse,
+            ParseError::UnsupportedHardware => ErrorCode::Unsupported,
+        };
+        crate::Error::with_code(Module::Arp, code, e.to_string())
+    }
+}
+
 /// Parse an ARP payload (no Ethernet header).
 ///
-/// Returns `None` for:
-/// - Truncated payloads (< 28 bytes).
-/// - Non-Ethernet hardware type (htype != 1).
-/// - Non-IPv4 protocol type (ptype != 0x0800).
-/// - Mismatched address lengths (hlen != 6 || plen != 4).
+/// Returns `Err` for:
+/// - Truncated payloads (< 28 bytes) → [`ParseError::Truncated`].
+/// - Non-Ethernet hardware type, non-IPv4 protocol type, or
+///   mismatched address lengths → [`ParseError::UnsupportedHardware`].
 ///
-/// Issue #1 (0.17).
-pub fn parse(payload: &[u8]) -> Option<ArpMessage> {
+/// Issue #1 (0.17). Signature changed to `Result` in issue #85.
+pub fn parse(payload: &[u8]) -> Result<ArpMessage, ParseError> {
     if payload.len() < 28 {
-        return None;
+        return Err(ParseError::Truncated {
+            need: 28,
+            have: payload.len(),
+        });
     }
     let htype = u16::from_be_bytes([payload[0], payload[1]]);
     let ptype = u16::from_be_bytes([payload[2], payload[3]]);
     let hlen = payload[4];
     let plen = payload[5];
     if htype != ETHERNET_HTYPE || ptype != IPV4_PTYPE || hlen != HLEN_MAC || plen != PLEN_IPV4 {
-        return None;
+        return Err(ParseError::UnsupportedHardware);
     }
     let oper = ArpOp::from(u16::from_be_bytes([payload[6], payload[7]]));
 
@@ -54,7 +103,7 @@ pub fn parse(payload: &[u8]) -> Option<ArpMessage> {
     target_mac.copy_from_slice(&payload[18..24]);
     let target_ip = Ipv4Addr::new(payload[24], payload[25], payload[26], payload[27]);
 
-    Some(ArpMessage {
+    Ok(ArpMessage {
         oper,
         sender: MacAddr(sender_mac),
         sender_ip,
@@ -65,28 +114,34 @@ pub fn parse(payload: &[u8]) -> Option<ArpMessage> {
 
 /// Parse an Ethernet frame whose EtherType is ARP (0x0806).
 ///
-/// Returns `None` if the frame is truncated, isn't ARP, or fails
+/// Returns `Err` if the frame is truncated, isn't ARP, or fails
 /// the ARP-specific [`parse`] checks. Handles a single 802.1Q
 /// VLAN tag transparently (most real captures aren't multi-tag
 /// ARP).
 ///
-/// Issue #1 (0.17).
-pub fn parse_frame(frame: &[u8]) -> Option<ArpMessage> {
+/// Issue #1 (0.17). Signature changed to `Result` in issue #85.
+pub fn parse_frame(frame: &[u8]) -> Result<ArpMessage, ParseError> {
     if frame.len() < 14 {
-        return None;
+        return Err(ParseError::Truncated {
+            need: 14,
+            have: frame.len(),
+        });
     }
     let mut offset = 12;
     let mut ethertype = u16::from_be_bytes([frame[offset], frame[offset + 1]]);
     // Strip one 802.1Q VLAN tag — need 4 tag bytes + 2 inner-EtherType bytes.
     if ethertype == 0x8100 {
         if frame.len() < offset + 6 {
-            return None;
+            return Err(ParseError::Truncated {
+                need: offset + 6,
+                have: frame.len(),
+            });
         }
         offset += 4;
         ethertype = u16::from_be_bytes([frame[offset], frame[offset + 1]]);
     }
     if ethertype != ARP_ETHERTYPE {
-        return None;
+        return Err(ParseError::NotArp);
     }
     offset += 2;
     parse(&frame[offset..])
@@ -101,13 +156,13 @@ pub struct ArpParser;
 impl ArpParser {
     /// See [`parse`].
     #[inline]
-    pub fn parse(&self, payload: &[u8]) -> Option<ArpMessage> {
+    pub fn parse(&self, payload: &[u8]) -> Result<ArpMessage, ParseError> {
         parse(payload)
     }
 
     /// See [`parse_frame`].
     #[inline]
-    pub fn parse_frame(&self, frame: &[u8]) -> Option<ArpMessage> {
+    pub fn parse_frame(&self, frame: &[u8]) -> Result<ArpMessage, ParseError> {
         parse_frame(frame)
     }
 }
@@ -195,9 +250,9 @@ mod tests {
 
     #[test]
     fn rejects_truncated() {
-        assert!(parse(&[]).is_none());
-        assert!(parse(&[0; 10]).is_none());
-        assert!(parse(&[0; 27]).is_none());
+        assert!(parse(&[]).is_err());
+        assert!(parse(&[0; 10]).is_err());
+        assert!(parse(&[0; 27]).is_err());
     }
 
     #[test]
@@ -205,7 +260,7 @@ mod tests {
         let mut p = build_payload(1, [0xaa; 6], [0; 4], [0xbb; 6], [0; 4]);
         p[0] = 0x00;
         p[1] = 0x05; // some non-Ethernet htype
-        assert!(parse(&p).is_none());
+        assert!(parse(&p).is_err());
     }
 
     #[test]
@@ -213,21 +268,21 @@ mod tests {
         let mut p = build_payload(1, [0xaa; 6], [0; 4], [0xbb; 6], [0; 4]);
         p[2] = 0x86;
         p[3] = 0xdd; // IPv6 ptype
-        assert!(parse(&p).is_none());
+        assert!(parse(&p).is_err());
     }
 
     #[test]
     fn rejects_mismatched_hlen() {
         let mut p = build_payload(1, [0xaa; 6], [0; 4], [0xbb; 6], [0; 4]);
         p[4] = 8; // wrong hlen
-        assert!(parse(&p).is_none());
+        assert!(parse(&p).is_err());
     }
 
     #[test]
     fn rejects_mismatched_plen() {
         let mut p = build_payload(1, [0xaa; 6], [0; 4], [0xbb; 6], [0; 4]);
         p[5] = 16; // wrong plen
-        assert!(parse(&p).is_none());
+        assert!(parse(&p).is_err());
     }
 
     #[test]
@@ -245,7 +300,7 @@ mod tests {
         // Flip EtherType to IPv4.
         frame[12] = 0x08;
         frame[13] = 0x00;
-        assert!(parse_frame(&frame).is_none());
+        assert!(parse_frame(&frame).is_err());
     }
 
     #[test]
@@ -267,8 +322,8 @@ mod tests {
         let p = build_payload(1, [0xaa; 6], [0; 4], [0xbb; 6], [0; 4]);
         let frame = build_frame(&p);
         let parser = ArpParser;
-        assert!(parser.parse(&p).is_some());
-        assert!(parser.parse_frame(&frame).is_some());
+        assert!(parser.parse(&p).is_ok());
+        assert!(parser.parse_frame(&frame).is_ok());
     }
 
     #[test]
@@ -287,7 +342,7 @@ mod tests {
         frame.extend_from_slice(&[0x00, 0x64]); // inner TCI
         frame.extend_from_slice(&[0x08, 0x06]); // EtherType = ARP
         frame.extend_from_slice(&p);
-        assert!(parse_frame(&frame).is_none());
+        assert!(parse_frame(&frame).is_err());
     }
 
     #[test]
@@ -301,6 +356,6 @@ mod tests {
         frame.extend_from_slice(&[0x00, 0x64]); // TCI
         frame.extend_from_slice(&[0x08, 0x00]); // EtherType = IPv4
         frame.extend_from_slice(&[0u8; 28]); // garbage payload
-        assert!(parse_frame(&frame).is_none());
+        assert!(parse_frame(&frame).is_err());
     }
 }

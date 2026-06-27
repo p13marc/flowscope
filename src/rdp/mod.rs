@@ -46,6 +46,6 @@ mod parser;
 mod session;
 mod types;
 
-pub use parser::parse_frame;
+pub use parser::{ParseError, parse_frame};
 pub use session::{PARSER_KIND, RDP_PORT, RdpParser};
 pub use types::{RdpFailureCode, RdpMessage, RdpProtocols};

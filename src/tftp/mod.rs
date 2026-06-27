@@ -36,5 +36,5 @@ mod parser;
 mod types;
 
 pub use datagram::{PARSER_KIND, TFTP_SERVER_PORT, TftpParser};
-pub use parser::parse;
+pub use parser::{ParseError, parse};
 pub use types::{TftpErrorCode, TftpMessage, TftpMode, TftpOpcode};

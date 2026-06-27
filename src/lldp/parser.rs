@@ -40,32 +40,78 @@ const MAX_TLVS: usize = 256;
 const MAX_MGMT_ADDRESSES: usize = 4;
 const MAX_VENDOR_TLVS: usize = 8;
 
+/// Failure mode for the `parse*` functions (issue #85).
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ParseError {
+    /// Buffer shorter than the bytes required at this stage.
+    Truncated {
+        /// Bytes needed.
+        need: usize,
+        /// Bytes available.
+        have: usize,
+    },
+    /// Ethernet frame isn't an LLDPDU (dst MAC not an IEEE LLDP
+    /// multicast, or EtherType != 0x88cc).
+    NotLldp,
+    /// A mandatory TLV (chassis-ID → port-ID → TTL) was missing,
+    /// out of order, or malformed.
+    MalformedTlv,
+}
+
+impl std::fmt::Display for ParseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Truncated { need, have } => {
+                write!(f, "truncated LLDP frame: need {need}, have {have}")
+            }
+            Self::NotLldp => f.write_str("not an LLDP frame (dst MAC / EtherType mismatch)"),
+            Self::MalformedTlv => f.write_str("malformed or misordered mandatory LLDP TLV"),
+        }
+    }
+}
+
+impl std::error::Error for ParseError {}
+
+impl From<ParseError> for crate::Error {
+    fn from(e: ParseError) -> Self {
+        use crate::error::{ErrorCode, Module};
+        let code = match &e {
+            ParseError::Truncated { .. } => ErrorCode::Truncated,
+            ParseError::NotLldp | ParseError::MalformedTlv => ErrorCode::Parse,
+        };
+        crate::Error::with_code(Module::Lldp, code, e.to_string())
+    }
+}
+
 /// Parse an LLDP payload (no Ethernet header).
 ///
-/// Returns `None` when:
+/// Returns `Err` when:
 /// - The mandatory TLV ordering (chassis-ID → port-ID → TTL)
-///   is violated.
-/// - A TLV header would read off the end of the buffer.
-/// - The chassis-ID, port-ID, or TTL TLVs are malformed.
+///   is violated, a TLV header would read off the end of the
+///   buffer, or the chassis-ID, port-ID, or TTL TLVs are
+///   malformed → [`ParseError::MalformedTlv`].
 ///
 /// Optional TLV malformations (truncated mgmt-address, invalid
 /// UTF-8 in a description field) skip the offending TLV rather
 /// than failing the whole parse — the mandatory triple is
 /// already useful on its own.
-pub fn parse(payload: &[u8]) -> Option<LldpMessage> {
+///
+/// Signature changed to `Result` in issue #85.
+pub fn parse(payload: &[u8]) -> Result<LldpMessage, ParseError> {
     let mut walker = TlvWalker { buf: payload };
 
-    let chassis_id = match walker.next()? {
-        (TLV_CHASSIS_ID, value) => parse_chassis_id(value)?,
-        _ => return None,
+    let chassis_id = match walker.next() {
+        Some((TLV_CHASSIS_ID, value)) => parse_chassis_id(value).ok_or(ParseError::MalformedTlv)?,
+        _ => return Err(ParseError::MalformedTlv),
     };
-    let port_id = match walker.next()? {
-        (TLV_PORT_ID, value) => parse_port_id(value)?,
-        _ => return None,
+    let port_id = match walker.next() {
+        Some((TLV_PORT_ID, value)) => parse_port_id(value).ok_or(ParseError::MalformedTlv)?,
+        _ => return Err(ParseError::MalformedTlv),
     };
-    let ttl_seconds = match walker.next()? {
-        (TLV_TTL, value) if value.len() == 2 => u16::from_be_bytes([value[0], value[1]]),
-        _ => return None,
+    let ttl_seconds = match walker.next() {
+        Some((TLV_TTL, value)) if value.len() == 2 => u16::from_be_bytes([value[0], value[1]]),
+        _ => return Err(ParseError::MalformedTlv),
     };
 
     let mut msg = LldpMessage {
@@ -132,36 +178,44 @@ pub fn parse(payload: &[u8]) -> Option<LldpMessage> {
         }
     }
 
-    Some(msg)
+    Ok(msg)
 }
 
 /// Parse an Ethernet frame whose EtherType is 0x88cc (LLDP),
 /// destined for an IEEE-reserved LLDP multicast.
 ///
-/// Strips one 802.1Q VLAN tag transparently. Returns `None`
+/// Strips one 802.1Q VLAN tag transparently. Returns `Err`
 /// when the frame isn't LLDP-destined, isn't 0x88cc, or fails
 /// the [`parse`] checks.
-pub fn parse_frame(frame: &[u8]) -> Option<LldpMessage> {
+///
+/// Signature changed to `Result` in issue #85.
+pub fn parse_frame(frame: &[u8]) -> Result<LldpMessage, ParseError> {
     if frame.len() < 14 {
-        return None;
+        return Err(ParseError::Truncated {
+            need: 14,
+            have: frame.len(),
+        });
     }
     let mut dst = [0u8; 6];
     dst.copy_from_slice(&frame[..6]);
     if !LLDP_DST_MACS.contains(&dst) {
-        return None;
+        return Err(ParseError::NotLldp);
     }
     let mut offset = 12;
     let mut ethertype = u16::from_be_bytes([frame[offset], frame[offset + 1]]);
     if ethertype == 0x8100 {
         // Strip one 802.1Q tag: need 4 tag bytes + 2 inner-EtherType bytes.
         if frame.len() < offset + 6 {
-            return None;
+            return Err(ParseError::Truncated {
+                need: offset + 6,
+                have: frame.len(),
+            });
         }
         offset += 4;
         ethertype = u16::from_be_bytes([frame[offset], frame[offset + 1]]);
     }
     if ethertype != LLDP_ETHERTYPE {
-        return None;
+        return Err(ParseError::NotLldp);
     }
     offset += 2;
     parse(&frame[offset..])
@@ -175,13 +229,13 @@ pub struct LldpParser;
 impl LldpParser {
     /// See [`parse`].
     #[inline]
-    pub fn parse(&self, payload: &[u8]) -> Option<LldpMessage> {
+    pub fn parse(&self, payload: &[u8]) -> Result<LldpMessage, ParseError> {
         parse(payload)
     }
 
     /// See [`parse_frame`].
     #[inline]
-    pub fn parse_frame(&self, frame: &[u8]) -> Option<LldpMessage> {
+    pub fn parse_frame(&self, frame: &[u8]) -> Result<LldpMessage, ParseError> {
         parse_frame(frame)
     }
 }
@@ -451,16 +505,16 @@ mod tests {
         p.extend(tlv(TLV_CHASSIS_ID, &[7, b'a']));
         p.extend(tlv(TLV_TTL, &120u16.to_be_bytes()));
         p.extend(end_tlv());
-        assert!(parse(&p).is_none());
+        assert!(parse(&p).is_err());
     }
 
     #[test]
     fn rejects_truncated_payload() {
-        assert!(parse(&[]).is_none());
-        assert!(parse(&[0x02]).is_none());
+        assert!(parse(&[]).is_err());
+        assert!(parse(&[0x02]).is_err());
         // Header claims 100 bytes of value but no value follows.
         let header = ((TLV_CHASSIS_ID as u16) << 9) | 100;
-        assert!(parse(&header.to_be_bytes()).is_none());
+        assert!(parse(&header.to_be_bytes()).is_err());
     }
 
     #[test]
@@ -509,7 +563,7 @@ mod tests {
         frame.extend_from_slice(&[0xaa; 6]);
         frame.extend_from_slice(&LLDP_ETHERTYPE.to_be_bytes());
         frame.extend_from_slice(&p);
-        assert!(parse_frame(&frame).is_none());
+        assert!(parse_frame(&frame).is_err());
     }
 
     #[test]
@@ -523,7 +577,7 @@ mod tests {
         frame.extend_from_slice(&[0x00, 0x64]); // TCI
         frame.extend_from_slice(&LLDP_ETHERTYPE.to_be_bytes());
         frame.extend_from_slice(&p);
-        assert!(parse_frame(&frame).is_some());
+        assert!(parse_frame(&frame).is_ok());
     }
 
     #[test]
@@ -569,7 +623,7 @@ mod tests {
         frame.extend_from_slice(&LLDP_ETHERTYPE.to_be_bytes());
         frame.extend_from_slice(&p);
         let parser = LldpParser;
-        assert!(parser.parse(&p).is_some());
-        assert!(parser.parse_frame(&frame).is_some());
+        assert!(parser.parse(&p).is_ok());
+        assert!(parser.parse_frame(&frame).is_ok());
     }
 }
