@@ -89,6 +89,9 @@ jobs:
           - "quic"              # 0.18: QUIC Initial parser (issue #3)
           - "community-id"      # 0.19: Corelight Community ID v1 flow hashing (issue #76)
           - "community-id,emit-eve"  # 0.19: community_id in the EVE writer
+          - "ja4plus"           # 0.19: JA4L latency fingerprint (issue #77)
+          - "ja4plus,tcp_fingerprint"  # 0.19: JA4T/JA4TS TCP fingerprint (issue #77)
+          - "ja4plus,ssh"       # 0.19: JA4SSH session fingerprint (issue #77)
     steps:
       - uses: actions/checkout@v4
       - name: Build (--no-default-features --features "${{ matrix.features }}")

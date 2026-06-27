@@ -106,6 +106,9 @@ pub mod anomaly_fields;
 // and need no crypto, so they live in `anomaly_fields`, not here.
 #[cfg(feature = "community-id")]
 pub mod community_id;
+// Issue #77: JA4L / JA4LS latency fingerprint (FoxIO-licensed JA4+).
+#[cfg(feature = "ja4plus")]
+pub mod ja4l;
 #[cfg(feature = "tracker")]
 pub use anomaly::{DetectorScore, OwnedAnomaly};
 #[cfg(feature = "tracker")]

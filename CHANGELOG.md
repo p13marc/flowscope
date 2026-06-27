@@ -34,8 +34,20 @@ Additive over 0.19. Pure, no-async — fits the runtime-free lib rule.
   the data-link header CRC is now checked (DNP3 CRC-16, verified against
   the IEEE 1815 spec vector). Per-block user-data CRCs stay unverified
   by design.
-- **CI**: `cargo-semver-checks` pre-1.0 stability gate + `community-id`
-  feature-matrix entries (#78).
+- **JA4 suite completion** (#77) — FoxIO-licensed, behind `ja4plus`:
+  - **JA4T / JA4TS** (`tcp_fingerprint::{ja4t, ja4t_from_tcp, ja4t_from_parts}`,
+    needs `tcp_fingerprint`) — passive TCP-stack fingerprint from a SYN /
+    SYN-ACK.
+  - **JA4L / JA4LS** (`ja4l::{ja4l, ja4l_client, ja4l_server}`) — handshake
+    latency / "light distance" fingerprint.
+  - **JA4SSH** (`ssh::Ja4sshAccumulator`, needs `ssh`) — rolling SSH-session
+    fingerprint over packet sizes + ACK patterns (200-packet window).
+
+  All three are **golden-tested against FoxIO's own Zeek test baselines** and
+  bit-faithful to the reference (`zeek/ja4{t,l,ssh}/main.zeek`). The
+  license-clean `tcp_fingerprint` (p0f-style) remains the non-FoxIO option.
+- **CI**: `cargo-semver-checks` pre-1.0 stability gate + `community-id` /
+  `ja4plus` feature-matrix entries (#78).
 
 ## 0.19.0 — RITA-style robust beacon detector
 
