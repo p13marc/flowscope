@@ -1,5 +1,42 @@
 # Changelog
 
+## Unreleased — NSM primitives (netring 0.27 support)
+
+Additive over 0.19. Pure, no-async — fits the runtime-free lib rule.
+
+- **`detect::IocSet`** (#72) — typed threat-intel membership over
+  `{ipv4, ipv6, domain, url, sha256, md5, ja3, ja4}` with optional
+  per-entry reputation (Suricata `datarep`) and a feed-file loader.
+  Domains match subdomain-aware (Zeek `Intel::DOMAIN`); `with_capacity`
+  bounds memory.
+- **`detect::FlowRisk`** + `RiskSeverity` (#73) — an nDPI-style risk
+  bitset (self-signed/expired/weak/obsolete TLS, SNI↔DNS mismatch, DGA,
+  cleartext creds, suspicious JA4, …) with an aggregate `score()`,
+  `max_severity()`, and stable slugs. Native model re-implementation,
+  not an FFI binding.
+- **Community ID v1 flow hashing** (#76, folds #70) — behind the new
+  `community-id` feature (SHA-1 + base64). `FiveTupleKey::community_id()`
+  / `KeyFields::community_id()`, emitted as `community_id` in the EVE
+  writer, for cross-tool SIEM pivots (Zeek/Suricata/Security Onion).
+  Golden-tested against the published spec vectors.
+- **Stable shard hash** (#76, folds #70) — always-on (no crypto)
+  `FiveTupleKey::stable_hash()` / `shard_index(n)` and the generic
+  `KeyFields` equivalents: seed-fixed, process-stable, direction-
+  invariant — both legs of a flow map to the same shard. The EVE
+  `flow_hash` now shares this helper (value unchanged). `docs/sharded.md`
+  and the `sharded_capture` example updated to use it.
+- **`correlate::CountMinSketch` + `BloomFilter`** (#75) — mergeable
+  streaming sketches alongside `HyperLogLog` (heavy-hitter frequency;
+  seen-before membership). Both `Mergeable` for sharded union.
+- **`correlate::BitStore`** (#74, partial) — Suricata `xbits`/`hostbits`
+  semantics: per-key named flags + values with per-entry TTL.
+- **DNP3 header CRC validation** (#80) — `DnpMessage::header_crc_valid`;
+  the data-link header CRC is now checked (DNP3 CRC-16, verified against
+  the IEEE 1815 spec vector). Per-block user-data CRCs stay unverified
+  by design.
+- **CI**: `cargo-semver-checks` pre-1.0 stability gate + `community-id`
+  feature-matrix entries (#78).
+
 ## 0.19.0 — RITA-style robust beacon detector
 
 Additive over 0.18.
