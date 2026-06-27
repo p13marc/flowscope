@@ -38,12 +38,18 @@
 //!
 //! Issue #7 (0.18).
 
+// JA4SSH — FoxIO-licensed JA4+ SSH-session fingerprint. Opt-in via the
+// `ja4plus` feature (issue #77).
+#[cfg(feature = "ja4plus")]
+mod ja4ssh;
 mod parser;
 #[cfg(feature = "pcap")]
 mod pcap_iter;
 mod session;
 mod types;
 
+#[cfg(feature = "ja4plus")]
+pub use ja4ssh::{DEFAULT_PACKET_COUNT, Ja4sshAccumulator};
 pub use parser::{
     compute_hassh, kexinit_message_byte, parse_kexinit_payload, version_banner_prefix,
 };

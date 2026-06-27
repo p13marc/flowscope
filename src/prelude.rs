@@ -138,12 +138,27 @@ pub use crate::correlate::FlowStateMap;
 pub use crate::correlate::{
     BurstDetector, Ewma, KeyIndexed, RollingRate, TimeBucketedCounter, TimeBucketedSet, TopK,
 };
+// Issue #75: mergeable streaming sketches — siblings of
+// `HyperLogLog`. The whole `correlate` module is `tracker`-gated,
+// so these re-exports must be too.
+#[cfg(feature = "tracker")]
+pub use crate::correlate::{BloomFilter, CountMinSketch};
+// Issue #74: xbits/hostbits-style named-bit TTL store.
+#[cfg(feature = "tracker")]
+pub use crate::correlate::BitStore;
 // Issue #1 (0.17): NeighborTable IP→link-layer binding tracker.
 #[cfg(feature = "tracker")]
 pub use crate::correlate::{NeighborBinding, NeighborEvent, NeighborTable};
 // Issue #4 (0.17): behavioural-fingerprint primitives.
 #[cfg(feature = "fingerprint")]
 pub use crate::detect::fingerprint::{FingerprintBuilder, FlowFingerprint};
+// Issue #72: threat-intel indicator membership set.
+pub use crate::detect::{IocKind, IocMatch, IocSet};
+// Issue #73: nDPI-style flow-risk taxonomy.
+pub use crate::detect::{FlowRisk, RiskSeverity};
+// Issue #83: analysis composition layer — enriched flow records.
+#[cfg(feature = "analysis")]
+pub use crate::analysis::{AnalyzedFlow, FlowAnalyzer, L7Summary};
 /// The typed [`crate::driver::Driver`] +
 /// [`crate::driver::SlotHandle`] shape (plan 121).
 #[cfg(all(feature = "extractors", feature = "reassembler", feature = "session"))]

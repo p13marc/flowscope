@@ -100,6 +100,15 @@ pub mod layers;
 #[cfg(feature = "tracker")]
 pub mod anomaly;
 pub mod anomaly_fields;
+// Issue #76: Corelight Community ID v1 flow hashing. Gated by the
+// `community-id` feature (pulls SHA-1 + base64). The seed-fixed
+// `stable_hash` / `shard_index` helpers on `KeyFields` are always-on
+// and need no crypto, so they live in `anomaly_fields`, not here.
+#[cfg(feature = "community-id")]
+pub mod community_id;
+// Issue #77: JA4L / JA4LS latency fingerprint (FoxIO-licensed JA4+).
+#[cfg(feature = "ja4plus")]
+pub mod ja4l;
 #[cfg(feature = "tracker")]
 pub use anomaly::{DetectorScore, OwnedAnomaly};
 #[cfg(feature = "tracker")]
@@ -294,6 +303,12 @@ pub use dnp3::{
 pub mod asset;
 #[cfg(feature = "asset")]
 pub use asset::{Asset, AssetCapabilities, AssetFingerprints, AssetSourceSet, Inventory};
+// Issue #83: analysis composition layer — wires detect/risk/IOC
+// to the flow lifecycle, producing enriched `AnalyzedFlow` records.
+#[cfg(feature = "analysis")]
+pub mod analysis;
+#[cfg(feature = "analysis")]
+pub use analysis::{AnalyzedFlow, FlowAnalyzer, L7Summary};
 // Issue #9 (0.18): p0f-style passive TCP/IP fingerprint.
 // License-clean alternative to FoxIO's JA4T / JA4TS.
 #[cfg(feature = "tcp_fingerprint")]

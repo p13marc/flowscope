@@ -17,10 +17,11 @@
 //! `"tls"`) are out of scope for 0.12 — add per-protocol EVE
 //! shapes when a consumer asks.
 
-use std::{
-    io::{self, Write},
-    net::IpAddr,
-};
+use std::io::{self, Write};
+// Only the ipfix-gated `flow_record_hash` names `IpAddr` directly;
+// the `KeyFields`-based path works through `to_string()`.
+#[cfg(feature = "ipfix")]
+use std::net::IpAddr;
 
 use serde_json::json;
 
@@ -301,6 +302,135 @@ where
         self.write_line(&obj)
     }
 
+    /// Emit an enriched [`crate::AnalyzedFlow`] as an EVE `flow`
+    /// event — the SIEM-ready single-pass record. Carries the
+    /// standard 5-tuple (+ `community_id` / `flow_hash`), the flow
+    /// counters, the observed L7 facts (`tls` / `http` / `dns`
+    /// objects), and a `flowscope` extension object with the
+    /// computed risk (slug array + aggregate `score` + `severity`)
+    /// and any threat-intel `ioc` hits. `flow.alerted` reflects
+    /// [`crate::AnalyzedFlow::is_clean`].
+    ///
+    /// Issue #83. Available with the `analysis` feature.
+    #[cfg(feature = "analysis")]
+    pub fn write_analyzed_flow<K>(&mut self, af: &crate::AnalyzedFlow<K>) -> io::Result<()>
+    where
+        K: KeyFields,
+    {
+        let stats = &af.stats;
+        self.ts_buf.clear();
+        let _ = stats.last_seen.write_iso8601(&mut self.ts_buf);
+        let end_ts = self.ts_buf.clone();
+        self.ts_buf.clear();
+        let _ = stats.started.write_iso8601(&mut self.ts_buf);
+        let start_ts = self.ts_buf.clone();
+
+        let flow_id = self.next_flow_id();
+        let mut obj = serde_json::Map::with_capacity(12);
+        obj.insert("timestamp".into(), json!(end_ts));
+        obj.insert("flow_id".into(), json!(flow_id));
+        obj.insert("event_type".into(), json!("flow"));
+        if !self.options.in_iface.is_empty() {
+            obj.insert("in_iface".into(), json!(self.options.in_iface));
+        }
+        insert_5tuple(&mut obj, &af.key);
+        // The detected app proto is more accurate than the port-based
+        // label insert_5tuple derives — prefer it when observed.
+        if let Some(ap) = af.l7.app_proto {
+            obj.insert("app_proto".into(), json!(ap));
+        }
+
+        obj.insert(
+            "flow".into(),
+            json!({
+                "pkts_toserver": stats.packets_initiator,
+                "pkts_toclient": stats.packets_responder,
+                "bytes_toserver": stats.bytes_initiator,
+                "bytes_toclient": stats.bytes_responder,
+                "start": start_ts,
+                "end": end_ts,
+                "age": stats.duration().as_secs(),
+                "alerted": !af.is_clean(),
+            }),
+        );
+
+        // L7 app-layer objects (Suricata-shaped where it maps cleanly).
+        let l7 = &af.l7;
+        if l7.ja3.is_some()
+            || l7.ja4.is_some()
+            || l7.tls_version.is_some()
+            || l7.tls_cipher.is_some()
+        {
+            let mut tls = serde_json::Map::with_capacity(5);
+            if let Some(sni) = &l7.server_name {
+                tls.insert("sni".into(), json!(sni));
+            }
+            if let Some(j) = &l7.ja3 {
+                tls.insert("ja3".into(), json!({ "hash": j }));
+            }
+            if let Some(j) = &l7.ja4 {
+                tls.insert("ja4".into(), json!(j));
+            }
+            if let Some(v) = l7.tls_version {
+                tls.insert("version_raw".into(), json!(format!("0x{v:04x}")));
+            }
+            if let Some(c) = l7.tls_cipher {
+                tls.insert("cipher_raw".into(), json!(format!("0x{c:04x}")));
+            }
+            obj.insert("tls".into(), serde_json::Value::Object(tls));
+        }
+        if l7.http_method.is_some() || l7.http_uri.is_some() || l7.user_agent.is_some() {
+            let mut http = serde_json::Map::with_capacity(4);
+            if let Some(h) = &l7.server_name {
+                http.insert("hostname".into(), json!(h));
+            }
+            if let Some(m) = &l7.http_method {
+                http.insert("http_method".into(), json!(m));
+            }
+            if let Some(u) = &l7.http_uri {
+                http.insert("url".into(), json!(u));
+            }
+            if let Some(ua) = &l7.user_agent {
+                http.insert("http_user_agent".into(), json!(ua));
+            }
+            obj.insert("http".into(), serde_json::Value::Object(http));
+        }
+        if !l7.dns_queries.is_empty() {
+            obj.insert("dns".into(), json!({ "queries": l7.dns_queries }));
+        }
+
+        // The `flowscope` enrichment extension: risk + IOC hits.
+        let mut fs = serde_json::Map::with_capacity(4);
+        if !af.risk.is_empty() {
+            let slugs: Vec<&str> = af.risk.as_slugs().collect();
+            fs.insert("risk".into(), json!(slugs));
+            fs.insert("risk_score".into(), json!(af.score()));
+            if let Some(sev) = af.severity() {
+                fs.insert("risk_severity".into(), json!(sev.as_str()));
+            }
+        }
+        if !af.ioc_hits.is_empty() {
+            let hits: Vec<serde_json::Value> = af
+                .ioc_hits
+                .iter()
+                .map(|m| {
+                    json!({
+                        "kind": m.kind.as_str(),
+                        "value": m.value,
+                        "reputation": m.reputation,
+                        "source": m.source,
+                    })
+                })
+                .collect();
+            fs.insert("ioc".into(), json!(hits));
+        }
+        if !fs.is_empty() {
+            obj.insert("flowscope".into(), serde_json::Value::Object(fs));
+        }
+
+        self.write_line(&obj)
+    }
+
     // ── Per-variant emit ────────────────────────────────────
 
     fn write_anomaly<K>(
@@ -563,65 +693,21 @@ fn insert_5tuple<K: KeyFields>(obj: &mut serde_json::Map<String, serde_json::Val
     if let Some(h) = flow_hash(key) {
         obj.insert("flow_hash".into(), json!(format!("{h:016x}")));
     }
+    // Cross-tool Community ID (Zeek / Suricata / Security Onion
+    // pivot). `None` unless built with the `community-id` feature.
+    if let Some(cid) = key.community_id() {
+        obj.insert("community_id".into(), json!(cid));
+    }
 }
 
 /// Stable 64-bit hash over the canonical 5-tuple. Returns
 /// `None` if any of (proto, src ip/port, dest ip/port) is
 /// unknown.
 ///
-/// Algorithm: FNV-1a over
-/// `proto.as_bytes() || lo_ip.octets() || lo_port_be ||
-/// hi_ip.octets() || hi_port_be`, where `(lo_ip, lo_port)` is
-/// the lexicographically smaller endpoint. Deterministic
-/// across runs and across direction (A→B and B→A produce the
-/// same hash). 64-bit FNV at flowscope scales: collision
-/// probability ~5e-8 at 1 M flows.
+/// Delegates to [`crate::KeyFields::stable_hash`] (FNV-1a) so the
+/// EVE `flow_hash` and the public `stable_hash()` always agree.
 fn flow_hash<K: KeyFields>(key: &K) -> Option<u64> {
-    let proto = key.proto_str()?;
-    let src_ip = key.src_ip()?;
-    let src_port = key.src_port()?;
-    let dest_ip = key.dest_ip()?;
-    let dest_port = key.dest_port()?;
-
-    let (lo_ip, lo_port, hi_ip, hi_port) = if (src_ip, src_port) <= (dest_ip, dest_port) {
-        (src_ip, src_port, dest_ip, dest_port)
-    } else {
-        (dest_ip, dest_port, src_ip, src_port)
-    };
-
-    const FNV_OFFSET: u64 = 0xcbf29ce484222325;
-    const FNV_PRIME: u64 = 0x100000001b3;
-    let mut h = FNV_OFFSET;
-    fn feed(b: u8, h: &mut u64) {
-        *h ^= b as u64;
-        *h = h.wrapping_mul(FNV_PRIME);
-    }
-    for &b in proto.as_bytes() {
-        feed(b, &mut h);
-    }
-    fn feed_ip(ip: IpAddr, h: &mut u64) {
-        match ip {
-            IpAddr::V4(v4) => {
-                for &b in &v4.octets() {
-                    feed(b, h);
-                }
-            }
-            IpAddr::V6(v6) => {
-                for &b in &v6.octets() {
-                    feed(b, h);
-                }
-            }
-        }
-    }
-    fn feed_port(p: u16, h: &mut u64) {
-        feed((p >> 8) as u8, h);
-        feed((p & 0xff) as u8, h);
-    }
-    feed_ip(lo_ip, &mut h);
-    feed_port(lo_port, &mut h);
-    feed_ip(hi_ip, &mut h);
-    feed_port(hi_port, &mut h);
-    Some(h)
+    key.stable_hash()
 }
 
 #[cfg(test)]
@@ -651,5 +737,59 @@ mod tests {
         };
         assert_eq!(flow_hash(&a), flow_hash(&b));
         assert!(flow_hash(&a).is_some());
+    }
+
+    #[cfg(all(feature = "analysis", feature = "extractors"))]
+    #[test]
+    fn analyzed_flow_emits_enriched_flow_event() {
+        use crate::analysis::L7Summary;
+        use crate::detect::{FlowRisk, IocKind, IocMatch};
+        use crate::{AnalyzedFlow, FlowStats, L4Proto, extract::FiveTupleKey};
+
+        let key = FiveTupleKey {
+            proto: L4Proto::Tcp,
+            a: "10.0.0.1:50000".parse().unwrap(),
+            b: "93.184.216.34:443".parse().unwrap(),
+        };
+        let l7 = L7Summary {
+            app_proto: Some("tls"),
+            server_name: Some("evil.example".into()),
+            ja4: Some("t13d1516h2_x_y".into()),
+            tls_version: Some(0x0301),
+            ..Default::default()
+        };
+        let af = AnalyzedFlow {
+            key,
+            stats: FlowStats::default(),
+            l7,
+            risk: FlowRisk::TLS_OBSOLETE_VERSION | FlowRisk::SUSPICIOUS_JA4,
+            ioc_hits: vec![IocMatch {
+                kind: IocKind::Ja4,
+                value: "t13d1516h2_x_y".into(),
+                reputation: Some(95),
+                source: Some("intel".into()),
+            }],
+        };
+
+        let mut buf = Vec::new();
+        EveJsonWriter::new(&mut buf)
+            .write_analyzed_flow(&af)
+            .unwrap();
+        let v: serde_json::Value = serde_json::from_slice(&buf).unwrap();
+
+        assert_eq!(v["event_type"], "flow");
+        assert_eq!(v["app_proto"], "tls");
+        assert_eq!(v["flow"]["alerted"], true);
+        assert_eq!(v["tls"]["sni"], "evil.example");
+        assert_eq!(v["tls"]["ja4"], "t13d1516h2_x_y");
+        assert_eq!(v["tls"]["version_raw"], "0x0301");
+        let risks = v["flowscope"]["risk"].as_array().unwrap();
+        assert!(risks.iter().any(|s| s == "tls_obsolete_version"));
+        assert!(risks.iter().any(|s| s == "suspicious_ja4"));
+        assert_eq!(v["flowscope"]["risk_severity"], "high");
+        assert_eq!(v["flowscope"]["ioc"][0]["kind"], "ja4");
+        assert_eq!(v["flowscope"]["ioc"][0]["source"], "intel");
+        // Every line is valid JSON ending in newline.
+        assert!(buf.ends_with(b"\n"));
     }
 }

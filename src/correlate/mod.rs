@@ -50,8 +50,10 @@
 //! assert!(q.get(&0x1234, Timestamp::new(10, 0)).is_none());
 //! ```
 
+mod bloom;
 mod bucketed;
 mod burst;
+mod count_min;
 mod ewma;
 mod hyperloglog;
 mod mergeable;
@@ -68,9 +70,12 @@ mod sequence;
 mod set;
 mod topk;
 mod welford;
+mod xbits;
 
+pub use bloom::BloomFilter;
 pub use bucketed::TimeBucketedCounter;
 pub use burst::{BurstDetector, BurstHit};
+pub use count_min::CountMinSketch;
 pub use ewma::Ewma;
 #[cfg(feature = "extractors")]
 pub use flow_state_map::FlowStateMap;
@@ -85,3 +90,4 @@ pub use sequence::{KeylessSequencePattern, SequencePattern};
 pub use set::TimeBucketedSet;
 pub use topk::TopK;
 pub use welford::WelfordStats;
+pub use xbits::BitStore;

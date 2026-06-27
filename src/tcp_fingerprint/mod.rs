@@ -38,3 +38,10 @@ mod fingerprint;
 pub use fingerprint::{
     Quirks, TcpDirection, TcpFingerprint, fingerprint_from_layers, guess_initial_ttl,
 };
+
+// JA4T / JA4TS — FoxIO-licensed JA4+ TCP fingerprint. Opt-in via the
+// `ja4plus` feature (issue #77).
+#[cfg(feature = "ja4plus")]
+mod ja4t;
+#[cfg(feature = "ja4plus")]
+pub use ja4t::{Ja4tParts, ja4t, ja4t_from_parts, ja4t_from_tcp};

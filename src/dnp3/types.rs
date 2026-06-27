@@ -23,6 +23,17 @@ pub struct DnpMessage {
     /// Application-layer payload, when the first user-data
     /// block contains a parsable application frame.
     pub application: Option<DnpApplication>,
+    /// Whether the data-link **header CRC** (bytes 8..10,
+    /// covering the 8-byte link header) validated against the
+    /// DNP3 CRC-16 (poly 0x3D65). A `false` here means the frame
+    /// is corrupt or not really DNP3 — don't trust the addresses
+    /// / function blindly. Issue #80.
+    ///
+    /// Only the fixed-size header CRC is checked; per-block
+    /// user-data CRCs are intentionally not verified (the
+    /// length-driven block walk is the Suricata-CVE-prone part
+    /// and stays out of scope).
+    pub header_crc_valid: bool,
 }
 
 /// IEEE 1815-2012 §9.1.2.1 DIR bit. The bit is `1` when sent

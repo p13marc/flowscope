@@ -1,5 +1,91 @@
 # Changelog
 
+## Unreleased — NSM primitives (netring 0.27 support)
+
+Additive over 0.19. Pure, no-async — fits the runtime-free lib rule.
+
+- **`detect::IocSet`** (#72) — typed threat-intel membership over
+  `{ipv4, ipv6, domain, url, sha256, md5, ja3, ja4}` with optional
+  per-entry reputation (Suricata `datarep`) and a feed-file loader.
+  Domains match subdomain-aware (Zeek `Intel::DOMAIN`); `with_capacity`
+  bounds memory.
+- **`detect::FlowRisk`** + `RiskSeverity` (#73) — an nDPI-style risk
+  bitset (self-signed/expired/weak/obsolete TLS, SNI↔DNS mismatch, DGA,
+  cleartext creds, suspicious JA4, …) with an aggregate `score()`,
+  `max_severity()`, and stable slugs. Native model re-implementation,
+  not an FFI binding.
+- **Risk/IOC adapters** (#83) — the pure "verbs"
+  that turn parser output into the standalone primitives above:
+  `FlowRisk::from_tls` (obsolete version + weak cipher via the new
+  public `detect::is_weak_cipher`), `FlowRisk::from_dns` (DGA label +
+  Punycode/IDN, via `DgaScorer`), `FlowRisk::from_port_proto`
+  (port↔protocol mismatch / known-proto-nonstd-port, alias-token aware
+  so `tls` on 443's `"tls/https"` label is consistent), and
+  `IocSet::check_tls` (screens SNI + JA3 + JA4 of a `TlsHandshake` in
+  one call). All pure, independently testable; gated by the relevant
+  parser feature (`tls` / `extractors`).
+- **`flowscope::analysis` composition layer** (#83) — behind the new
+  `analysis` feature, the opt-in wiring that turns parser output into
+  enriched, SIEM-ready flow records:
+  - `FlowAnalyzer<K>` — bounded (TTL + capacity, LRU) per-flow
+    accumulator. Feed it `observe_tls` / `observe_http` /
+    `observe_dns_query` / `observe_dns_response` (each gated by its
+    parser feature); `finalize(key, stats)` on the flow's `Ended`
+    event computes `FlowRisk`, screens the optional `IocSet`, evicts
+    the per-flow state, and returns the record. `snapshot` for a
+    mid-flow view; `evict_expired` / `forget` for housekeeping.
+  - `AnalyzedFlow<K>` — the enriched record: key + `FlowStats` +
+    `L7Summary` + computed `FlowRisk` + `Vec<IocMatch>`, with
+    `is_clean` / `severity` / `score` / `has_ioc` accessors.
+  - `L7Summary` — the curated, security-relevant L7 facts (SNI/Host,
+    JA3/JA4, TLS version+cipher, HTTP UA/method/URI, DNS qnames
+    bounded to `MAX_DNS_QUERIES`).
+
+  A pure composition layer (the `asset::Inventory` shape), runtime-free,
+  features-not-verdicts. Example: `examples/03-detection/flow_analysis.rs`.
+  `IocMatch` gains a `serde` derive (additive) so hits serialize.
+  - **`EveJsonWriter::write_analyzed_flow`** (with `analysis` +
+    `emit-eve`) — the SIEM-ready single-pass emit: an EVE `flow`
+    event carrying the 5-tuple (+ `community_id` / `flow_hash`),
+    counters, observed L7 (`tls` / `http` / `dns` objects), and a
+    `flowscope` extension object with the risk slug array + aggregate
+    `score` + `severity` and the threat-intel `ioc` hits.
+    `flow.alerted` reflects `AnalyzedFlow::is_clean`.
+- **Community ID v1 flow hashing** (#76, folds #70) — behind the new
+  `community-id` feature (SHA-1 + base64). `FiveTupleKey::community_id()`
+  / `KeyFields::community_id()`, emitted as `community_id` in the EVE
+  writer, for cross-tool SIEM pivots (Zeek/Suricata/Security Onion).
+  Golden-tested against the published spec vectors.
+- **Stable shard hash** (#76, folds #70) — always-on (no crypto)
+  `FiveTupleKey::stable_hash()` / `shard_index(n)` and the generic
+  `KeyFields` equivalents: seed-fixed, process-stable, direction-
+  invariant — both legs of a flow map to the same shard. The EVE
+  `flow_hash` now shares this helper (value unchanged). `docs/sharded.md`
+  and the `sharded_capture` example updated to use it.
+- **`correlate::CountMinSketch` + `BloomFilter`** (#75) — mergeable
+  streaming sketches alongside `HyperLogLog` (heavy-hitter frequency;
+  seen-before membership). Both `Mergeable` for sharded union.
+- **`correlate::BitStore`** (#74, partial) — Suricata `xbits`/`hostbits`
+  semantics: per-key named flags + values with per-entry TTL.
+- **DNP3 header CRC validation** (#80) — `DnpMessage::header_crc_valid`;
+  the data-link header CRC is now checked (DNP3 CRC-16, verified against
+  the IEEE 1815 spec vector). Per-block user-data CRCs stay unverified
+  by design.
+- **JA4 suite completion** (#77) — FoxIO-licensed, behind `ja4plus`:
+  - **JA4T / JA4TS** (`tcp_fingerprint::{ja4t, ja4t_from_tcp, ja4t_from_parts}`,
+    needs `tcp_fingerprint`) — passive TCP-stack fingerprint from a SYN /
+    SYN-ACK.
+  - **JA4L / JA4LS** (`ja4l::{ja4l, ja4l_client, ja4l_server}`) — handshake
+    latency / "light distance" fingerprint.
+  - **JA4SSH** (`ssh::Ja4sshAccumulator`, needs `ssh`) — rolling SSH-session
+    fingerprint over packet sizes + ACK patterns (200-packet window).
+
+  All three are **golden-tested against FoxIO's own Zeek test baselines** and
+  bit-faithful to the reference (`zeek/ja4{t,l,ssh}/main.zeek`). The
+  license-clean `tcp_fingerprint` (p0f-style) remains the non-FoxIO option.
+- **CI**: `cargo-semver-checks` pre-1.0 stability gate + `community-id` /
+  `ja4plus` feature-matrix entries (#78).
+
 ## 0.19.0 — RITA-style robust beacon detector
 
 Additive over 0.18.

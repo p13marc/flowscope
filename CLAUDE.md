@@ -807,6 +807,10 @@ src/
 ├── asset/                       # `asset` feature — Asset + Inventory composition (issue #27, 0.18)
 │   ├── core.rs                  # Asset + AssetCapabilities + AssetSourceSet + per-parser from_* adapters
 │   └── inventory.rs             # LRU-bounded Inventory<MacAddr, Asset>
+├── analysis/                    # `analysis` feature — risk/IOC/L7 → enriched flow records (issue #83, 0.19+)
+│   ├── summary.rs               # L7Summary curated facts + observe_tls/http/dns (gated per parser)
+│   ├── analyzed_flow.rs         # AnalyzedFlow<K> = key + FlowStats + L7Summary + FlowRisk + IocMatch hits
+│   └── analyzer.rs              # FlowAnalyzer<K> bounded accumulator (observe_* / finalize / snapshot / evict)
 ├── ipfix/                       # `ipfix` feature (scoped piece of #16, 0.18)
 │   ├── registry.rs              # IANA IE table + lookup_by_id/name
 │   ├── types.rs                 # FlowEndReason + encode_tcp_control_bits
