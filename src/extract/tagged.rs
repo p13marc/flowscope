@@ -48,15 +48,17 @@
 //! metadata (NIC index, namespace, capture-source enum). Common
 //! shapes:
 //!
-//! ```ignore
+//! ```
 //! # use flowscope::extract::{Tagged, FiveTuple};
 //! # use flowscope::PacketView;
 //! // Static — every packet gets the same tag (silly but legal).
-//! let _ = Tagged::new(FiveTuple::bidirectional(), |_| 0u32);
+//! let _ = Tagged::new(FiveTuple::bidirectional(), |_: PacketView<'_>| 0u32);
 //!
-//! // From PacketView (when 0.17's RxMetadata lands, this will be
-//! // the natural path):
-//! //     let tag_fn = |view: PacketView<'_>| view.rx_metadata.source_idx;
+//! // From PacketView — the per-packet `source_idx` (NIC / capture-channel
+//! // identifier) is the natural per-source tag. Set it on the view with
+//! // `PacketView::with_source_idx`.
+//! let tag_fn = |view: PacketView<'_>| view.rx_metadata.source_idx;
+//! let _ = Tagged::new(FiveTuple::bidirectional(), tag_fn);
 //! ```
 //!
 //! For consumers that need rich tag-derivation logic (closures

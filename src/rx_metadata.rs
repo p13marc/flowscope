@@ -62,6 +62,25 @@ pub struct RxMetadata {
 }
 
 impl RxMetadata {
+    /// Construct `RxMetadata` carrying only a [`source_idx`](Self::source_idx),
+    /// every other field left at its default.
+    ///
+    /// `RxMetadata` is `#[non_exhaustive]`, so downstream crates cannot
+    /// write `RxMetadata { source_idx, ..Default::default() }` (that's a
+    /// cross-crate `E0639`). This is the one-call escape hatch for the
+    /// single most common live-capture field. Pairs with
+    /// [`PacketView::with_source_idx`](crate::PacketView::with_source_idx)
+    /// when you already hold a view.
+    ///
+    /// Issue #69 (0.19).
+    #[inline]
+    pub fn from_source_idx(source_idx: u32) -> Self {
+        Self {
+            source_idx,
+            ..Self::default()
+        }
+    }
+
     /// `true` if no fields have been populated (every Option is
     /// `None`, checksum is `Unknown`, source_idx is `0`).
     ///
@@ -231,6 +250,19 @@ mod tests {
             ..RxMetadata::default()
         };
         assert!(!m.is_empty());
+    }
+
+    #[test]
+    fn from_source_idx_sets_only_source_idx() {
+        let m = RxMetadata::from_source_idx(7);
+        assert_eq!(m.source_idx, 7);
+        // Every other field stays at default.
+        assert!(m.hw_timestamp.is_none());
+        assert!(m.rx_hash.is_none());
+        assert!(m.vlan.is_none());
+        assert!(matches!(m.checksum, ChecksumStatus::Unknown));
+        // Equivalent to clearing source_idx back to the default value.
+        assert_eq!(RxMetadata::from_source_idx(0), RxMetadata::default());
     }
 
     #[test]

@@ -69,6 +69,30 @@ impl<'a> PacketView<'a> {
         self
     }
 
+    /// Builder — set just the per-packet
+    /// [`source_idx`](crate::RxMetadata::source_idx) (NIC / capture-channel
+    /// identifier), leaving the rest of the receive metadata untouched.
+    ///
+    /// This is the one-call replacement for the
+    /// `let mut m = RxMetadata::default(); m.source_idx = n;
+    /// view.with_rx_metadata(m)` dance on the per-packet hot path. Pairs
+    /// with [`crate::extract::Tagged`] for per-source attribution.
+    ///
+    /// ```
+    /// use flowscope::{PacketView, Timestamp};
+    ///
+    /// let frame = [0u8; 64];
+    /// let view = PacketView::new(&frame, Timestamp::new(0, 0)).with_source_idx(3);
+    /// assert_eq!(view.rx_metadata.source_idx, 3);
+    /// ```
+    ///
+    /// Issue #69 (0.19).
+    #[inline]
+    pub fn with_source_idx(mut self, source_idx: u32) -> Self {
+        self.rx_metadata.source_idx = source_idx;
+        self
+    }
+
     /// Parse the frame into a layered view.
     ///
     /// Assumes Ethernet at the start. For raw IP datagrams (no L2
@@ -168,6 +192,18 @@ impl OwnedPacketView {
         self
     }
 
+    /// Builder — set just the per-packet
+    /// [`source_idx`](crate::RxMetadata::source_idx), leaving the rest of
+    /// the receive metadata untouched. Owned-view mirror of
+    /// [`PacketView::with_source_idx`].
+    ///
+    /// Issue #69 (0.19).
+    #[inline]
+    pub fn with_source_idx(mut self, source_idx: u32) -> Self {
+        self.rx_metadata.source_idx = source_idx;
+        self
+    }
+
     /// Borrow as a [`PacketView`]. Carries the rx_metadata
     /// through.
     pub fn as_view(&self) -> PacketView<'_> {
@@ -191,6 +227,20 @@ mod tests {
         let v = PacketView::new(&buf, Timestamp::new(1, 2));
         assert_eq!(v.frame.len(), 8);
         assert_eq!(v.timestamp, Timestamp::new(1, 2));
+    }
+
+    #[test]
+    fn with_source_idx_sets_only_source_idx() {
+        let buf = [0u8; 8];
+        let v = PacketView::new(&buf, Timestamp::new(1, 2)).with_source_idx(5);
+        assert_eq!(v.rx_metadata.source_idx, 5);
+        assert!(v.rx_metadata.hw_timestamp.is_none());
+        assert!(v.rx_metadata.rx_hash.is_none());
+
+        // Owned mirror.
+        let ov = OwnedPacketView::new(vec![0u8; 8], Timestamp::new(1, 2)).with_source_idx(9);
+        assert_eq!(ov.rx_metadata.source_idx, 9);
+        assert_eq!(ov.as_view().rx_metadata.source_idx, 9);
     }
 
     #[test]
