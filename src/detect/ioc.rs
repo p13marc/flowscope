@@ -65,6 +65,7 @@ impl IocKind {
 
 /// A successful indicator lookup.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]
 pub struct IocMatch {
     /// Which indicator kind matched.

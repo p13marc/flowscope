@@ -71,7 +71,8 @@ impl CountMinSketch<std::hash::RandomState> {
 
 impl<S: BuildHasher> CountMinSketch<S> {
     /// [`Self::with_error`] with a caller-supplied hasher builder
-    /// (use a deterministic one for sharded [`Mergeable`] use).
+    /// (use a deterministic one for sharded
+    /// [`Mergeable`](crate::correlate::Mergeable) use).
     pub fn with_error_and_hasher(epsilon: f64, delta: f64, hasher_builder: S) -> Self {
         let epsilon = epsilon.clamp(f64::MIN_POSITIVE, 1.0 - f64::EPSILON);
         let delta = delta.clamp(f64::MIN_POSITIVE, 1.0 - f64::EPSILON);

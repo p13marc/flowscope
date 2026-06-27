@@ -247,11 +247,26 @@ impl FlowRisk {
             return FlowRisk::empty();
         }
         match key.protocol_label() {
-            Some(label) if label.eq_ignore_ascii_case(detected) => FlowRisk::empty(),
+            Some(label) if label_matches(label, detected) => FlowRisk::empty(),
             Some(_) => FlowRisk::PORT_PROTO_MISMATCH,
             None => FlowRisk::KNOWN_PROTO_NONSTD_PORT,
         }
     }
+}
+
+/// Does a well-known port label (e.g. `"tls/https"`) name the
+/// detected protocol slug (e.g. `"tls"`)?
+///
+/// Labels in [`crate::well_known`] are slash-delimited alias lists
+/// (`"tls/https"`, `"quic/http3"`); a parser's app slug is a
+/// single token (`"tls"`). Match if `detected` equals any
+/// alias token (case-insensitive) — otherwise TLS on 443 would
+/// read as a port/protocol mismatch against its own `"tls/https"`
+/// label.
+pub(crate) fn label_matches(label: &str, detected: &str) -> bool {
+    label
+        .split('/')
+        .any(|tok| tok.eq_ignore_ascii_case(detected))
 }
 
 /// Heuristic weak / deprecated TLS cipher-suite test
@@ -402,6 +417,10 @@ mod tests {
 
         // HTTP detected on port 80 → consistent, no risk.
         assert!(FlowRisk::from_port_proto(&mk(80), "http").is_empty());
+
+        // TLS detected on port 443 (label "tls/https") must NOT
+        // read as a mismatch — alias-token match.
+        assert!(FlowRisk::from_port_proto(&mk(443), "tls").is_empty());
 
         // SSH on a random high port (no well-known mapping) → nonstd.
         let nonstd = FlowRisk::from_port_proto(&mk(51000), "ssh");

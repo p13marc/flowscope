@@ -14,15 +14,36 @@ Additive over 0.19. Pure, no-async — fits the runtime-free lib rule.
   cleartext creds, suspicious JA4, …) with an aggregate `score()`,
   `max_severity()`, and stable slugs. Native model re-implementation,
   not an FFI binding.
-- **Risk/IOC adapters** (#83, first shippable slice) — the pure "verbs"
+- **Risk/IOC adapters** (#83) — the pure "verbs"
   that turn parser output into the standalone primitives above:
   `FlowRisk::from_tls` (obsolete version + weak cipher via the new
   public `detect::is_weak_cipher`), `FlowRisk::from_dns` (DGA label +
   Punycode/IDN, via `DgaScorer`), `FlowRisk::from_port_proto`
-  (port↔protocol mismatch / known-proto-nonstd-port), and
+  (port↔protocol mismatch / known-proto-nonstd-port, alias-token aware
+  so `tls` on 443's `"tls/https"` label is consistent), and
   `IocSet::check_tls` (screens SNI + JA3 + JA4 of a `TlsHandshake` in
   one call). All pure, independently testable; gated by the relevant
   parser feature (`tls` / `extractors`).
+- **`flowscope::analysis` composition layer** (#83) — behind the new
+  `analysis` feature, the opt-in wiring that turns parser output into
+  enriched, SIEM-ready flow records:
+  - `FlowAnalyzer<K>` — bounded (TTL + capacity, LRU) per-flow
+    accumulator. Feed it `observe_tls` / `observe_http` /
+    `observe_dns_query` / `observe_dns_response` (each gated by its
+    parser feature); `finalize(key, stats)` on the flow's `Ended`
+    event computes `FlowRisk`, screens the optional `IocSet`, evicts
+    the per-flow state, and returns the record. `snapshot` for a
+    mid-flow view; `evict_expired` / `forget` for housekeeping.
+  - `AnalyzedFlow<K>` — the enriched record: key + `FlowStats` +
+    `L7Summary` + computed `FlowRisk` + `Vec<IocMatch>`, with
+    `is_clean` / `severity` / `score` / `has_ioc` accessors.
+  - `L7Summary` — the curated, security-relevant L7 facts (SNI/Host,
+    JA3/JA4, TLS version+cipher, HTTP UA/method/URI, DNS qnames
+    bounded to `MAX_DNS_QUERIES`).
+
+  A pure composition layer (the `asset::Inventory` shape), runtime-free,
+  features-not-verdicts. Example: `examples/03-detection/flow_analysis.rs`.
+  `IocMatch` gains a `serde` derive (additive) so hits serialize.
 - **Community ID v1 flow hashing** (#76, folds #70) — behind the new
   `community-id` feature (SHA-1 + base64). `FiveTupleKey::community_id()`
   / `KeyFields::community_id()`, emitted as `community_id` in the EVE

@@ -303,6 +303,12 @@ pub use dnp3::{
 pub mod asset;
 #[cfg(feature = "asset")]
 pub use asset::{Asset, AssetCapabilities, AssetFingerprints, AssetSourceSet, Inventory};
+// Issue #83: analysis composition layer — wires detect/risk/IOC
+// to the flow lifecycle, producing enriched `AnalyzedFlow` records.
+#[cfg(feature = "analysis")]
+pub mod analysis;
+#[cfg(feature = "analysis")]
+pub use analysis::{AnalyzedFlow, FlowAnalyzer, L7Summary};
 // Issue #9 (0.18): p0f-style passive TCP/IP fingerprint.
 // License-clean alternative to FoxIO's JA4T / JA4TS.
 #[cfg(feature = "tcp_fingerprint")]

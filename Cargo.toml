@@ -188,6 +188,14 @@ tftp = ["extractors", "tracker", "session"]
 # parsers (ARP / NDP / DHCP / LLDP / CDP / SSDP). Pure
 # composition; no new wire-format work. Issue #27 (0.18).
 asset = ["tracker"]
+# analysis — the opt-in composition layer wiring parser output
+# to the flow lifecycle: `FlowAnalyzer` accumulates a per-flow
+# `L7Summary`, then `finalize` computes `FlowRisk` + screens an
+# `IocSet`, returning an enriched `AnalyzedFlow` record. Pure
+# composition over `detect` + the parsers; the `observe_*`
+# adapters are individually gated by their parser feature
+# (`tls` / `http` / `dns`). Issue #83.
+analysis = ["tracker"]
 # mDNS — RFC 6762 multicast DNS over UDP/5353. Wire format
 # is identical to DNS so this is a thin wrapper around
 # `dns` adding mDNS-specific service-discovery helpers and
@@ -407,7 +415,7 @@ community-id = ["dep:sha1", "dep:base64"]
 chrono = ["dep:chrono"]
 
 # Convenience: turn everything on.
-full = ["http", "tls", "tls-fingerprints", "dns", "icmp", "arp", "pcap", "metrics", "tracing", "serde", "emit", "emit-ndjson", "emit-eve", "aggregate", "chrono", "file-hash", "fingerprint", "community-id"]
+full = ["http", "tls", "tls-fingerprints", "dns", "icmp", "arp", "pcap", "metrics", "tracing", "serde", "emit", "emit-ndjson", "emit-eve", "aggregate", "chrono", "file-hash", "fingerprint", "community-id", "analysis"]
 
 [package.metadata.docs.rs]
 all-features = true
@@ -575,6 +583,11 @@ required-features = ["pcap", "extractors", "tracker", "reassembler"]
 name = "composite_c2"
 path = "examples/03-detection/composite_c2.rs"
 required-features = ["pcap", "extractors", "tracker", "dns", "tls", "emit-eve"]
+
+[[example]]
+name = "flow_analysis"
+path = "examples/03-detection/flow_analysis.rs"
+required-features = ["analysis", "tls", "dns"]
 
 # ── 04 observability / SRE ───────────────────────────
 [[example]]

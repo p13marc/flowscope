@@ -92,6 +92,8 @@ jobs:
           - "ja4plus"           # 0.19: JA4L latency fingerprint (issue #77)
           - "ja4plus,tcp_fingerprint"  # 0.19: JA4T/JA4TS TCP fingerprint (issue #77)
           - "ja4plus,ssh"       # 0.19: JA4SSH session fingerprint (issue #77)
+          - "analysis"          # 0.19: analysis layer, no parser observe_* gated in (issue #83)
+          - "analysis,tls,dns"  # 0.19: analysis layer with the gated observe_* adapters (issue #83)
     steps:
       - uses: actions/checkout@v4
       - name: Build (--no-default-features --features "${{ matrix.features }}")

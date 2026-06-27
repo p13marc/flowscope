@@ -153,6 +153,9 @@ pub use crate::detect::fingerprint::{FingerprintBuilder, FlowFingerprint};
 pub use crate::detect::{IocKind, IocMatch, IocSet};
 // Issue #73: nDPI-style flow-risk taxonomy.
 pub use crate::detect::{FlowRisk, RiskSeverity};
+// Issue #83: analysis composition layer — enriched flow records.
+#[cfg(feature = "analysis")]
+pub use crate::analysis::{AnalyzedFlow, FlowAnalyzer, L7Summary};
 /// The typed [`crate::driver::Driver`] +
 /// [`crate::driver::SlotHandle`] shape (plan 121).
 #[cfg(all(feature = "extractors", feature = "reassembler", feature = "session"))]
