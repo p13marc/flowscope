@@ -103,8 +103,14 @@ recipe.
 
 - **Hash function choice.** `hash(src_ip)` works for the demo
   but mis-shards traffic with many flows sharing one source
-  (e.g., a load balancer's egress). Prefer the canonical
-  5-tuple hash from `flowscope::extract::FiveTupleKey`.
+  (e.g., a load balancer's egress), and `DefaultHasher` /
+  `RandomState` are **per-process random** — they split a
+  flow's two legs across shards non-reproducibly. Use the
+  seed-fixed canonical helper `FiveTupleKey::shard_index(n)`
+  (or `stable_hash()`), which is direction-invariant and
+  reproducible across threads/processes, so both legs of a
+  flow always land on the same shard. The generic
+  `KeyFields::shard_index` works for custom keys too.
 - **Per-shard back-pressure.** Each shard's input channel can
   fill if a worker is slow. Use bounded channels
   (`mpsc::sync_channel(N)`) for back-pressure, or drop on

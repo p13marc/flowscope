@@ -53,9 +53,10 @@ use std::{
 };
 
 use flowscope::{
-    OwnedPacketView, PacketView,
+    OwnedPacketView, PacketView, Timestamp,
     driver::{Driver, Event, SlotMessage},
     extract::{FiveTuple, FiveTupleKey},
+    extractor::FlowExtractor,
     http::{HttpMessage, HttpParser},
     pcap::PcapFlowSource,
 };
@@ -163,15 +164,16 @@ fn shard_worker(
     Ok(())
 }
 
-/// Hash the raw frame's L3 source address bytes to pick a shard.
-/// Real production code hashes the canonical 5-tuple after
-/// extraction; this demo keeps it simple.
+/// Pick a shard from the **canonical bidirectional 5-tuple** so
+/// both directions of a flow always land on the same shard.
+///
+/// `FiveTupleKey::shard_index` (issue #76) uses a seed-fixed,
+/// process-stable hash — unlike `DefaultHasher` / `RandomState`,
+/// which are per-process random and would split a flow's two legs
+/// across shards. Non-IP / unparseable frames fall back to shard 0.
 fn hash_to_shard(frame: &[u8], n_shards: usize) -> usize {
-    if frame.len() < 30 {
-        return 0;
-    }
-    // Ethernet (14) + IPv4 src at offset 12 of IP header → 26.
-    let src_bytes = &frame[26..30];
-    let h = u32::from_be_bytes([src_bytes[0], src_bytes[1], src_bytes[2], src_bytes[3]]);
-    (h as usize) % n_shards
+    FiveTuple::bidirectional()
+        .extract(PacketView::new(frame, Timestamp::default()))
+        .map(|e| e.key.shard_index(n_shards))
+        .unwrap_or(0)
 }

@@ -17,10 +17,7 @@
 //! `"tls"`) are out of scope for 0.12 — add per-protocol EVE
 //! shapes when a consumer asks.
 
-use std::{
-    io::{self, Write},
-    net::IpAddr,
-};
+use std::io::{self, Write};
 
 use serde_json::json;
 
@@ -563,65 +560,21 @@ fn insert_5tuple<K: KeyFields>(obj: &mut serde_json::Map<String, serde_json::Val
     if let Some(h) = flow_hash(key) {
         obj.insert("flow_hash".into(), json!(format!("{h:016x}")));
     }
+    // Cross-tool Community ID (Zeek / Suricata / Security Onion
+    // pivot). `None` unless built with the `community-id` feature.
+    if let Some(cid) = key.community_id() {
+        obj.insert("community_id".into(), json!(cid));
+    }
 }
 
 /// Stable 64-bit hash over the canonical 5-tuple. Returns
 /// `None` if any of (proto, src ip/port, dest ip/port) is
 /// unknown.
 ///
-/// Algorithm: FNV-1a over
-/// `proto.as_bytes() || lo_ip.octets() || lo_port_be ||
-/// hi_ip.octets() || hi_port_be`, where `(lo_ip, lo_port)` is
-/// the lexicographically smaller endpoint. Deterministic
-/// across runs and across direction (A→B and B→A produce the
-/// same hash). 64-bit FNV at flowscope scales: collision
-/// probability ~5e-8 at 1 M flows.
+/// Delegates to [`crate::KeyFields::stable_hash`] (FNV-1a) so the
+/// EVE `flow_hash` and the public `stable_hash()` always agree.
 fn flow_hash<K: KeyFields>(key: &K) -> Option<u64> {
-    let proto = key.proto_str()?;
-    let src_ip = key.src_ip()?;
-    let src_port = key.src_port()?;
-    let dest_ip = key.dest_ip()?;
-    let dest_port = key.dest_port()?;
-
-    let (lo_ip, lo_port, hi_ip, hi_port) = if (src_ip, src_port) <= (dest_ip, dest_port) {
-        (src_ip, src_port, dest_ip, dest_port)
-    } else {
-        (dest_ip, dest_port, src_ip, src_port)
-    };
-
-    const FNV_OFFSET: u64 = 0xcbf29ce484222325;
-    const FNV_PRIME: u64 = 0x100000001b3;
-    let mut h = FNV_OFFSET;
-    fn feed(b: u8, h: &mut u64) {
-        *h ^= b as u64;
-        *h = h.wrapping_mul(FNV_PRIME);
-    }
-    for &b in proto.as_bytes() {
-        feed(b, &mut h);
-    }
-    fn feed_ip(ip: IpAddr, h: &mut u64) {
-        match ip {
-            IpAddr::V4(v4) => {
-                for &b in &v4.octets() {
-                    feed(b, h);
-                }
-            }
-            IpAddr::V6(v6) => {
-                for &b in &v6.octets() {
-                    feed(b, h);
-                }
-            }
-        }
-    }
-    fn feed_port(p: u16, h: &mut u64) {
-        feed((p >> 8) as u8, h);
-        feed((p & 0xff) as u8, h);
-    }
-    feed_ip(lo_ip, &mut h);
-    feed_port(lo_port, &mut h);
-    feed_ip(hi_ip, &mut h);
-    feed_port(hi_port, &mut h);
-    Some(h)
+    key.stable_hash()
 }
 
 #[cfg(test)]

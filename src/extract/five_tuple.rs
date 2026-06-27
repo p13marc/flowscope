@@ -229,6 +229,79 @@ impl FiveTupleKey {
         self.protocol_label_with(table)
             .unwrap_or_else(|| self.proto.canonical_name())
     }
+
+    /// Seed-fixed 64-bit hash over the canonical (direction-
+    /// normalized) 5-tuple — **reproducible across threads and
+    /// processes** (unlike `#[derive(Hash)]` through a random
+    /// `RandomState`). A→B and B→A produce the same value.
+    ///
+    /// This is the infallible companion to
+    /// [`crate::KeyFields::stable_hash`] (a `FiveTupleKey` always
+    /// carries a full 5-tuple), and equals the value the EVE
+    /// writer emits as `flow_hash`. Use it to shard a merged flow
+    /// table so both legs of a flow land on the same worker — see
+    /// [`Self::shard_index`].
+    ///
+    /// Issue #76 (folds #70).
+    #[inline]
+    pub fn stable_hash(&self) -> u64 {
+        let mut id_buf = [0u8; 1];
+        let proto: &[u8] = match crate::KeyFields::proto_str(&self.proto) {
+            Some(s) => s.as_bytes(),
+            None => {
+                id_buf[0] = self.proto.as_u8();
+                &id_buf
+            }
+        };
+        crate::anomaly_fields::fnv1a_five_tuple(
+            proto,
+            self.a.ip(),
+            self.a.port(),
+            self.b.ip(),
+            self.b.port(),
+        )
+    }
+
+    /// Deterministic shard index in `0..n` (or `0` if `n == 0`).
+    /// Both directions of a flow map to the same shard across
+    /// processes — the correctness requirement for tap-merge
+    /// sharding. Built on [`Self::stable_hash`].
+    ///
+    /// Issue #76 (folds #70).
+    #[inline]
+    pub fn shard_index(&self, n: usize) -> usize {
+        if n == 0 {
+            return 0;
+        }
+        (self.stable_hash() % n as u64) as usize
+    }
+
+    /// [Corelight Community ID](https://github.com/corelight/community-id-spec)
+    /// v1 (universal default seed 0) — the cross-tool flow id for
+    /// pivoting flowscope output against Zeek / Suricata / Security
+    /// Onion. TCP/UDP/SCTP are exact; ICMP is stable but not
+    /// spec-compatible (see [`crate::community_id`]).
+    ///
+    /// Requires the `community-id` feature. Issue #76.
+    #[cfg(feature = "community-id")]
+    #[inline]
+    pub fn community_id(&self) -> String {
+        self.community_id_seeded(0)
+    }
+
+    /// [`Self::community_id`] with an explicit sensor seed.
+    #[cfg(feature = "community-id")]
+    #[inline]
+    pub fn community_id_seeded(&self, seed: u16) -> String {
+        crate::community_id::community_id_v1(
+            self.proto.as_u8(),
+            self.a.ip(),
+            self.a.port(),
+            self.b.ip(),
+            self.b.port(),
+            seed,
+        )
+    }
 }
 
 impl crate::KeyFields for FiveTupleKey {
@@ -554,5 +627,66 @@ mod tests {
         assert_eq!(L4Proto::Tcp.canonical_name(), "tcp");
         assert_eq!(L4Proto::Other(42).proto_str(), None);
         assert_eq!(L4Proto::Other(42).canonical_name(), "other");
+    }
+
+    fn key(proto: L4Proto, a: [u8; 4], ap: u16, b: [u8; 4], bp: u16) -> FiveTupleKey {
+        FiveTupleKey {
+            proto,
+            a: SocketAddr::from((a, ap)),
+            b: SocketAddr::from((b, bp)),
+        }
+    }
+
+    #[test]
+    fn stable_hash_is_direction_invariant() {
+        let fwd = key(L4Proto::Tcp, [10, 0, 0, 1], 1234, [10, 0, 0, 2], 80);
+        let rev = key(L4Proto::Tcp, [10, 0, 0, 2], 80, [10, 0, 0, 1], 1234);
+        assert_eq!(fwd.stable_hash(), rev.stable_hash());
+        // Distinct flows differ.
+        let other = key(L4Proto::Tcp, [10, 0, 0, 1], 1234, [10, 0, 0, 3], 80);
+        assert_ne!(fwd.stable_hash(), other.stable_hash());
+    }
+
+    #[test]
+    fn stable_hash_matches_keyfields_trait() {
+        use crate::KeyFields;
+        let k = key(L4Proto::Udp, [10, 0, 0, 1], 5000, [8, 8, 8, 8], 53);
+        // The inherent infallible value equals the trait's Option value
+        // (and therefore the EVE `flow_hash`).
+        assert_eq!(Some(k.stable_hash()), KeyFields::stable_hash(&k));
+    }
+
+    #[test]
+    fn stable_hash_infallible_for_other_proto() {
+        // proto_str is None for Other(_), but the inherent hash still
+        // works (falls back to the numeric id) and is direction-stable.
+        let fwd = key(L4Proto::Other(99), [10, 0, 0, 1], 0, [10, 0, 0, 2], 0);
+        let rev = key(L4Proto::Other(99), [10, 0, 0, 2], 0, [10, 0, 0, 1], 0);
+        assert_eq!(fwd.stable_hash(), rev.stable_hash());
+    }
+
+    #[test]
+    fn shard_index_in_range_and_coherent() {
+        let fwd = key(L4Proto::Tcp, [10, 0, 0, 1], 1234, [10, 0, 0, 2], 80);
+        let rev = key(L4Proto::Tcp, [10, 0, 0, 2], 80, [10, 0, 0, 1], 1234);
+        for n in [1usize, 4, 16, 256] {
+            let s = fwd.shard_index(n);
+            assert!(s < n);
+            // Both legs of a flow land on the same shard.
+            assert_eq!(s, rev.shard_index(n));
+        }
+        assert_eq!(fwd.shard_index(0), 0); // n == 0 guard
+    }
+
+    #[cfg(feature = "community-id")]
+    #[test]
+    fn community_id_matches_golden_vector() {
+        // Same published TCP vector as the community_id module test,
+        // reached through the key method.
+        let k = key(L4Proto::Tcp, [128, 232, 110, 120], 34855, [66, 35, 250, 204], 80);
+        assert_eq!(k.community_id(), "1:LQU9qZlK+B5F3KDmev6m5PMibrg=");
+        // Direction-invariant via the key too.
+        let rev = key(L4Proto::Tcp, [66, 35, 250, 204], 80, [128, 232, 110, 120], 34855);
+        assert_eq!(k.community_id(), rev.community_id());
     }
 }

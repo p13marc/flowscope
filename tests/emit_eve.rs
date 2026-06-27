@@ -56,6 +56,32 @@ fn eve_flow_hash_is_emitted_and_hex_format() {
     );
 }
 
+#[cfg(feature = "community-id")]
+#[test]
+fn eve_emits_community_id_and_is_direction_invariant() {
+    let mk = |k: FiveTupleKey| {
+        let mut buf = Vec::new();
+        let mut w = EveJsonWriter::new(&mut buf);
+        let ev: FlowEvent<FiveTupleKey> = FlowEvent::FlowAnomaly {
+            key: k,
+            kind: AnomalyKind::OutOfOrderSegment {
+                side: FlowSide::Initiator,
+                count: 1,
+            },
+            ts: Timestamp::new(1_700_000_000, 0),
+        };
+        w.write_event(&ev).unwrap();
+        parse_lines(&buf)[0]["community_id"]
+            .as_str()
+            .expect("community_id present")
+            .to_string()
+    };
+    let fwd = mk(key());
+    let rev = mk(flipped_key());
+    assert!(fwd.starts_with("1:"), "v1 prefix: {fwd}");
+    assert_eq!(fwd, rev, "community_id is direction-invariant");
+}
+
 #[test]
 fn eve_flow_hash_is_direction_invariant_and_deterministic() {
     fn extract_hash(key: FiveTupleKey) -> String {

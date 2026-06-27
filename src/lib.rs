@@ -100,6 +100,12 @@ pub mod layers;
 #[cfg(feature = "tracker")]
 pub mod anomaly;
 pub mod anomaly_fields;
+// Issue #76: Corelight Community ID v1 flow hashing. Gated by the
+// `community-id` feature (pulls SHA-1 + base64). The seed-fixed
+// `stable_hash` / `shard_index` helpers on `KeyFields` are always-on
+// and need no crypto, so they live in `anomaly_fields`, not here.
+#[cfg(feature = "community-id")]
+pub mod community_id;
 #[cfg(feature = "tracker")]
 pub use anomaly::{DetectorScore, OwnedAnomaly};
 #[cfg(feature = "tracker")]

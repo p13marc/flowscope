@@ -38,7 +38,12 @@ httparse = { version = "1.10", optional = true }
 bytes = { version = "1", optional = true }
 
 # `smtp` feature — base64 for AUTH PLAIN/LOGIN credential decode.
+# Also used by the `community-id` feature (base64 of the SHA-1 digest).
 base64 = { version = "0.22", optional = true, default-features = false, features = ["alloc"] }
+
+# `community-id` feature — SHA-1 for the Corelight Community ID v1
+# flow hash (the spec mandates SHA-1). RustCrypto, MIT/Apache.
+sha1 = { version = "0.10", optional = true }
 
 # `ja4plus` JA4X — x509 cert parsing. Gated behind the
 # combination of `tls-fingerprints` + `ja4plus`. MIT-licensed
@@ -387,6 +392,14 @@ file-hash = ["reassembler", "dep:sha2", "dep:md-5", "dep:hex"]
 # `Histogram` (no deps) + `Percentile` (wraps the `tdigest` crate).
 aggregate = ["dep:tdigest"]
 
+# Corelight Community ID v1 flow hashing (cross-tool flow id for
+# Zeek / Suricata / Security Onion pivots). Adds `community_id()` /
+# `community_id_seeded()` to flow keys and emits `community_id` in the
+# EVE / NDJSON writers. SHA-1 + base64 per the spec. `license: clean`.
+# The seed-fixed `stable_hash()` / `shard_index()` helpers are
+# always-on (no crypto) and do NOT require this feature.
+community-id = ["dep:sha1", "dep:base64"]
+
 # `chrono` interop on `Timestamp` (plan 127). Adds
 # `From<DateTime<Utc>>` + `TryFrom<Timestamp>` for
 # `chrono::DateTime<chrono::Utc>` so consumers already on
@@ -394,7 +407,7 @@ aggregate = ["dep:tdigest"]
 chrono = ["dep:chrono"]
 
 # Convenience: turn everything on.
-full = ["http", "tls", "tls-fingerprints", "dns", "icmp", "arp", "pcap", "metrics", "tracing", "serde", "emit", "emit-ndjson", "emit-eve", "aggregate", "chrono", "file-hash", "fingerprint"]
+full = ["http", "tls", "tls-fingerprints", "dns", "icmp", "arp", "pcap", "metrics", "tracing", "serde", "emit", "emit-ndjson", "emit-eve", "aggregate", "chrono", "file-hash", "fingerprint", "community-id"]
 
 [package.metadata.docs.rs]
 all-features = true

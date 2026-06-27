@@ -91,6 +91,139 @@ pub trait KeyFields {
     fn app_proto_str(&self) -> Option<&'static str> {
         None
     }
+
+    /// Stable, **seed-fixed** 64-bit hash over the canonical
+    /// (direction-normalized) 5-tuple.
+    ///
+    /// Unlike a `#[derive(Hash)]` run through `RandomState` (a
+    /// per-process random seed), this is **reproducible across
+    /// threads and processes** — the property required for
+    /// sharding a merged flow table so both legs of a flow always
+    /// land on the same worker (see [`Self::shard_index`]). A→B
+    /// and B→A produce the same value.
+    ///
+    /// Returns `None` if any of (proto, src ip/port, dest ip/port)
+    /// is unknown. The algorithm is FNV-1a — the same value the
+    /// EVE writer emits as `flow_hash`.
+    ///
+    /// Issue #76 (folds #70).
+    fn stable_hash(&self) -> Option<u64> {
+        let src_ip = self.src_ip()?;
+        let src_port = self.src_port()?;
+        let dest_ip = self.dest_ip()?;
+        let dest_port = self.dest_port()?;
+        // Proto component: the EVE-compatible string label when the
+        // key carries one (keeps the EVE `flow_hash` byte-identical
+        // for TCP/UDP/…), else the numeric protocol id.
+        let mut id_buf = [0u8; 1];
+        let proto: &[u8] = if let Some(s) = self.proto_str() {
+            s.as_bytes()
+        } else if let Some(id) = self.protocol_identifier() {
+            id_buf[0] = id;
+            &id_buf
+        } else {
+            return None;
+        };
+        Some(fnv1a_five_tuple(
+            proto, src_ip, src_port, dest_ip, dest_port,
+        ))
+    }
+
+    /// Deterministic shard index in `0..n` for sharded flow
+    /// tables. `None` if `n == 0` or the key lacks a full 5-tuple.
+    ///
+    /// Built on [`Self::stable_hash`], so both directions of a
+    /// flow map to the same shard across processes — the
+    /// correctness requirement for tap-merge sharding.
+    ///
+    /// Issue #76 (folds #70).
+    fn shard_index(&self, n: usize) -> Option<usize> {
+        if n == 0 {
+            return None;
+        }
+        Some((self.stable_hash()? % n as u64) as usize)
+    }
+
+    /// [Corelight Community ID](https://github.com/corelight/community-id-spec)
+    /// v1 with the universal default seed (0) — the cross-tool
+    /// flow id for pivoting flowscope output against Zeek /
+    /// Suricata / Security Onion.
+    ///
+    /// Returns `Some` only when the crate is built with the
+    /// `community-id` feature **and** the key carries a full
+    /// 5-tuple; otherwise `None`. TCP/UDP/SCTP are exact; ICMP is
+    /// stable but not spec-compatible (see [`crate::community_id`]).
+    ///
+    /// Issue #76.
+    fn community_id(&self) -> Option<String> {
+        self.community_id_seeded(0)
+    }
+
+    /// [`Self::community_id`] with an explicit sensor seed.
+    fn community_id_seeded(&self, seed: u16) -> Option<String> {
+        #[cfg(feature = "community-id")]
+        {
+            crate::community_id::community_id_for_key(self, seed)
+        }
+        #[cfg(not(feature = "community-id"))]
+        {
+            let _ = seed;
+            None
+        }
+    }
+}
+
+/// FNV-1a over the canonical 5-tuple: `proto.as_bytes() ‖ lo_ip
+/// ‖ lo_port_be ‖ hi_ip ‖ hi_port_be`, where `(lo_ip, lo_port)`
+/// is the lexicographically smaller endpoint. Direction- and
+/// process-stable. Shared by [`KeyFields::stable_hash`] and the
+/// EVE writer's `flow_hash` so both produce the identical value.
+pub(crate) fn fnv1a_five_tuple(
+    proto: &[u8],
+    src_ip: IpAddr,
+    src_port: u16,
+    dest_ip: IpAddr,
+    dest_port: u16,
+) -> u64 {
+    let (lo_ip, lo_port, hi_ip, hi_port) = if (src_ip, src_port) <= (dest_ip, dest_port) {
+        (src_ip, src_port, dest_ip, dest_port)
+    } else {
+        (dest_ip, dest_port, src_ip, src_port)
+    };
+
+    const FNV_OFFSET: u64 = 0xcbf29ce484222325;
+    const FNV_PRIME: u64 = 0x100000001b3;
+    let mut h = FNV_OFFSET;
+    fn feed(b: u8, h: &mut u64) {
+        *h ^= b as u64;
+        *h = h.wrapping_mul(FNV_PRIME);
+    }
+    fn feed_ip(ip: IpAddr, h: &mut u64) {
+        match ip {
+            IpAddr::V4(v4) => {
+                for &b in &v4.octets() {
+                    feed(b, h);
+                }
+            }
+            IpAddr::V6(v6) => {
+                for &b in &v6.octets() {
+                    feed(b, h);
+                }
+            }
+        }
+    }
+    fn feed_port(p: u16, h: &mut u64) {
+        feed((p >> 8) as u8, h);
+        feed((p & 0xff) as u8, h);
+    }
+    for &b in proto {
+        feed(b, &mut h);
+    }
+    feed_ip(lo_ip, &mut h);
+    feed_port(lo_port, &mut h);
+    feed_ip(hi_ip, &mut h);
+    feed_port(hi_port, &mut h);
+    h
 }
 
 /// Anomaly classification accessor — implemented on
