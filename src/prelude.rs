@@ -147,6 +147,8 @@ pub use crate::correlate::{NeighborBinding, NeighborEvent, NeighborTable};
 // Issue #4 (0.17): behavioural-fingerprint primitives.
 #[cfg(feature = "fingerprint")]
 pub use crate::detect::fingerprint::{FingerprintBuilder, FlowFingerprint};
+// Issue #72: threat-intel indicator membership set.
+pub use crate::detect::{IocKind, IocMatch, IocSet};
 /// The typed [`crate::driver::Driver`] +
 /// [`crate::driver::SlotHandle`] shape (plan 121).
 #[cfg(all(feature = "extractors", feature = "reassembler", feature = "session"))]
