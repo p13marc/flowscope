@@ -149,6 +149,8 @@ pub use crate::correlate::{NeighborBinding, NeighborEvent, NeighborTable};
 pub use crate::detect::fingerprint::{FingerprintBuilder, FlowFingerprint};
 // Issue #72: threat-intel indicator membership set.
 pub use crate::detect::{IocKind, IocMatch, IocSet};
+// Issue #73: nDPI-style flow-risk taxonomy.
+pub use crate::detect::{FlowRisk, RiskSeverity};
 /// The typed [`crate::driver::Driver`] +
 /// [`crate::driver::SlotHandle`] shape (plan 121).
 #[cfg(all(feature = "extractors", feature = "reassembler", feature = "session"))]

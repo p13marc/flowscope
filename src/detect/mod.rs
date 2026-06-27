@@ -42,10 +42,13 @@ pub mod file;
 pub mod fingerprint;
 pub mod ioc;
 pub mod patterns;
+pub mod risk;
 pub mod signatures;
 
 // Issue #72: typed threat-intel membership set.
 pub use ioc::{IocKind, IocMatch, IocSet};
+// Issue #73: nDPI-style flow-risk taxonomy.
+pub use risk::{FlowRisk, RiskSeverity};
 
 // Issue #4 (0.17): short-path re-exports for the most-imported
 // fingerprint types.
