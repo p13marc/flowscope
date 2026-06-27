@@ -587,7 +587,7 @@ required-features = ["pcap", "extractors", "tracker", "dns", "tls", "emit-eve"]
 [[example]]
 name = "flow_analysis"
 path = "examples/03-detection/flow_analysis.rs"
-required-features = ["analysis", "tls", "dns"]
+required-features = ["analysis", "tls", "dns", "emit-eve"]
 
 # ── 04 observability / SRE ───────────────────────────
 [[example]]

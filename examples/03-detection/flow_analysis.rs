@@ -14,13 +14,14 @@
 //! slot drain (or a `FlowSessionDriver`) and `finalize` from the
 //! flow's `Ended` event.
 //!
-//! Run: `cargo run --example flow_analysis --features analysis,tls,dns`
+//! Run: `cargo run --example flow_analysis --features analysis,tls,dns,emit-eve`
 
 use std::time::Duration;
 
 use flowscope::analysis::FlowAnalyzer;
 use flowscope::detect::{IocKind, IocSet};
 use flowscope::dns::{DnsFlags, DnsQuery, DnsQuestion};
+use flowscope::emit::EveJsonWriter;
 use flowscope::extract::FiveTupleKey;
 use flowscope::tls::{TlsHandshake, TlsVersion};
 use flowscope::{FlowStats, L4Proto, Timestamp};
@@ -110,10 +111,17 @@ fn main() {
         ("D clean     ", d, stats(40, 28_000)),
     ];
 
+    let records: Vec<_> = flows
+        .into_iter()
+        .map(|(label, k, st)| (label, analyzer.finalize(&k, st)))
+        .collect();
+
+    // The analyzer evicted each flow's state on finalize.
+    assert_eq!(analyzer.len(), 0);
+
     println!("flow          clean?  sev     score  risk / IOC");
     println!("{}", "─".repeat(72));
-    for (label, k, st) in flows {
-        let rec = analyzer.finalize(&k, st);
+    for (label, rec) in &records {
         let sev = rec.severity().map(|s| s.as_str()).unwrap_or("-");
         let risks: Vec<&str> = rec.risk.as_slugs().collect();
         let mut detail = risks.join(",");
@@ -138,6 +146,13 @@ fn main() {
         );
     }
 
-    // The analyzer evicted each flow's state on finalize.
-    assert_eq!(analyzer.len(), 0);
+    // 4. The same records as SIEM-ready EVE JSON (one line per
+    //    non-clean flow) — pipe to jq, Filebeat, Splunk, …
+    println!("\n── EVE JSON (non-clean flows) ──");
+    let mut eve = EveJsonWriter::new(std::io::stdout().lock());
+    for (_, rec) in &records {
+        if !rec.is_clean() {
+            eve.write_analyzed_flow(rec).unwrap();
+        }
+    }
 }

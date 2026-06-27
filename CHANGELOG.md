@@ -44,6 +44,13 @@ Additive over 0.19. Pure, no-async — fits the runtime-free lib rule.
   A pure composition layer (the `asset::Inventory` shape), runtime-free,
   features-not-verdicts. Example: `examples/03-detection/flow_analysis.rs`.
   `IocMatch` gains a `serde` derive (additive) so hits serialize.
+  - **`EveJsonWriter::write_analyzed_flow`** (with `analysis` +
+    `emit-eve`) — the SIEM-ready single-pass emit: an EVE `flow`
+    event carrying the 5-tuple (+ `community_id` / `flow_hash`),
+    counters, observed L7 (`tls` / `http` / `dns` objects), and a
+    `flowscope` extension object with the risk slug array + aggregate
+    `score` + `severity` and the threat-intel `ioc` hits.
+    `flow.alerted` reflects `AnalyzedFlow::is_clean`.
 - **Community ID v1 flow hashing** (#76, folds #70) — behind the new
   `community-id` feature (SHA-1 + base64). `FiveTupleKey::community_id()`
   / `KeyFields::community_id()`, emitted as `community_id` in the EVE

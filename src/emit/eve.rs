@@ -302,6 +302,135 @@ where
         self.write_line(&obj)
     }
 
+    /// Emit an enriched [`crate::AnalyzedFlow`] as an EVE `flow`
+    /// event — the SIEM-ready single-pass record. Carries the
+    /// standard 5-tuple (+ `community_id` / `flow_hash`), the flow
+    /// counters, the observed L7 facts (`tls` / `http` / `dns`
+    /// objects), and a `flowscope` extension object with the
+    /// computed risk (slug array + aggregate `score` + `severity`)
+    /// and any threat-intel `ioc` hits. `flow.alerted` reflects
+    /// [`crate::AnalyzedFlow::is_clean`].
+    ///
+    /// Issue #83. Available with the `analysis` feature.
+    #[cfg(feature = "analysis")]
+    pub fn write_analyzed_flow<K>(&mut self, af: &crate::AnalyzedFlow<K>) -> io::Result<()>
+    where
+        K: KeyFields,
+    {
+        let stats = &af.stats;
+        self.ts_buf.clear();
+        let _ = stats.last_seen.write_iso8601(&mut self.ts_buf);
+        let end_ts = self.ts_buf.clone();
+        self.ts_buf.clear();
+        let _ = stats.started.write_iso8601(&mut self.ts_buf);
+        let start_ts = self.ts_buf.clone();
+
+        let flow_id = self.next_flow_id();
+        let mut obj = serde_json::Map::with_capacity(12);
+        obj.insert("timestamp".into(), json!(end_ts));
+        obj.insert("flow_id".into(), json!(flow_id));
+        obj.insert("event_type".into(), json!("flow"));
+        if !self.options.in_iface.is_empty() {
+            obj.insert("in_iface".into(), json!(self.options.in_iface));
+        }
+        insert_5tuple(&mut obj, &af.key);
+        // The detected app proto is more accurate than the port-based
+        // label insert_5tuple derives — prefer it when observed.
+        if let Some(ap) = af.l7.app_proto {
+            obj.insert("app_proto".into(), json!(ap));
+        }
+
+        obj.insert(
+            "flow".into(),
+            json!({
+                "pkts_toserver": stats.packets_initiator,
+                "pkts_toclient": stats.packets_responder,
+                "bytes_toserver": stats.bytes_initiator,
+                "bytes_toclient": stats.bytes_responder,
+                "start": start_ts,
+                "end": end_ts,
+                "age": stats.duration().as_secs(),
+                "alerted": !af.is_clean(),
+            }),
+        );
+
+        // L7 app-layer objects (Suricata-shaped where it maps cleanly).
+        let l7 = &af.l7;
+        if l7.ja3.is_some()
+            || l7.ja4.is_some()
+            || l7.tls_version.is_some()
+            || l7.tls_cipher.is_some()
+        {
+            let mut tls = serde_json::Map::with_capacity(5);
+            if let Some(sni) = &l7.server_name {
+                tls.insert("sni".into(), json!(sni));
+            }
+            if let Some(j) = &l7.ja3 {
+                tls.insert("ja3".into(), json!({ "hash": j }));
+            }
+            if let Some(j) = &l7.ja4 {
+                tls.insert("ja4".into(), json!(j));
+            }
+            if let Some(v) = l7.tls_version {
+                tls.insert("version_raw".into(), json!(format!("0x{v:04x}")));
+            }
+            if let Some(c) = l7.tls_cipher {
+                tls.insert("cipher_raw".into(), json!(format!("0x{c:04x}")));
+            }
+            obj.insert("tls".into(), serde_json::Value::Object(tls));
+        }
+        if l7.http_method.is_some() || l7.http_uri.is_some() || l7.user_agent.is_some() {
+            let mut http = serde_json::Map::with_capacity(4);
+            if let Some(h) = &l7.server_name {
+                http.insert("hostname".into(), json!(h));
+            }
+            if let Some(m) = &l7.http_method {
+                http.insert("http_method".into(), json!(m));
+            }
+            if let Some(u) = &l7.http_uri {
+                http.insert("url".into(), json!(u));
+            }
+            if let Some(ua) = &l7.user_agent {
+                http.insert("http_user_agent".into(), json!(ua));
+            }
+            obj.insert("http".into(), serde_json::Value::Object(http));
+        }
+        if !l7.dns_queries.is_empty() {
+            obj.insert("dns".into(), json!({ "queries": l7.dns_queries }));
+        }
+
+        // The `flowscope` enrichment extension: risk + IOC hits.
+        let mut fs = serde_json::Map::with_capacity(4);
+        if !af.risk.is_empty() {
+            let slugs: Vec<&str> = af.risk.as_slugs().collect();
+            fs.insert("risk".into(), json!(slugs));
+            fs.insert("risk_score".into(), json!(af.score()));
+            if let Some(sev) = af.severity() {
+                fs.insert("risk_severity".into(), json!(sev.as_str()));
+            }
+        }
+        if !af.ioc_hits.is_empty() {
+            let hits: Vec<serde_json::Value> = af
+                .ioc_hits
+                .iter()
+                .map(|m| {
+                    json!({
+                        "kind": m.kind.as_str(),
+                        "value": m.value,
+                        "reputation": m.reputation,
+                        "source": m.source,
+                    })
+                })
+                .collect();
+            fs.insert("ioc".into(), json!(hits));
+        }
+        if !fs.is_empty() {
+            obj.insert("flowscope".into(), serde_json::Value::Object(fs));
+        }
+
+        self.write_line(&obj)
+    }
+
     // ── Per-variant emit ────────────────────────────────────
 
     fn write_anomaly<K>(
@@ -608,5 +737,59 @@ mod tests {
         };
         assert_eq!(flow_hash(&a), flow_hash(&b));
         assert!(flow_hash(&a).is_some());
+    }
+
+    #[cfg(all(feature = "analysis", feature = "extractors"))]
+    #[test]
+    fn analyzed_flow_emits_enriched_flow_event() {
+        use crate::analysis::L7Summary;
+        use crate::detect::{FlowRisk, IocKind, IocMatch};
+        use crate::{AnalyzedFlow, FlowStats, L4Proto, extract::FiveTupleKey};
+
+        let key = FiveTupleKey {
+            proto: L4Proto::Tcp,
+            a: "10.0.0.1:50000".parse().unwrap(),
+            b: "93.184.216.34:443".parse().unwrap(),
+        };
+        let l7 = L7Summary {
+            app_proto: Some("tls"),
+            server_name: Some("evil.example".into()),
+            ja4: Some("t13d1516h2_x_y".into()),
+            tls_version: Some(0x0301),
+            ..Default::default()
+        };
+        let af = AnalyzedFlow {
+            key,
+            stats: FlowStats::default(),
+            l7,
+            risk: FlowRisk::TLS_OBSOLETE_VERSION | FlowRisk::SUSPICIOUS_JA4,
+            ioc_hits: vec![IocMatch {
+                kind: IocKind::Ja4,
+                value: "t13d1516h2_x_y".into(),
+                reputation: Some(95),
+                source: Some("intel".into()),
+            }],
+        };
+
+        let mut buf = Vec::new();
+        EveJsonWriter::new(&mut buf)
+            .write_analyzed_flow(&af)
+            .unwrap();
+        let v: serde_json::Value = serde_json::from_slice(&buf).unwrap();
+
+        assert_eq!(v["event_type"], "flow");
+        assert_eq!(v["app_proto"], "tls");
+        assert_eq!(v["flow"]["alerted"], true);
+        assert_eq!(v["tls"]["sni"], "evil.example");
+        assert_eq!(v["tls"]["ja4"], "t13d1516h2_x_y");
+        assert_eq!(v["tls"]["version_raw"], "0x0301");
+        let risks = v["flowscope"]["risk"].as_array().unwrap();
+        assert!(risks.iter().any(|s| s == "tls_obsolete_version"));
+        assert!(risks.iter().any(|s| s == "suspicious_ja4"));
+        assert_eq!(v["flowscope"]["risk_severity"], "high");
+        assert_eq!(v["flowscope"]["ioc"][0]["kind"], "ja4");
+        assert_eq!(v["flowscope"]["ioc"][0]["source"], "intel");
+        // Every line is valid JSON ending in newline.
+        assert!(buf.ends_with(b"\n"));
     }
 }
