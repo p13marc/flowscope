@@ -19,6 +19,31 @@ const LINK_HEADER_LEN: usize = 10;
 /// First user-data block max payload (16 bytes + 2 CRC).
 const FIRST_BLOCK_DATA: usize = 16;
 
+/// DNP3 CRC-16 over `data` (IEEE 1815-2012 §9.2.4.5).
+///
+/// Polynomial 0x3D65, reflected (0xA6BC), result one's-complemented
+/// — the standard DNP3 framing CRC. The on-wire CRC bytes follow
+/// `data` little-endian (low byte first).
+///
+/// Pure, bounded, no length-driven loop over attacker-controlled
+/// sizes — `data` here is always the fixed 8-byte link header, so
+/// this is not the reassembly-style code path the Suricata DNP3 CVE
+/// lived in.
+fn dnp3_crc(data: &[u8]) -> u16 {
+    let mut crc: u16 = 0;
+    for &b in data {
+        crc ^= b as u16;
+        for _ in 0..8 {
+            if crc & 1 != 0 {
+                crc = (crc >> 1) ^ 0xA6BC;
+            } else {
+                crc >>= 1;
+            }
+        }
+    }
+    !crc
+}
+
 /// Failure mode for [`parse`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
@@ -66,8 +91,11 @@ pub fn parse(payload: &[u8]) -> Result<DnpMessage, ParseError> {
     let control = payload[3];
     let dst_addr = u16::from_le_bytes([payload[4], payload[5]]);
     let src_addr = u16::from_le_bytes([payload[6], payload[7]]);
-    // Bytes 8..10 are the header CRC — skipped here per the
-    // module doc.
+    // Bytes 8..10 are the header CRC (little-endian) covering the
+    // 8-byte link header. Validate it (issue #80) so consumers can
+    // tell a corrupt/non-DNP3 frame from a clean one.
+    let on_wire_crc = u16::from_le_bytes([payload[8], payload[9]]);
+    let header_crc_valid = dnp3_crc(&payload[0..8]) == on_wire_crc;
 
     let link_function = DnpLinkFunctionKind::from_raw(control);
     let link_dir = DnpLinkDirection::from_bit((control & 0x80) != 0);
@@ -94,6 +122,7 @@ pub fn parse(payload: &[u8]) -> Result<DnpMessage, ParseError> {
         link_dir,
         link_prm,
         application,
+        header_crc_valid,
     })
 }
 
@@ -151,10 +180,31 @@ mod tests {
         out.push(control);
         out.extend_from_slice(&dst.to_le_bytes());
         out.extend_from_slice(&src.to_le_bytes());
-        // header CRC placeholder (we don't verify).
-        out.extend_from_slice(&[0xAA, 0xBB]);
+        // Real header CRC over the 8-byte link header (issue #80).
+        out.extend_from_slice(&dnp3_crc(&out[0..8]).to_le_bytes());
         out.extend_from_slice(user_data);
         out
+    }
+
+    #[test]
+    fn crc_matches_dnp3_spec_vector() {
+        // IEEE 1815 §9.2.4.5 worked example: CRC of the 8-byte
+        // link header `05 64 05 C0 01 00 00 04` is 0x21E9, stored
+        // little-endian on the wire as E9 21.
+        let header = [0x05u8, 0x64, 0x05, 0xC0, 0x01, 0x00, 0x00, 0x04];
+        assert_eq!(dnp3_crc(&header), 0x21E9);
+    }
+
+    #[test]
+    fn header_crc_validates_and_detects_tampering() {
+        let mut buf = build_frame(0xC0, 1, 2, &[]);
+        assert!(parse(&buf).unwrap().header_crc_valid);
+        // Flip a CRC byte → invalid, but the frame still parses
+        // (metadata is surfaced with header_crc_valid = false).
+        buf[8] ^= 0xFF;
+        let msg = parse(&buf).unwrap();
+        assert!(!msg.header_crc_valid);
+        assert_eq!(msg.src_addr, 2); // metadata still extracted
     }
 
     #[test]
