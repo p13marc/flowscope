@@ -18,6 +18,10 @@
 //! shapes when a consumer asks.
 
 use std::io::{self, Write};
+// Only the ipfix-gated `flow_record_hash` names `IpAddr` directly;
+// the `KeyFields`-based path works through `to_string()`.
+#[cfg(feature = "ipfix")]
+use std::net::IpAddr;
 
 use serde_json::json;
 

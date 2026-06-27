@@ -87,9 +87,25 @@ jobs:
           - "ldap"              # 0.18: LDAP parser (issue #13)
           - "smb"               # 0.18: SMB2/3 parser M1 (issue #12)
           - "quic"              # 0.18: QUIC Initial parser (issue #3)
+          - "community-id"      # 0.19: Corelight Community ID v1 flow hashing (issue #76)
+          - "community-id,emit-eve"  # 0.19: community_id in the EVE writer
     steps:
       - uses: actions/checkout@v4
       - name: Build (--no-default-features --features "${{ matrix.features }}")
         run: cargo build --no-default-features --features "${{ matrix.features }}"
       - name: Clippy (--no-default-features --features "${{ matrix.features }}")
         run: cargo clippy --no-default-features --features "${{ matrix.features }}" -- -D warnings
+
+  semver:
+    # Pre-1.0 API-stability gate (issue #78). Catches *accidental*
+    # breaking changes against the last crates.io release. Intentional
+    # breaks are fine — bump the version + label the PR `breaking`;
+    # cargo-semver-checks keys off the version, so a major/minor bump
+    # that matches the change passes.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: cargo-semver-checks
+        uses: obi1kenobi/cargo-semver-checks-action@v2
+        with:
+          feature-group: all-features
