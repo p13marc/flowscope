@@ -18,10 +18,6 @@
 //! shapes when a consumer asks.
 
 use std::io::{self, Write};
-// Only the ipfix-gated `flow_record_hash` names `IpAddr` directly;
-// the `KeyFields`-based path works through `to_string()`.
-#[cfg(feature = "ipfix")]
-use std::net::IpAddr;
 
 use serde_json::json;
 
@@ -193,9 +189,10 @@ where
     /// 152/153) to ISO-8601 strings.
     ///
     /// `flow_id` is auto-incremented as for `write_event`.
-    /// The `flow_hash` is recomputed from the FlowRecord
-    /// (proto + sorted-endpoint addresses + ports) — same
-    /// algorithm as the event-driven path.
+    /// The cross-tool `community_id` (read from
+    /// [`FlowRecord::community_id`](crate::FlowRecord::community_id),
+    /// populated when the `community-id` feature is on) is emitted as the
+    /// canonical flow identifier — matching the event-driven path.
     ///
     /// Issue #16 — emitter unification at the FlowRecord
     /// layer. Requires the `ipfix` feature.
@@ -231,7 +228,11 @@ where
                 "alerted": false,
             }),
         );
-        obj.insert("flow_hash".into(), json!(flow_record_hash(rec)));
+        // Canonical cross-tool flow identifier. `None` unless the
+        // FlowRecord was built with the `community-id` feature.
+        if let Some(cid) = rec.community_id.as_deref() {
+            obj.insert("community_id".into(), json!(cid));
+        }
         self.write_line(&obj)
     }
 
@@ -304,7 +305,7 @@ where
 
     /// Emit an enriched [`crate::AnalyzedFlow`] as an EVE `flow`
     /// event — the SIEM-ready single-pass record. Carries the
-    /// standard 5-tuple (+ `community_id` / `flow_hash`), the flow
+    /// standard 5-tuple (+ `community_id`), the flow
     /// counters, the observed L7 facts (`tls` / `http` / `dns`
     /// objects), and a `flowscope` extension object with the
     /// computed risk (slug array + aggregate `score` + `severity`)
@@ -592,72 +593,6 @@ fn insert_flow_record_5tuple(
     }
 }
 
-/// FNV-1a hash over the FlowRecord's canonical 5-tuple.
-/// Same algorithm as [`flow_hash`] (the KeyFields variant);
-/// produces the same hex value for the same 5-tuple
-/// regardless of construction path.
-#[cfg(feature = "ipfix")]
-fn flow_record_hash(rec: &crate::FlowRecord) -> Option<String> {
-    let proto = super::csv::flow_record_proto_str(rec);
-    if proto.is_empty() {
-        return None;
-    }
-    let src_ip = rec
-        .source_ipv4_address
-        .map(IpAddr::V4)
-        .or_else(|| rec.source_ipv6_address.map(IpAddr::V6))?;
-    let dest_ip = rec
-        .destination_ipv4_address
-        .map(IpAddr::V4)
-        .or_else(|| rec.destination_ipv6_address.map(IpAddr::V6))?;
-    let src_port = rec.source_transport_port;
-    let dest_port = rec.destination_transport_port;
-
-    let (lo_ip, lo_port, hi_ip, hi_port) = if (src_ip, src_port) <= (dest_ip, dest_port) {
-        (src_ip, src_port, dest_ip, dest_port)
-    } else {
-        (dest_ip, dest_port, src_ip, src_port)
-    };
-    // Proto-uppercase to match `KeyFields::proto_str()`
-    // which yields "TCP" / "UDP" / etc.
-    let proto_upper = proto.to_uppercase();
-
-    const FNV_OFFSET: u64 = 0xcbf29ce484222325;
-    const FNV_PRIME: u64 = 0x100000001b3;
-    let mut h = FNV_OFFSET;
-    fn feed(b: u8, h: &mut u64) {
-        *h ^= b as u64;
-        *h = h.wrapping_mul(FNV_PRIME);
-    }
-    for &b in proto_upper.as_bytes() {
-        feed(b, &mut h);
-    }
-    fn feed_ip(ip: IpAddr, h: &mut u64) {
-        match ip {
-            IpAddr::V4(v4) => {
-                for &b in &v4.octets() {
-                    feed(b, h);
-                }
-            }
-            IpAddr::V6(v6) => {
-                for &b in &v6.octets() {
-                    feed(b, h);
-                }
-            }
-        }
-    }
-    fn feed_port(p: u16, h: &mut u64) {
-        for &b in &p.to_be_bytes() {
-            feed(b, h);
-        }
-    }
-    feed_ip(lo_ip, &mut h);
-    feed_port(lo_port, &mut h);
-    feed_ip(hi_ip, &mut h);
-    feed_port(hi_port, &mut h);
-    Some(format!("{h:016x}"))
-}
-
 /// Convert Unix milliseconds → ISO 8601 string by going via
 /// [`crate::Timestamp`].
 #[cfg(feature = "ipfix")]
@@ -690,24 +625,15 @@ fn insert_5tuple<K: KeyFields>(obj: &mut serde_json::Map<String, serde_json::Val
     if let Some(p) = key.app_proto_str() {
         obj.insert("app_proto".into(), json!(p));
     }
-    if let Some(h) = flow_hash(key) {
-        obj.insert("flow_hash".into(), json!(format!("{h:016x}")));
-    }
-    // Cross-tool Community ID (Zeek / Suricata / Security Onion
-    // pivot). `None` unless built with the `community-id` feature.
+    // Cross-tool Community ID (Zeek / Suricata / Security Onion pivot) —
+    // the canonical, portable flow identifier in EVE output since 0.19.
+    // `None` unless built with the `community-id` feature. (The legacy
+    // proprietary FNV-1a `flow_hash` was dropped from default output in
+    // 0.19, issue #88; `KeyFields::stable_hash()` is still available for
+    // callers that want a non-portable in-process hash.)
     if let Some(cid) = key.community_id() {
         obj.insert("community_id".into(), json!(cid));
     }
-}
-
-/// Stable 64-bit hash over the canonical 5-tuple. Returns
-/// `None` if any of (proto, src ip/port, dest ip/port) is
-/// unknown.
-///
-/// Delegates to [`crate::KeyFields::stable_hash`] (FNV-1a) so the
-/// EVE `flow_hash` and the public `stable_hash()` always agree.
-fn flow_hash<K: KeyFields>(key: &K) -> Option<u64> {
-    key.stable_hash()
 }
 
 #[cfg(test)]
@@ -722,8 +648,14 @@ mod tests {
         assert_eq!(default_severity_numeric(Severity::Info), 4);
     }
 
+    /// The canonical EVE flow identifier (`community_id`) is
+    /// direction-invariant — both orientations of the same flow hash
+    /// to the same value. (Replaces the pre-0.19 `flow_hash` test;
+    /// the proprietary FNV `flow_hash` was dropped from EVE output in
+    /// issue #88.)
+    #[cfg(feature = "community-id")]
     #[test]
-    fn flow_hash_direction_invariant() {
+    fn community_id_direction_invariant() {
         use crate::{L4Proto, extract::FiveTupleKey};
         let a = FiveTupleKey {
             proto: L4Proto::Tcp,
@@ -735,8 +667,9 @@ mod tests {
             a: "10.0.0.2:80".parse().unwrap(),
             b: "10.0.0.1:33000".parse().unwrap(),
         };
-        assert_eq!(flow_hash(&a), flow_hash(&b));
-        assert!(flow_hash(&a).is_some());
+        // `FiveTupleKey::community_id()` is the infallible inherent method.
+        assert_eq!(a.community_id(), b.community_id());
+        assert!(a.community_id().starts_with("1:"));
     }
 
     #[cfg(all(feature = "analysis", feature = "extractors"))]

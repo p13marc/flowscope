@@ -34,8 +34,11 @@ fn flipped_key() -> FiveTupleKey {
     }
 }
 
+/// The proprietary FNV-1a `flow_hash` was dropped from default EVE
+/// output in 0.19 (issue #88) — `community_id` is now the canonical
+/// flow identifier. This guards against it sneaking back.
 #[test]
-fn eve_flow_hash_is_emitted_and_hex_format() {
+fn eve_flow_hash_is_not_emitted() {
     let mut buf = Vec::new();
     let mut w = EveJsonWriter::new(&mut buf);
     let ev: FlowEvent<FiveTupleKey> = FlowEvent::FlowAnomaly {
@@ -48,11 +51,10 @@ fn eve_flow_hash_is_emitted_and_hex_format() {
     };
     w.write_event(&ev).unwrap();
     let lines = parse_lines(&buf);
-    let hash = lines[0]["flow_hash"].as_str().expect("flow_hash present");
-    assert_eq!(hash.len(), 16, "16-char hex u64");
     assert!(
-        hash.chars().all(|c| c.is_ascii_hexdigit()),
-        "ascii hex: {hash}"
+        lines[0].get("flow_hash").is_none(),
+        "flow_hash must not be emitted: {:?}",
+        lines[0]
     );
 }
 
@@ -82,55 +84,42 @@ fn eve_emits_community_id_and_is_direction_invariant() {
     assert_eq!(fwd, rev, "community_id is direction-invariant");
 }
 
+#[cfg(feature = "community-id")]
+fn extract_community_id(key: FiveTupleKey) -> String {
+    let mut buf = Vec::new();
+    let mut w = EveJsonWriter::new(&mut buf);
+    let ev: FlowEvent<FiveTupleKey> = FlowEvent::FlowAnomaly {
+        key,
+        kind: AnomalyKind::OutOfOrderSegment {
+            side: FlowSide::Initiator,
+            count: 1,
+        },
+        ts: Timestamp::new(1_700_000_000, 0),
+    };
+    w.write_event(&ev).unwrap();
+    parse_lines(&buf)[0]["community_id"]
+        .as_str()
+        .expect("community_id present")
+        .to_string()
+}
+
+#[cfg(feature = "community-id")]
 #[test]
-fn eve_flow_hash_is_direction_invariant_and_deterministic() {
-    fn extract_hash(key: FiveTupleKey) -> String {
-        let mut buf = Vec::new();
-        let mut w = EveJsonWriter::new(&mut buf);
-        let ev: FlowEvent<FiveTupleKey> = FlowEvent::FlowAnomaly {
-            key,
-            kind: AnomalyKind::OutOfOrderSegment {
-                side: FlowSide::Initiator,
-                count: 1,
-            },
-            ts: Timestamp::new(1_700_000_000, 0),
-        };
-        w.write_event(&ev).unwrap();
-        parse_lines(&buf)[0]["flow_hash"]
-            .as_str()
-            .unwrap()
-            .to_string()
-    }
-    let h1 = extract_hash(key());
-    let h2 = extract_hash(key()); // same input → same hash (deterministic)
-    let h3 = extract_hash(flipped_key()); // direction reversed → same hash
+fn eve_community_id_is_deterministic() {
+    let h1 = extract_community_id(key());
+    let h2 = extract_community_id(key()); // same input → same id
+    let h3 = extract_community_id(flipped_key()); // direction reversed → same id
     assert_eq!(h1, h2);
     assert_eq!(h1, h3);
 }
 
+#[cfg(feature = "community-id")]
 #[test]
-fn eve_flow_hash_differs_for_distinct_flows() {
-    fn extract_hash(key: FiveTupleKey) -> String {
-        let mut buf = Vec::new();
-        let mut w = EveJsonWriter::new(&mut buf);
-        let ev: FlowEvent<FiveTupleKey> = FlowEvent::FlowAnomaly {
-            key,
-            kind: AnomalyKind::OutOfOrderSegment {
-                side: FlowSide::Initiator,
-                count: 1,
-            },
-            ts: Timestamp::new(1_700_000_000, 0),
-        };
-        w.write_event(&ev).unwrap();
-        parse_lines(&buf)[0]["flow_hash"]
-            .as_str()
-            .unwrap()
-            .to_string()
-    }
-    let h1 = extract_hash(key());
+fn eve_community_id_differs_for_distinct_flows() {
+    let h1 = extract_community_id(key());
     let mut other = key();
     other.b = "10.0.0.3:443".parse().unwrap();
-    let h2 = extract_hash(other);
+    let h2 = extract_community_id(other);
     assert_ne!(h1, h2);
 }
 

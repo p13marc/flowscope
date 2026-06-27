@@ -196,6 +196,17 @@ pub struct FlowRecord {
     /// Issue #16 close.
     #[cfg(feature = "tracker")]
     pub original_end_reason: Option<crate::EndReason>,
+
+    /// flowscope ext — Corelight **Community ID** v1 (the canonical,
+    /// cross-tool flow identifier: Zeek / Suricata / Security Onion all
+    /// pivot on it). `"1:"`-prefixed SHA-1 + base64 over the canonical
+    /// 5-tuple. Populated by [`Self::from_parts`] **only when the
+    /// `community-id` feature is enabled** (it requires SHA-1 + base64);
+    /// `None` otherwise. The NDJSON / CSV / EVE FlowRecord writers emit
+    /// this field as the portable flow id.
+    ///
+    /// Issue #88.
+    pub community_id: Option<String>,
 }
 
 impl FlowRecord {
@@ -306,6 +317,9 @@ impl FlowRecord {
         {
             rec.application_name = Some(app.to_string());
         }
+        // Canonical cross-tool flow id. `KeyFields::community_id()` returns
+        // `None` unless the crate is built with the `community-id` feature.
+        rec.community_id = key.community_id();
         rec
     }
 

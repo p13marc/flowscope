@@ -492,9 +492,14 @@ for ev in driver.track(view) {
 eve.finish()?;
 ```
 
-Every record carries a `flow_hash` field — a 16-char hex FNV-1a
-over `(proto, sorted endpoints)`, deterministic and direction-
-invariant. Use it as a stable correlation key across pipelines.
+When built with the `community-id` feature, every record carries a
+`community_id` field — Corelight Community ID v1, the portable
+cross-tool flow identifier (Zeek / Suricata / Security Onion all
+pivot on it), deterministic and direction-invariant. Use it as the
+stable correlation key across pipelines. (Before 0.19 this was a
+proprietary FNV-1a `flow_hash`; that field was dropped in issue #88
+— the FNV hash remains available in-process as
+`KeyFields::stable_hash()` but is no longer emitted.)
 
 Custom flow-key types opt in by implementing
 [`AnomalyFields`](#custom-anomalyfields-impl). See

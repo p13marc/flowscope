@@ -58,7 +58,14 @@ extract)* — is anti-pattern for production DPI:
 
 flowscope is shaped for the run-to-completion model: per-flow
 state is local (one `FlowTracker` per worker), no locks on the
-hot path, no atomics required.
+hot path, no atomics required. This is the *recommended* default,
+not a hard constraint — the typed `Driver<E>` is `Send + Sync`
+since 0.13 (and `SlotHandle<M, K>` since 0.12), so a worker may be
+moved to a tokio task on another core or shared across drainers
+via `Arc` when a deployment genuinely needs cross-thread fan-out.
+The point stands that the per-shard, shared-nothing layout is the
+one that scales; the Send+Sync bounds just don't *forbid* the
+other shapes.
 
 **Recommendation when deploying:** one extractor + tracker +
 reassembler + parser per worker, fed from one RSS queue, pinned
@@ -100,9 +107,11 @@ extend the surface without breaking existing impls.
 
 Every shipped L7 module — HTTP, TLS, DNS, ICMP — uses the
 typed-stream shape: a `SessionParser` (TCP) or `DatagramParser`
-(UDP) implementation that returns `Vec<Message>` from `feed_*`
-or `parse`; the consumer iterates `SessionEvent::Application`
-arms.
+(UDP) implementation that drains typed messages into a
+caller-supplied `&mut Vec<Message>` sink from `feed_*` / `parse`
+(the alloc-free idiom adopted in 0.11, plan 119 — was a returned
+`Vec<Message>` through 0.10); the consumer iterates
+`SessionEvent::Application` arms.
 
 TLS additionally ships `TlsHandshakeParser` — also a
 `SessionParser`, but aggregating ClientHello + ServerHello +
@@ -236,27 +245,34 @@ they belong elsewhere:
   in `CLAUDE.md`. Async lives in netring.
 - **eBPF in-kernel correlation.** Different architecture; would
   belong in a separate sister crate.
-- **ML-based anomaly detection.** Compose with this stack via a
-  user-defined `AnomalyRule` that feeds a learned model; shipping
-  the ML pipeline isn't flowscope's job.
-- **Text-DSL rule language** (Suricata-style). Same reasoning;
-  not flowscope's scope.
-- **NetFlow / IPFIX export.** Belongs in a sister crate
-  (`flowscope-export`); no current consumer asking.
+- **Learned-model anomaly detection.** flowscope ships *feature
+  extraction* — `flowscope::ml_features` (CICFlowMeter parity) and
+  the `nprint` matrix landed in-crate in 0.18 — but not the model
+  itself. Train and run the classifier on those vectors in your
+  own stack; shipping a learned-model inference pipeline (and its
+  weights) isn't flowscope's job.
+- **Text-DSL rule language** (Suricata-style). A parser stack, not
+  a rule engine; not flowscope's scope.
 - **CLIs.** `flow-summary` / `flow-replay` etc. belong in
   `flowscope-cli`; no current consumer asking.
 
 ## Sister-crate roadmap
 
-Three sister crates are pre-architected but unstarted (no
-current consumer asking):
+Two sister crates are pre-architected but unstarted (no current
+consumer asking):
 
-- `flowscope-export` — NetFlow / IPFIX / sFlow output formats.
 - `flowscope-cli` — `flow-summary` / `flow-replay` reference
   CLIs for "try without writing code" demos.
 - `flowscope-rss` — multi-worker orchestration helpers (RSS
   sharding, AF_XDP queue management). Today consumers wire this
   themselves; the helpers would absorb the common shape.
+
+(IPFIX export was originally slated for a `flowscope-export`
+sister crate, but a concrete consumer arrived: the IE registry +
+`FlowRecord` and the RFC 7011 binary encoder shipped **in-crate**
+in 0.18 under the `ipfix` / `ipfix-export` features. sFlow /
+NetFlow v5/v9 output, if ever asked for, would still fit a
+sister crate.)
 
 If you need one of these, file an issue with a concrete use case.
 None are blocked on design — they're blocked on demand signal.

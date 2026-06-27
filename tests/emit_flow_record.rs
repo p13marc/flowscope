@@ -9,8 +9,8 @@
 //! 2. For the schemas that can fully round-trip the data
 //!    (CSV + NDJSON), the output is byte-equivalent to the
 //!    event-driven path.
-//! 3. The EVE flow_hash is direction-invariant and matches
-//!    the KeyFields-derived hash.
+//! 3. The EVE `community_id` is identical regardless of
+//!    construction path, and the legacy `flow_hash` is gone.
 
 #![cfg(all(
     feature = "emit",
@@ -163,6 +163,15 @@ fn ndjson_write_flow_record_serializes_full_ie_set() {
     let value: serde_json::Value = serde_json::from_str(line).expect("valid JSON");
     assert_eq!(value["protocol_identifier"], 6);
     assert_eq!(value["packet_delta_count_initiator"], 10);
+    // The canonical cross-tool flow id rides through the FlowRecord serde
+    // path when the `community-id` feature is on (issue #88).
+    #[cfg(feature = "community-id")]
+    {
+        let cid = value["community_id"]
+            .as_str()
+            .expect("community_id present");
+        assert!(cid.starts_with("1:"), "v1 prefix: {cid}");
+    }
 }
 
 #[cfg(feature = "emit-eve")]
@@ -186,10 +195,18 @@ fn eve_write_flow_record_matches_event_shape() {
     let rec_value: serde_json::Value =
         serde_json::from_str(std::str::from_utf8(&buf_rec).unwrap().trim_end()).expect("rec");
 
-    // Same flow_hash → direction-invariant + algorithm-equivalent.
+    // flow_hash was dropped from EVE output in 0.19 (issue #88) — neither
+    // construction path should emit it.
+    assert!(
+        ev_value.get("flow_hash").is_none() && rec_value.get("flow_hash").is_none(),
+        "flow_hash must not be emitted on either path"
+    );
+    // community_id is the canonical id and must be identical regardless of
+    // construction path (event-driven vs FlowRecord).
+    #[cfg(feature = "community-id")]
     assert_eq!(
-        ev_value["flow_hash"], rec_value["flow_hash"],
-        "flow_hash should be identical regardless of construction path"
+        ev_value["community_id"], rec_value["community_id"],
+        "community_id should be identical regardless of construction path"
     );
     // Same byte/packet counts.
     assert_eq!(

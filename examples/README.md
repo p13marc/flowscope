@@ -97,7 +97,7 @@ the categories sort logically in `ls`.
 | **`flow_csv_export`** | `pcap,emit` | `flows.csv` via `FlowEventCsvWriter` (RFC-4180 quoted; plan 101). |
 | **`flow_json_export`** | `pcap,emit-ndjson` | NDJSON via `FlowEventNdjsonWriter` — drop-in for Elasticsearch / Loki / ClickHouse. |
 | **`zeek_style_conn_log`** | `pcap,emit` | Tab-separated Zeek `conn.log` via `ZeekConnLogWriter` (with `#fields` / `#types` / `#close` headers + UID generation). |
-| **`eve_writer`** | `pcap,emit-eve` | Suricata EVE JSON via `EveJsonWriter` (0.12) — drop-in for Filebeat / Splunk Suricata TA / Tenzir / ECS pipelines. Every record carries a deterministic 16-char `flow_hash`. |
+| **`eve_writer`** | `pcap,emit-eve` | Suricata EVE JSON via `EveJsonWriter` (0.12) — drop-in for Filebeat / Splunk Suricata TA / Tenzir / ECS pipelines. With `community-id`, every record carries the portable cross-tool `community_id`. |
 | **`detector_to_eve`** | `pcap,extractors,tracker,emit-eve` | Plan-147 single-detector → SIEM pipeline: `PortScanDetector` scores route through `EveJsonWriter::write_owned_anomaly`. |
 | **`prometheus_exporter`** | `pcap,extractors,tracker,reassembler,metrics` | Render the `metrics` feature's counters / gauges / summaries as Prometheus text-exposition. Doc-comment shows the canonical production wiring via `metrics-exporter-prometheus`. |
 | **`ipfix_wire_export`** | `pcap,extractors,tracker,ipfix-export` | Build RFC 7011 IPFIX Messages via `flowscope::ipfix::wire::MessageBuilder` + default IPv4/IPv6 templates. Pure-bytes (no UDP / SCTP I/O). |

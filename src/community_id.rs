@@ -2,11 +2,14 @@
 //! flow hashing — the cross-tool standard for joining flows across
 //! Zeek, Suricata, Security Onion, Arkime and friends.
 //!
-//! flowscope's native [`flow_hash`](crate::KeyFields::stable_hash)
+//! flowscope's native [`stable_hash`](crate::KeyFields::stable_hash)
 //! (FNV-1a, 64-bit) is fast and direction-invariant but
-//! flowscope-specific. Community ID is the *interoperable* id: an
-//! analyst can take a `community_id` from a flowscope EVE record and
-//! pivot directly into the SIEM's existing Zeek/Suricata data.
+//! flowscope-specific (non-portable). Community ID is the
+//! *interoperable* id and the **canonical** flow identifier in
+//! flowscope's EVE / NDJSON output since 0.19 (issue #88): an analyst
+//! can take a `community_id` from a flowscope record and pivot directly
+//! into the SIEM's existing Zeek/Suricata data. `stable_hash` is no
+//! longer emitted — keep it for in-process sharding / keying only.
 //!
 //! ## Algorithm (spec v1)
 //!

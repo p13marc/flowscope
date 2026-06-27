@@ -103,8 +103,11 @@ pub trait KeyFields {
     /// and B→A produce the same value.
     ///
     /// Returns `None` if any of (proto, src ip/port, dest ip/port)
-    /// is unknown. The algorithm is FNV-1a — the same value the
-    /// EVE writer emits as `flow_hash`.
+    /// is unknown. The algorithm is FNV-1a. This is a fast,
+    /// **non-portable** in-process identifier — it is *not* emitted by
+    /// the EVE / NDJSON writers (which lead with the portable
+    /// [`community_id`](Self::community_id) since 0.19, issue #88). Use
+    /// it for sharding / in-memory keying, not for cross-tool pivots.
     ///
     /// Issue #76 (folds #70).
     fn stable_hash(&self) -> Option<u64> {
@@ -112,9 +115,9 @@ pub trait KeyFields {
         let src_port = self.src_port()?;
         let dest_ip = self.dest_ip()?;
         let dest_port = self.dest_port()?;
-        // Proto component: the EVE-compatible string label when the
-        // key carries one (keeps the EVE `flow_hash` byte-identical
-        // for TCP/UDP/…), else the numeric protocol id.
+        // Proto component: the string label when the key carries one
+        // (stable across direction for TCP/UDP/…), else the numeric
+        // protocol id.
         let mut id_buf = [0u8; 1];
         let proto: &[u8] = if let Some(s) = self.proto_str() {
             s.as_bytes()
@@ -176,8 +179,9 @@ pub trait KeyFields {
 /// FNV-1a over the canonical 5-tuple: `proto.as_bytes() ‖ lo_ip
 /// ‖ lo_port_be ‖ hi_ip ‖ hi_port_be`, where `(lo_ip, lo_port)`
 /// is the lexicographically smaller endpoint. Direction- and
-/// process-stable. Shared by [`KeyFields::stable_hash`] and the
-/// EVE writer's `flow_hash` so both produce the identical value.
+/// process-stable. Backs [`KeyFields::stable_hash`] — a non-portable
+/// in-process identifier (the portable cross-tool id is
+/// [`KeyFields::community_id`]).
 pub(crate) fn fnv1a_five_tuple(
     proto: &[u8],
     src_ip: IpAddr,
