@@ -1,6 +1,8 @@
 # RFC 175 — Driver & event convergence for 1.0 (issue #84)
 
-**Status:** Draft for review — *no code changed yet.*
+**Status:** Accepted — break approved. Decisions resolved (§5); split
+into implementation issues #97–#101 + netring#107. *No code changed by
+this RFC.*
 **Issue:** #84 ("converge the two driver families + three event enums into one driver").
 **Effort:** L. The keystone of the 1.0 API cleanup.
 **Blast radius:** flowscope public API + netring (the only known consumer).
@@ -259,40 +261,34 @@ where possible:
 
 ---
 
-## 5. Open decisions (your call)
+## 5. Decisions (resolved — break approved)
 
-These change what gets built; flagging rather than presuming.
+The maintainer approved breaking backward compatibility, resolving all
+six. Each maps to an implementation issue.
 
-- **Q1 — Driver families: delete or deprecate-one-release?**
-  Recommend **delete** `FlowSessionDriver`/`FlowDatagramDriver` (pre-1.0
-  blesses it; they are isolated to `pcap_flow.rs` in netring). Keep
-  `FlowDriver`. Alternative: `#[deprecated]` for one release, delete in
-  1.1 — softer but drags two dead types into 1.0.
+- **Q1 — Driver families →  delete.** Delete
+  `FlowSessionDriver`/`FlowDatagramDriver`; keep `FlowDriver`. → **#99**
+- **Q2 — `SessionEvent` →  delete from flowscope.** netring owns its
+  stream-event type for the async adapters. → **#100**
+- **Q3 — `StateChange` →  add `Event::FlowStateChange`.** Lossless
+  `From<FlowEvent>`. → **#97**
+- **Q4 — emitter surface →  shared lifecycle trait.** Emitters take
+  both `FlowEvent` and `Event`. → **#97**
+- **Q5 — builder →  one extractor-at-`build()` builder.** Delete
+  `DeferredDriverBuilder` + `Driver::deferred()`. → **#98**
+- **Q6 — first-PR scope →  Phase 0 additive first**, then the breaking
+  collapse as the 0.21 cycle. → **#97** is the additive lead.
 
-- **Q2 — `SessionEvent`: delete outright, or relocate to netring?**
-  netring is the only consumer and it *constructs* `SessionEvent` in
-  its async adapters. Options: (a) delete from flowscope, netring
-  defines its own session-event type for its stream adapters; (b) keep
-  a minimal `SessionEvent` in flowscope purely as the async-adapter
-  contract. Recommend **(a)** — it is a netring-stream concern, not a
-  core flowscope primitive.
+### Implementation issues
+- **#97** (1/5, additive) — `Event<K>` emit-readiness (serde +
+  `From<FlowEvent>` + `FlowStateChange` + shared emit trait).
+- **#98** (2/5, breaking) — collapse the two builders.
+- **#99** (3/5, breaking) — delete `Flow{Session,Datagram}Driver`.
+- **#100** (4/5, breaking) — retire `SessionEvent`.
+- **#101** (5/5, P2) — `SlotDrain` shared trait.
+- **netring#107** — coordinated consumer migration (same release).
 
-- **Q3 — `StateChange` in `Event<K>`?** Add `Event::FlowStateChange`
-  for parity with `FlowEvent`, or keep dropping it (current behavior;
-  `FlowEstablished` covers the common case). Recommend **add it** for a
-  lossless `From<FlowEvent>`.
-
-- **Q4 — emitter surface for `Event<K>`.** Add `write_event(&Event<K>)`
-  overloads, or a shared `LifecycleEvent` trait both enums implement.
-  Recommend the **shared trait** (one impl site, future-proof).
-
-- **Q5 — builder shape.** Extractor-at-`build` single builder
-  (recommended, §3.3) vs keep-two-builders-plus-parity (safe fallback).
-
-- **Q6 — scope of the first PR.** Land Phase 0 (additive) now and
-  schedule Phases 1–3 as the breaking 0.21 cycle, or do the whole thing
-  in one 0.21 series. Recommend **Phase 0 now** — it is pure upside and
-  shrinks the eventual break.
+Order: #97 → #98 → #99 → #100 (with netring#107) → #101.
 
 ---
 
