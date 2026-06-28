@@ -732,6 +732,7 @@ src/
 │                                # AnomalyKind / OverflowPolicy   (0.2.0)
 │                                # FlowStats::{bytes_for,pkts_for,mean_pkt_size_for,direction_skew} (plan 168, 0.14.0)
 │                                # FlowStats::throughput_bps{,_pps,_for,_pps_for} safe-divide accessors (plan 173, 0.14.0)
+│                                # EventMask bitflags — tracker load-shedding (issue #79, 0.20.0)
 ├── history.rs                   # HistoryString (Zeek-style ShAdaFf)
 ├── tcp_state.rs                 # TCP state machine (transitions + idle policy)
 ├── tracker.rs                   # FlowTracker<E, S>     (manual_tick alias added in 50.4)

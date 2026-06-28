@@ -164,7 +164,7 @@ pub use crate::analysis::{AnalyzedFlow, FlowAnalyzer, L7Summary};
 #[cfg(all(feature = "extractors", feature = "reassembler", feature = "session"))]
 pub use crate::driver::{Driver, DriverBuilder, Event, SlotHandle, SlotMessage};
 #[cfg(feature = "tracker")]
-pub use crate::event::{AnomalyKind, EndReason, FlowEvent, FlowSide, FlowStats};
+pub use crate::event::{AnomalyKind, EndReason, EventMask, FlowEvent, FlowSide, FlowStats};
 #[cfg(feature = "extractors")]
 pub use crate::extract::{FiveTuple, FiveTupleKey, Tagged, TaggedKey};
 #[cfg(feature = "extractors")]

@@ -10,7 +10,9 @@ use std::time::Duration;
 use ahash::RandomState;
 
 use crate::Timestamp;
-use crate::event::{AnomalyKind, EndReason, FlowEvent, FlowSide, MemcapPolicy, OverflowPolicy};
+use crate::event::{
+    AnomalyKind, EndReason, EventMask, FlowEvent, FlowSide, MemcapPolicy, OverflowPolicy,
+};
 use crate::extractor::FlowExtractor;
 use crate::reassembler::{Reassembler, ReassemblerFactory};
 use crate::tracker::{FlowEvents, FlowTracker, FlowTrackerConfig};
@@ -403,7 +405,18 @@ where
         // `FlowTrackerConfig::flow_tick_interval`. Emitted after
         // anomaly + BufferOverflow synthesis so consumers see the
         // tick AFTER any anomalies / ends for the same packet.
-        if let Some(interval) = self.tracker.config().flow_tick_interval {
+        // Tick is the one driver-emitted variant that scales with live
+        // flow count, so honour the tracker's load-shed gates here too
+        // (issue #79): skip the whole stats-snapshot walk when paused or
+        // when `EventMask::TICK` is masked off.
+        if let Some(interval) = self.tracker.config().flow_tick_interval
+            && !self.tracker.events_paused()
+            && !self
+                .tracker
+                .config()
+                .suppress_events
+                .contains(EventMask::TICK)
+        {
             self.emit_ticks(&mut events, ts, interval);
         }
 
@@ -1767,6 +1780,55 @@ mod tests {
             "first packet should emit initial tick, got: {:?}",
             events
         );
+    }
+
+    #[test]
+    fn tick_suppressed_by_event_mask() {
+        // issue #79: EventMask::TICK shed the driver-emitted Tick even
+        // though the interval is configured.
+        let cfg = FlowTrackerConfig {
+            flow_tick_interval: Some(Duration::from_secs(10)),
+            suppress_events: EventMask::TICK,
+            ..FlowTrackerConfig::default()
+        };
+        let mut d = FlowDriver::<_, _>::with_config(
+            FiveTuple::bidirectional(),
+            BufferedReassemblerFactory::default(),
+            cfg,
+        );
+        let f =
+            crate::extract::parse::test_frames::ipv4_udp([10, 0, 0, 1], [10, 0, 0, 2], 1, 2, b"x");
+        let events = d.track(view(&f, 0));
+        assert!(
+            !events.iter().any(|e| matches!(e, FlowEvent::Tick { .. })),
+            "Tick masked off, got: {events:?}"
+        );
+        // Flow is still tracked.
+        assert_eq!(d.tracker().flow_count(), 1);
+    }
+
+    #[test]
+    fn pause_via_tracker_mut_sheds_ticks() {
+        // issue #79: a runtime pause through tracker_mut() shuts off the
+        // driver's Tick emission too.
+        let cfg = FlowTrackerConfig {
+            flow_tick_interval: Some(Duration::from_secs(10)),
+            ..FlowTrackerConfig::default()
+        };
+        let mut d = FlowDriver::<_, _>::with_config(
+            FiveTuple::bidirectional(),
+            BufferedReassemblerFactory::default(),
+            cfg,
+        );
+        d.tracker_mut().pause_events();
+        let f =
+            crate::extract::parse::test_frames::ipv4_udp([10, 0, 0, 1], [10, 0, 0, 2], 1, 2, b"x");
+        let events = d.track(view(&f, 0));
+        assert!(
+            events.is_empty(),
+            "paused driver sheds all, got: {events:?}"
+        );
+        assert_eq!(d.tracker().flow_count(), 1, "accounting continued");
     }
 
     #[test]
