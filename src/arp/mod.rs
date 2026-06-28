@@ -12,5 +12,5 @@
 mod parser;
 mod types;
 
-pub use parser::{ARP_ETHERTYPE, ArpParser, parse, parse_frame};
+pub use parser::{ARP_ETHERTYPE, ArpParser, ParseError, parse, parse_frame};
 pub use types::{ArpMessage, ArpOp};

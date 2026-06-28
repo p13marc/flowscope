@@ -57,5 +57,5 @@ mod parser;
 mod types;
 
 pub use datagram::{NBNS_PORT, NbnsParser, PARSER_KIND};
-pub use parser::parse;
+pub use parser::{ParseError, parse};
 pub use types::{NbnsMessage, NbnsOpcode};

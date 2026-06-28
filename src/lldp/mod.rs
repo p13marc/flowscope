@@ -36,7 +36,7 @@
 mod parser;
 mod types;
 
-pub use parser::{LLDP_ETHERTYPE, LldpParser, parse, parse_frame};
+pub use parser::{LLDP_ETHERTYPE, LldpParser, ParseError, parse, parse_frame};
 pub use types::{
     CapabilityBits, ChassisId, LldpManagementAddress, LldpMessage, LldpVendorTlv, PortId,
     SystemCapabilities,

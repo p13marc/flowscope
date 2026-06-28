@@ -54,16 +54,62 @@ const MAX_TLVS: usize = 64;
 /// Cap the address-list walker similarly.
 const MAX_ADDRESSES: usize = 16;
 
+/// Failure mode for the `parse*` functions (issue #85).
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ParseError {
+    /// Buffer shorter than the bytes required at this stage.
+    Truncated {
+        /// Bytes needed.
+        need: usize,
+        /// Bytes available.
+        have: usize,
+    },
+    /// Ethernet frame isn't a CDPDU (dst MAC, LLC/SNAP, OUI, or
+    /// PID didn't match CDP).
+    NotCdp,
+}
+
+impl std::fmt::Display for ParseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Truncated { need, have } => {
+                write!(f, "truncated CDP frame: need {need}, have {have}")
+            }
+            Self::NotCdp => {
+                f.write_str("not a CDP frame (dst MAC / LLC / SNAP / OUI / PID mismatch)")
+            }
+        }
+    }
+}
+
+impl std::error::Error for ParseError {}
+
+impl From<ParseError> for crate::Error {
+    fn from(e: ParseError) -> Self {
+        use crate::error::{ErrorCode, Module};
+        let code = match &e {
+            ParseError::Truncated { .. } => ErrorCode::Truncated,
+            ParseError::NotCdp => ErrorCode::Parse,
+        };
+        crate::Error::with_code(Module::Cdp, code, e.to_string())
+    }
+}
+
 /// Parse a CDPDU payload (post the LLC/SNAP/OUI/PID header).
 ///
-/// Returns `None` when:
-/// - The payload is < 4 bytes (version + TTL + checksum minimum).
-/// - A TLV header would read off the end of the buffer.
-/// - A TLV claims length < 4 (header alone is 4 bytes; smaller
-///   is malformed).
-pub fn parse(payload: &[u8]) -> Option<CdpMessage> {
+/// Returns `Err` when the payload is < 4 bytes (version + TTL +
+/// checksum minimum) → [`ParseError::Truncated`]. The TLV walk
+/// is best-effort: a truncated or sub-4-length TLV stops the
+/// walk but keeps the fields decoded so far.
+///
+/// Signature changed to `Result` in issue #85.
+pub fn parse(payload: &[u8]) -> Result<CdpMessage, ParseError> {
     if payload.len() < 4 {
-        return None;
+        return Err(ParseError::Truncated {
+            need: 4,
+            have: payload.len(),
+        });
     }
     let version = payload[0];
     let ttl_seconds = payload[1];
@@ -134,7 +180,7 @@ pub fn parse(payload: &[u8]) -> Option<CdpMessage> {
         };
     }
 
-    Some(msg)
+    Ok(msg)
 }
 
 /// Parse a full Ethernet frame whose payload is a CDPDU.
@@ -143,28 +189,33 @@ pub fn parse(payload: &[u8]) -> Option<CdpMessage> {
 /// LLC + SNAP + OUI + PID header before delegating to
 /// [`parse`].
 ///
-/// Returns `None` when the frame is too short, the dst MAC
+/// Returns `Err` when the frame is too short, the dst MAC
 /// doesn't match `01:00:0c:cc:cc:cc`, the LLC/SNAP/OUI/PID
 /// doesn't match CDP, or [`parse`] rejects the inner payload.
-pub fn parse_frame(frame: &[u8]) -> Option<CdpMessage> {
+///
+/// Signature changed to `Result` in issue #85.
+pub fn parse_frame(frame: &[u8]) -> Result<CdpMessage, ParseError> {
     // Eth (14) + LLC (3) + SNAP (5) = 22 bytes of header.
     if frame.len() < 22 {
-        return None;
+        return Err(ParseError::Truncated {
+            need: 22,
+            have: frame.len(),
+        });
     }
     if frame[0..6] != CDP_DST_MAC {
-        return None;
+        return Err(ParseError::NotCdp);
     }
     // bytes 12..14 are the 802.3 length field — not validated
     // (CDP allows it to be informational only).
     if frame[14] != 0xaa || frame[15] != 0xaa || frame[16] != 0x03 {
-        return None; // LLC SNAP marker.
+        return Err(ParseError::NotCdp); // LLC SNAP marker.
     }
     if frame[17..20] != CDP_OUI {
-        return None;
+        return Err(ParseError::NotCdp);
     }
     let pid = u16::from_be_bytes([frame[20], frame[21]]);
     if pid != CDP_PID {
-        return None;
+        return Err(ParseError::NotCdp);
     }
     parse(&frame[22..])
 }
@@ -176,13 +227,13 @@ pub struct CdpParser;
 impl CdpParser {
     /// See [`parse`].
     #[inline]
-    pub fn parse(&self, payload: &[u8]) -> Option<CdpMessage> {
+    pub fn parse(&self, payload: &[u8]) -> Result<CdpMessage, ParseError> {
         parse(payload)
     }
 
     /// See [`parse_frame`].
     #[inline]
-    pub fn parse_frame(&self, frame: &[u8]) -> Option<CdpMessage> {
+    pub fn parse_frame(&self, frame: &[u8]) -> Result<CdpMessage, ParseError> {
         parse_frame(frame)
     }
 }
@@ -384,8 +435,8 @@ mod tests {
 
     #[test]
     fn rejects_truncated_payload() {
-        assert!(parse(&[]).is_none());
-        assert!(parse(&[0x02, 180, 0]).is_none());
+        assert!(parse(&[]).is_err());
+        assert!(parse(&[0x02, 180, 0]).is_err());
     }
 
     #[test]
@@ -450,7 +501,7 @@ mod tests {
         frame.extend_from_slice(&CDP_OUI);
         frame.extend_from_slice(&CDP_PID.to_be_bytes());
         frame.extend_from_slice(&p);
-        assert!(parse_frame(&frame).is_none());
+        assert!(parse_frame(&frame).is_err());
     }
 
     #[test]
@@ -464,13 +515,13 @@ mod tests {
         frame.extend_from_slice(&[0xde, 0xad, 0xbe]); // wrong OUI
         frame.extend_from_slice(&CDP_PID.to_be_bytes());
         frame.extend_from_slice(&p);
-        assert!(parse_frame(&frame).is_none());
+        assert!(parse_frame(&frame).is_err());
     }
 
     #[test]
     fn cdp_parser_marker_delegates() {
         let p = cdp_payload_minimal(b"sw1");
         let parser = CdpParser;
-        assert!(parser.parse(&p).is_some());
+        assert!(parser.parse(&p).is_ok());
     }
 }

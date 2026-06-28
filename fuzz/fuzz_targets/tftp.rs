@@ -7,7 +7,7 @@ use libfuzzer_sys::fuzz_target;
 // surface — drive it with arbitrary bytes and also probe the
 // derived predicate path.
 fuzz_target!(|data: &[u8]| {
-    if let Some(m) = tftp::parse(data) {
+    if let Ok(m) = tftp::parse(data) {
         let _ = m.is_device_config_transfer();
     }
 });

@@ -4,7 +4,26 @@
 
 Additive over 0.19. Pure, no-async — fits the runtime-free lib rule.
 
-### 1.0-prep issue batch (#69, #87, #88)
+### 1.0-prep issue batch (#69, #85, #87, #88)
+
+- **BREAKING — parser fallibility unified: 16 `Option` parsers → `Result`**
+  (#85). Every remaining hand-rolled wire parser's free `parse*()` function
+  now returns `Result<T, ParseError>` with a per-module, `#[non_exhaustive]`
+  `ParseError` (the shape #65 introduced for dnp3/smb/ldap/kerberos/quic),
+  so callers can finally tell "not my protocol" from "malformed / truncated".
+  Swept modules: `arp`, `ndp`, `lldp`, `cdp`, `dhcp`, `ssdp`, `netbios_ns`,
+  `stun`, `ssh` (`parse_kexinit_payload`), `ntp`, `tftp`, `wireguard`,
+  `modbus` (`parse_one`), `rdp` (`parse_frame`), `snmp`, `radius`. Each
+  `ParseError` is re-exported from its module (e.g. `flowscope::arp::ParseError`).
+  - **Error-model unification.** Every per-module `ParseError` (the 16 new
+    *and* the 5 from #65) now implements `From<ParseError> for flowscope::Error`
+    and has a matching `flowscope::Module` variant, so a parse failure can
+    bubble through `?` into the unified `crate::Error` while keeping its rich
+    typed form. Previously those enums could never become a `crate::Error`.
+  - **Unaffected:** the `SessionParser` / `DatagramParser` trait sink methods
+    (`feed_*` / `parse(&mut Vec<…>)`) and the `*_from_pcap` helpers — only the
+    free `parse*()` functions changed. See `docs/migration-0.19-to-0.20.md`.
+
 
 - **BREAKING — `flow_hash` dropped from EVE output, `community_id` is
   canonical** (#88). The proprietary 64-bit FNV-1a `flow_hash` field is

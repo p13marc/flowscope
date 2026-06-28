@@ -32,5 +32,5 @@ mod parser;
 mod types;
 
 pub use datagram::DhcpParser;
-pub use parser::parse;
+pub use parser::{ParseError, parse};
 pub use types::{DhcpMessage, DhcpMessageType, DhcpOp};

@@ -96,3 +96,73 @@ let meta = RxMetadata::from_source_idx(nic_index);
 
 These replace the old three-step
 `let mut m = RxMetadata::default(); m.source_idx = n; view.with_rx_metadata(m)`.
+
+## Breaking change — 16 `parse()` parsers now return `Result` (#85)
+
+The remaining hand-rolled wire parsers' free `parse*()` functions changed
+from `Option<T>` to `Result<T, ParseError>`, with a per-module,
+`#[non_exhaustive]` `ParseError` enum — the same shape the 0.18 binary
+parsers (dnp3 / smb / ldap / kerberos / quic) adopted in #65. This lets a
+caller distinguish "not my protocol" from "truncated / malformed".
+
+Affected free functions (re-exported `ParseError` per module):
+
+| Module | Function | New return |
+| ------ | -------- | ---------- |
+| `arp` | `parse`, `parse_frame` | `Result<ArpMessage, arp::ParseError>` |
+| `ndp` | `parse`, `parse_icmpv6` | `Result<NdpMessage, ndp::ParseError>` |
+| `lldp` | `parse`, `parse_frame` | `Result<LldpMessage, lldp::ParseError>` |
+| `cdp` | `parse`, `parse_frame` | `Result<CdpMessage, cdp::ParseError>` |
+| `dhcp` | `parse` | `Result<DhcpMessage, dhcp::ParseError>` |
+| `ssdp` | `parse` | `Result<SsdpMessage, ssdp::ParseError>` |
+| `netbios_ns` | `parse` | `Result<NbnsMessage, netbios_ns::ParseError>` |
+| `stun` | `parse` | `Result<StunMessage, stun::ParseError>` |
+| `ssh` | `parse_kexinit_payload` | `Result<SshKexInit, ssh::ParseError>` |
+| `ntp` | `parse` | `Result<NtpMessage, ntp::ParseError>` |
+| `tftp` | `parse` | `Result<TftpMessage, tftp::ParseError>` |
+| `wireguard` | `parse` | `Result<WireGuardMessage, wireguard::ParseError>` |
+| `modbus` | `parse_one` | `Result<(ModbusMessage, usize), modbus::ParseError>` |
+| `rdp` | `parse_frame` | `Result<RdpMessage, rdp::ParseError>` |
+| `snmp` | `parse` | `Result<SnmpMessage, snmp::ParseError>` |
+| `radius` | `parse` | `Result<RadiusMessage, radius::ParseError>` |
+
+**Migration recipe.** Most call sites are a one-token change — `Option`
+combinators map straight onto `Result`:
+
+```diff
+- if let Some(msg) = flowscope::arp::parse(payload) {
++ if let Ok(msg) = flowscope::arp::parse(payload) {
+      handle(msg);
+  }
+
+- let Some(msg) = flowscope::arp::parse_frame(frame) else { continue };
++ let Ok(msg) = flowscope::arp::parse_frame(frame) else { continue };
+```
+
+`.unwrap()` / `.expect(...)` work unchanged. To branch on *why* a parse
+failed, match the typed `ParseError`:
+
+```rust
+match flowscope::stun::parse(datagram) {
+    Ok(msg) => handle(msg),
+    Err(flowscope::stun::ParseError::NotStun) => {}        // not STUN — ignore
+    Err(e) => log::debug!("malformed STUN: {e}"),          // truncated etc.
+}
+```
+
+**Unified error bridge.** Every per-module `ParseError` (the 16 above and
+the 5 from #65) now implements `From<ParseError> for flowscope::Error` and
+has a matching `flowscope::Module` variant, so it bubbles through `?` into a
+`flowscope::Result` while keeping its typed form:
+
+```rust
+fn handle(payload: &[u8]) -> flowscope::Result<()> {
+    let msg = flowscope::dhcp::parse(payload)?; // ParseError -> flowscope::Error
+    // ...
+    Ok(())
+}
+```
+
+**Not affected:** the `SessionParser` / `DatagramParser` trait methods
+(`feed_*` / `parse(&mut Vec<…>)`) and the `*_from_pcap` helpers keep their
+signatures — only the free `parse*()` functions changed.

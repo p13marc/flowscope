@@ -45,6 +45,6 @@ mod parser;
 mod session;
 mod types;
 
-pub use parser::parse;
+pub use parser::{ParseError, parse};
 pub use session::{PARSER_KIND, WIREGUARD_PORT, WireGuardParser};
 pub use types::{WireGuardKind, WireGuardMessage};

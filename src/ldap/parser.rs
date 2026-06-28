@@ -34,6 +34,16 @@ impl std::fmt::Display for ParseError {
 
 impl std::error::Error for ParseError {}
 
+impl From<ParseError> for crate::Error {
+    fn from(e: ParseError) -> Self {
+        use crate::error::{ErrorCode, Module};
+        let code = match &e {
+            ParseError::AsnDecode => ErrorCode::Parse,
+        };
+        crate::Error::with_code(Module::Ldap, code, e.to_string())
+    }
+}
+
 /// Decode one LDAP message from the front of `payload`.
 pub fn parse(payload: &[u8]) -> Result<LdapMessage, ParseError> {
     #[allow(deprecated)]

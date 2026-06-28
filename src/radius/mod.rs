@@ -46,5 +46,5 @@ mod parser;
 mod types;
 
 pub use datagram::{PARSER_KIND, RADIUS_ACCT_PORT, RADIUS_AUTH_PORT, RadiusParser};
-pub use parser::parse;
+pub use parser::{ParseError, parse};
 pub use types::{RadiusCodeKind, RadiusMessage};

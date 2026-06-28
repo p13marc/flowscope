@@ -2,19 +2,49 @@
 
 use super::types::{SnmpMessage, SnmpPduKind, SnmpVersion};
 
-/// Parse one SNMP UDP datagram. Returns `None` on malformed
-/// input (ASN.1 BER failure, truncated payload, unknown
-/// version).
-pub fn parse(payload: &[u8]) -> Option<SnmpMessage> {
+/// Failure mode for [`parse`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ParseError {
+    /// ASN.1 BER decode failure (malformed / truncated /
+    /// non-SNMP payload).
+    Decode,
+}
+
+impl std::fmt::Display for ParseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Decode => f.write_str("SNMP decode failed"),
+        }
+    }
+}
+
+impl std::error::Error for ParseError {}
+
+impl From<ParseError> for crate::Error {
+    fn from(e: ParseError) -> Self {
+        use crate::error::{ErrorCode, Module};
+        let code = match &e {
+            ParseError::Decode => ErrorCode::Parse,
+        };
+        crate::Error::with_code(Module::Snmp, code, e.to_string())
+    }
+}
+
+/// Parse one SNMP UDP datagram. Returns a [`ParseError`] on
+/// malformed input (ASN.1 BER failure, truncated payload,
+/// unknown version).
+pub fn parse(payload: &[u8]) -> Result<SnmpMessage, ParseError> {
     // snmp-parser exposes `parse_snmp_generic_message` which
     // handles v1/v2c/v3 outer envelopes. We dispatch on the
     // version it returns.
-    let (_rem, generic) = snmp_parser::parse_snmp_generic_message(payload).ok()?;
+    let (_rem, generic) =
+        snmp_parser::parse_snmp_generic_message(payload).map_err(|_| ParseError::Decode)?;
     match generic {
         snmp_parser::SnmpGenericMessage::V1(msg) | snmp_parser::SnmpGenericMessage::V2(msg) => {
-            decode_v1_v2c(msg)
+            decode_v1_v2c(msg).ok_or(ParseError::Decode)
         }
-        snmp_parser::SnmpGenericMessage::V3(msg) => Some(SnmpMessage {
+        snmp_parser::SnmpGenericMessage::V3(msg) => Ok(SnmpMessage {
             version: SnmpVersion::V3,
             community: String::new(),
             pdu_kind: SnmpPduKind::Other,
@@ -111,12 +141,12 @@ mod tests {
 
     #[test]
     fn rejects_truncated_payload() {
-        assert!(parse(&SAMPLE_V1_GETREQUEST[..5]).is_none());
+        assert!(parse(&SAMPLE_V1_GETREQUEST[..5]).is_err());
     }
 
     #[test]
     fn rejects_non_snmp_payload() {
-        assert!(parse(b"this is not SNMP").is_none());
+        assert!(parse(b"this is not SNMP").is_err());
     }
 
     #[test]

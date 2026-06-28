@@ -60,7 +60,7 @@ impl RdpParser {
             return None;
         }
         let frame = &buf.buf[..total];
-        let msg = parse_frame(frame);
+        let msg = parse_frame(frame).ok();
         // Whether we parsed it or not, we're done with this
         // side (anything else is TLS).
         buf.done = true;

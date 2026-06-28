@@ -2,9 +2,43 @@
 
 use super::types::{TftpErrorCode, TftpMessage, TftpMode, TftpOpcode};
 
+/// Failure mode for [`parse`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ParseError {
+    /// Payload ran out of bytes for the expected field.
+    Truncated { need: usize, have: usize },
+    /// A NUL-terminated string was missing, empty, or non-UTF-8.
+    InvalidString,
+}
+
+impl std::fmt::Display for ParseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Truncated { need, have } => {
+                write!(f, "truncated TFTP packet: need {need}, have {have}")
+            }
+            Self::InvalidString => f.write_str("missing, empty, or non-UTF-8 TFTP string"),
+        }
+    }
+}
+
+impl std::error::Error for ParseError {}
+
+impl From<ParseError> for crate::Error {
+    fn from(e: ParseError) -> Self {
+        use crate::error::{ErrorCode, Module};
+        let code = match &e {
+            ParseError::Truncated { .. } => ErrorCode::Truncated,
+            ParseError::InvalidString => ErrorCode::Parse,
+        };
+        crate::Error::with_code(Module::Tftp, code, e.to_string())
+    }
+}
+
 /// Parse a UDP/69 payload as a TFTP packet.
 ///
-/// Returns `None` when:
+/// Returns `Err` when:
 /// - The payload is shorter than 2 bytes (no opcode field).
 /// - The opcode is one of the request shapes (1/2) but the
 ///   payload lacks two NUL-terminated strings (filename + mode).
@@ -12,9 +46,12 @@ use super::types::{TftpErrorCode, TftpMessage, TftpMode, TftpOpcode};
 ///   shorter than the 4-byte fixed header.
 /// - The opcode is ERROR (5) but the payload lacks a 2-byte
 ///   errcode + NUL-terminated message.
-pub fn parse(payload: &[u8]) -> Option<TftpMessage> {
+pub fn parse(payload: &[u8]) -> Result<TftpMessage, ParseError> {
     if payload.len() < 2 {
-        return None;
+        return Err(ParseError::Truncated {
+            need: 2,
+            have: payload.len(),
+        });
     }
     let opcode = TftpOpcode::from_raw(u16::from_be_bytes([payload[0], payload[1]]));
     let rest = &payload[2..];
@@ -38,20 +75,29 @@ pub fn parse(payload: &[u8]) -> Option<TftpMessage> {
         }
         TftpOpcode::Data => {
             if rest.len() < 2 {
-                return None;
+                return Err(ParseError::Truncated {
+                    need: 2,
+                    have: rest.len(),
+                });
             }
             msg.block = Some(u16::from_be_bytes([rest[0], rest[1]]));
             msg.data_len = Some(rest.len() - 2);
         }
         TftpOpcode::Ack => {
             if rest.len() < 2 {
-                return None;
+                return Err(ParseError::Truncated {
+                    need: 2,
+                    have: rest.len(),
+                });
             }
             msg.block = Some(u16::from_be_bytes([rest[0], rest[1]]));
         }
         TftpOpcode::Error => {
             if rest.len() < 2 {
-                return None;
+                return Err(ParseError::Truncated {
+                    need: 2,
+                    have: rest.len(),
+                });
             }
             msg.error_code = Some(TftpErrorCode::from_raw(u16::from_be_bytes([
                 rest[0], rest[1],
@@ -70,20 +116,25 @@ pub fn parse(payload: &[u8]) -> Option<TftpMessage> {
         }
     }
 
-    Some(msg)
+    Ok(msg)
 }
 
 /// Read a NUL-terminated US-ASCII string from `buf`. Returns
 /// `(string, remainder_after_NUL)`. Rejects non-UTF-8 bytes,
 /// missing NUL, and zero-length strings (RFC 1350 implies
 /// filename + mode are both non-empty).
-fn take_nul_string(buf: &[u8]) -> Option<(String, &[u8])> {
-    let nul = buf.iter().position(|&b| b == 0)?;
+fn take_nul_string(buf: &[u8]) -> Result<(String, &[u8]), ParseError> {
+    let nul = buf
+        .iter()
+        .position(|&b| b == 0)
+        .ok_or(ParseError::InvalidString)?;
     if nul == 0 {
-        return None;
+        return Err(ParseError::InvalidString);
     }
-    let s = std::str::from_utf8(&buf[..nul]).ok()?.to_string();
-    Some((s, &buf[nul + 1..]))
+    let s = std::str::from_utf8(&buf[..nul])
+        .map_err(|_| ParseError::InvalidString)?
+        .to_string();
+    Ok((s, &buf[nul + 1..]))
 }
 
 #[cfg(test)]
@@ -181,14 +232,14 @@ mod tests {
 
     #[test]
     fn rejects_truncated_payload() {
-        assert!(parse(&[]).is_none());
-        assert!(parse(&[0x00]).is_none());
+        assert!(parse(&[]).is_err());
+        assert!(parse(&[0x00]).is_err());
         // RRQ opcode, no strings.
-        assert!(parse(&[0x00, 0x01]).is_none());
+        assert!(parse(&[0x00, 0x01]).is_err());
         // DATA opcode with no block field.
-        assert!(parse(&[0x00, 0x03]).is_none());
+        assert!(parse(&[0x00, 0x03]).is_err());
         // ACK opcode with no block field.
-        assert!(parse(&[0x00, 0x04, 0x00]).is_none());
+        assert!(parse(&[0x00, 0x04, 0x00]).is_err());
     }
 
     #[test]
@@ -197,7 +248,7 @@ mod tests {
         p.push(0); // empty filename
         p.extend_from_slice(b"octet");
         p.push(0);
-        assert!(parse(&p).is_none());
+        assert!(parse(&p).is_err());
     }
 
     #[test]
@@ -215,6 +266,6 @@ mod tests {
         p.push(0);
         p.extend_from_slice(b"octet");
         p.push(0);
-        assert!(parse(&p).is_none());
+        assert!(parse(&p).is_err());
     }
 }

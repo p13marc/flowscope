@@ -37,21 +37,54 @@ const OPT_END: u8 = 255;
 /// well under 30 options appear in real DHCP traffic.
 const MAX_OPTIONS: usize = 256;
 
+/// Failure mode for [`parse`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ParseError {
+    /// Payload shorter than the 236-byte BOOTP fixed header.
+    Truncated { need: usize, have: usize },
+}
+
+impl std::fmt::Display for ParseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Truncated { need, have } => {
+                write!(f, "truncated DHCP header: need {need}, have {have}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for ParseError {}
+
+impl From<ParseError> for crate::Error {
+    fn from(e: ParseError) -> Self {
+        use crate::error::{ErrorCode, Module};
+        let code = match &e {
+            ParseError::Truncated { .. } => ErrorCode::Truncated,
+        };
+        crate::Error::with_code(Module::Dhcp, code, e.to_string())
+    }
+}
+
 /// Parse a UDP/67-68 payload as a DHCP message.
 ///
-/// Returns `None` when:
-/// - The payload is shorter than the BOOTP fixed header.
-/// - The DHCP magic cookie (`0x63 82 53 63`) is absent.
-/// - An option header would read off the end of the buffer.
+/// Returns `Err` when the payload is shorter than the BOOTP
+/// fixed header. A missing DHCP magic cookie or a truncated
+/// option block is *not* a failure — the BOOTP header alone
+/// is already useful, so those cases return `Ok` with the
+/// header-only message.
 ///
 /// Per-option malformations (string options containing non-
 /// UTF-8 bytes, length fields disagreeing with option-spec
 /// minima, etc.) skip the offending option rather than
-/// failing the whole parse — the BOOTP header alone is
-/// already useful.
-pub fn parse(payload: &[u8]) -> Option<DhcpMessage> {
+/// failing the whole parse.
+pub fn parse(payload: &[u8]) -> Result<DhcpMessage, ParseError> {
     if payload.len() < BOOTP_HEADER_LEN {
-        return None;
+        return Err(ParseError::Truncated {
+            need: BOOTP_HEADER_LEN,
+            have: payload.len(),
+        });
     }
     let op = DhcpOp::from(payload[0]);
     let htype = payload[1];
@@ -91,16 +124,16 @@ pub fn parse(payload: &[u8]) -> Option<DhcpMessage> {
     // legal BOOTP (no DHCP options) — return the header-only
     // message.
     if payload.len() < BOOTP_HEADER_LEN + 4 {
-        return Some(msg);
+        return Ok(msg);
     }
     if payload[BOOTP_HEADER_LEN..BOOTP_HEADER_LEN + 4] != MAGIC_COOKIE {
         // Without the cookie this isn't DHCP. Some BOOTP variants
         // ship without it, but the option block isn't safe to walk.
-        return Some(msg);
+        return Ok(msg);
     }
 
     walk_options(&payload[BOOTP_HEADER_LEN + 4..], &mut msg);
-    Some(msg)
+    Ok(msg)
 }
 
 fn ipv4(b: &[u8]) -> Ipv4Addr {
@@ -272,9 +305,9 @@ mod tests {
 
     #[test]
     fn rejects_truncated_header() {
-        assert!(parse(&[]).is_none());
-        assert!(parse(&[0; 100]).is_none());
-        assert!(parse(&[0; BOOTP_HEADER_LEN - 1]).is_none());
+        assert!(parse(&[]).is_err());
+        assert!(parse(&[0; 100]).is_err());
+        assert!(parse(&[0; BOOTP_HEADER_LEN - 1]).is_err());
     }
 
     #[test]

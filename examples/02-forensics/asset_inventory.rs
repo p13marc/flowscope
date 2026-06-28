@@ -44,7 +44,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     for view in PcapFlowSource::open(&path)?.views() {
         let view = view?;
-        let Some(msg) = arp::parse_frame(&view.frame) else {
+        let Ok(msg) = arp::parse_frame(&view.frame) else {
             continue;
         };
         arp_count += 1;

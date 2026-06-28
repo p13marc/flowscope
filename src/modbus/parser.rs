@@ -8,29 +8,67 @@ use super::types::{ModbusExceptionCode, ModbusFunction, ModbusMessage};
 /// + length 2 + unit_id 1).
 pub(crate) const MBAP_HEADER_LEN: usize = 7;
 
+/// Failure mode for [`parse_one`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ParseError {
+    /// Not enough bytes yet for a complete frame (either the
+    /// 7-byte MBAP header or the full `6 + length` frame).
+    Incomplete,
+    /// The MBAP `protocol_id` field wasn't 0 (the Modbus/TCP
+    /// constant).
+    BadProtocolId,
+    /// The MBAP `length` field was < 2 (minimum unit_id +
+    /// function_code).
+    InvalidLength,
+}
+
+impl std::fmt::Display for ParseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Incomplete => f.write_str("incomplete Modbus frame (need more bytes)"),
+            Self::BadProtocolId => f.write_str("bad Modbus/TCP protocol_id (expected 0)"),
+            Self::InvalidLength => f.write_str("invalid Modbus length field (min 2)"),
+        }
+    }
+}
+
+impl std::error::Error for ParseError {}
+
+impl From<ParseError> for crate::Error {
+    fn from(e: ParseError) -> Self {
+        use crate::error::{ErrorCode, Module};
+        let code = match &e {
+            ParseError::Incomplete => ErrorCode::Truncated,
+            ParseError::BadProtocolId | ParseError::InvalidLength => ErrorCode::Parse,
+        };
+        crate::Error::with_code(Module::Modbus, code, e.to_string())
+    }
+}
+
 /// Parse a single Modbus/TCP frame from the front of `buf`.
-/// Returns `(message, bytes_consumed)` on success, or
-/// `None` when not enough bytes yet or the protocol_id
+/// Returns `(message, bytes_consumed)` on success, or a
+/// [`ParseError`] when not enough bytes yet or the protocol_id
 /// doesn't match the Modbus/TCP constant (0).
-pub fn parse_one(buf: &[u8]) -> Option<(ModbusMessage, usize)> {
+pub fn parse_one(buf: &[u8]) -> Result<(ModbusMessage, usize), ParseError> {
     if buf.len() < MBAP_HEADER_LEN {
-        return None;
+        return Err(ParseError::Incomplete);
     }
     let transaction_id = u16::from_be_bytes([buf[0], buf[1]]);
     let protocol_id = u16::from_be_bytes([buf[2], buf[3]]);
     let length = u16::from_be_bytes([buf[4], buf[5]]) as usize;
     if protocol_id != 0 {
-        return None;
+        return Err(ParseError::BadProtocolId);
     }
     // `length` covers unit_id + function + data, so the
     // total frame is 6 + length.
     let total = 6 + length;
     if buf.len() < total {
-        return None;
+        return Err(ParseError::Incomplete);
     }
     if length < 2 {
         // unit_id (1) + function_code (1) minimum.
-        return None;
+        return Err(ParseError::InvalidLength);
     }
     let unit_id = buf[6];
     let raw_fn = buf[7];
@@ -45,7 +83,7 @@ pub fn parse_one(buf: &[u8]) -> Option<(ModbusMessage, usize)> {
         decode_request(&function, pdu_data)
     };
 
-    Some((
+    Ok((
         ModbusMessage {
             transaction_id,
             unit_id,
@@ -101,8 +139,9 @@ fn decode_request(
 pub(crate) fn drain_frames(buf: &mut BytesMut, out: &mut Vec<ModbusMessage>) {
     use bytes::Buf;
     loop {
-        let Some((msg, consumed)) = parse_one(buf) else {
-            return;
+        let (msg, consumed) = match parse_one(buf) {
+            Ok(v) => v,
+            Err(_) => return,
         };
         out.push(msg);
         buf.advance(consumed);
@@ -161,19 +200,19 @@ mod tests {
     fn rejects_non_modbus_protocol_id() {
         let mut buf = build_read_holding(0x1234, 0x01, 0x0064, 0x000a);
         buf[2..4].copy_from_slice(&1u16.to_be_bytes());
-        assert!(parse_one(&buf).is_none());
+        assert!(parse_one(&buf).is_err());
     }
 
     #[test]
     fn rejects_truncated_frame() {
         let mut buf = build_read_holding(0x1234, 0x01, 0x0064, 0x000a);
         buf.pop();
-        assert!(parse_one(&buf).is_none());
+        assert!(parse_one(&buf).is_err());
     }
 
     #[test]
     fn rejects_too_short_for_header() {
-        assert!(parse_one(&[0u8; 5]).is_none());
+        assert!(parse_one(&[0u8; 5]).is_err());
     }
 
     #[test]

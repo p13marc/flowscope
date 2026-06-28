@@ -69,7 +69,7 @@ impl SshParser {
                     }
                     let msg_type = payload[0];
                     if msg_type == kexinit_message_byte() {
-                        if let Some(kex) = parse_kexinit_payload(&payload[1..], from_client) {
+                        if let Ok(kex) = parse_kexinit_payload(&payload[1..], from_client) {
                             out.push(SshMessage::KexInit(Box::new(kex)));
                         }
                     } else if msg_type == newkeys_message_byte() {

@@ -35,26 +35,71 @@ const NA_FLAG_ROUTER: u8 = 0x80;
 const NA_FLAG_SOLICITED: u8 = 0x40;
 const NA_FLAG_OVERRIDE: u8 = 0x20;
 
-/// Parse a full ICMPv6 message, returning Some only for the NDP
+/// Failure mode for the `parse*` functions (issue #85).
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ParseError {
+    /// Buffer shorter than the bytes required at this stage.
+    Truncated {
+        /// Bytes needed.
+        need: usize,
+        /// Bytes available.
+        have: usize,
+    },
+    /// ICMPv6 type isn't an NDP type this module decodes
+    /// (not 135 Neighbor Solicitation or 136 Neighbor
+    /// Advertisement).
+    NotNdp,
+}
+
+impl std::fmt::Display for ParseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Truncated { need, have } => {
+                write!(f, "truncated NDP message: need {need}, have {have}")
+            }
+            Self::NotNdp => f.write_str("not an NDP message (ICMPv6 type isn't 135/136)"),
+        }
+    }
+}
+
+impl std::error::Error for ParseError {}
+
+impl From<ParseError> for crate::Error {
+    fn from(e: ParseError) -> Self {
+        use crate::error::{ErrorCode, Module};
+        let code = match &e {
+            ParseError::Truncated { .. } => ErrorCode::Truncated,
+            ParseError::NotNdp => ErrorCode::Parse,
+        };
+        crate::Error::with_code(Module::Ndp, code, e.to_string())
+    }
+}
+
+/// Parse a full ICMPv6 message, returning `Ok` only for the NDP
 /// types this module decodes (135 NS / 136 NA).
 ///
 /// `icmpv6` is the full ICMPv6 message starting at the 4-byte
 /// type / code / checksum header — i.e., the ICMPv6 *layer*
 /// payload, not the ICMPv6 *message body*.
 ///
-/// Returns `None` for:
-/// - Truncated buffers (< 4 bytes for the header).
-/// - ICMPv6 type that isn't NS or NA.
+/// Returns `Err` for:
+/// - Truncated buffers (< 4 bytes for the header) →
+///   [`ParseError::Truncated`].
+/// - ICMPv6 type that isn't NS or NA → [`ParseError::NotNdp`].
 /// - Anything [`parse`] rejects on the message-body payload.
 ///
-/// Issue #6 (0.18).
-pub fn parse_icmpv6(icmpv6: &[u8]) -> Option<NdpMessage> {
+/// Issue #6 (0.18). Signature changed to `Result` in issue #85.
+pub fn parse_icmpv6(icmpv6: &[u8]) -> Result<NdpMessage, ParseError> {
     if icmpv6.len() < 4 {
-        return None;
+        return Err(ParseError::Truncated {
+            need: 4,
+            have: icmpv6.len(),
+        });
     }
     let ty = icmpv6[0];
     if ty != ICMPV6_NS && ty != ICMPV6_NA {
-        return None;
+        return Err(ParseError::NotNdp);
     }
     // code byte (1) + checksum (2) ignored — checksum is
     // validated upstream by the IP / ICMPv6 layer if at all.
@@ -69,15 +114,20 @@ pub fn parse_icmpv6(icmpv6: &[u8]) -> Option<NdpMessage> {
 /// This is the lower-level entry. Most consumers want
 /// [`parse_icmpv6`] which handles the type byte and the
 /// truncation check.
-pub fn parse(icmpv6_type: u8, body: &[u8]) -> Option<NdpMessage> {
+///
+/// Signature changed to `Result` in issue #85.
+pub fn parse(icmpv6_type: u8, body: &[u8]) -> Result<NdpMessage, ParseError> {
     parse_body(icmpv6_type, body)
 }
 
-fn parse_body(icmpv6_type: u8, body: &[u8]) -> Option<NdpMessage> {
+fn parse_body(icmpv6_type: u8, body: &[u8]) -> Result<NdpMessage, ParseError> {
     // Both NS and NA have a 4-byte reserved/flags field + 16-byte
     // target = 20 bytes minimum.
     if body.len() < 20 {
-        return None;
+        return Err(ParseError::Truncated {
+            need: 20,
+            have: body.len(),
+        });
     }
     let (kind, router_flag, solicited_flag, override_flag, expected_opt) = match icmpv6_type {
         ICMPV6_NS => (
@@ -97,7 +147,7 @@ fn parse_body(icmpv6_type: u8, body: &[u8]) -> Option<NdpMessage> {
                 OPT_TARGET_LLADDR,
             )
         }
-        _ => return None,
+        _ => return Err(ParseError::NotNdp),
     };
 
     let mut target_octets = [0u8; 16];
@@ -106,7 +156,7 @@ fn parse_body(icmpv6_type: u8, body: &[u8]) -> Option<NdpMessage> {
 
     let lladdr = parse_lladdr_option(&body[20..], expected_opt);
 
-    Some(NdpMessage {
+    Ok(NdpMessage {
         kind,
         target,
         lladdr,
@@ -165,13 +215,13 @@ pub struct NdpParser;
 impl NdpParser {
     /// See [`parse_icmpv6`].
     #[inline]
-    pub fn parse_icmpv6(&self, icmpv6: &[u8]) -> Option<NdpMessage> {
+    pub fn parse_icmpv6(&self, icmpv6: &[u8]) -> Result<NdpMessage, ParseError> {
         parse_icmpv6(icmpv6)
     }
 
     /// See [`parse`].
     #[inline]
-    pub fn parse(&self, icmpv6_type: u8, body: &[u8]) -> Option<NdpMessage> {
+    pub fn parse(&self, icmpv6_type: u8, body: &[u8]) -> Result<NdpMessage, ParseError> {
         parse(icmpv6_type, body)
     }
 }
@@ -264,8 +314,8 @@ mod tests {
 
     #[test]
     fn rejects_truncated_icmpv6_header() {
-        assert!(parse_icmpv6(&[]).is_none());
-        assert!(parse_icmpv6(&[135, 0, 0]).is_none());
+        assert!(parse_icmpv6(&[]).is_err());
+        assert!(parse_icmpv6(&[135, 0, 0]).is_err());
     }
 
     #[test]
@@ -273,7 +323,7 @@ mod tests {
         // type=135 but body shorter than 20 bytes.
         let mut m = vec![135, 0, 0, 0];
         m.extend_from_slice(&[0; 5]);
-        assert!(parse_icmpv6(&m).is_none());
+        assert!(parse_icmpv6(&m).is_err());
     }
 
     #[test]
@@ -281,7 +331,7 @@ mod tests {
         // ICMPv6 Echo Request = 128 — not NDP.
         let mut m = vec![128, 0, 0, 0];
         m.extend_from_slice(&[0; 24]);
-        assert!(parse_icmpv6(&m).is_none());
+        assert!(parse_icmpv6(&m).is_err());
     }
 
     #[test]

@@ -51,7 +51,7 @@ mod types;
 #[cfg(feature = "ja4plus")]
 pub use ja4ssh::{DEFAULT_PACKET_COUNT, Ja4sshAccumulator};
 pub use parser::{
-    compute_hassh, kexinit_message_byte, parse_kexinit_payload, version_banner_prefix,
+    ParseError, compute_hassh, kexinit_message_byte, parse_kexinit_payload, version_banner_prefix,
 };
 #[cfg(feature = "pcap")]
 pub use pcap_iter::messages_from_pcap;

@@ -51,16 +51,53 @@ pub fn compute_hassh(
     hex::encode(digest)
 }
 
+/// Failure mode for [`parse_kexinit_payload`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ParseError {
+    /// Payload (or an embedded name-list) ran out of bytes.
+    Truncated { need: usize, have: usize },
+    /// A name-list contained non-UTF-8 bytes.
+    InvalidName,
+}
+
+impl std::fmt::Display for ParseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Truncated { need, have } => {
+                write!(f, "truncated SSH KEXINIT payload: need {need}, have {have}")
+            }
+            Self::InvalidName => f.write_str("non-UTF-8 algorithm name in name-list"),
+        }
+    }
+}
+
+impl std::error::Error for ParseError {}
+
+impl From<ParseError> for crate::Error {
+    fn from(e: ParseError) -> Self {
+        use crate::error::{ErrorCode, Module};
+        let code = match &e {
+            ParseError::Truncated { .. } => ErrorCode::Truncated,
+            ParseError::InvalidName => ErrorCode::Parse,
+        };
+        crate::Error::with_code(Module::Ssh, code, e.to_string())
+    }
+}
+
 /// Parse the KEXINIT payload starting at the byte AFTER the
-/// 1-byte msg-type field. Returns `None` on malformed input
+/// 1-byte msg-type field. Returns `Err` on malformed input
 /// (truncated name-lists, non-UTF-8 algorithm names).
 ///
 /// The `from_client` flag drives the HASSH variant computed —
 /// client HASSH uses c2s lists; HASSHServer uses s2c lists.
-pub fn parse_kexinit_payload(payload: &[u8], from_client: bool) -> Option<SshKexInit> {
+pub fn parse_kexinit_payload(payload: &[u8], from_client: bool) -> Result<SshKexInit, ParseError> {
     // 16-byte cookie skipped; we don't expose it.
     if payload.len() < 16 {
-        return None;
+        return Err(ParseError::Truncated {
+            need: 16,
+            have: payload.len(),
+        });
     }
     let mut cursor = &payload[16..];
 
@@ -75,7 +112,7 @@ pub fn parse_kexinit_payload(payload: &[u8], from_client: bool) -> Option<SshKex
     let languages_c2s = take_name_list(&mut cursor)?;
     let languages_s2c = take_name_list(&mut cursor)?;
     if cursor.is_empty() {
-        return None;
+        return Err(ParseError::Truncated { need: 1, have: 0 });
     }
     let first_kex_packet_follows = cursor[0] != 0;
     // 4-byte reserved field at the tail intentionally ignored.
@@ -86,7 +123,7 @@ pub fn parse_kexinit_payload(payload: &[u8], from_client: bool) -> Option<SshKex
         compute_hassh(&kex_algorithms, &encryption_s2c, &mac_s2c, &compression_s2c)
     };
 
-    Some(SshKexInit {
+    Ok(SshKexInit {
         from_client,
         kex_algorithms,
         server_host_key_algorithms,
@@ -106,21 +143,27 @@ pub fn parse_kexinit_payload(payload: &[u8], from_client: bool) -> Option<SshKex
 /// Consume a 4-byte big-endian length-prefixed `name-list`
 /// (comma-separated US-ASCII algorithm names per RFC 4251
 /// §5). The cursor is advanced past the consumed bytes.
-fn take_name_list(cursor: &mut &[u8]) -> Option<Vec<String>> {
+fn take_name_list(cursor: &mut &[u8]) -> Result<Vec<String>, ParseError> {
     if cursor.len() < 4 {
-        return None;
+        return Err(ParseError::Truncated {
+            need: 4,
+            have: cursor.len(),
+        });
     }
     let len = u32::from_be_bytes([cursor[0], cursor[1], cursor[2], cursor[3]]) as usize;
     if cursor.len() < 4 + len {
-        return None;
+        return Err(ParseError::Truncated {
+            need: 4 + len,
+            have: cursor.len(),
+        });
     }
     let raw = &cursor[4..4 + len];
     *cursor = &cursor[4 + len..];
-    let s = std::str::from_utf8(raw).ok()?;
+    let s = std::str::from_utf8(raw).map_err(|_| ParseError::InvalidName)?;
     if s.is_empty() {
-        return Some(Vec::new());
+        return Ok(Vec::new());
     }
-    Some(s.split(',').map(str::to_string).collect())
+    Ok(s.split(',').map(str::to_string).collect())
 }
 
 #[cfg(test)]
@@ -242,7 +285,7 @@ mod tests {
     fn rejects_truncated_payload() {
         // Only the cookie — no name-lists.
         let p = vec![0u8; 16];
-        assert!(parse_kexinit_payload(&p, true).is_none());
+        assert!(parse_kexinit_payload(&p, true).is_err());
     }
 
     #[test]
@@ -251,7 +294,7 @@ mod tests {
         // none follow.
         let mut p = vec![0u8; 16];
         p.extend_from_slice(&1000u32.to_be_bytes());
-        assert!(parse_kexinit_payload(&p, true).is_none());
+        assert!(parse_kexinit_payload(&p, true).is_err());
     }
 
     #[test]

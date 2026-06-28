@@ -46,5 +46,5 @@ mod parser;
 mod types;
 
 pub use datagram::{PARSER_KIND, SNMP_PORT, SNMP_TRAP_PORT, SnmpParser};
-pub use parser::parse;
+pub use parser::{ParseError, parse};
 pub use types::{SnmpMessage, SnmpPduKind, SnmpVersion};
