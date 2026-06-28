@@ -5,6 +5,19 @@
 Pure, no-async — fits the runtime-free lib rule. Carries the pre-1.0
 breaking batch (#85 / #88 / #78), so the version bumps 0.19 → 0.20.
 
+### Additive — unified offline `Pulse` stream (#111)
+
+`pcap::session_pulses::<P>(path)` / `datagram_pulses::<P>(path)` replay a
+pcap through a single parser and yield one ordered `pcap::Pulse<K, M>`
+stream that interleaves flow lifecycle **and** typed messages
+(`Started` / `Message(SlotMessage)` / `Ended` / `Tick`). Fills the gap
+between `session_messages::<P>` (messages only) and `Driver::run_pcap`
+(lifecycle only) — and closes the trailing-drain footgun: close-flush
+messages arrive as `Message` pulses *before* the flow's `Ended`, so
+nothing is left buffered when the iterator ends. `Pulse` and both
+iterators are exported from the prelude. Example:
+`examples/01-l7-logging/pcap_pulses.rs`.
+
 ### Additive — `SlotDrain` shared trait (#101, driver-convergence 5/5)
 
 `driver::SlotDrain<M, K>` — a shared drain surface

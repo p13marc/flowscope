@@ -184,6 +184,9 @@ pub use crate::pcap::PcapFlowSource;
 // building block under the per-parser `*_from_pcap` helpers).
 #[cfg(all(feature = "pcap", feature = "session", feature = "reassembler"))]
 pub use crate::pcap::{datagram_messages, session_messages};
+// Issue #111 (0.20): unified offline lifecycle + message stream.
+#[cfg(all(feature = "pcap", feature = "session", feature = "reassembler"))]
+pub use crate::pcap::{Pulse, datagram_pulses, session_pulses};
 // Issue #109 (0.20): typed parser identity — returned by
 // `SessionParser`/`DatagramParser::parser_kind` and carried on
 // `Event::ParserClosed` / `SlotHandle::parser_kind`.

@@ -24,12 +24,17 @@
 // session pipeline to drive a SessionParser / DatagramParser.
 #[cfg(all(feature = "session", feature = "reassembler"))]
 mod messages;
+// Unified lifecycle + message stream (issue #111).
+#[cfg(all(feature = "session", feature = "reassembler"))]
+mod pulses;
 mod source;
 #[cfg(feature = "tracker")]
 mod summaries;
 
 #[cfg(all(feature = "session", feature = "reassembler"))]
 pub use messages::{datagram_messages, session_messages};
+#[cfg(all(feature = "session", feature = "reassembler"))]
+pub use pulses::{Pulse, datagram_pulses, session_pulses};
 pub use source::{EventIter, OwnedPacketView, PcapFlowSource, ViewIter};
 #[cfg(feature = "tracker")]
 #[allow(deprecated)]

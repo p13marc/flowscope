@@ -526,6 +526,11 @@ path = "examples/01-l7-logging/http_log.rs"
 required-features = ["http", "pcap"]
 
 [[example]]
+name = "pcap_pulses"
+path = "examples/01-l7-logging/pcap_pulses.rs"
+required-features = ["tls", "pcap"]
+
+[[example]]
 name = "http_exchanges"
 path = "examples/01-l7-logging/http_exchanges.rs"
 required-features = ["http", "pcap"]
