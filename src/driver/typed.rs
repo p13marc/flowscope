@@ -47,7 +47,7 @@ use crate::{
     PacketView, Timestamp,
     dedup::Dedup,
     detect::signatures::SignatureFn,
-    event::{AnomalyKind, EndReason, FlowEvent, FlowSide, FlowStats},
+    event::{AnomalyKind, EndReason, FlowEvent, FlowSide, FlowState, FlowStats},
     extractor::{FlowExtractor, L4Proto, TcpInfo},
     flow_driver::FlowDriver,
     history::HistoryString,
@@ -66,7 +66,23 @@ type IdleTimeoutFn<K> =
 /// typed messages flow through [`SlotHandle`] returned by the
 /// builder. `ParserClosed` stays as a lifecycle marker for when
 /// a parser self-terminates.
+///
+/// `Serialize`able under the `serde` feature with the same
+/// `tag = "type"` / `snake_case` shape as
+/// [`FlowEvent`](crate::FlowEvent), and convertible from it via
+/// `Event::from(flow_event)` (issue #97). The conversion is
+/// lossless — [`FlowEvent::StateChange`] maps to
+/// [`Self::FlowStateChange`].
+///
+/// `Serialize` only (not `Deserialize`): [`Self::ParserClosed`]
+/// carries a `parser_kind: &'static str`, which cannot be produced by
+/// a general `Deserialize` impl. To read events back, deserialize the
+/// tracker primitive [`FlowEvent`](crate::FlowEvent) (which is
+/// round-trippable) and `Event::from` it.
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde", serde(tag = "type", rename_all = "snake_case"))]
+#[cfg_attr(feature = "serde", serde(bound(serialize = "K: serde::Serialize")))]
 #[non_exhaustive]
 pub enum Event<K> {
     /// First packet of a new flow.
@@ -82,6 +98,22 @@ pub enum Event<K> {
         key: K,
         ts: Timestamp,
         l4: Option<L4Proto>,
+    },
+
+    /// TCP state-machine transition other than reaching
+    /// `Established` (e.g. `Established → FinWait`). The lossless
+    /// counterpart of [`FlowEvent::StateChange`] (issue #97).
+    ///
+    /// The typed `Driver<E>` does **not** emit this today —
+    /// `FlowEstablished` covers the common case and the driver
+    /// historically omits raw state churn — but the variant exists
+    /// so `Event::from(FlowEvent::StateChange { .. })` is lossless
+    /// and so future driver modes can surface it.
+    FlowStateChange {
+        key: K,
+        from: FlowState,
+        to: FlowState,
+        ts: Timestamp,
     },
 
     /// Per-packet event on an existing flow.
@@ -151,6 +183,7 @@ impl<K> Event<K> {
         match self {
             Event::FlowStarted { key, .. }
             | Event::FlowEstablished { key, .. }
+            | Event::FlowStateChange { key, .. }
             | Event::FlowPacket { key, .. }
             | Event::FlowEnded { key, .. }
             | Event::FlowTick { key, .. }
@@ -184,12 +217,123 @@ impl<K> Event<K> {
         match self {
             Event::FlowStarted { ts, .. }
             | Event::FlowEstablished { ts, .. }
+            | Event::FlowStateChange { ts, .. }
             | Event::FlowPacket { ts, .. }
             | Event::FlowEnded { ts, .. }
             | Event::FlowTick { ts, .. }
             | Event::ParserClosed { ts, .. }
             | Event::FlowAnomaly { ts, .. }
             | Event::TrackerAnomaly { ts, .. } => *ts,
+        }
+    }
+
+    /// Project this typed event back to a tracker
+    /// [`FlowEvent`](crate::FlowEvent), if it has one (issue #97).
+    ///
+    /// Returns `None` for [`Self::ParserClosed`] — a parser-level
+    /// marker with no tracker-event counterpart. The
+    /// [`Self::FlowPacket`] `tcp` enrichment is dropped (`FlowEvent`
+    /// carries no per-packet TCP details) and [`Self::FlowEnded`]'s
+    /// explicit `ts` is folded back into `stats.last_seen`.
+    ///
+    /// This is the bridge that lets the `emit` writers — which speak
+    /// `FlowEvent` — consume a typed `Driver<E>` stream. See
+    /// [`crate::emit`] for the `write_event`-over-`Event` path.
+    pub fn into_flow_event(self) -> Option<FlowEvent<K>> {
+        Some(match self {
+            Event::FlowStarted { key, ts, l4 } => FlowEvent::Started {
+                key,
+                side: FlowSide::Initiator,
+                ts,
+                l4,
+            },
+            Event::FlowEstablished { key, ts, l4 } => FlowEvent::Established { key, ts, l4 },
+            Event::FlowStateChange { key, from, to, ts } => {
+                FlowEvent::StateChange { key, from, to, ts }
+            }
+            Event::FlowPacket {
+                key,
+                side,
+                len,
+                ts,
+                tcp: _,
+            } => FlowEvent::Packet { key, side, len, ts },
+            Event::FlowEnded {
+                key,
+                reason,
+                stats,
+                history,
+                l4,
+                ts: _,
+            } => FlowEvent::Ended {
+                key,
+                reason,
+                stats,
+                history,
+                l4,
+            },
+            Event::FlowTick { key, stats, ts } => FlowEvent::Tick { key, stats, ts },
+            Event::FlowAnomaly { key, kind, ts } => FlowEvent::FlowAnomaly { key, kind, ts },
+            Event::TrackerAnomaly { kind, ts } => FlowEvent::TrackerAnomaly { kind, ts },
+            Event::ParserClosed { .. } => return None,
+        })
+    }
+
+    /// Borrowing variant of [`Self::into_flow_event`] — clones the
+    /// key/stats. Convenient for emit writers that take
+    /// `&FlowEvent<K>` without consuming the event.
+    pub fn to_flow_event(&self) -> Option<FlowEvent<K>>
+    where
+        K: Clone,
+    {
+        self.clone().into_flow_event()
+    }
+}
+
+impl<K> From<FlowEvent<K>> for Event<K> {
+    /// Lossless conversion from the tracker primitive to the typed
+    /// driver event (issue #97).
+    ///
+    /// Every `FlowEvent` variant has an `Event` counterpart:
+    /// `StateChange` maps to [`Event::FlowStateChange`], `Ended`'s
+    /// timestamp is taken from `stats.last_seen`, and
+    /// [`Event::FlowPacket`]'s `tcp` enrichment defaults to `None`
+    /// (it is a driver-only, opt-in field — populate it via the
+    /// driver's `emit_packet_details`, not this conversion).
+    fn from(ev: FlowEvent<K>) -> Self {
+        match ev {
+            FlowEvent::Started { key, ts, l4, .. } => Event::FlowStarted { key, ts, l4 },
+            FlowEvent::Established { key, ts, l4 } => Event::FlowEstablished { key, ts, l4 },
+            FlowEvent::StateChange { key, from, to, ts } => {
+                Event::FlowStateChange { key, from, to, ts }
+            }
+            FlowEvent::Packet { key, side, len, ts } => Event::FlowPacket {
+                key,
+                side,
+                len,
+                ts,
+                tcp: None,
+            },
+            FlowEvent::Ended {
+                key,
+                reason,
+                stats,
+                history,
+                l4,
+            } => {
+                let ts = stats.last_seen;
+                Event::FlowEnded {
+                    key,
+                    reason,
+                    stats,
+                    history,
+                    l4,
+                    ts,
+                }
+            }
+            FlowEvent::Tick { key, stats, ts } => Event::FlowTick { key, stats, ts },
+            FlowEvent::FlowAnomaly { key, kind, ts } => Event::FlowAnomaly { key, kind, ts },
+            FlowEvent::TrackerAnomaly { kind, ts } => Event::TrackerAnomaly { kind, ts },
         }
     }
 }
@@ -1101,38 +1245,19 @@ where
 /// former is now slot-handle-routed; the latter has no
 /// shipping equivalent — `FlowEstablished` covers it).
 fn map_flow_event<K>(ev: FlowEvent<K>, tcp: Option<TcpInfo>) -> Option<Event<K>> {
-    match ev {
-        FlowEvent::Started { key, ts, l4, .. } => Some(Event::FlowStarted { key, ts, l4 }),
-        FlowEvent::Established { key, ts, l4 } => Some(Event::FlowEstablished { key, ts, l4 }),
-        FlowEvent::Packet { key, side, len, ts } => Some(Event::FlowPacket {
-            key,
-            side,
-            len,
-            ts,
-            tcp,
-        }),
-        FlowEvent::Ended {
-            key,
-            reason,
-            stats,
-            history,
-            l4,
-        } => {
-            let ts = stats.last_seen;
-            Some(Event::FlowEnded {
-                key,
-                reason,
-                stats,
-                history,
-                l4,
-                ts,
-            })
-        }
-        FlowEvent::Tick { key, stats, ts } => Some(Event::FlowTick { key, stats, ts }),
-        FlowEvent::FlowAnomaly { key, kind, ts } => Some(Event::FlowAnomaly { key, kind, ts }),
-        FlowEvent::TrackerAnomaly { kind, ts } => Some(Event::TrackerAnomaly { kind, ts }),
-        FlowEvent::StateChange { .. } => None,
+    // The typed driver historically omits raw TCP state churn —
+    // `FlowEstablished` covers the common case — so drop `StateChange`
+    // here even though `Event` can now represent it (issue #97). The
+    // rest reuse the lossless `From` conversion, then patch in the
+    // opt-in per-packet `tcp` details the conversion can't know about.
+    if matches!(ev, FlowEvent::StateChange { .. }) {
+        return None;
     }
+    let mut event = Event::from(ev);
+    if let Event::FlowPacket { tcp: slot, .. } = &mut event {
+        *slot = tcp;
+    }
+    Some(event)
 }
 
 #[cfg(feature = "pcap")]

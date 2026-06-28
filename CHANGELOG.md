@@ -5,6 +5,29 @@
 Pure, no-async — fits the runtime-free lib rule. Carries the pre-1.0
 breaking batch (#85 / #88 / #78), so the version bumps 0.19 → 0.20.
 
+### Additive — `Event<K>` emit-readiness (#97, driver-convergence 1/5)
+
+First (additive) step of the #84 driver/event convergence — makes the
+typed driver's `Event<K>` a first-class consumer/emit event so the
+later breaking steps can retire `SessionEvent`.
+
+- **`impl From<FlowEvent<K>> for Event<K>`** — total, lossless
+  conversion from the tracker primitive. New variant
+  **`Event::FlowStateChange`** gives `FlowEvent::StateChange` a
+  counterpart so nothing is dropped (`FlowPacket.tcp` defaults to
+  `None`; `FlowEnded.ts` comes from `stats.last_seen`).
+- **`Event::into_flow_event` / `Event::to_flow_event`** — the reverse
+  projection (`ParserClosed -> None`, having no tracker counterpart).
+- **`Event<K>: Serialize`** under `serde` — same `tag = "type"` /
+  `snake_case` shape as `FlowEvent`. `Serialize`-only: `ParserClosed`'s
+  `parser_kind: &'static str` precludes a general `Deserialize`
+  (deserialize the round-trippable `FlowEvent` and `From` it instead).
+- **`emit::LifecycleEvent` trait** + **`write_lifecycle`** on every
+  writer (CSV / Zeek / NDJSON / EVE) — emit either a `FlowEvent<K>` or a
+  typed `Event<K>` through the same writers (the `FlowEvent` path stays
+  zero-copy via `Cow`). The typed `Driver<E>`'s emitted stream is
+  unchanged (it still omits raw `StateChange`).
+
 ### Additive — generic pcap message iterators (#86)
 
 - **`pcap::session_messages::<P>(path)` / `pcap::datagram_messages::<P>(path)`**

@@ -119,6 +119,23 @@ where
         }
     }
 
+    /// Emit any [`LifecycleEvent`](crate::emit::LifecycleEvent) — both
+    /// the tracker's [`FlowEvent`] and the typed
+    /// driver's [`Event`](crate::driver::Event) (issue #97). Events
+    /// with no flow-record projection (e.g.
+    /// [`Event::ParserClosed`](crate::driver::Event::ParserClosed)) are
+    /// skipped.
+    pub fn write_lifecycle<T, K>(&mut self, ev: &T) -> io::Result<()>
+    where
+        T: crate::emit::LifecycleEvent<K>,
+        K: KeyFields + Clone,
+    {
+        match ev.as_flow_event() {
+            Some(fe) => self.write_event(fe.as_ref()),
+            None => Ok(()),
+        }
+    }
+
     /// Write one event. Skipped variants per
     /// [`EveOptions`] produce no output and return `Ok(())`.
     pub fn write_event<K>(&mut self, ev: &FlowEvent<K>) -> io::Result<()>
