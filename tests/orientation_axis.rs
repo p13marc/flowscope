@@ -8,11 +8,17 @@
 //! address-sorted `Orientation` does **not** move — a given wire
 //! direction always carries the same `Orientation` regardless of which
 //! packet of the flow was observed first.
+//!
+//! Issue #120 — the physical capture leg (`RxMetadata::source_idx`) is
+//! folded to a per-canonical-orientation binding on `FlowStats`, so a
+//! merged bidirectional flow still reports which NIC each direction
+//! arrived on (IPFIX biflow-merge model) without splitting into two
+//! flows.
 
 #![cfg(all(feature = "extractors", feature = "tracker"))]
 
 use flowscope::{
-    FlowEvent, FlowSide, FlowTracker, Orientation, PacketView, Timestamp,
+    FlowEvent, FlowSide, FlowStats, FlowTracker, Orientation, PacketView, Timestamp,
     extract::{FiveTuple, parse::test_frames},
 };
 
@@ -144,6 +150,79 @@ fn flow_stats_translate_between_axes() {
     flipped.initiator_orientation = Orientation::Reverse;
     assert_eq!(flipped.side_for(Orientation::Reverse), FlowSide::Initiator);
     assert_eq!(flipped.side_for(Orientation::Forward), FlowSide::Responder);
+}
+
+/// Feed `(frame, source_idx)` pairs through one merged bidirectional
+/// flow and return the single flow's live `FlowStats`.
+fn drive_with_legs(frames: &[(Vec<u8>, u32)]) -> FlowStats {
+    let mut tracker: FlowTracker<_, ()> = FlowTracker::new(FiveTuple::bidirectional());
+    for (t, (frame, src)) in frames.iter().enumerate() {
+        let view = PacketView::new(frame, Timestamp::new(t as u32, 0)).with_source_idx(*src);
+        let _ = tracker.track(view);
+    }
+    let mut stats = None;
+    for (_k, entry) in tracker.flows() {
+        assert!(stats.is_none(), "expected exactly one merged flow");
+        stats = Some(entry.stats.clone());
+    }
+    stats.expect("flow was created")
+}
+
+#[test]
+fn capture_leg_binds_per_orientation_on_merged_flow() {
+    // A→B (Forward) arrives on NIC 1; B→A (Reverse) on NIC 2. Both
+    // legs of the SAME flow — they must merge into one flow while each
+    // direction remembers its leg.
+    let stats = drive_with_legs(&[
+        (a_to_b(b"q1"), 1),
+        (b_to_a(b"r1"), 2),
+        (a_to_b(b"q2"), 1),
+        (b_to_a(b"r2"), 2),
+    ]);
+
+    assert_eq!(stats.source_idx_for(Orientation::Forward), Some(1));
+    assert_eq!(stats.source_idx_for(Orientation::Reverse), Some(2));
+    assert_eq!(stats.source_idx_forward, Some(1));
+    assert_eq!(stats.source_idx_reverse, Some(2));
+    assert!(
+        !stats.capture_leg_inconsistent,
+        "one leg per direction — consistent"
+    );
+    // Still a single bidirectional flow.
+    assert_eq!(stats.total_packets(), 4);
+}
+
+#[test]
+fn inconsistent_leg_flips_the_ioc() {
+    // The A→B direction shows up on TWO different NICs (1 then 3) —
+    // tap miswire / asymmetric routing. The first binding is kept, the
+    // IOC flips.
+    let stats = drive_with_legs(&[
+        (a_to_b(b"q1"), 1),
+        (b_to_a(b"r1"), 2),
+        (a_to_b(b"q2"), 3), // same orientation, different leg
+    ]);
+
+    assert_eq!(
+        stats.source_idx_for(Orientation::Forward),
+        Some(1),
+        "original binding is kept, not overwritten"
+    );
+    assert_eq!(stats.source_idx_for(Orientation::Reverse), Some(2));
+    assert!(
+        stats.capture_leg_inconsistent,
+        "a second, different leg on the Forward direction is the IOC"
+    );
+}
+
+#[test]
+fn no_source_idx_leaves_legs_unbound() {
+    // pcap / synthetic: source_idx stays at the `0` "unused" sentinel,
+    // so the per-direction bindings stay None and the IOC stays clear.
+    let stats = drive_with_legs(&[(a_to_b(b"q1"), 0), (b_to_a(b"r1"), 0)]);
+    assert_eq!(stats.source_idx_for(Orientation::Forward), None);
+    assert_eq!(stats.source_idx_for(Orientation::Reverse), None);
+    assert!(!stats.capture_leg_inconsistent);
 }
 
 #[test]

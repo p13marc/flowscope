@@ -186,9 +186,17 @@ Each axis lines up with an established wire/standard concept:
 
 The capture-leg axis (`source_idx`) is set by the capture layer
 (netring, a pcapng reader, a tun device) via
-[`PacketView::with_source_idx`]; the tracker treats it as opaque
-metadata. Surfacing per-direction leg on `FlowStats` is tracked
-separately (issue #120).
+[`PacketView::with_source_idx`]. On a **merged** bidirectional flow the
+tracker folds it to a per-canonical-orientation binding —
+`FlowStats::source_idx_for(Forward)` / `source_idx_for(Reverse)` —
+without splitting the flow (the IPFIX biflow-merge model, RFC 5103:
+forward `ingressInterface` + reverse IE). The first non-zero
+`source_idx` seen for each direction binds it; a later *different* leg
+on the same direction flips `FlowStats::capture_leg_inconsistent` —
+the tap-miswire / asymmetric-routing IOC (#120). pcap / synthetic
+sources leave `source_idx` at its `0` "unused" sentinel, so the
+bindings stay `None`. Per-*packet* leg fidelity (audit tier) is tracked
+separately (issue #121).
 
 [`FlowSide`]: https://docs.rs/flowscope/latest/flowscope/enum.FlowSide.html
 [`Orientation`]: https://docs.rs/flowscope/latest/flowscope/enum.Orientation.html

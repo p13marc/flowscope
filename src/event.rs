@@ -394,6 +394,28 @@ pub struct FlowStats {
     /// Defaults to [`Orientation::Forward`] for a default-constructed
     /// `FlowStats`; a tracked flow always carries the real value.
     pub initiator_orientation: Orientation,
+    /// New in 0.20.0 (issue #120): physical capture leg
+    /// ([`crate::RxMetadata::source_idx`]) bound to each canonical
+    /// [`Orientation`], so a **merged** bidirectional flow can still
+    /// report "the `Forward` half arrived on NIC X, the `Reverse` half
+    /// on NIC Y" — the IPFIX biflow-merge model (RFC 5103: a forward
+    /// `ingressInterface` IE 10 + a reverse one), not a per-packet
+    /// drop.
+    ///
+    /// Bound to `Orientation` (not [`FlowSide`]) so the leg is
+    /// arrival-order-stable, like the rest of the #71 fix. Recorded on
+    /// the first packet of each orientation that carries a **non-zero**
+    /// `source_idx` (`0` is the documented "unused" sentinel), so pcap
+    /// / synthetic sources leave these `None`. Use
+    /// [`Self::source_idx_for`] for `Orientation`-keyed access.
+    pub source_idx_forward: Option<u32>,
+    pub source_idx_reverse: Option<u32>,
+    /// New in 0.20.0 (issue #120): set when a **second, different**
+    /// non-zero `source_idx` is later seen for an
+    /// [`Orientation`] already bound to a leg — the tap-miswire /
+    /// asymmetric-routing IOC ("one leg per direction" assumption
+    /// violated). The original binding is kept; this flag flips.
+    pub capture_leg_inconsistent: bool,
 }
 
 impl FlowStats {
@@ -466,6 +488,23 @@ impl FlowStats {
         match side {
             FlowSide::Initiator => self.initiator_orientation,
             FlowSide::Responder => self.initiator_orientation.flipped(),
+        }
+    }
+
+    /// The physical capture leg ([`crate::RxMetadata::source_idx`])
+    /// bound to the given canonical [`Orientation`], or `None` if no
+    /// non-zero `source_idx` was ever seen for that direction (the
+    /// pcap / synthetic case). New in 0.20.0 (issue #120).
+    ///
+    /// Combine with [`Self::side_for`] / [`Self::orientation_for`] to
+    /// answer "which NIC did the initiator's traffic arrive on?" on a
+    /// merged flow. [`Self::capture_leg_inconsistent`] reports whether
+    /// the one-leg-per-direction assumption held.
+    #[inline]
+    pub fn source_idx_for(&self, orientation: Orientation) -> Option<u32> {
+        match orientation {
+            Orientation::Forward => self.source_idx_forward,
+            Orientation::Reverse => self.source_idx_reverse,
         }
     }
 

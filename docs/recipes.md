@@ -340,8 +340,29 @@ Rule of thumb:
 On a finished flow, recover one axis from the other via
 `FlowStats::side_for(orientation)` / `orientation_for(side)`;
 `FlowStats::initiator_orientation` records which `Orientation` the
-initiator had. To key the two NICs *separately* instead of merging,
-wrap the extractor in `Tagged` with `source_idx` as the tag — see the
+initiator had.
+
+**Which NIC did each direction arrive on?** Stamp the leg with
+`PacketView::with_source_idx(nic)` and the tracker folds it to a
+per-direction binding on the merged flow (the IPFIX biflow-merge model)
+— no split required:
+
+```rust,ignore
+let view = PacketView::new(&frame, ts).with_source_idx(nic_index); // 1, 2, …
+// … track …
+// On Ended / snapshot:
+let fwd_leg = stats.source_idx_for(Orientation::Forward); // Some(nic) or None
+let rev_leg = stats.source_idx_for(Orientation::Reverse);
+if stats.capture_leg_inconsistent {
+    // the same direction showed up on >1 NIC: tap miswire / asymmetric
+    // routing — the "never assume one leg per flow" IOC.
+}
+```
+
+`source_idx` `0` is the "unused" sentinel, so pcap / synthetic replays
+leave both bindings `None`. To key the two NICs *separately* instead of
+merging, wrap the extractor in `Tagged` with `source_idx` as the tag —
+see the
 [`Tagged`](https://docs.rs/flowscope/latest/flowscope/extract/struct.Tagged.html)
 module docs. Full model: `docs/concepts.md` →
 "Direction, orientation, and capture leg".

@@ -64,6 +64,32 @@ serde wire the new field appears as `"orientation": "forward"` /
 verbatim; the new field rides along. netring can optionally surface
 `orientation` in its own adapters.
 
+### Additive — per-direction capture-leg binding on `FlowStats` (#120, epic #123 phase 2)
+
+A **merged** bidirectional flow can now report which physical capture
+leg (NIC / `RxMetadata::source_idx`) each canonical direction arrived
+on, without splitting into two flows — the IPFIX biflow-merge model
+(RFC 5103: a forward `ingressInterface` IE 10 + a reverse one), the
+missing middle ground between "drop the leg" (plain merge) and "fold
+the leg into the key" (`Tagged`, which splits).
+
+- `FlowStats::source_idx_forward` / `source_idx_reverse` +
+  `source_idx_for(orientation)` — the leg bound to each canonical
+  `Orientation`. The first **non-zero** `source_idx` seen for a
+  direction binds it; `0` is the documented "unused" sentinel, so
+  pcap / synthetic sources leave both `None`.
+- `FlowStats::capture_leg_inconsistent` — flips when a second, *different*
+  non-zero leg appears for an already-bound direction (the tap-miswire /
+  asymmetric-routing IOC; the original binding is kept).
+
+Keyed by `Orientation` (not `FlowSide`) so the binding is
+arrival-order-stable, like the rest of the #71 fix. The tracker now
+reads `view.rx_metadata.source_idx` on the per-packet path (a single
+`u32` compare + conditional store — negligible, always-on). Available
+on `Ended` / `Tick` / `snapshot_stats`. Purely additive (`FlowStats` is
+`#[non_exhaustive]`); existing consumers unaffected. Per-*packet* leg
+fidelity (audit tier) is tracked separately (#121).
+
 ### Additive — unified offline `Pulse` stream (#111)
 
 `pcap::session_pulses::<P>(path)` / `datagram_pulses::<P>(path)` replay a

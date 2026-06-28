@@ -88,6 +88,7 @@ For the conceptual layer-by-layer reference, see
 | `FlowStats::direction_skew` | `(init - resp) / total`. `[-1, 1]`. (0.14, plan 168.) |
 | `FlowStats::initiator_orientation` | Canonical `Orientation` of the flow's initiator — the deterministic axis. (0.20, #118.) |
 | `FlowStats::side_for(orientation)` / `orientation_for(side)` | Translate between the role axis (`FlowSide`) and canonical axis (`Orientation`). (0.20, #118.) |
+| `FlowStats::source_idx_for(orientation)` / `capture_leg_inconsistent` | Physical capture leg (NIC) bound per direction on a merged flow + tap-miswire IOC. (0.20, #120.) |
 
 ## "I want a stable per-direction label across sensors"
 
