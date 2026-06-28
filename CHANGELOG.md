@@ -24,6 +24,28 @@ breaking batch (#85 / #88 / #78), so the version bumps 0.19 → 0.20.
   and `pcap::flow_summaries_from_pcap`. Migrate to the generic entries;
   see `docs/migration-0.19-to-0.20.md`.
 
+### Additive — tracker load-shedding (#79)
+
+- **`EventMask`** — a `bitflags` set selecting which `FlowEvent`
+  variants the tracker should *not* emit, for source-level
+  back-pressure under overload. Each bit maps to one variant
+  (`PACKET` is the highest-volume); the empty default suppresses
+  nothing.
+- **`FlowTrackerConfig::with_event_filter(EventMask)`** — static,
+  per-variant suppression. Suppressed events are never *constructed*
+  — the `FlowStats` / `HistoryString` clones behind `Ended` / `Tick`
+  are skipped entirely.
+- **`FlowTracker::pause_events()` / `resume_events()` / `events_paused()`**
+  — runtime, total shed for the duration of an overload episode
+  ("shunt mode"). When driving through a `FlowDriver`, reach it via
+  `driver.tracker_mut().pause_events()`.
+- Accounting (TCP state machine, byte/packet counters, idle
+  bookkeeping) always keeps running while shedding, so flows still
+  finalize correctly when emission resumes. The driver-emitted `Tick`
+  honours the same `EventMask::TICK` bit and pause state. Pure,
+  additive, inert at the default. Resolves netring#54's flowscope
+  side.
+
 ### Additive — JA4-QUIC client fingerprint (#82)
 
 - **`tls::ja4_quic` / `tls::ja4_quic_parts`** — JA4 *client* fingerprint

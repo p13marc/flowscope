@@ -497,7 +497,7 @@ pub use datagram_driver::FlowDatagramDriver;
 pub use dedup::Dedup;
 #[cfg(feature = "tracker")]
 pub use event::{
-    AnomalyKind, EndReason, FlowEvent, FlowSide, FlowState, FlowStats, MemcapPolicy,
+    AnomalyKind, EndReason, EventMask, FlowEvent, FlowSide, FlowState, FlowStats, MemcapPolicy,
     OverflowPolicy, TcpOverlapPolicy,
 };
 pub use extractor::{Extracted, FlowExtractor, L4Proto, Orientation, TcpFlags, TcpInfo};

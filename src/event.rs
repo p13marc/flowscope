@@ -1,5 +1,7 @@
 //! Events emitted by [`crate::FlowTracker`] as packets flow through it.
 
+use bitflags::bitflags;
+
 use crate::{Timestamp, extractor::L4Proto, history::HistoryString};
 
 /// Which side of a flow a packet belongs to.
@@ -783,6 +785,54 @@ impl std::fmt::Display for Severity {
             Severity::Error => "error",
             Severity::Critical => "critical",
         })
+    }
+}
+
+bitflags! {
+    /// Selects which [`FlowEvent`] variants a tracker should *not*
+    /// emit — a source-level load-shedding knob (issue #79).
+    ///
+    /// Each bit maps to one [`FlowEvent`] variant. The empty mask
+    /// (the [`Default`]) suppresses nothing, so the feature is
+    /// inert until a consumer opts in via
+    /// [`FlowTrackerConfig::with_event_filter`](crate::FlowTrackerConfig::with_event_filter).
+    /// Suppressed events are never *constructed* — the highest-volume
+    /// variant ([`Self::PACKET`]) costs nothing under overload, and
+    /// the [`FlowStats`] / [`HistoryString`] clones behind
+    /// [`Self::ENDED`] / [`Self::TICK`] are skipped entirely.
+    ///
+    /// Suppression never touches accounting: the TCP state machine,
+    /// byte/packet counters and idle bookkeeping all keep running, so
+    /// flows still finalize correctly. Only the emission is shed.
+    ///
+    /// The tracker emits five of these variants itself ([`Self::STARTED`],
+    /// [`Self::PACKET`], [`Self::ESTABLISHED`], [`Self::STATE_CHANGE`],
+    /// [`Self::ENDED`]); [`Self::TICK`], [`Self::FLOW_ANOMALY`] and
+    /// [`Self::TRACKER_ANOMALY`] are produced by the drivers, which honour
+    /// the same mask where they emit them (today: `TICK`).
+    ///
+    /// For a *total* shed over the duration of an overload episode use
+    /// [`FlowTracker::pause_events`](crate::FlowTracker::pause_events) /
+    /// [`resume_events`](crate::FlowTracker::resume_events) instead, which
+    /// gate every variant regardless of the mask.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+    pub struct EventMask: u8 {
+        /// [`FlowEvent::Started`].
+        const STARTED         = 1 << 0;
+        /// [`FlowEvent::Packet`] — the highest-volume variant.
+        const PACKET          = 1 << 1;
+        /// [`FlowEvent::Established`].
+        const ESTABLISHED     = 1 << 2;
+        /// [`FlowEvent::StateChange`].
+        const STATE_CHANGE    = 1 << 3;
+        /// [`FlowEvent::Ended`].
+        const ENDED           = 1 << 4;
+        /// [`FlowEvent::FlowAnomaly`] (driver-emitted).
+        const FLOW_ANOMALY    = 1 << 5;
+        /// [`FlowEvent::TrackerAnomaly`] (driver-emitted).
+        const TRACKER_ANOMALY = 1 << 6;
+        /// [`FlowEvent::Tick`] (driver-emitted).
+        const TICK            = 1 << 7;
     }
 }
 
