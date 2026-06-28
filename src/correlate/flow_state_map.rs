@@ -200,6 +200,7 @@ mod tests {
         let ev: FlowEvent<u32> = FlowEvent::Packet {
             key: 42,
             side: crate::FlowSide::Initiator,
+            orientation: crate::extractor::Orientation::Forward,
             len: 100,
             ts: Timestamp::new(50, 0),
         };

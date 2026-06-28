@@ -74,6 +74,7 @@ fn skips_non_ended_events_by_default() {
     let started = FlowEvent::Started {
         key: key("10.0.0.1:1234", "10.0.0.2:80", L4Proto::Tcp),
         side: flowscope::FlowSide::Initiator,
+        orientation: flowscope::Orientation::Forward,
         ts: Timestamp::new(100, 0),
         l4: Some(L4Proto::Tcp),
     };
@@ -93,6 +94,7 @@ fn emit_started_adds_kind_column() {
     let started = FlowEvent::Started {
         key: key("10.0.0.1:1234", "10.0.0.2:80", L4Proto::Tcp),
         side: flowscope::FlowSide::Initiator,
+        orientation: flowscope::Orientation::Forward,
         ts: Timestamp::new(100, 0),
         l4: Some(L4Proto::Tcp),
     };

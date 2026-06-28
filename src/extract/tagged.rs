@@ -29,6 +29,21 @@
 //! extractor registration time. No tracker config, no `MergedKey`
 //! wrapper, no `merge_sources: bool`.
 //!
+//! ## Merge ≠ losing direction
+//!
+//! Source-merge (no tag) folds both capture legs into one
+//! bidirectional flow, but it does **not** mean you lose track of
+//! direction. The capture-leg identity ([`crate::RxMetadata::source_idx`])
+//! is one of flowscope's three orthogonal direction axes; the other
+//! two survive the merge intact. In particular every
+//! [`crate::FlowEvent::Packet`] still carries a deterministic
+//! [`crate::Orientation`] (address-sorted canonical direction), which
+//! — unlike the arrival-order [`crate::FlowSide`] — is **stable across
+//! the tap-merge race** described above. So "merge the two legs" and
+//! "know which way each packet flowed" are not in tension: merge for
+//! flow unification, read `orientation` for direction. See
+//! `docs/concepts.md` → "Direction, orientation, and capture leg".
+//!
 //! ## Sharding
 //!
 //! Sharding on the key hash works automatically for both modes:

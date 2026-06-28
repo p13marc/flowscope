@@ -117,6 +117,85 @@ be distinguished.
 cookies, BGP communities, tenant IDs in a header. Implement the
 trait; the rest of the stack treats your key as opaque.
 
+## Direction, orientation, and capture leg
+
+A packet's "direction" is really **three orthogonal axes**. Conflating
+them is the single most common flow-analysis bug (CICFlowMeter's
+"sorted endpoint == initiator" assumption is the canonical example).
+flowscope keeps all three distinct:
+
+| Axis | Type | Anchored to | Question it answers | Deterministic? |
+|------|------|-------------|---------------------|----------------|
+| **Logical role** | [`FlowSide`] `Initiator` / `Responder` | arrival order (≈ SYN sender) | *Who started the conversation?* | **no** — first-seen can race |
+| **Canonical orientation** | [`Orientation`] `Forward` / `Reverse` | address sort (`key.a < key.b`) | *Which way along the sorted key?* | **yes** |
+| **Physical capture leg** | [`RxMetadata::source_idx`] `u32` | NIC / queue / interface | *Which wire did it arrive on?* | n/a (a fact, not inferred) |
+
+These are independent: a single packet has a role, an orientation, and
+a capture leg all at once, and knowing one tells you nothing about the
+others.
+
+### Why `FlowSide` alone is not enough
+
+`FlowSide::Initiator` binds to whichever endpoint's packet the tracker
+saw **first**. On one capture point that is reliably the SYN sender.
+But across a **tap-merge** — two NICs (e.g. a TX leg and an RX leg of
+the same link), or two RSS queues, feeding one tracker — a scheduling
+race can deliver the *response* before the request. When that happens
+`Initiator` binds to the server on some flows and the client on others,
+**non-deterministically**. Anything keyed on `FlowSide` (per-direction
+byte counts, biflow records, dedup across two capture points) then
+disagrees between runs or between sensors.
+
+`Orientation` has no such fragility: it is computed purely from the
+canonical key ordering (`FiveTupleKey` sorts endpoints so `a < b`), so
+the **same wire 5-tuple always yields the same `Orientation`**, no
+matter which packet arrived first or which sensor observed it. Use it
+whenever two independent observers must agree — Community ID ordering,
+IPFIX biflow keying, cross-sensor dedup.
+
+### Both axes ride on every packet event
+
+`FlowEvent::{Started, Packet}` (and the typed `Event::{Started,
+Packet}`) carry **both** `side` and `orientation`. On a finished flow,
+[`FlowStats::initiator_orientation`] records which `Orientation` the
+initiator had, and `FlowStats::side_for(orientation)` /
+`orientation_for(side)` translate between the axes:
+
+```rust,ignore
+match ev {
+    // "who started it" — fragile under tap-merge
+    FlowEvent::Packet { side, .. } => …,
+    // deterministic canonical direction — stable across sensors
+    FlowEvent::Packet { orientation, .. } => …,
+    _ => {}
+}
+
+// On Ended, recover side from the canonical axis deterministically:
+let side = stats.side_for(Orientation::Forward); // a→b half
+```
+
+### Standards mapping
+
+Each axis lines up with an established wire/standard concept:
+
+| flowscope | IPFIX (RFC 7011/5103) | pcapng / libpcap | gopacket | netring |
+|-----------|------------------------|------------------|----------|---------|
+| `FlowSide` | `biflowDirection` IE 239 | — | — | flow `side` |
+| `Orientation` | (implied by sorted biflow key) | — | endpoint `LessThan` ordering | — |
+| `RxMetadata::source_idx` | `observationPointId` IE 138 / `ingressInterface` IE 10 | EPB Interface ID | `InterfaceIndex` | `source_idx` |
+
+The capture-leg axis (`source_idx`) is set by the capture layer
+(netring, a pcapng reader, a tun device) via
+[`PacketView::with_source_idx`]; the tracker treats it as opaque
+metadata. Surfacing per-direction leg on `FlowStats` is tracked
+separately (issue #120).
+
+[`FlowSide`]: https://docs.rs/flowscope/latest/flowscope/enum.FlowSide.html
+[`Orientation`]: https://docs.rs/flowscope/latest/flowscope/enum.Orientation.html
+[`RxMetadata::source_idx`]: https://docs.rs/flowscope/latest/flowscope/struct.RxMetadata.html
+[`FlowStats::initiator_orientation`]: https://docs.rs/flowscope/latest/flowscope/struct.FlowStats.html
+[`PacketView::with_source_idx`]: https://docs.rs/flowscope/latest/flowscope/struct.PacketView.html
+
 ## Layer 2 — `FlowTracker<E, S>`
 
 Per-flow accounting on top of the extractor. Generic over the
@@ -384,7 +463,10 @@ they trip people up:
 - **Mono-direction never doubles back.** Once a flow's `Initiator`
   side is determined (from the first packet's orientation), it
   stays. The tracker maintains this via an internal canonicalisation
-  in the extractor's `Orientation`.
+  in the extractor's `Orientation`. Note `Initiator` is *arrival-order*
+  relative and can race under a tap-merge; the canonical `Orientation`
+  on every event does not — see
+  [Direction, orientation, and capture leg](#direction-orientation-and-capture-leg).
 - **`fin()` is idempotent.** Multiple FINs on the same side are
   fine.
 - **Parser splitting invariance.** Feeding a byte sequence in one

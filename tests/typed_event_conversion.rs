@@ -9,8 +9,11 @@
 use std::net::SocketAddr;
 
 use flowscope::{
-    AnomalyKind, EndReason, FlowEvent, FlowSide, FlowState, FlowStats, Timestamp, driver::Event,
-    extract::FiveTupleKey, extractor::L4Proto, history::HistoryString,
+    AnomalyKind, EndReason, FlowEvent, FlowSide, FlowState, FlowStats, Timestamp,
+    driver::Event,
+    extract::FiveTupleKey,
+    extractor::{L4Proto, Orientation},
+    history::HistoryString,
 };
 
 fn key() -> FiveTupleKey {
@@ -36,12 +39,14 @@ fn all_flow_events() -> Vec<FlowEvent<FiveTupleKey>> {
         FlowEvent::Started {
             key: key(),
             side: FlowSide::Initiator,
+            orientation: Orientation::Forward,
             ts,
             l4: Some(L4Proto::Tcp),
         },
         FlowEvent::Packet {
             key: key(),
             side: FlowSide::Responder,
+            orientation: Orientation::Reverse,
             len: 100,
             ts,
         },
@@ -138,6 +143,7 @@ fn from_flow_packet_defaults_tcp_to_none() {
     let ev = Event::from(FlowEvent::Packet {
         key: key(),
         side: FlowSide::Initiator,
+        orientation: Orientation::Forward,
         len: 40,
         ts: Timestamp::new(1, 0),
     });
@@ -158,6 +164,7 @@ fn event_serializes_with_type_tag() {
     let started = Event::from(FlowEvent::Started {
         key: key(),
         side: FlowSide::Initiator,
+        orientation: Orientation::Forward,
         ts: Timestamp::new(1, 0),
         l4: Some(L4Proto::Tcp),
     });

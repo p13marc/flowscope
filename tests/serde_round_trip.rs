@@ -14,7 +14,7 @@ use flowscope::{
     event::{
         AnomalyKind, EndReason, FlowEvent, FlowSide, FlowState, FlowStats, OverflowPolicy, Severity,
     },
-    extractor::L4Proto,
+    extractor::{L4Proto, Orientation},
 };
 
 fn ts(sec: u32, nsec: u32) -> Timestamp {
@@ -161,6 +161,7 @@ fn flow_event_started_round_trips() {
     let evt: FlowEvent<u32> = FlowEvent::Started {
         key: 7,
         side: FlowSide::Initiator,
+        orientation: Orientation::Forward,
         ts: ts(1234, 0),
         l4: Some(L4Proto::Tcp),
     };
@@ -168,6 +169,8 @@ fn flow_event_started_round_trips() {
     assert_eq!(json["type"], "started");
     assert_eq!(json["key"], 7);
     assert_eq!(json["side"], "initiator");
+    // Issue #118: the canonical orientation axis rides alongside `side`.
+    assert_eq!(json["orientation"], "forward");
     assert_eq!(json["l4"], serde_json::json!({"kind": "tcp"}));
     round_trip(evt);
 }
@@ -194,12 +197,14 @@ fn flow_event_all_variants_round_trip() {
         FlowEvent::Started {
             key,
             side: FlowSide::Initiator,
+            orientation: Orientation::Forward,
             ts: ts(1, 0),
             l4: Some(L4Proto::Tcp),
         },
         FlowEvent::Packet {
             key,
             side: FlowSide::Responder,
+            orientation: Orientation::Reverse,
             len: 100,
             ts: ts(2, 0),
         },

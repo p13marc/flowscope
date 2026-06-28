@@ -291,6 +291,61 @@ for key in offenders {
 }
 ```
 
+## Tap-merge: TX/RX legs into one flow, direction preserved
+
+A network tap often splits a link's two directions across two NICs:
+the client→server bytes arrive on one interface (the "TX leg"), the
+server→client bytes on another (the "RX leg"). You want both legs to
+land in **one bidirectional flow** — and you still want to know which
+way each packet went.
+
+Merging is a composition decision, not a config flag: feed both legs
+through the *same* bidirectional extractor with **no per-source tag**.
+Both legs of a flow canonicalise to the same key, so they accumulate
+together:
+
+```rust,ignore
+use flowscope::{FlowTracker, FlowEvent, FlowSide, Orientation, PacketView, Timestamp};
+use flowscope::extract::FiveTuple;
+
+let mut tracker: FlowTracker<_, ()> = FlowTracker::new(FiveTuple::bidirectional());
+
+// `frames` interleaves packets from BOTH NICs in capture order. The
+// `source_idx` (which NIC) can be stamped on the view via
+// `PacketView::with_source_idx`, but we deliberately do NOT tag the
+// key — we want one merged flow.
+for (frame, ts) in frames {
+    for ev in tracker.track(PacketView::new(&frame, ts)) {
+        if let FlowEvent::Packet { side, orientation, len, .. } = ev {
+            // `side` answers "initiator or responder?" — but it is
+            // assigned from whichever leg the tracker saw FIRST, and a
+            // scheduling race between the two NICs can flip it.
+            //
+            // `orientation` answers "which way along the address-sorted
+            // key?" deterministically — Forward = key.a→key.b, Reverse =
+            // key.b→key.a — regardless of arrival order. Use it when two
+            // sensors (or two runs) must agree.
+            let _ = (side, orientation, len);
+        }
+    }
+}
+```
+
+Rule of thumb:
+
+- **Need who-initiated** (and one capture point, no race): `side`.
+- **Need a stable per-direction label** across sensors / dedup /
+  Community ID / biflow keying: `orientation`.
+
+On a finished flow, recover one axis from the other via
+`FlowStats::side_for(orientation)` / `orientation_for(side)`;
+`FlowStats::initiator_orientation` records which `Orientation` the
+initiator had. To key the two NICs *separately* instead of merging,
+wrap the extractor in `Tagged` with `source_idx` as the tag — see the
+[`Tagged`](https://docs.rs/flowscope/latest/flowscope/extract/struct.Tagged.html)
+module docs. Full model: `docs/concepts.md` →
+"Direction, orientation, and capture leg".
+
 ## Buffer-cap pressure on the reassembler
 
 Watch occupancy without waiting for `BufferOverflow`:

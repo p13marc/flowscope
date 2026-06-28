@@ -336,3 +336,73 @@ and `ParserClosed` are unchanged.
   changes from `"flow_started"` &c. to `"started"` &c. (now identical to
   `FlowEvent`'s tags). The shipped CSV / EVE / NDJSON emitters serialize
   `FlowEvent`, not `Event`, so their output is unchanged.
+
+## Breaking change — `orientation` on `Started` / `Packet` events (#118)
+
+`FlowEvent::{Started, Packet}` and `driver::Event::{Started, Packet}`
+gain an `orientation: Orientation` field next to the existing `side`.
+`side` ([`FlowSide`]) is the **logical role** (who started the flow),
+inferred from arrival order; `orientation` ([`Orientation`]) is the
+**deterministic, address-sorted** direction (`Forward` = the packet's
+src→dst matches the canonical key's `a→b`, `Reverse` = swapped). Unlike
+`side`, `orientation` does not depend on which packet of the flow was
+seen first, so it is stable across a tap-merge / two-NIC race. See
+`docs/concepts.md` → "Direction, orientation, and capture leg" for the
+full model (issue #71).
+
+**Patterns** — add the field or a trailing `..`:
+
+```rust
+// before (0.19)
+match ev {
+    FlowEvent::Packet { key, side, len, ts } => …,
+    _ => {}
+}
+
+// after (0.20) — bind it …
+match ev {
+    FlowEvent::Packet { key, side, orientation, len, ts } => …,
+    _ => {}
+}
+// … or ignore it
+match ev {
+    FlowEvent::Packet { key, side, .. } => …,
+    _ => {}
+}
+```
+
+**Construction** — production code never builds these events (the
+tracker does). For synthetic events in tests, prefer the blessed
+constructors:
+
+```rust
+use flowscope::test_helpers::events; // needs the `test-helpers` feature
+let started = events::started(key, ts);
+let pkt     = events::packet_side(key, FlowSide::Responder, 100, ts);
+```
+
+If you construct the struct directly, add `orientation`:
+
+```rust
+FlowEvent::Packet {
+    key, side: FlowSide::Initiator,
+    orientation: Orientation::Forward, // NEW
+    len: 100, ts,
+};
+```
+
+**serde** — the wire gains an additive `"orientation": "forward"` /
+`"reverse"` field on `started` / `packet` records. Existing fields are
+unchanged; a reader that ignores unknown fields is unaffected.
+
+**New companions** (additive, no migration needed):
+
+- `FlowStats::initiator_orientation` — which `Orientation` the flow's
+  initiator had; available on `Ended` / `Tick` / snapshots.
+- `FlowStats::side_for(orientation)` / `orientation_for(side)` —
+  translate between the two axes for that flow.
+- `FlowEntry::initiator_orientation()` — same, on a live snapshot.
+- `Orientation::flipped()` / `as_str()` + `Default` (`Forward`).
+
+[`FlowSide`]: https://docs.rs/flowscope/latest/flowscope/enum.FlowSide.html
+[`Orientation`]: https://docs.rs/flowscope/latest/flowscope/enum.Orientation.html

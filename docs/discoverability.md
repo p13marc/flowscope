@@ -86,6 +86,23 @@ For the conceptual layer-by-layer reference, see
 | `FlowStats::duration` / `duration_secs` | `last_seen - started`. |
 | `FlowStats::bytes_for(side)` / `pkts_for(side)` / `mean_pkt_size_for(side)` | Per-`FlowSide` accessors. (0.14, plan 168.) |
 | `FlowStats::direction_skew` | `(init - resp) / total`. `[-1, 1]`. (0.14, plan 168.) |
+| `FlowStats::initiator_orientation` | Canonical `Orientation` of the flow's initiator — the deterministic axis. (0.20, #118.) |
+| `FlowStats::side_for(orientation)` / `orientation_for(side)` | Translate between the role axis (`FlowSide`) and canonical axis (`Orientation`). (0.20, #118.) |
+
+## "I want a stable per-direction label across sensors"
+
+`FlowSide` (`Initiator`/`Responder`) is arrival-order-relative — a
+tap-merge race can flip it. `Orientation` (`Forward`/`Reverse`,
+address-sorted) is deterministic. Every `Started`/`Packet` event
+carries **both**. Reach for `orientation` when two captures/runs must
+agree (Community ID, biflow keys, dedup); reach for `side` for
+"who started it". Full model: `docs/concepts.md` →
+"Direction, orientation, and capture leg".
+
+| Primitive | Pitch |
+|---|---|
+| `FlowEvent::Packet { orientation, .. }` | Deterministic canonical direction per packet. (0.20, #118.) |
+| [`Orientation`](https://docs.rs/flowscope/latest/flowscope/enum.Orientation.html) | `Forward`/`Reverse` + `flipped()` / `as_str()`. |
 
 ## "I want to emit structured anomalies"
 

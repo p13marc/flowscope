@@ -18,7 +18,51 @@ Three themes:
   keeps the strongly-typed `*_from_pcap` helpers (un-deprecated, #86 /
   #108) and gains a unified lifecycle-plus-message `Pulse` stream (#111).
 - **Carried pre-1.0 breaks:** `parse()`→`Result` (#85), EVE `flow_hash`
-  → `community_id` (#88), `#[non_exhaustive]` everywhere (#78).
+  → `community_id` (#88), `#[non_exhaustive]` everywhere (#78), and the
+  canonical-direction fix — `Started`/`Packet` events now carry both
+  `side` and a deterministic `orientation` (#118).
+
+### Breaking — canonical `Orientation` on flow events (#118, epic #123)
+
+`FlowEvent::{Started, Packet}` and `Event::{Started, Packet}` gain an
+`orientation: Orientation` field alongside the existing `side`. This
+closes #71: `FlowSide` is **arrival-order-relative** — `Initiator`
+binds to whichever endpoint's packet reached the tracker first — so a
+tap-merge (two NICs / two queues feeding one tracker, with a scheduling
+race) can flip it, binding `Initiator` to the server on some flows and
+the client on others. `Orientation` (`Forward` / `Reverse`) is computed
+purely from the address-sorted canonical key, so the **same wire
+direction always carries the same `Orientation` regardless of arrival
+order** — the property `FlowSide` lacks and the one you want for
+Community ID ordering, biflow keying, and dedup across capture points.
+
+flowscope already kept the two as distinct internal concepts (so it
+avoids the CICFlowMeter "sorted == initiator" conflation bug); this
+change simply stops discarding `Orientation` at the event boundary.
+
+Also added (all additive):
+
+- `FlowStats::initiator_orientation` — the canonical `Orientation` the
+  flow's initiator (first-seen packet) had; the deterministic bridge
+  for translating `side` ↔ `orientation` on a finished flow.
+- `FlowStats::side_for(orientation)` / `orientation_for(side)` —
+  translate between the two axes for a given flow.
+- `FlowEntry::initiator_orientation()` accessor (live snapshots).
+- `Orientation` now derives `Default` (`Forward`) + `Hash`, and gains
+  `flipped()` and `as_str()` (`"forward"` / `"reverse"`).
+
+**Migration.** Add `orientation` to any exhaustive `Started`/`Packet`
+pattern (or a trailing `..`), and to any direct struct construction
+(synthetic events: prefer `flowscope::test_helpers::events`). On the
+serde wire the new field appears as `"orientation": "forward"` /
+`"reverse"` — purely additive to the JSON. Consumers that only need
+"who started it" keep using `side` unchanged. See
+`docs/migration-0.19-to-0.20.md` §"#118" and `docs/concepts.md` →
+"Direction, orientation, and capture leg".
+
+**netring.** No code change required — netring forwards events
+verbatim; the new field rides along. netring can optionally surface
+`orientation` in its own adapters.
 
 ### Additive — unified offline `Pulse` stream (#111)
 

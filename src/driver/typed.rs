@@ -46,7 +46,7 @@ use crate::{
     dedup::Dedup,
     detect::signatures::SignatureFn,
     event::{AnomalyKind, EndReason, FlowEvent, FlowSide, FlowState, FlowStats},
-    extractor::{FlowExtractor, L4Proto, TcpInfo},
+    extractor::{FlowExtractor, L4Proto, Orientation, TcpInfo},
     flow_driver::FlowDriver,
     history::HistoryString,
     parser_kind::ParserKind,
@@ -88,8 +88,15 @@ type IdleTimeoutFn<K> =
 #[non_exhaustive]
 pub enum Event<K> {
     /// First packet of a new flow.
+    ///
+    /// `orientation` is the flow's deterministic canonical direction
+    /// ([`Orientation`], issue #118) — equal to the initiator's
+    /// orientation and to [`FlowStats::initiator_orientation`].
     Started {
         key: K,
+        /// Canonical (address-sorted) orientation of the flow's
+        /// first packet. Deterministic regardless of arrival order.
+        orientation: Orientation,
         ts: Timestamp,
         l4: Option<L4Proto>,
     },
@@ -133,6 +140,11 @@ pub enum Event<K> {
     Packet {
         key: K,
         side: FlowSide,
+        /// Canonical (address-sorted) orientation of this packet
+        /// ([`Orientation`], issue #118). Together with the flow's
+        /// [`FlowStats::initiator_orientation`] it recovers `side`
+        /// deterministically.
+        orientation: Orientation,
         len: usize,
         ts: Timestamp,
         tcp: Option<TcpInfo>,
@@ -243,9 +255,15 @@ impl<K> Event<K> {
     /// [`crate::emit`] for the `write_event`-over-`Event` path.
     pub fn into_flow_event(self) -> Option<FlowEvent<K>> {
         Some(match self {
-            Event::Started { key, ts, l4 } => FlowEvent::Started {
+            Event::Started {
+                key,
+                orientation,
+                ts,
+                l4,
+            } => FlowEvent::Started {
                 key,
                 side: FlowSide::Initiator,
+                orientation,
                 ts,
                 l4,
             },
@@ -256,10 +274,17 @@ impl<K> Event<K> {
             Event::Packet {
                 key,
                 side,
+                orientation,
                 len,
                 ts,
                 tcp: _,
-            } => FlowEvent::Packet { key, side, len, ts },
+            } => FlowEvent::Packet {
+                key,
+                side,
+                orientation,
+                len,
+                ts,
+            },
             Event::Ended {
                 key,
                 reason,
@@ -304,14 +329,32 @@ impl<K> From<FlowEvent<K>> for Event<K> {
     /// driver's `emit_packet_details`, not this conversion).
     fn from(ev: FlowEvent<K>) -> Self {
         match ev {
-            FlowEvent::Started { key, ts, l4, .. } => Event::Started { key, ts, l4 },
+            FlowEvent::Started {
+                key,
+                orientation,
+                ts,
+                l4,
+                ..
+            } => Event::Started {
+                key,
+                orientation,
+                ts,
+                l4,
+            },
             FlowEvent::Established { key, ts, l4 } => Event::Established { key, ts, l4 },
             FlowEvent::StateChange { key, from, to, ts } => {
                 Event::StateChange { key, from, to, ts }
             }
-            FlowEvent::Packet { key, side, len, ts } => Event::Packet {
+            FlowEvent::Packet {
                 key,
                 side,
+                orientation,
+                len,
+                ts,
+            } => Event::Packet {
+                key,
+                side,
+                orientation,
                 len,
                 ts,
                 tcp: None,

@@ -89,16 +89,69 @@ impl<K> Extracted<K> {
     }
 }
 
-/// Orientation of a packet relative to its canonical flow key.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Canonical orientation of a packet relative to its flow key —
+/// the **deterministic, address-sorted** direction axis.
+///
+/// This is one of flowscope's three orthogonal direction axes; keep
+/// it distinct from the other two:
+///
+/// | Axis | Type | Anchored to | Stable under tap-merge? |
+/// |------|------|-------------|--------------------------|
+/// | **Canonical orientation** | [`Orientation`] | address sort (`a < b`) | **yes** — deterministic |
+/// | Logical role | [`FlowSide`](crate::FlowSide) | arrival order / SYN | no — first-seen can race |
+/// | Physical capture leg | [`RxMetadata::source_idx`](crate::RxMetadata) | NIC / queue / interface | n/a (orthogonal) |
+///
+/// `Forward` / `Reverse` are computed purely from the canonical key
+/// ordering ([`crate::extract::FiveTupleKey`] sorts endpoints so
+/// `a < b`), so the **same wire 5-tuple always yields the same
+/// `Orientation` regardless of which packet of the flow was seen
+/// first**. That is the property [`FlowSide`](crate::FlowSide) lacks:
+/// `FlowSide::Initiator` binds to whichever endpoint's packet *arrived
+/// first*, which a two-NIC tap-merge (two queues, a race) can flip.
+/// When you need a direction label that two independent captures of
+/// the same flow will agree on — Community ID ordering, biflow keying,
+/// dedup across capture points — use `Orientation`, not `FlowSide`.
+///
+/// See `docs/concepts.md` → "Direction, orientation, and capture leg"
+/// for the full model and standards mapping (IPFIX `biflowDirection`
+/// IE 239 / `observationPointId` IE 138).
+///
+/// The default is [`Orientation::Forward`] — the natural a→b
+/// direction of a freshly-keyed flow.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
 pub enum Orientation {
     /// Packet's natural src→dst matches the key's a→b ordering.
+    #[default]
     Forward,
     /// Extractor swapped src/dst to canonicalize; packet is
     /// flowing from key.b to key.a.
     Reverse,
+}
+
+impl Orientation {
+    /// The opposite orientation (`Forward` ↔ `Reverse`).
+    #[inline]
+    #[must_use]
+    pub fn flipped(self) -> Self {
+        match self {
+            Orientation::Forward => Orientation::Reverse,
+            Orientation::Reverse => Orientation::Forward,
+        }
+    }
+
+    /// Stable lowercase slug — `"forward"` / `"reverse"`. Suitable as
+    /// a metric label or column value. Mirrors the `as_str` convention
+    /// on the other strong-typed enums.
+    #[inline]
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Orientation::Forward => "forward",
+            Orientation::Reverse => "reverse",
+        }
+    }
 }
 
 /// L4 protocol identified by an extractor.
