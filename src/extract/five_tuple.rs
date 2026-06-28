@@ -51,6 +51,7 @@ impl Default for FiveTuple {
 /// In directional mode, `a` is always source, `b` always destination.
 #[derive(Debug, Clone, Copy, Hash, Eq, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[non_exhaustive]
 pub struct FiveTupleKey {
     pub proto: L4Proto,
     pub a: SocketAddr,
@@ -58,6 +59,15 @@ pub struct FiveTupleKey {
 }
 
 impl FiveTupleKey {
+    /// Construct a key from its parts. Endpoints are stored as
+    /// given (no canonicalisation — that is the extractor's job);
+    /// use this for tests, fixtures, and manual key construction
+    /// now that the struct is `#[non_exhaustive]`.
+    #[inline]
+    pub fn new(proto: L4Proto, a: SocketAddr, b: SocketAddr) -> Self {
+        Self { proto, a, b }
+    }
+
     /// Convenience: matches either endpoint's port.
     ///
     /// Useful in idle-timeout predicates (see

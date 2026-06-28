@@ -27,11 +27,11 @@ use flowscope::tls::{TlsHandshake, TlsVersion};
 use flowscope::{FlowStats, L4Proto, Timestamp};
 
 fn key(dst_ip: &str, dport: u16) -> FiveTupleKey {
-    FiveTupleKey {
-        proto: L4Proto::Tcp,
-        a: "10.0.0.50:51000".parse().unwrap(),
-        b: format!("{dst_ip}:{dport}").parse().unwrap(),
-    }
+    FiveTupleKey::new(
+        L4Proto::Tcp,
+        "10.0.0.50:51000".parse().unwrap(),
+        format!("{dst_ip}:{dport}").parse().unwrap(),
+    )
 }
 
 fn stats(pkts: u64, bytes: u64) -> FlowStats {
@@ -75,16 +75,12 @@ fn main() {
 
     // ── Flow B: DNS lookup of a DGA domain, to a flagged resolver IP ──
     let b = key("198.51.100.7", 53);
-    let q = DnsQuery {
-        transaction_id: 0x1234,
-        flags: DnsFlags(0),
-        questions: vec![DnsQuestion {
-            name: "kq3v9z7xj2wqp1.com".into(),
-            qtype: 1,
-            qclass: 1,
-        }],
-        timestamp: ts,
-    };
+    let q = DnsQuery::new(
+        0x1234,
+        DnsFlags(0),
+        vec![DnsQuestion::new("kq3v9z7xj2wqp1.com", 1, 1)],
+        ts,
+    );
     analyzer.observe_dns_query(&b, &q, ts);
 
     // ── Flow C: TLS whose JA4 is on the malware watch-list ──

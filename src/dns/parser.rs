@@ -9,6 +9,7 @@ use crate::Timestamp;
 
 /// Outcome of [`parse_message`].
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum DnsParseResult {
     Query(DnsQuery),
     Response(DnsResponse),

@@ -44,6 +44,7 @@ pub trait FlowExtractor: Send + Sync + 'static {
 /// pre-parsed protocol data that the tracker and reassembler reuse
 /// without re-parsing.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct Extracted<K> {
     /// The flow this packet belongs to.
     pub key: K,
@@ -69,6 +70,23 @@ pub struct Extracted<K> {
     /// Built-in extractors fill this for ~zero extra cost; custom
     /// extractors that don't care about TCP can leave it `None`.
     pub tcp: Option<TcpInfo>,
+}
+
+impl<K> Extracted<K> {
+    /// Construct an extraction result.
+    pub fn new(
+        key: K,
+        orientation: Orientation,
+        l4: Option<L4Proto>,
+        tcp: Option<TcpInfo>,
+    ) -> Self {
+        Self {
+            key,
+            orientation,
+            l4,
+            tcp,
+        }
+    }
 }
 
 /// Orientation of a packet relative to its canonical flow key.

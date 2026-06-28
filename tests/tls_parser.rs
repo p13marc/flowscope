@@ -32,6 +32,7 @@ impl Captured {
                 #[cfg(feature = "ja4plus")]
                 TlsMessage::Ja4s { .. } => {}
                 TlsMessage::Certificate { .. } => {}
+                _ => {}
             }
         }
     }
@@ -288,10 +289,9 @@ fn malformed_doesnt_panic() {
 #[test]
 fn ja3_fires_when_enabled() {
     use flowscope::tls::TlsConfig;
-    let mut parser = TlsParser::with_config(TlsConfig {
-        ja3: true,
-        ..Default::default()
-    });
+    let mut cfg = TlsConfig::default();
+    cfg.ja3 = true;
+    let mut parser = TlsParser::with_config(cfg);
     let mut captured = Captured::default();
     let bytes = client_hello_with_sni("example.com");
     feed_init(&mut parser, &mut captured, &bytes);
@@ -303,10 +303,9 @@ fn ja3_fires_when_enabled() {
 #[test]
 fn ja4_fires_when_enabled() {
     use flowscope::tls::TlsConfig;
-    let mut parser = TlsParser::with_config(TlsConfig {
-        ja4: true,
-        ..Default::default()
-    });
+    let mut cfg = TlsConfig::default();
+    cfg.ja4 = true;
+    let mut parser = TlsParser::with_config(cfg);
     let captured = std::cell::RefCell::new(Vec::new());
     let mut out = Vec::new();
     parser.feed_initiator(

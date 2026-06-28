@@ -24,11 +24,11 @@ use flowscope::{
 };
 
 fn sample_key() -> FiveTupleKey {
-    FiveTupleKey {
-        proto: L4Proto::Tcp,
-        a: SocketAddr::from((Ipv4Addr::new(10, 0, 0, 1), 33000)),
-        b: SocketAddr::from((Ipv4Addr::new(10, 0, 0, 2), 80)),
-    }
+    FiveTupleKey::new(
+        L4Proto::Tcp,
+        SocketAddr::from((Ipv4Addr::new(10, 0, 0, 1), 33000)),
+        SocketAddr::from((Ipv4Addr::new(10, 0, 0, 2), 80)),
+    )
 }
 
 #[test]

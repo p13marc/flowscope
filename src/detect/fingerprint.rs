@@ -147,6 +147,7 @@ impl FingerprintBuilder {
 ///   for ML pipelines ("feed this to a classifier").
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[non_exhaustive]
 pub struct FlowFingerprint {
     /// First-N L4 payload lengths.
     pub len_seq: ArrayVec<u16, MAX_SAMPLES>,

@@ -36,6 +36,7 @@
 //!             match message {
 //!                 HttpMessage::Request(r)  => { /* handle request */ }
 //!                 HttpMessage::Response(r) => { /* handle response */ }
+//!                 _ => {}
 //!             }
 //!         }
 //!     }

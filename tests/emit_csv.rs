@@ -19,7 +19,7 @@ fn key(a: &str, b: &str, proto: L4Proto) -> FiveTupleKey {
     let a: SocketAddr = a.parse().unwrap();
     let b: SocketAddr = b.parse().unwrap();
     let (a, b) = if a < b { (a, b) } else { (b, a) };
-    FiveTupleKey { proto, a, b }
+    FiveTupleKey::new(proto, a, b)
 }
 
 fn sample_ended() -> FlowEvent<FiveTupleKey> {

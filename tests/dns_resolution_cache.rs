@@ -24,51 +24,29 @@ fn flags() -> DnsFlags {
 }
 
 fn record_a(name: &str, ip: Ipv4Addr) -> DnsRecord {
-    DnsRecord {
-        name: name.to_string(),
-        rtype: 1,
-        rclass: 1,
-        ttl: 300,
-        data: DnsRdata::A(ip),
-    }
+    DnsRecord::new(name, 1, 1, 300, DnsRdata::A(ip))
 }
 
 fn record_aaaa(name: &str, ip: Ipv6Addr) -> DnsRecord {
-    DnsRecord {
-        name: name.to_string(),
-        rtype: 28,
-        rclass: 1,
-        ttl: 300,
-        data: DnsRdata::AAAA(ip),
-    }
+    DnsRecord::new(name, 28, 1, 300, DnsRdata::AAAA(ip))
 }
 
 fn record_cname(name: &str, target: &str) -> DnsRecord {
-    DnsRecord {
-        name: name.to_string(),
-        rtype: 5,
-        rclass: 1,
-        ttl: 300,
-        data: DnsRdata::CNAME(target.to_string()),
-    }
+    DnsRecord::new(name, 5, 1, 300, DnsRdata::CNAME(target.to_string()))
 }
 
 fn response_with(question_name: &str, answers: Vec<DnsRecord>) -> DnsResponse {
-    DnsResponse {
-        transaction_id: 1,
-        flags: flags(),
-        questions: vec![flowscope::dns::DnsQuestion {
-            name: question_name.to_string(),
-            qtype: 1,
-            qclass: 1,
-        }],
+    DnsResponse::new(
+        1,
+        flags(),
+        vec![flowscope::dns::DnsQuestion::new(question_name, 1, 1)],
         answers,
-        authorities: vec![],
-        additionals: vec![],
-        rcode: DnsRcode::NoError,
-        timestamp: ts(0),
-        elapsed: None,
-    }
+        vec![],
+        vec![],
+        DnsRcode::NoError,
+        ts(0),
+        None,
+    )
 }
 
 #[test]

@@ -22,9 +22,17 @@ pub enum IcmpFamily {
 /// family.
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[non_exhaustive]
 pub struct IcmpMessage {
     pub family: IcmpFamily,
     pub ty: IcmpType,
+}
+
+impl IcmpMessage {
+    /// Construct an ICMP message from its family + type.
+    pub fn new(family: IcmpFamily, ty: IcmpType) -> Self {
+        Self { family, ty }
+    }
 }
 
 /// Outer ICMP type discriminant. Split per IP version because
@@ -274,12 +282,32 @@ pub enum Icmpv6ParamProblemCode {
 /// protocols (or truncated embeds), they're `None`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[non_exhaustive]
 pub struct IcmpInner {
     pub src: IpAddr,
     pub dst: IpAddr,
     pub proto: L4Proto,
     pub src_port: Option<u16>,
     pub dst_port: Option<u16>,
+}
+
+impl IcmpInner {
+    /// Construct an embedded inner-packet correlation slice.
+    pub fn new(
+        src: IpAddr,
+        dst: IpAddr,
+        proto: L4Proto,
+        src_port: Option<u16>,
+        dst_port: Option<u16>,
+    ) -> Self {
+        Self {
+            src,
+            dst,
+            proto,
+            src_port,
+            dst_port,
+        }
+    }
 }
 
 // ── Convenience accessors (plan 84) ─────────────────────────────

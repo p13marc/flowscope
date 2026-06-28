@@ -128,6 +128,7 @@ impl std::fmt::Display for EndReason {
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
+#[non_exhaustive]
 pub enum OverflowPolicy {
     /// Drop oldest bytes from the front of the buffer until the new
     /// payload fits. The flow stays alive; the parser sees a gap and
@@ -515,6 +516,7 @@ fn safe_div_u64(num: u64, den: f64) -> f64 {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
+#[non_exhaustive]
 pub enum FlowState {
     /// First TCP SYN observed; awaiting SYN-ACK.
     SynSent,

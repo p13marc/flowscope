@@ -12,17 +12,17 @@ use flowscope::mdns::{
 };
 
 fn empty_response() -> DnsResponse {
-    DnsResponse {
-        transaction_id: 0,
-        flags: DnsFlags(0x8400), // QR=1, AA=1 — typical mDNS response shape
-        questions: Vec::new(),
-        answers: Vec::new(),
-        authorities: Vec::new(),
-        additionals: Vec::new(),
-        rcode: DnsRcode::NoError,
-        timestamp: Timestamp::default(),
-        elapsed: None,
-    }
+    DnsResponse::new(
+        0,
+        DnsFlags(0x8400), // QR=1, AA=1 — typical mDNS response shape
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+        DnsRcode::NoError,
+        Timestamp::default(),
+        None,
+    )
 }
 
 #[test]
@@ -50,20 +50,20 @@ fn extract_services_returns_empty_on_no_ptr() {
 #[test]
 fn extract_services_decodes_multiple_records() {
     let mut resp = empty_response();
-    resp.answers.push(DnsRecord {
-        name: "_airplay._tcp.local".into(),
-        rtype: 12,
-        rclass: 1,
-        ttl: 120,
-        data: DnsRdata::PTR("TV._airplay._tcp.local".into()),
-    });
-    resp.answers.push(DnsRecord {
-        name: "_googlecast._tcp.local".into(),
-        rtype: 12,
-        rclass: 1,
-        ttl: 120,
-        data: DnsRdata::PTR("Chromecast._googlecast._tcp.local".into()),
-    });
+    resp.answers.push(DnsRecord::new(
+        "_airplay._tcp.local",
+        12,
+        1,
+        120,
+        DnsRdata::PTR("TV._airplay._tcp.local".into()),
+    ));
+    resp.answers.push(DnsRecord::new(
+        "_googlecast._tcp.local",
+        12,
+        1,
+        120,
+        DnsRdata::PTR("Chromecast._googlecast._tcp.local".into()),
+    ));
     let services = extract_services(&resp);
     assert_eq!(services.len(), 2);
     let names: Vec<_> = services.iter().map(|s| s.service.as_str()).collect();
@@ -81,13 +81,13 @@ fn looks_like_mdns_recognizes_zero_transaction_id() {
 fn looks_like_mdns_recognizes_service_discovery_record() {
     let mut resp = empty_response();
     resp.transaction_id = 0x1234;
-    resp.answers.push(DnsRecord {
-        name: "_http._tcp.local".into(),
-        rtype: 12,
-        rclass: 1,
-        ttl: 60,
-        data: DnsRdata::PTR("WebUI._http._tcp.local".into()),
-    });
+    resp.answers.push(DnsRecord::new(
+        "_http._tcp.local",
+        12,
+        1,
+        60,
+        DnsRdata::PTR("WebUI._http._tcp.local".into()),
+    ));
     assert!(looks_like_mdns(&resp));
 }
 
@@ -95,13 +95,13 @@ fn looks_like_mdns_recognizes_service_discovery_record() {
 fn looks_like_mdns_rejects_unicast_dns_response() {
     let mut resp = empty_response();
     resp.transaction_id = 0x4242;
-    resp.answers.push(DnsRecord {
-        name: "example.com".into(),
-        rtype: 1,
-        rclass: 1,
-        ttl: 300,
-        data: DnsRdata::A(Ipv4Addr::new(93, 184, 216, 34)),
-    });
+    resp.answers.push(DnsRecord::new(
+        "example.com",
+        1,
+        1,
+        300,
+        DnsRdata::A(Ipv4Addr::new(93, 184, 216, 34)),
+    ));
     assert!(!looks_like_mdns(&resp));
 }
 
@@ -111,13 +111,13 @@ fn service_record_well_known_filter() {
     // literal from outside the crate. Drive through the
     // parser instead.
     let mut resp = empty_response();
-    resp.answers.push(DnsRecord {
-        name: "_airplay._tcp.local".into(),
-        rtype: 12,
-        rclass: 1,
-        ttl: 120,
-        data: DnsRdata::PTR("TV._airplay._tcp.local".into()),
-    });
+    resp.answers.push(DnsRecord::new(
+        "_airplay._tcp.local",
+        12,
+        1,
+        120,
+        DnsRdata::PTR("TV._airplay._tcp.local".into()),
+    ));
     let svc = extract_services(&resp).into_iter().next().expect("one");
     let _: &ServiceRecord = &svc;
     assert!(svc.is_well_known_device_service());
@@ -141,13 +141,13 @@ mod asset {
     #[test]
     fn from_mdns_extracts_hostname_from_a_record() {
         let mut resp = empty_response();
-        resp.answers.push(DnsRecord {
-            name: "printer-living-room.local".into(),
-            rtype: 1,
-            rclass: 1,
-            ttl: 120,
-            data: DnsRdata::A(Ipv4Addr::new(10, 0, 0, 42)),
-        });
+        resp.answers.push(DnsRecord::new(
+            "printer-living-room.local",
+            1,
+            1,
+            120,
+            DnsRdata::A(Ipv4Addr::new(10, 0, 0, 42)),
+        ));
         let mac = MacAddr([0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff]);
         let asset = Asset::from_mdns(&resp, mac).expect("populated");
         assert_eq!(asset.mac, mac);
@@ -161,13 +161,13 @@ mod asset {
     fn from_mdns_extracts_aaaa_binding() {
         let mut resp = empty_response();
         let v6 = std::net::Ipv6Addr::new(0xfe80, 0, 0, 0, 0xaa, 0xbb, 0xcc, 0xdd);
-        resp.answers.push(DnsRecord {
-            name: "device.local".into(),
-            rtype: 28,
-            rclass: 1,
-            ttl: 120,
-            data: DnsRdata::AAAA(v6),
-        });
+        resp.answers.push(DnsRecord::new(
+            "device.local",
+            28,
+            1,
+            120,
+            DnsRdata::AAAA(v6),
+        ));
         let mac = MacAddr([1; 6]);
         let asset = Asset::from_mdns(&resp, mac).expect("populated");
         assert!(asset.ipv6.contains(&v6));
@@ -177,13 +177,13 @@ mod asset {
     #[test]
     fn from_mdns_service_discovery_implies_upnp_capability() {
         let mut resp = empty_response();
-        resp.answers.push(DnsRecord {
-            name: "_homekit._tcp.local".into(),
-            rtype: 12,
-            rclass: 1,
-            ttl: 4500,
-            data: DnsRdata::PTR("AppleTV._homekit._tcp.local".into()),
-        });
+        resp.answers.push(DnsRecord::new(
+            "_homekit._tcp.local",
+            12,
+            1,
+            4500,
+            DnsRdata::PTR("AppleTV._homekit._tcp.local".into()),
+        ));
         let mac = MacAddr([2; 6]);
         let asset = Asset::from_mdns(&resp, mac).expect("populated");
         assert!(asset.capabilities.contains(AssetCapabilities::UPNP));
@@ -196,20 +196,20 @@ mod asset {
         // Real-world mDNS responses cram A records into the
         // additionals section alongside the answer PTR.
         let mut resp = empty_response();
-        resp.answers.push(DnsRecord {
-            name: "_ipp._tcp.local".into(),
-            rtype: 12,
-            rclass: 1,
-            ttl: 4500,
-            data: DnsRdata::PTR("HP-Printer._ipp._tcp.local".into()),
-        });
-        resp.additionals.push(DnsRecord {
-            name: "HP-Printer.local".into(),
-            rtype: 1,
-            rclass: 1,
-            ttl: 120,
-            data: DnsRdata::A(Ipv4Addr::new(10, 0, 0, 100)),
-        });
+        resp.answers.push(DnsRecord::new(
+            "_ipp._tcp.local",
+            12,
+            1,
+            4500,
+            DnsRdata::PTR("HP-Printer._ipp._tcp.local".into()),
+        ));
+        resp.additionals.push(DnsRecord::new(
+            "HP-Printer.local",
+            1,
+            1,
+            120,
+            DnsRdata::A(Ipv4Addr::new(10, 0, 0, 100)),
+        ));
         let mac = MacAddr([3; 6]);
         let asset = Asset::from_mdns(&resp, mac).expect("populated");
         assert!(asset.ipv4.contains(&Ipv4Addr::new(10, 0, 0, 100)));
@@ -219,13 +219,13 @@ mod asset {
     #[test]
     fn from_mdns_ignores_non_local_records() {
         let mut resp = empty_response();
-        resp.answers.push(DnsRecord {
-            name: "example.com".into(),
-            rtype: 1,
-            rclass: 1,
-            ttl: 300,
-            data: DnsRdata::A(Ipv4Addr::new(93, 184, 216, 34)),
-        });
+        resp.answers.push(DnsRecord::new(
+            "example.com",
+            1,
+            1,
+            300,
+            DnsRdata::A(Ipv4Addr::new(93, 184, 216, 34)),
+        ));
         let mac = MacAddr([4; 6]);
         assert!(
             Asset::from_mdns(&resp, mac).is_none(),
@@ -238,13 +238,13 @@ mod asset {
         let mut inv = Inventory::new(8);
         let mac = MacAddr([5; 6]);
         let mut resp = empty_response();
-        resp.answers.push(DnsRecord {
-            name: "tv.local".into(),
-            rtype: 1,
-            rclass: 1,
-            ttl: 120,
-            data: DnsRdata::A(Ipv4Addr::new(10, 0, 0, 50)),
-        });
+        resp.answers.push(DnsRecord::new(
+            "tv.local",
+            1,
+            1,
+            120,
+            DnsRdata::A(Ipv4Addr::new(10, 0, 0, 50)),
+        ));
         let asset = Asset::from_mdns(&resp, mac).expect("populated");
         inv.absorb(asset);
         let got = inv.get(&mac).expect("present");

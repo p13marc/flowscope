@@ -20,6 +20,7 @@ use crate::{
 /// Wraps an inner key with a 20-bit IPv6 flow label.
 #[derive(Debug, Clone, Copy, Hash, Eq, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[non_exhaustive]
 pub struct FlowLabelKey<K> {
     /// The inner extractor's key.
     pub inner: K,
@@ -28,8 +29,16 @@ pub struct FlowLabelKey<K> {
     pub label: u32,
 }
 
+impl<K> FlowLabelKey<K> {
+    /// Construct a flow-label-augmented key.
+    pub fn new(inner: K, label: u32) -> Self {
+        Self { inner, label }
+    }
+}
+
 /// Augment `extractor`'s key with the inner packet's IPv6 flow label.
 #[derive(Debug, Clone, Copy)]
+#[non_exhaustive]
 pub struct FlowLabel<E> {
     /// The wrapped extractor.
     pub extractor: E,

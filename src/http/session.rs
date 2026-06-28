@@ -19,6 +19,7 @@ use crate::{SessionParser, Timestamp};
     feature = "serde",
     serde(tag = "type", content = "data", rename_all = "snake_case")
 )]
+#[non_exhaustive]
 pub enum HttpMessage {
     Request(HttpRequest),
     Response(HttpResponse),

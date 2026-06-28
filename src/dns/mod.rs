@@ -22,6 +22,7 @@
 //! match parse_message(payload) {
 //!     Ok(DnsParseResult::Query(q)) => println!("query: {} questions", q.questions.len()),
 //!     Ok(DnsParseResult::Response(r)) => println!("response: rcode={:?}", r.rcode),
+//!     Ok(_) => {}    // future variants
 //!     Err(_e) => {}  // malformed — ignore
 //! }
 //! ```

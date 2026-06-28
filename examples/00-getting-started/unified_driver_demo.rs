@@ -29,6 +29,7 @@ fn http_label(m: &HttpMessage) -> String {
             r.path_str().unwrap_or("?"),
         ),
         HttpMessage::Response(r) => format!("HTTP {} {}", r.status, r.reason_str().unwrap_or("?"),),
+        _ => "HTTP".to_string(),
     }
 }
 

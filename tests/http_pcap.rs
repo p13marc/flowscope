@@ -42,6 +42,7 @@ fn http_pcap_emits_request_and_response() {
             match m.message {
                 HttpMessage::Request(r) => reqs.push(r),
                 HttpMessage::Response(r) => resps.push(r),
+                _ => {}
             }
         }
     }
@@ -56,6 +57,7 @@ fn http_pcap_emits_request_and_response() {
             match m.message {
                 HttpMessage::Request(r) => reqs.push(r),
                 HttpMessage::Response(r) => resps.push(r),
+                _ => {}
             }
         }
     }

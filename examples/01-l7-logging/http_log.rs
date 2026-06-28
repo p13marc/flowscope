@@ -48,6 +48,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         ct
                     );
                 }
+                _ => {}
             },
             SessionEvent::Closed { .. } => closed += 1,
             _ => {}

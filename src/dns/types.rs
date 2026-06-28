@@ -11,6 +11,7 @@ use crate::Timestamp;
 /// Parsed DNS query observed on the wire.
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[non_exhaustive]
 pub struct DnsQuery {
     pub transaction_id: u16,
     pub flags: DnsFlags,
@@ -21,6 +22,7 @@ pub struct DnsQuery {
 /// Parsed DNS response.
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[non_exhaustive]
 pub struct DnsResponse {
     pub transaction_id: u16,
     pub flags: DnsFlags,
@@ -38,21 +40,92 @@ pub struct DnsResponse {
 
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[non_exhaustive]
 pub struct DnsQuestion {
     pub name: String,
     pub qtype: u16,
     pub qclass: u16,
 }
 
+impl DnsQuestion {
+    /// Construct a DNS question.
+    pub fn new(name: impl Into<String>, qtype: u16, qclass: u16) -> Self {
+        Self {
+            name: name.into(),
+            qtype,
+            qclass,
+        }
+    }
+}
+
+impl DnsQuery {
+    /// Construct a DNS query event.
+    pub fn new(
+        transaction_id: u16,
+        flags: DnsFlags,
+        questions: Vec<DnsQuestion>,
+        timestamp: Timestamp,
+    ) -> Self {
+        Self {
+            transaction_id,
+            flags,
+            questions,
+            timestamp,
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+impl DnsResponse {
+    /// Construct a DNS response event.
+    pub fn new(
+        transaction_id: u16,
+        flags: DnsFlags,
+        questions: Vec<DnsQuestion>,
+        answers: Vec<DnsRecord>,
+        authorities: Vec<DnsRecord>,
+        additionals: Vec<DnsRecord>,
+        rcode: DnsRcode,
+        timestamp: Timestamp,
+        elapsed: Option<Duration>,
+    ) -> Self {
+        Self {
+            transaction_id,
+            flags,
+            questions,
+            answers,
+            authorities,
+            additionals,
+            rcode,
+            timestamp,
+            elapsed,
+        }
+    }
+}
+
 /// One DNS resource record.
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[non_exhaustive]
 pub struct DnsRecord {
     pub name: String,
     pub rtype: u16,
     pub rclass: u16,
     pub ttl: u32,
     pub data: DnsRdata,
+}
+
+impl DnsRecord {
+    /// Construct a DNS resource record.
+    pub fn new(name: impl Into<String>, rtype: u16, rclass: u16, ttl: u32, data: DnsRdata) -> Self {
+        Self {
+            name: name.into(),
+            rtype,
+            rclass,
+            ttl,
+            data,
+        }
+    }
 }
 
 /// Decoded record data for the common types we can render simply.
@@ -63,6 +136,7 @@ pub struct DnsRecord {
     feature = "serde",
     serde(tag = "rtype", content = "data", rename_all = "snake_case")
 )]
+#[non_exhaustive]
 pub enum DnsRdata {
     A(Ipv4Addr),
     AAAA(Ipv6Addr),
@@ -188,6 +262,7 @@ impl DnsFlags {
 /// Tunables for DNS query/response correlation
 /// ([`crate::dns::Correlator`], [`crate::dns::DnsUdpParser::with_config`]).
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct DnsConfig {
     /// How long to wait for a response before flagging as unanswered.
     /// Default: 30 s.

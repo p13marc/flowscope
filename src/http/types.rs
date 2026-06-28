@@ -7,6 +7,7 @@ use bytes::Bytes;
 /// `String` / `Vec<u8>` in 0.10.
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[non_exhaustive]
 pub struct HttpRequest {
     /// Method bytes (typically uppercase ASCII like `GET`, `POST`).
     pub method: Bytes,
@@ -25,6 +26,7 @@ pub struct HttpRequest {
 /// Parsed HTTP/1.x response.
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[non_exhaustive]
 pub struct HttpResponse {
     pub status: u16,
     /// Reason phrase from the status line.
@@ -37,6 +39,7 @@ pub struct HttpResponse {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
+#[non_exhaustive]
 pub enum HttpVersion {
     Http1_0,
     Http1_1,
@@ -53,6 +56,23 @@ pub enum HttpVersion {
 // everything else.
 
 impl HttpRequest {
+    /// Construct an HTTP request.
+    pub fn new(
+        method: Bytes,
+        path: Bytes,
+        version: HttpVersion,
+        headers: Vec<(Bytes, Bytes)>,
+        body: Bytes,
+    ) -> Self {
+        Self {
+            method,
+            path,
+            version,
+            headers,
+            body,
+        }
+    }
+
     /// Method as a UTF-8 `&str` (e.g. `"GET"`). `None` if the
     /// method bytes are not valid UTF-8 (extremely rare).
     pub fn method_str(&self) -> Option<&str> {
@@ -127,6 +147,23 @@ impl HttpRequest {
 }
 
 impl HttpResponse {
+    /// Construct an HTTP response.
+    pub fn new(
+        status: u16,
+        reason: Bytes,
+        version: HttpVersion,
+        headers: Vec<(Bytes, Bytes)>,
+        body: Bytes,
+    ) -> Self {
+        Self {
+            status,
+            reason,
+            version,
+            headers,
+            body,
+        }
+    }
+
     /// Reason phrase as a UTF-8 `&str` (e.g. `"OK"`).
     pub fn reason_str(&self) -> Option<&str> {
         std::str::from_utf8(&self.reason).ok()
@@ -220,6 +257,7 @@ fn header_lookup<'h, 'n>(
 
 /// Configuration knobs for the HTTP parser.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct HttpConfig {
     /// Cap on the buffered bytes per direction. Once exceeded the
     /// reassembler drops the per-flow buffer to recover memory; the

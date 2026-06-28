@@ -20,6 +20,7 @@ pub const DEFAULT_GTPU_PORT: u16 = 2152;
 /// Decapsulate GTP-U and delegate to `extractor` on the inner
 /// IP datagram (wrapped in a synthetic Ethernet header).
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct InnerGtpU<E> {
     /// The wrapped extractor that processes the inner frame.
     pub extractor: E,

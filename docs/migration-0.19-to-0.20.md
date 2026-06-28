@@ -166,3 +166,69 @@ fn handle(payload: &[u8]) -> flowscope::Result<()> {
 **Not affected:** the `SessionParser` / `DatagramParser` trait methods
 (`feed_*` / `parse(&mut Vec<…>)`) and the `*_from_pcap` helpers keep their
 signatures — only the free `parse*()` functions changed.
+
+## Breaking change — 43 public types are now `#[non_exhaustive]` (#78)
+
+The pre-1.0 API-stability sweep brought the remaining growable public
+structs/enums into line with the project rule (`#[non_exhaustive]` on
+everything that may grow). This affects only code in **other crates**
+(your code, integration tests, examples) that **constructed these types
+with a struct literal** or **matched an enum exhaustively** — reading
+their public fields is unchanged.
+
+Affected types include the DNS / HTTP / TLS / ICMP wire records and
+message enums (`DnsQuery`, `DnsResponse`, `DnsQuestion`, `DnsRecord`,
+`DnsRdata`, `DnsParseResult`, `HttpRequest`, `HttpResponse`, `HttpMessage`,
+`HttpVersion`, `TlsAlert`, `TlsMessage`, `IcmpMessage`, `IcmpInner`), the
+`DnsConfig` / `HttpConfig` / `TlsConfig` structs, the flow keys
+(`FiveTupleKey`, `IpPairKey`, `FlowLabelKey`, `TaggedKey`), the encap
+combinators (`InnerVxlan`, `InnerGtpU`, `InnerGre`, `FlowLabel`, `Tagged`,
+`AutoDetectEncap`, `AutoEncapVariants`), the JA4 `Ja4Parts` / `Ja4sParts` /
+`Ja4tParts`, `event::OverflowPolicy` / `event::FlowState`, `Extracted`,
+`correlate::BurstHit`, `detect::FlowFingerprint`, `detect::RiskSeverity`,
+`FlowEntry`, `FlowTrackerStats`, `tcp_state::Transition`, and the IPFIX
+`InformationElement` / `FieldSpec` / `TemplateDefinition`.
+
+### Recipe 1 — construct via the new `new()` constructors
+
+Records and keys gained `new()` constructors:
+
+```rust
+// before (0.19)
+let key = FiveTupleKey { proto: L4Proto::Tcp, a, b };
+let rec = DnsRecord { name: "example.com".into(), rtype, rclass, ttl, data };
+
+// after (0.20)
+let key = FiveTupleKey::new(L4Proto::Tcp, a, b);
+let rec = DnsRecord::new("example.com", rtype, rclass, ttl, data);
+```
+
+New constructors: `DnsQuery::new`, `DnsResponse::new`, `DnsQuestion::new`,
+`DnsRecord::new`, `HttpRequest::new`, `HttpResponse::new`, `TlsAlert::new`,
+`IcmpMessage::new`, `IcmpInner::new`, `Extracted::new`,
+`FiveTupleKey::new`, `IpPairKey::new`, `FlowLabelKey::new`,
+`TaggedKey::new`. The encap combinators already had `new()` / `with_*`.
+
+### Recipe 2 — configs: `default()` + field mutation
+
+```rust
+// before
+let cfg = DnsConfig { max_pending: 1024, ..Default::default() };
+// after
+let mut cfg = DnsConfig::default();
+cfg.max_pending = 1024;
+```
+
+### Recipe 3 — add a wildcard arm to exhaustive matches
+
+```rust
+match msg {
+    HttpMessage::Request(_) => { /* … */ }
+    HttpMessage::Response(_) => { /* … */ }
+    _ => { /* required: the enum is now #[non_exhaustive] */ }
+}
+```
+
+**Not affected:** field *reads* (`key.proto`, `rec.ttl`, …) work exactly
+as before; only construction and exhaustive matching from outside the
+crate change.

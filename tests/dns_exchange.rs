@@ -59,10 +59,10 @@ fn nxdomain_response_yields_failed() {
 
 #[test]
 fn unanswered_query_yields_no_response_on_tick() {
-    let mut p = flowscope::dns::DnsExchangeParser::with_config(flowscope::dns::DnsConfig {
-        query_timeout: Duration::from_secs(1),
-        max_pending: 1024,
-    });
+    let mut cfg = flowscope::dns::DnsConfig::default();
+    cfg.query_timeout = Duration::from_secs(1);
+    cfg.max_pending = 1024;
+    let mut p = flowscope::dns::DnsExchangeParser::with_config(cfg);
     let q = build_msg(0x9999, "slow.example", 0x0100, 0);
     let mut sink = Vec::new();
     p.parse(&q, FlowSide::Initiator, Timestamp::new(0, 0), &mut sink);

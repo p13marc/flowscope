@@ -72,6 +72,7 @@ impl IeAbstractType {
 /// [`crate::ipfix::lookup_by_id`] / [`crate::ipfix::lookup_by_name`]
 /// accessors.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct InformationElement {
     /// IANA-assigned IE id.
     pub id: u16,

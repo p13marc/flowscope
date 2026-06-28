@@ -110,11 +110,19 @@ where
 /// are equal.
 #[derive(Debug, Clone, Copy, Hash, Eq, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[non_exhaustive]
 pub struct TaggedKey<T, K> {
     /// The caller-supplied tag (e.g. NIC index, source enum).
     pub tag: T,
     /// The inner extractor's key.
     pub inner: K,
+}
+
+impl<T, K> TaggedKey<T, K> {
+    /// Construct a tagged key.
+    pub fn new(tag: T, inner: K) -> Self {
+        Self { tag, inner }
+    }
 }
 
 /// Augments `extractor`'s key with a per-packet tag produced by
@@ -123,6 +131,7 @@ pub struct TaggedKey<T, K> {
 /// See the module-level docs for the rationale and typical
 /// composition patterns.
 #[derive(Debug, Clone, Copy)]
+#[non_exhaustive]
 pub struct Tagged<E, T> {
     /// The wrapped extractor.
     pub extractor: E,

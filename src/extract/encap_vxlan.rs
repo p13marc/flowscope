@@ -16,6 +16,7 @@ pub const DEFAULT_VXLAN_PORT: u16 = 4789;
 /// Decapsulate VXLAN and delegate to `extractor` on the inner
 /// Ethernet frame.
 #[derive(Debug, Clone, Copy)]
+#[non_exhaustive]
 pub struct InnerVxlan<E> {
     /// The wrapped extractor that processes the inner frame.
     pub extractor: E,

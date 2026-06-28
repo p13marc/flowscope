@@ -253,28 +253,28 @@ fn flow_event_all_variants_round_trip() {
 fn http_message_round_trips() {
     use bytes::Bytes;
     use flowscope::http::{HttpMessage, HttpRequest, HttpResponse, HttpVersion};
-    let req = HttpRequest {
-        method: Bytes::from_static(b"GET"),
-        path: Bytes::from_static(b"/"),
-        version: HttpVersion::Http1_1,
-        headers: vec![(
+    let req = HttpRequest::new(
+        Bytes::from_static(b"GET"),
+        Bytes::from_static(b"/"),
+        HttpVersion::Http1_1,
+        vec![(
             Bytes::from_static(b"Host"),
             Bytes::from_static(b"example.com"),
         )],
-        body: Bytes::new(),
-    };
+        Bytes::new(),
+    );
     let msg = HttpMessage::Request(req);
     let json = serde_json::to_value(&msg).unwrap();
     assert_eq!(json["type"], "request");
     round_trip(msg);
 
-    let resp = HttpResponse {
-        status: 200,
-        reason: Bytes::from_static(b"OK"),
-        version: HttpVersion::Http1_1,
-        headers: vec![],
-        body: Bytes::new(),
-    };
+    let resp = HttpResponse::new(
+        200,
+        Bytes::from_static(b"OK"),
+        HttpVersion::Http1_1,
+        vec![],
+        Bytes::new(),
+    );
     round_trip(HttpMessage::Response(resp));
 }
 
@@ -282,16 +282,12 @@ fn http_message_round_trips() {
 #[test]
 fn dns_message_query_round_trips() {
     use flowscope::dns::{DnsFlags, DnsMessage, DnsQuery, DnsQuestion};
-    let q = DnsQuery {
-        transaction_id: 0x1234,
-        flags: DnsFlags(0x0100),
-        questions: vec![DnsQuestion {
-            name: "example.com".to_string(),
-            qtype: 1,
-            qclass: 1,
-        }],
-        timestamp: ts(0, 0),
-    };
+    let q = DnsQuery::new(
+        0x1234,
+        DnsFlags(0x0100),
+        vec![DnsQuestion::new("example.com", 1, 1)],
+        ts(0, 0),
+    );
     let msg = DnsMessage::Query(q);
     let json = serde_json::to_value(&msg).unwrap();
     assert_eq!(json["type"], "query");
@@ -302,13 +298,13 @@ fn dns_message_query_round_trips() {
 #[test]
 fn icmp_message_round_trips() {
     use flowscope::icmp::{IcmpFamily, IcmpMessage, IcmpType, Icmpv4Type};
-    let msg = IcmpMessage {
-        family: IcmpFamily::V4,
-        ty: IcmpType::V4(Icmpv4Type::EchoRequest {
+    let msg = IcmpMessage::new(
+        IcmpFamily::V4,
+        IcmpType::V4(Icmpv4Type::EchoRequest {
             id: 0x1234,
             seq: 0x5678,
         }),
-    };
+    );
     let json = serde_json::to_value(&msg).unwrap();
     assert_eq!(json["family"], "v4");
     round_trip(msg);

@@ -1,10 +1,39 @@
 # Changelog
 
-## Unreleased — NSM primitives (netring 0.27 support)
+## 0.20.0 (unreleased) — NSM primitives + 1.0-prep API sweep
 
-Additive over 0.19. Pure, no-async — fits the runtime-free lib rule.
+Pure, no-async — fits the runtime-free lib rule. Carries the pre-1.0
+breaking batch (#85 / #88 / #78), so the version bumps 0.19 → 0.20.
 
-### 1.0-prep issue batch (#69, #85, #87, #88)
+### 1.0-prep issue batch (#69, #78, #85, #87, #88)
+
+- **BREAKING — `#[non_exhaustive]` coverage sweep** (#78). Brought 43
+  growable public structs/enums into compliance with the project rule
+  ("`#[non_exhaustive]` on every public struct/enum that may grow",
+  CLAUDE.md). The gap was older types predating the 0.2.0 rule: the
+  DNS / HTTP / TLS / ICMP wire-record structs + message enums
+  (`DnsQuery` / `DnsResponse` / `DnsRecord` / `DnsRdata` / `HttpRequest` /
+  `HttpResponse` / `HttpMessage` / `HttpVersion` / `TlsAlert` /
+  `TlsMessage` / `IcmpMessage` / `IcmpInner` / `DnsParseResult`), the
+  `*Config` structs, the flow keys (`FiveTupleKey` / `IpPairKey` /
+  `FlowLabelKey` / `TaggedKey`), the encap combinators, the JA4 `*Parts`,
+  `event::{OverflowPolicy, FlowState}`, `Extracted`, `BurstHit`,
+  `FlowFingerprint`, `RiskSeverity`, `tracker::{FlowEntry, FlowTrackerStats}`,
+  `Transition`, and the IPFIX `InformationElement` / `FieldSpec` /
+  `TemplateDefinition`. Construction now goes through new `new()`
+  constructors (or `Default` + field mutation for configs) — downstream
+  struct-literal construction and exhaustive matches need the
+  mechanical update in `docs/migration-0.19-to-0.20.md`. Every type
+  the #66 primitive→enum lift named was already covered.
+  - **Sealed-trait decision (documented, no code change):** the public
+    extension traits `SessionParser` / `DatagramParser` / `FlowExtractor` /
+    `KeyFields` / `DetectorScore` stay **open** for 1.0 — custom parsers,
+    extractors, and keys are documented use cases (`KeyFields` in
+    particular is required for downstream custom keys to use the emit
+    writers). Rationale in `docs/design.md` → "Trait extensibility".
+  - **`cargo-semver-checks` CI gate** confirmed green against the
+    0.19.0 baseline + isolated `emit` / `aggregate` feature-matrix
+    rows added so every feature is built somewhere.
 
 - **BREAKING — parser fallibility unified: 16 `Option` parsers → `Result`**
   (#85). Every remaining hand-rolled wire parser's free `parse*()` function
