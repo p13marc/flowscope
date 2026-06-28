@@ -15,7 +15,7 @@ use smallvec::SmallVec;
 
 use crate::Timestamp;
 use crate::event::{EndReason, EventMask, FlowEvent, FlowSide, FlowState, FlowStats};
-use crate::extractor::{Extracted, FlowExtractor, L4Proto, Orientation};
+use crate::extractor::{Extracted, FlowExtractor, L4Proto, Orientation, TcpFlags};
 use crate::history::{HistoryString, push_for_flags};
 use crate::tcp_state;
 use crate::view::PacketView;
@@ -185,6 +185,28 @@ pub struct FlowTrackerConfig {
     /// [`Self::with_event_filter`]. For a *total*, episodic shed see
     /// [`FlowTracker::pause_events`].
     pub suppress_events: EventMask,
+    /// Infer the TCP initiator from the handshake instead of pure
+    /// arrival order (issue #122). When `true`, a flow whose **first
+    /// observed packet** is a `SYN+ACK` (i.e. the response was
+    /// delivered before the request — a tap-merge / two-queue race) has
+    /// its initiator orientation **flipped** so the SYN sender is
+    /// correctly labelled [`FlowSide::Initiator`], and
+    /// [`FlowStats::direction_flipped`] is set (Zeek's `^`).
+    ///
+    /// Only the first packet's flags are consulted, so the decision is
+    /// made once at flow creation — no mid-flow re-labelling of
+    /// already-counted stats. A first packet that is a bare `SYN`
+    /// (the common case), or any non-handshake / non-TCP packet
+    /// (mid-stream capture), falls back to arrival order unchanged.
+    ///
+    /// Default `false` — preserves the historical first-seen semantics
+    /// for single-tap consumers (where the SYN is always seen first, so
+    /// this flag would change nothing anyway). Enable it for tap-merge
+    /// / multi-queue capture where the two directions can race. This
+    /// corrects the **logical role** axis ([`FlowSide`]); the canonical
+    /// [`Orientation`] axis is already race-immune regardless of this
+    /// flag.
+    pub infer_tcp_initiator: bool,
 }
 
 impl Default for FlowTrackerConfig {
@@ -206,6 +228,7 @@ impl Default for FlowTrackerConfig {
             reassembly_memcap_policy: crate::event::MemcapPolicy::Ignore,
             active_idle_threshold: Some(Duration::from_secs(1)),
             suppress_events: EventMask::empty(),
+            infer_tcp_initiator: false,
         }
     }
 }
@@ -449,11 +472,28 @@ impl<E: FlowExtractor, S: Send + 'static> FlowTracker<E, S> {
 
         if is_new {
             let user = (self.init)(&key);
+            // SYN-based initiator inference (issue #122). If enabled and
+            // the first packet we see is a `SYN+ACK`, the *response*
+            // raced ahead of the request, so the real initiator is the
+            // opposite orientation — flip it once, here at creation, so
+            // no already-counted stats need re-labelling. A bare `SYN`,
+            // a non-handshake packet, or non-TCP falls back to
+            // arrival order.
+            let (init_orientation, direction_flipped) = if self.config.infer_tcp_initiator
+                && let Some(t) = &tcp
+                && t.flags.contains(TcpFlags::SYN)
+                && t.flags.contains(TcpFlags::ACK)
+            {
+                (orientation.flipped(), true)
+            } else {
+                (orientation, false)
+            };
             let entry = FlowEntry {
                 stats: FlowStats {
                     started: ts,
                     last_seen: ts,
-                    initiator_orientation: orientation,
+                    initiator_orientation: init_orientation,
+                    direction_flipped,
                     ..FlowStats::default()
                 },
                 // TCP flows transition out of Active via the
@@ -462,7 +502,7 @@ impl<E: FlowExtractor, S: Send + 'static> FlowTracker<E, S> {
                 state: FlowState::Active,
                 history: HistoryString::new(),
                 user,
-                initiator_orientation: orientation,
+                initiator_orientation: init_orientation,
                 l4,
                 last_tick_at: None,
             };
@@ -497,11 +537,19 @@ impl<E: FlowExtractor, S: Send + 'static> FlowTracker<E, S> {
             crate::obs::trace_flow_started(l4);
 
             if self.emits(EventMask::STARTED) {
+                // `side` honours the inferred initiator (issue #122):
+                // normally the first packet IS the initiator, but a
+                // flipped `SYN+ACK`-first flow makes the first packet
+                // the responder. `orientation` is always this packet's
+                // own canonical direction (issue #118).
+                let side = if orientation == init_orientation {
+                    FlowSide::Initiator
+                } else {
+                    FlowSide::Responder
+                };
                 events.push(FlowEvent::Started {
                     key: key.clone(),
-                    side: FlowSide::Initiator,
-                    // First packet defines the initiator orientation,
-                    // so the canonical axis equals it here (issue #118).
+                    side,
                     orientation,
                     ts,
                     l4,

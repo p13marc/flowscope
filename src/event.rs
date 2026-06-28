@@ -27,6 +27,14 @@ use crate::{
 /// the *response*, so `Initiator` may bind to the server on some flows
 /// and the client on others — non-deterministically.
 ///
+/// For TCP specifically you can make the *role* axis itself
+/// race-robust: set
+/// [`FlowTrackerConfig::infer_tcp_initiator`](crate::FlowTrackerConfig::infer_tcp_initiator)
+/// and the tracker derives the initiator from the handshake (a
+/// `SYN+ACK`-first flow is flipped so the SYN sender stays
+/// `Initiator`), recording [`FlowStats::direction_flipped`] when it
+/// corrected one (issue #122).
+///
 /// When you need a direction label two independent captures of the
 /// same flow will agree on, use [`crate::Orientation`] (deterministic,
 /// address-sorted) instead. flowscope keeps both: the
@@ -416,6 +424,18 @@ pub struct FlowStats {
     /// asymmetric-routing IOC ("one leg per direction" assumption
     /// violated). The original binding is kept; this flag flips.
     pub capture_leg_inconsistent: bool,
+    /// New in 0.20.0 (issue #122): set when the tracker **flipped**
+    /// the inferred initiator because the flow's first observed packet
+    /// was a TCP `SYN+ACK` (the response raced ahead of the request).
+    /// The analogue of Zeek's `conn.log` `^` history marker.
+    ///
+    /// Only ever `true` when
+    /// [`crate::FlowTrackerConfig::infer_tcp_initiator`] is enabled and
+    /// the race actually occurred; otherwise `false`. When set,
+    /// [`Self::initiator_orientation`] (and thus every [`FlowSide`]
+    /// label on this flow) reflects the SYN sender, not the
+    /// arrival-order first-seen endpoint.
+    pub direction_flipped: bool,
 }
 
 impl FlowStats {

@@ -153,6 +153,17 @@ matter which packet arrived first or which sensor observed it. Use it
 whenever two independent observers must agree — Community ID ordering,
 IPFIX biflow keying, cross-sensor dedup.
 
+If you specifically need the *role* axis (`FlowSide`) to survive the
+race — not just the orientation axis — set
+`FlowTrackerConfig::infer_tcp_initiator`. For TCP, the tracker then
+reads the handshake: a flow whose first observed packet is a `SYN+ACK`
+(the response raced ahead) is flipped so the SYN sender stays
+`Initiator`, and `FlowStats::direction_flipped` records that a
+correction happened (the analogue of Zeek's `^`). It's opt-in (default
+off) because single-tap captures always see the SYN first, where it
+would change nothing. Non-TCP / mid-stream flows fall back to arrival
+order. (#122)
+
 ### Both axes ride on every packet event
 
 `FlowEvent::{Started, Packet}` (and the typed `Event::{Started,
