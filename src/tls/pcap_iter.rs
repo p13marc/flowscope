@@ -1,11 +1,13 @@
 //! High-level one-call iterators over TLS messages in a pcap.
 //!
-//! These compose [`PcapFlowSource::sessions`] +
-//! [`TlsParser`] / [`TlsHandshakeParser`] into a single
-//! function call — for the common "open a pcap, look at
-//! every ClientHello" path the user shouldn't have to
-//! assemble a Driver builder + slot handle + drain loop
-//! by hand.
+//! The strongly-typed front door over the generic
+//! [`crate::pcap::session_messages`] building block: these compose
+//! the offline pcap pipeline + [`TlsParser`] / [`TlsHandshakeParser`]
+//! and pre-filter to the specific message type (e.g.
+//! [`TlsClientHello`]) so the common "open a pcap, look at every
+//! ClientHello" path is one call — no Driver builder + slot handle +
+//! drain loop. For an arbitrary `SessionParser`, reach for
+//! [`crate::pcap::session_messages::<P>`](crate::pcap::session_messages).
 
 use std::path::Path;
 
@@ -23,7 +25,6 @@ use crate::tls::types::TlsClientHello;
 /// in one call.
 ///
 /// ```no_run
-/// # #![allow(deprecated)]
 /// for (key, hello) in flowscope::tls::client_hellos_from_pcap("trace.pcap")? {
 ///     let sni = hello.sni.as_deref().unwrap_or("(none)");
 ///     println!("{key:?}  SNI={sni}");
@@ -32,10 +33,6 @@ use crate::tls::types::TlsClientHello;
 /// ```
 ///
 /// Iterator stops on the first pcap-decode error.
-#[deprecated(
-    since = "0.20.0",
-    note = "use flowscope::pcap::session_messages::<P>() / datagram_messages::<P>() (issue #86)"
-)]
 pub fn client_hellos_from_pcap<P: AsRef<Path>>(
     path: P,
 ) -> Result<impl Iterator<Item = (FiveTupleKey, Box<TlsClientHello>)>> {
@@ -60,16 +57,11 @@ pub fn client_hellos_from_pcap<P: AsRef<Path>>(
 /// rather than one per TLS record.
 ///
 /// ```no_run
-/// # #![allow(deprecated)]
 /// for (key, hs) in flowscope::tls::handshakes_from_pcap("trace.pcap")? {
 ///     println!("{key:?}  sni={:?} ja4={:?} outcome={:?}", hs.sni, hs.ja4, hs.outcome);
 /// }
 /// # Ok::<(), flowscope::Error>(())
 /// ```
-#[deprecated(
-    since = "0.20.0",
-    note = "use flowscope::pcap::session_messages::<P>() / datagram_messages::<P>() (issue #86)"
-)]
 pub fn handshakes_from_pcap<P: AsRef<Path>>(
     path: P,
 ) -> Result<impl Iterator<Item = (FiveTupleKey, TlsHandshake)>> {

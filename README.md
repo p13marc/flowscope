@@ -88,14 +88,17 @@ for (key, msg) in flowscope::smb::messages_from_pcap("trace.pcap")? {
 # Ok(()) }
 ```
 
-For protocols without a dedicated `*_from_pcap` helper, use
-`PcapFlowSource::sessions(extractor, parser)` /
-`.datagrams(extractor, parser)` to compose the same shape
-with any `SessionParser` / `DatagramParser` impl.
+The per-parser `*_from_pcap` helpers are the strongly-typed front
+door over a generic building block: for any protocol — including
+parsers without a dedicated helper — use
+`flowscope::pcap::session_messages::<P>(path)` /
+`datagram_messages::<P>(path)`, which yield `(FiveTupleKey, P::Message)`
+for any `SessionParser` / `DatagramParser`.
 
 For per-port filtering, multiple parsers per pcap, or live
 NIC capture, drop down to `Driver::builder(ext)` — the typed
-low-level driver with `SlotHandle<M, K>` per parser. See
+low-level driver with one `SlotHandle<M, K>` per parser and the
+flow-lifecycle `Event<K>` stream. See
 [`examples/07-multi-protocol/`](examples/07-multi-protocol/).
 
 ---
@@ -188,7 +191,7 @@ AF_XDP) which consumes flowscope's traits.
 
 ```toml
 [dependencies]
-flowscope = { version = "0.18", features = ["full"] }
+flowscope = { version = "0.19", features = ["full"] }
 ```
 
 MSRV is Rust 1.88. The `full` feature pulls in everything; for production
@@ -209,6 +212,7 @@ size. Per-feature dependency tree is documented inline in
 | [`docs/discoverability.md`](docs/discoverability.md) | one-page prelude tour grouped by use case |
 | [`docs/performance.md`](docs/performance.md) | criterion bench methodology + numbers |
 | [`docs/design.md`](docs/design.md) | why flowscope is shaped the way it is |
+| [`docs/migration-0.19-to-0.20.md`](docs/migration-0.19-to-0.20.md) | the 0.20 driver/event convergence — one typed `Driver<E>`, removal of `Flow{Session,Datagram}Driver` + `SessionEvent`, with migration recipes |
 | [`docs/migration-0.17-to-0.18.md`](docs/migration-0.17-to-0.18.md) | the two BREAKING 0.18 changes (`parse() → Result<T, ParseError>` across new parsers + primitive→enum lifts for LDAP / Kerberos / nPrint / DNP3) with migration recipes |
 | [`examples/`](examples/) | 60+ runnable examples grouped by use case (l7 logging, forensics, detection, observability, export, custom protocols, multi-protocol, performance, low-level) |
 | [`CHANGELOG.md`](CHANGELOG.md) | release history + migration recipes |

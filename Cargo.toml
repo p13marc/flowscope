@@ -143,7 +143,7 @@ tls-fingerprints = ["tls", "dep:md-5", "dep:sha2", "dep:hex"]
 # excluded from `l7` / `full` so the default build stays royalty-free.
 # Commercial use requires a FoxIO OEM license. See LICENSE-FoxIO-1.1 + NOTICE.
 ja4plus = ["tls-fingerprints", "dep:x509-parser", "dep:sha2"]
-dns = ["extractors", "tracker", "session", "dep:simple-dns", "dep:bytes"]
+dns = ["extractors", "tracker", "session", "reassembler", "dep:simple-dns", "dep:bytes"]
 icmp = ["extractors", "tracker", "session", "dep:bytes"]
 # ARP visibility — datagram-style parser for EtherType 0x0806 (Issue #1, 0.17).
 # `MacAddr` is unconditional at the crate root; `arp` adds the message types,
@@ -283,26 +283,26 @@ radius = ["session", "dep:radius-parser"]
 # TGS-REP / KRB-ERROR. Surfaces principals, realm, etype list
 # (Kerberoasting RC4-downgrade signal). Wraps the rusticata
 # kerberos-parser. Issue #13 sub-piece.
-kerberos = ["session", "dep:kerberos-parser", "dep:bytes"]
+kerberos = ["session", "reassembler", "dep:kerberos-parser", "dep:bytes"]
 # LDAP parser (TCP/389) — BindRequest / SearchRequest /
 # SearchResultDone. Surfaces auth method (simple-cleartext
 # vs SASL), base DN, filter summary, attribute requests
 # (SPN-query → GetUserSPNs / BloodHound enumeration signal).
 # Wraps the rusticata ldap-parser. Issue #13 sub-piece.
-ldap = ["session", "dep:ldap-parser", "dep:bytes"]
+ldap = ["session", "reassembler", "dep:ldap-parser", "dep:bytes"]
 # SMB2/3 parser (TCP/445) — dialect detection + command
 # decode + tree-connect target (highest lateral-movement
 # visibility per MITRE T1021.002). Hand-rolled; no mature
 # rusticata crate exists. M1 scope per issue #12 — dialect,
 # command, message/tree/session IDs, encryption presence,
 # tree-connect path (C$/ADMIN$/IPC$ signal).
-smb = ["session", "dep:bytes"]
+smb = ["session", "reassembler", "dep:bytes"]
 # QUIC Initial parser (UDP/443) — long-header decode +
 # Initial-secret derivation + AEAD decrypt + ClientHello
 # extraction → SNI / ALPN visibility on encrypted-by-
 # default protocols (HTTP/3, DoH). Wraps the `quic-parser`
 # crate (zero-copy decoder + ring-backed AEAD). Issue #3.
-quic = ["session", "dep:quic-parser", "dep:tls-parser"]
+quic = ["session", "reassembler", "dep:quic-parser", "dep:tls-parser"]
 # STUN — RFC 5389 over UDP (no IANA port; 3478 is the
 # convention; TURN uses 3478/5349). Useful for WebRTC peer
 # detection, NAT-type discovery, TURN identification. 20-

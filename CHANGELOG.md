@@ -17,6 +17,19 @@ type-specific extras (`SlotHandle::drain_replacing` / `clear`,
 the existing inherent methods are unchanged. Re-exported from
 `flowscope::driver` and the prelude. Closes the #84 convergence.
 
+### Fixed — `<parser>,pcap` feature combos compile
+
+The high-level `*_from_pcap` typed helpers are built on the offline
+session/datagram engine, which needs the `reassembler` feature (its
+trait backs even the datagram path's no-op reassembler). Five parser
+features that ship a helper but didn't pull `reassembler` —
+`quic` / `dns` / `kerberos` / `smb` / `ldap` — failed to compile under
+`--features "<parser>,pcap"` (a latent gap: CI only built each parser
+solo). Each now pulls `reassembler` (additive — TCP parsers genuinely
+reassemble; datagram parsers need the trait for the no-op stub). New CI
+`feature-matrix` rows (`quic,pcap` / `dns,pcap` / `kerberos,pcap` /
+`smb,pcap` / `ldap,pcap` / `tls,pcap`) pin it.
+
 ### Additive — `Event<K>` emit-readiness (#97, driver-convergence 1/5)
 
 First (additive) step of the #84 driver/event convergence — makes the
@@ -115,24 +128,27 @@ instance was known; in practice nothing used it, and the eager
   or the emitted stream. netring forwards no deferred-builder surface,
   so no downstream change is required.
 
-### Additive — generic pcap message iterators (#86)
+### Additive — generic pcap message iterators + prelude (#86)
 
 - **`pcap::session_messages::<P>(path)` / `pcap::datagram_messages::<P>(path)`**
   — two generic one-call iterators that yield `(FiveTupleKey, P::Message)`
-  for *any* `SessionParser` / `DatagramParser` with a `Default`, replacing
-  the 13 hand-written per-parser `*_from_pcap` helpers. Zero per-parser
-  code; every current and future parser is first-class. (Two functions,
-  not one `messages::<P>()`: `SessionParser` and `DatagramParser` are
-  distinct traits, and overlapping blanket impls over `P` are rejected by
-  coherence — splitting by transport keeps the API registration-free.)
+  for *any* `SessionParser` / `DatagramParser` with a `Default`. The
+  registration-free **building block** under the per-parser `*_from_pcap`
+  helpers; the one-stop call for parsers without a bespoke helper or with
+  non-`Default` config. (Two functions, not one `messages::<P>()`:
+  `SessionParser` and `DatagramParser` are distinct traits, and overlapping
+  blanket impls over `P` are rejected by coherence — splitting by transport
+  keeps the API registration-free.) Now exported from the prelude.
+- **Per-parser `*_from_pcap` helpers kept as the high-level typed surface.**
+  `tls::client_hellos_from_pcap`, `http::requests_from_pcap`,
+  `quic::initials_from_pcap`, &c. return the *specific, pre-filtered*
+  message type (`Box<TlsClientHello>`, `HttpRequest`, `QuicInitial`) — a
+  strict ergonomics/typing win over the generic enum stream for the
+  marquee protocols, so they are **not** deprecated. The two layers stand
+  side by side: reach for the typed helper when one exists, drop to
+  `session_messages::<P>` otherwise.
 - **`pcap::flow_summaries(path)`** — renamed from `flow_summaries_from_pcap`
-  for naming consistency.
-- **Deprecated (kept one release as `#[deprecated]` aliases):** the 13
-  bespoke helpers — `http::{requests,responses,exchanges}_from_pcap`,
-  `dns::{messages,exchanges}_from_pcap`, `tls::{client_hellos,handshakes}_from_pcap`,
-  `quic::initials_from_pcap`, `{smb,kerberos,ldap,ssh}::messages_from_pcap`,
-  and `pcap::flow_summaries_from_pcap`. Migrate to the generic entries;
-  see `docs/migration-0.19-to-0.20.md`.
+  for naming consistency; the old name is a `#[deprecated]` alias.
 
 ### Additive — tracker load-shedding (#79)
 

@@ -162,7 +162,9 @@ pub use crate::analysis::{AnalyzedFlow, FlowAnalyzer, L7Summary};
 /// The typed [`crate::driver::Driver`] +
 /// [`crate::driver::SlotHandle`] shape (plan 121).
 #[cfg(all(feature = "extractors", feature = "reassembler", feature = "session"))]
-pub use crate::driver::{Driver, DriverBuilder, Event, SlotDrain, SlotHandle, SlotMessage};
+pub use crate::driver::{
+    BroadcastSlotHandle, Driver, DriverBuilder, Event, SlotDrain, SlotHandle, SlotMessage,
+};
 #[cfg(feature = "tracker")]
 pub use crate::event::{AnomalyKind, EndReason, EventMask, FlowEvent, FlowSide, FlowStats};
 #[cfg(feature = "extractors")]
@@ -178,6 +180,10 @@ pub use crate::icmp::{DestUnreachableKind, IcmpInner, IcmpMessage, IcmpType, Mtu
 pub use crate::layers::{Layer, LayerKind, LayerParser, LayerStack, Layers};
 #[cfg(feature = "pcap")]
 pub use crate::pcap::PcapFlowSource;
+// The blessed offline one-call message iterators (the generic
+// building block under the per-parser `*_from_pcap` helpers).
+#[cfg(all(feature = "pcap", feature = "session", feature = "reassembler"))]
+pub use crate::pcap::{datagram_messages, session_messages};
 // Issue #8 (0.18): ECH GREASE-vs-real classification — surface
 // next to the rest of the TLS handshake vocabulary.
 #[cfg(feature = "session")]

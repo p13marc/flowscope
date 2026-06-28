@@ -13,7 +13,6 @@ use crate::session::SessionEvent;
 /// paired with the [`FiveTupleKey`] of the flow it was seen on.
 ///
 /// ```no_run
-/// # #![allow(deprecated)]
 /// for (key, msg) in flowscope::dns::messages_from_pcap("trace.pcap")? {
 ///     println!("{key:?} {msg:?}");
 /// }
@@ -21,12 +20,8 @@ use crate::session::SessionEvent;
 /// ```
 ///
 /// For TCP-only DNS (RFC 1035 §4.2.2 length-framed), use
-/// `PcapFlowSource::sessions` with the [`crate::dns::DnsTcpParser`]
-/// directly — this helper only covers the UDP common case.
-#[deprecated(
-    since = "0.20.0",
-    note = "use flowscope::pcap::session_messages::<P>() / datagram_messages::<P>() (issue #86)"
-)]
+/// [`crate::pcap::session_messages::<DnsTcpParser>`](crate::pcap::session_messages)
+/// — this helper only covers the UDP common case.
 pub fn messages_from_pcap<P: AsRef<Path>>(
     path: P,
 ) -> Result<impl Iterator<Item = (FiveTupleKey, DnsMessage)>> {
@@ -42,10 +37,6 @@ pub fn messages_from_pcap<P: AsRef<Path>>(
 
 /// Iterate every aggregated [`DnsExchange`] (query + response
 /// pair) in the pcap. One event per resolution.
-#[deprecated(
-    since = "0.20.0",
-    note = "use flowscope::pcap::session_messages::<P>() / datagram_messages::<P>() (issue #86)"
-)]
 pub fn exchanges_from_pcap<P: AsRef<Path>>(
     path: P,
 ) -> Result<impl Iterator<Item = (FiveTupleKey, DnsExchange)>> {

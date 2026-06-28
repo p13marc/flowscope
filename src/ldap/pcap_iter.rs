@@ -13,7 +13,6 @@ use crate::session::SessionEvent;
 /// [`FiveTupleKey`] of the flow it was seen on.
 ///
 /// ```no_run
-/// # #![allow(deprecated)]
 /// for (key, msg) in flowscope::ldap::messages_from_pcap("trace.pcap")? {
 ///     if msg.search_attributes_spn_query {
 ///         println!("{key:?} GetUserSPNs / BloodHound: base={:?}", msg.search_base);
@@ -21,10 +20,6 @@ use crate::session::SessionEvent;
 /// }
 /// # Ok::<(), flowscope::Error>(())
 /// ```
-#[deprecated(
-    since = "0.20.0",
-    note = "use flowscope::pcap::session_messages::<P>() / datagram_messages::<P>() (issue #86)"
-)]
 pub fn messages_from_pcap<P: AsRef<Path>>(
     path: P,
 ) -> Result<impl Iterator<Item = (FiveTupleKey, LdapMessage)>> {
