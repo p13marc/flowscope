@@ -23,6 +23,17 @@ crates.io on 2026-06-13 (tag `0.14.0`). Durable record in
 
 Next cycle will accrue here as plans land.
 
+### RFCs (design drafts awaiting a go/no-go)
+
+- [`175-driver-event-convergence-rfc.md`](175-driver-event-convergence-rfc.md)
+  — issue #84: converge the two driver families + three event enums
+  into one `Driver<E>` + `Event<K>` for 1.0. Draft for review; no code
+  changed. Key finding: netring's live path is already on the target
+  shape, so the break is far smaller than the raw ref-count implies.
+  Carries 6 open decisions (delete-vs-deprecate the `Flow*Driver`
+  trio, fate of `SessionEvent`, `StateChange` parity, emitter surface,
+  builder shape, first-PR scope).
+
 ---
 
 ## Deferred items recorded so a future ask doesn't get re-litigated
@@ -131,7 +142,7 @@ the prior reasoning instead of re-litigating.
 | 160–174 | 0.14.0 operations-layer ergonomics cycle |
 | 175+ | post-0.14 / 1.0-prep |
 
-The next free number for a new plan is **175**.
+The next free number for a new plan is **176**.
 
 Per the convention, plan files are deleted in the same PR
 series that ships them. Cycle wishlists and umbrellas are
