@@ -53,6 +53,7 @@ pub struct SlotMessage<M, K> {
 /// sum across all clones equals the number of messages pushed,
 /// matching MPMC semantics. For broadcast (every consumer sees
 /// every message), drain into a channel and fan out yourself.
+#[must_use = "drop the SlotHandle and the parser's messages are never read — keep it and drain it"]
 pub struct SlotHandle<M, K>
 where
     M: Send + 'static,
