@@ -114,7 +114,7 @@ the categories sort logically in `ls`.
 | Example | Features | What it shows |
 |---|---|---|
 | **`accumulating_line_parser`** | `pcap,extractors,session` | Helper-based: one constructor call (`AccumulatingSessionParser`, plan 106) replaces a 25-LoC manual `SessionParser` impl. **Start here.** |
-| **`length_prefixed_pcap`** | `pcap,session` | Hand-written `SessionParser`: a custom binary protocol (`PFX2,`/`PFX4,` length-prefixed) using `FlowSessionDriver` directly. |
+| **`length_prefixed_pcap`** | `pcap,session` | Hand-written `SessionParser`: a custom binary protocol (`PFX2,`/`PFX4,` length-prefixed) driven through a typed `Driver<E>` session slot. |
 | **`redis_protocol`** | `pcap,extractors,reassembler` | RESP protocol parser as `SessionParser`. Demonstrates the splitting-invariance contract and a real recursive parser. |
 
 ## 07 — multi-protocol pipelines
@@ -174,13 +174,14 @@ so the generation logic stays close to the fixtures.
 - Anything emitting structured data writes to stdout —
   redirect with `> output.{csv,ndjson,log}`.
 - The typed `flowscope::driver::Driver<E>` + `SlotHandle<M, K>`
-  surface is the canonical multi-parser shape since 0.11; the
+  surface is the canonical shape for both single- and multi-parser
+  pipelines; the
   [`00-getting-started/unified_driver_demo.rs`](./00-getting-started/unified_driver_demo.rs)
-  example showcases it. The bare `FlowSessionDriver` /
-  `FlowDatagramDriver` types remain shipped for single-parser
-  shapes that don't need the typed-slot surface; the legacy
-  closed-`M` `Driver<E, M>` and `FlowMultiSessionDriver` types
-  were removed in plan 121 (0.11.0).
+  example showcases it. Register one session/datagram slot per
+  protocol. The per-parser `FlowSessionDriver` / `FlowDatagramDriver`
+  types were removed in 0.20 (#99); the legacy closed-`M`
+  `Driver<E, M>` and `FlowMultiSessionDriver` types were removed in
+  plan 121 (0.11.0).
 - For the highest-level common-case demos (TLS / QUIC / SMB
   ClientHello extraction), reach for the per-parser
   `*_from_pcap` helpers (`flowscope::tls::client_hellos_from_pcap`,

@@ -97,8 +97,8 @@ pub struct FlowTrackerConfig {
     /// no effect unless that field is `Some`.
     pub overflow_policy: crate::event::OverflowPolicy,
     /// Hint to the default [`crate::BufferedReassemblerFactory`]
-    /// when used via [`crate::FlowSessionDriver::with_config`] /
-    /// `FlowDatagramDriver::with_config`: fire a
+    /// when used via the typed [`crate::driver::Driver`]
+    /// (or the internal session/datagram engines): fire a
     /// [`crate::AnomalyKind::ReassemblerHighWatermark`] anomaly
     /// when buffer occupancy crosses this percent of
     /// `max_reassembler_buffer`. `None` = off.
@@ -755,8 +755,8 @@ impl<E: FlowExtractor, S: Send + 'static> FlowTracker<E, S> {
     /// not active.
     ///
     /// Does **not** flush any reassembler or parser slots — those live
-    /// on the driver. When driving through a [`crate::FlowDriver`] /
-    /// [`crate::FlowSessionDriver`] / [`crate::FlowDatagramDriver`],
+    /// on the driver. When driving through a [`crate::FlowDriver`]
+    /// or the typed [`crate::driver::Driver`],
     /// call the driver-level `force_close` instead so the parser +
     /// reassembler tear down cleanly.
     pub fn force_close(&mut self, key: &E::Key, now: Timestamp) -> Option<FlowEvent<E::Key>> {
@@ -782,7 +782,7 @@ impl<E: FlowExtractor, S: Send + 'static> FlowTracker<E, S> {
 
     /// Run a sweep, driving `on_tick` on every live parser
     /// **before** the swept events land. Mirrors the choreography
-    /// that `FlowSessionDriver::sweep` does internally, so
+    /// that the internal session engine's `sweep` does internally, so
     /// direct-tracker consumers don't have to spell it out.
     ///
     /// `parsers` is the caller-owned per-flow parser map (lets the
@@ -935,9 +935,8 @@ impl<E: FlowExtractor, S: Send + 'static> FlowTracker<E, S> {
     /// `reassembler_high_watermark_*`) are **stale** through this
     /// accessor — the tracker doesn't own reassemblers. For live
     /// reassembly diagnostics, call
-    /// [`crate::FlowDriver::snapshot_flow_stats`] or
-    /// [`crate::FlowSessionDriver::snapshot_flow_stats`] which
-    /// combine tracker stats with live reassembler state.
+    /// [`crate::FlowDriver::snapshot_flow_stats`], which
+    /// combines tracker stats with live reassembler state.
     #[deprecated(
         since = "0.8.0",
         note = "use `iter_active()` which exposes per-flow user state, TCP state, and L4 protocol in addition to stats"

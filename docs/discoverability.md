@@ -118,10 +118,10 @@ For the conceptual layer-by-layer reference, see
 
 **`session`:** `DatagramParser`, `SessionEvent`, `SessionParser`.
 
-**`reassembler` + `session`:** `FlowSessionDriver`.
-
-**`extractors` + `reassembler` + `session`:** `FlowDatagramDriver`,
-`Driver`, `DriverBuilder`, `Event`, `SlotHandle`, `SlotMessage`.
+**`extractors` + `reassembler` + `session`:** `Driver`,
+`DriverBuilder`, `Event`, `SlotHandle`, `SlotMessage`. (Register one
+session/datagram slot per protocol; this replaced the per-parser
+`FlowSessionDriver` / `FlowDatagramDriver` in 0.20.)
 
 **`pcap`:** `PcapFlowSource`.
 

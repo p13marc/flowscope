@@ -1,7 +1,8 @@
 //! Internal slot impls for [`super::typed::Driver`].
 //!
-//! Each slot owns its inner [`crate::FlowSessionDriver`] /
-//! [`crate::FlowDatagramDriver`], a persistent `SessionEvent`
+//! Each slot owns its inner [`crate::session_driver::FlowSessionDriver`]
+//! / [`crate::datagram_driver::FlowDatagramDriver`] engine, a
+//! persistent `SessionEvent`
 //! scratch buffer (for zero-alloc dispatch), and an
 //! `Arc<SegQueue<SlotMessage<M, K>>>` that the matching
 //! [`super::SlotHandle`] drains. The slot writes typed

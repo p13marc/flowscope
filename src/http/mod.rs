@@ -9,35 +9,46 @@
 //!
 //! # Quick start
 //!
-//! ```no_run
-//! use flowscope::extract::FiveTuple;
-//! use flowscope::http::{HttpMessage, HttpParser};
-//! use flowscope::{FlowSessionDriver, SessionEvent, SessionParser, Timestamp};
+//! Register an [`HttpParser`] on the typed
+//! [`Driver`](crate::driver::Driver) and drain its slot:
 //!
-//! let _driver = FlowSessionDriver::new(
-//!     FiveTuple::bidirectional(),
-//!     HttpParser::default(),
-//! );
+//! ```
+//! use flowscope::driver::Driver;
+//! use flowscope::extract::FiveTuple;
+//! use flowscope::http::HttpParser;
+//!
+//! let mut builder = Driver::builder(FiveTuple::bidirectional());
+//! let mut http = builder.session_on_ports(HttpParser::default(), [80, 8080]);
+//! let _driver = builder.build();
+//! # let _ = &mut http;
 //! ```
 //!
-//! For a callback-shaped interface, drive a `SessionParser` from
-//! a consumer loop — `Application` events carry the parsed
-//! `HttpMessage` directly:
+//! Each drained [`SlotMessage`](crate::driver::SlotMessage) carries
+//! the parsed [`HttpMessage`] directly:
 //!
 //! ```no_run
-//! # use flowscope::extract::FiveTuple;
-//! # use flowscope::http::{HttpMessage, HttpParser};
-//! # use flowscope::{FlowSessionDriver, SessionEvent};
-//! # let mut driver = FlowSessionDriver::new(FiveTuple::bidirectional(), HttpParser::default());
-//! # fn views() -> impl IntoIterator<Item = flowscope::PacketView<'static>> { std::iter::empty() }
+//! use flowscope::driver::{Driver, Event, SlotMessage};
+//! use flowscope::extract::{FiveTuple, FiveTupleKey};
+//! use flowscope::http::{HttpMessage, HttpParser};
+//! use flowscope::PacketView;
+//!
+//! let mut builder = Driver::builder(FiveTuple::bidirectional());
+//! let mut http = builder.session_on_ports(HttpParser::default(), [80, 8080]);
+//! let mut driver = builder.build();
+//!
+//! let mut events: Vec<Event<FiveTupleKey>> = Vec::new();
+//! let mut msgs: Vec<SlotMessage<HttpMessage, FiveTupleKey>> = Vec::new();
+//! # fn views() -> impl IntoIterator<Item = PacketView<'static>> { std::iter::empty() }
 //! for view in views() {
-//!     for ev in driver.track(view) {
-//!         if let SessionEvent::Application { message, .. } = ev {
-//!             match message {
-//!                 HttpMessage::Request(r)  => { /* handle request */ }
-//!                 HttpMessage::Response(r) => { /* handle response */ }
-//!                 _ => {}
-//!             }
+//!     events.clear();
+//!     msgs.clear();
+//!     driver.track_into(view, &mut events);
+//!     http.drain(&mut msgs);
+//!     for m in &msgs {
+//!         match &m.message {
+//!             HttpMessage::Request(r)  => { let _ = r; /* handle request */ }
+//!             HttpMessage::Response(r) => { let _ = r; /* handle response */ }
+//!             _ => {}
 //!         }
 //!     }
 //! }

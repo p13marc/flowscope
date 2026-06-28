@@ -122,12 +122,12 @@ for the two granularities consumers want.
 **Why one shape:**
 
 - Typed parsers compose naturally with `Stream<SessionEvent>`
-  async iteration and the sync `FlowSessionDriver` /
-  `FlowDatagramDriver` loop alike — the same parser drives
+  async iteration and the sync typed `driver::Driver<E>` (one
+  session/datagram slot per parser) alike — the same parser drives
   both paths.
 - A consumer who wants callback ergonomics writes a
-  `for ev in driver.track(...) { match ev { … } }` loop and
-  dispatches inside the arms — no need for a separate
+  `driver.track_into(view, &mut events)` + `slot.drain(&mut msgs)`
+  loop and dispatches inside the arms — no need for a separate
   callback trait.
 - Single shape = single docs path, single test fixture, single
   set of guarantees. The legacy callback-factory shape that
@@ -187,8 +187,8 @@ Every async helper in netring has a sync mirror in flowscope:
 | netring (async) | flowscope (sync) |
 |-----------------|------------------|
 | `flow_stream` | `FlowDriver` |
-| `session_stream` | `FlowSessionDriver` |
-| `datagram_stream` | `FlowDatagramDriver` |
+| `session_stream` | `driver::Driver` + a session slot |
+| `datagram_stream` | `driver::Driver` + a datagram slot |
 | `conversation` | (planned; today: drive the reassembler manually) |
 
 The async path is the ergonomic one; the sync path is what

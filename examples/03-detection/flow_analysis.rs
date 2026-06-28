@@ -11,8 +11,7 @@
 //! To keep the example deterministic and dependency-free it
 //! synthesizes a few flows rather than reading a pcap; in a real
 //! pipeline the `observe_*` calls are driven from a `Driver<E>`
-//! slot drain (or a `FlowSessionDriver`) and `finalize` from the
-//! flow's `Ended` event.
+//! slot drain and `finalize` from the flow's `Ended` event.
 //!
 //! Run: `cargo run --example flow_analysis --features analysis,tls,dns,emit-eve`
 

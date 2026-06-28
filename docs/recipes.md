@@ -24,15 +24,15 @@ top-to-bottom; the first "yes" picks your API.
 2. **Parsing a protocol flowscope doesn't ship?** (HTTP/2, AMQP,
    custom framed binary, …)
    → Implement `SessionParser` for TCP or `DatagramParser` for
-   UDP. Pair with `Driver::builder(ext).session_broadcast(p)`
-   for the typed-slot path, `FlowSessionDriver::new(ext, p)`
-   for the raw `SessionEvent` stream, or netring's
+   UDP. Register it on the typed `Driver` with
+   `Driver::builder(ext).session_on_ports(p, ports)` (or
+   `datagram_on_ports` for UDP), or use netring's
    `session_stream` / `datagram_stream` for async.
 
 3. **Need per-flow user state (`S` parameter)?**
-   → `FlowSessionDriver<E, P, S>` directly. The typed `Driver`
-   wraps drivers with `S = ()`; if you need a custom `S`,
-   build the inner driver yourself.
+   → Keep that state on `FlowEntry::user` via `FlowDriver`, or
+   maintain it in your own consumer loop keyed by the flow key.
+   The typed `Driver` runs parsers with `S = ()`.
 
 4. **Want typed L7 messages from a tokio task?**
    → Move the `SlotHandle` to the task (it's `Send + Sync`
@@ -184,47 +184,11 @@ signature against each new flow's initial bytes; pins to the
 parser when it matches, gives up after the configured probe
 budget. Useful for non-standard ports.
 
-### Legacy — one driver per parser, N pcap passes
-
-Readable, fully decoupled, every parser sees every flow it might
-apply to. Loads the pcap N times.
-
-```rust,ignore
-let source = PcapFlowSource::open(&path)?;
-let mut http = FlowSessionDriver::new(FiveTuple::bidirectional(), HttpParser::default());
-let mut tls  = FlowSessionDriver::new(FiveTuple::bidirectional(), TlsParser::default());
-let mut dns  = FlowDatagramDriver::new(FiveTuple::bidirectional(), DnsUdpParser::default());
-let mut icmp = FlowDatagramDriver::new(FiveTuple::bidirectional(), IcmpParser::new());
-
-// ... feed every view to each driver ...
-```
-
-A turnkey reference at `examples/multi_protocol_monitor.rs`:
-`cargo run --features l7,pcap --example multi_protocol_monitor
--- trace.pcap`.
-
-### Performant pattern — single pass, manual port dispatch
-
-One pcap read, route by L4 + port:
-
-```rust,ignore
-for view in source.views() {
-    let view = view?;
-    let port = peek_dst_port(&view); // user-supplied helper
-    match (l4_classification(&view), port) {
-        (Some(L4Proto::Tcp), 80) | (Some(L4Proto::Tcp), 8080) => {
-            for ev in http.track(&view) { ... }
-        }
-        (Some(L4Proto::Tcp), 443) => {
-            for ev in tls.track(&view) { ... }
-        }
-        (Some(L4Proto::Udp), 53) => {
-            for ev in dns.track(&view) { ... }
-        }
-        _ => {}
-    }
-}
-```
+The typed `Driver` already does single-pass, port-routed
+dispatch: one pcap read, each parser only sees the flows matching
+its registered ports. There is no longer a separate "one driver
+per parser, N passes" shape — register every parser as a slot on
+one `Driver` as shown above.
 
 ## Cross-protocol correlation — DNS resolutions
 
@@ -623,22 +587,28 @@ cipher, and a `HandshakeOutcome` discriminant.
 ```rust,ignore
 use flowscope::tls::{HandshakeOutcome, TlsHandshakeParser};
 use flowscope::extract::FiveTuple;
-use flowscope::{FlowSessionDriver, SessionEvent};
+use flowscope::driver::Driver;
+use flowscope::PacketView;
 
-let mut driver = FlowSessionDriver::builder(FiveTuple::bidirectional())
-    .parser(TlsHandshakeParser::default())
-    .build();
+let mut builder = Driver::builder(FiveTuple::bidirectional());
+let mut tls = builder.session_on_ports(TlsHandshakeParser::default(), [443]);
+let mut driver = builder.build();
 
+let mut events = Vec::new();
+let mut handshakes = Vec::new();
 for view in source.views() {
-    for ev in driver.track(&view?) {
-        if let SessionEvent::Application { message: hs, .. } = ev {
-            println!("SNI={:?} version={:?} outcome={:?}",
-                hs.sni, hs.version, hs.outcome);
-            match hs.outcome {
-                HandshakeOutcome::Completed => { /* … */ }
-                HandshakeOutcome::AlertedByServer { description } => { /* … */ }
-                _ => {}
-            }
+    events.clear();
+    handshakes.clear();
+    driver.track_into(PacketView::from(&view?), &mut events);
+    tls.drain(&mut handshakes);
+    for m in &handshakes {
+        let hs = &m.message;
+        println!("SNI={:?} version={:?} outcome={:?}",
+            hs.sni, hs.version, hs.outcome);
+        match hs.outcome {
+            HandshakeOutcome::Completed => { /* … */ }
+            HandshakeOutcome::AlertedByServer { description } => { /* … */ }
+            _ => {}
         }
     }
 }
@@ -819,18 +789,25 @@ decomposition the consumer has to stitch.
 
 ```rust,ignore
 use flowscope::http::{HttpExchangeParser, HttpOutcome};
+use flowscope::driver::Driver;
+use flowscope::PacketView;
 
-let mut driver = FlowSessionDriver::new(ext, HttpExchangeParser::new());
+let mut builder = Driver::builder(ext);
+let mut http = builder.session_on_ports(HttpExchangeParser::new(), [80, 8080]);
+let mut driver = builder.build();
 
-for ev in driver.track(view) {
-    if let SessionEvent::Application { message: ex, .. } = ev {
-        match ex.outcome {
-            HttpOutcome::Completed if ex.is_success() => { /* 2xx */ }
-            HttpOutcome::Completed if ex.is_error()   => { /* 4xx/5xx */ }
-            HttpOutcome::NoResponse                   => { /* flow ended pending */ }
-            HttpOutcome::Reset                        => { /* RST mid-exchange */ }
-            _ => {}
-        }
+let mut events = Vec::new();
+let mut exchanges = Vec::new();
+driver.track_into(PacketView::from(&view), &mut events);
+http.drain(&mut exchanges);
+for m in &exchanges {
+    let ex = &m.message;
+    match ex.outcome {
+        HttpOutcome::Completed if ex.is_success() => { /* 2xx */ }
+        HttpOutcome::Completed if ex.is_error()   => { /* 4xx/5xx */ }
+        HttpOutcome::NoResponse                   => { /* flow ended pending */ }
+        HttpOutcome::Reset                        => { /* RST mid-exchange */ }
+        _ => {}
     }
 }
 ```
@@ -1345,12 +1322,12 @@ links should use the bare form, not the explicit-path form:
 
 ```rust,ignore
 // In your-crate/src/lib.rs:
-pub use flowscope::FlowSessionDriver;
+pub use flowscope::FlowDriver;
 
 // In your-crate's rustdoc:
-/// See [`FlowSessionDriver`] for the sync session-event driver.
+/// See [`FlowDriver`] for the sync run-to-completion driver.
 ```
 
-The explicit form `[FlowSessionDriver](flowscope::FlowSessionDriver)`
+The explicit form `[FlowDriver](flowscope::FlowDriver)`
 trips `redundant_explicit_links` under `-D warnings` because
 rustdoc resolves the bare form through the re-export anyway.

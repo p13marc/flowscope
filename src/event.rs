@@ -308,8 +308,8 @@ pub struct FlowStats {
     /// Peak buffer occupancy ever observed for the per-side
     /// reassembler. Useful for tuning
     /// [`crate::FlowTrackerConfig::max_reassembler_buffer`].
-    /// Populated by [`crate::FlowDriver`] /
-    /// [`crate::FlowSessionDriver`] on `Ended` and via live
+    /// Populated by [`crate::FlowDriver`] and the typed
+    /// [`crate::driver::Driver`] on `Ended` and via live
     /// snapshot accessors. Zero when no reassembler was attached.
     pub reassembler_high_watermark_initiator: u64,
     pub reassembler_high_watermark_responder: u64,

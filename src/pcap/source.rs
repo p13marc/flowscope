@@ -2,12 +2,16 @@ use std::fs::File;
 use std::io::{BufReader, Read};
 use std::path::Path;
 
-use crate::tracker::FlowEvents;
 #[cfg(all(feature = "session", feature = "reassembler", feature = "extractors"))]
-use crate::{DatagramParser, FlowDatagramDriver};
+use crate::DatagramParser;
+#[cfg(all(feature = "session", feature = "reassembler", feature = "extractors"))]
+use crate::datagram_driver::FlowDatagramDriver;
+#[cfg(all(feature = "session", feature = "reassembler", feature = "extractors"))]
+use crate::session_driver::FlowSessionDriver;
+use crate::tracker::FlowEvents;
 use crate::{FlowEvent, FlowExtractor, FlowTracker, Timestamp};
 #[cfg(all(feature = "session", feature = "reassembler"))]
-use crate::{FlowSessionDriver, SessionEvent, SessionParser};
+use crate::{SessionEvent, SessionParser};
 
 use pcap_file::pcap::PcapReader;
 
@@ -142,7 +146,7 @@ impl<R: Read> PcapFlowSource<R> {
     /// through `extractor` + a per-flow `parser`, yielding typed L7
     /// [`SessionEvent`]s. The end-of-input flush is automatic — when
     /// the pcap is exhausted the iterator drains every still-open
-    /// flow via [`FlowSessionDriver::finish`].
+    /// flow via the internal session engine's finish step.
     ///
     /// ```no_run
     /// use flowscope::extract::FiveTuple;

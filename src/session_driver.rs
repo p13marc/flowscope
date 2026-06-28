@@ -1,44 +1,15 @@
-//! Sync companion to netring's async `session_stream`. Wraps a
-//! [`FlowDriver`] and adds per-flow [`SessionParser`] dispatch,
-//! yielding [`SessionEvent`]s.
+//! Crate-internal sync session engine. Wraps a [`FlowDriver`] and
+//! adds per-flow [`SessionParser`] dispatch, translating the
+//! tracker's `FlowEvent`s into [`SessionEvent`]s by feeding
+//! reassembled bytes to the per-flow parser.
 //!
-//! Use this when you want typed L7 messages from a synchronous loop
-//! (offline pcap replay, embedded use, non-tokio CLI tools). The
-//! async equivalent lives in
-//! `netring::FlowStream::session_stream(parser)`.
-//!
-//! # Example
-//!
-//! ```no_run
-//! use flowscope::extract::FiveTuple;
-//! use flowscope::pcap::PcapFlowSource;
-//! use flowscope::{FlowSessionDriver, SessionEvent, SessionParser, Timestamp};
-//!
-//! #[derive(Default, Clone)]
-//! struct EchoParser;
-//! impl SessionParser for EchoParser {
-//!     type Message = Vec<u8>;
-//!     fn feed_initiator(&mut self, bytes: &[u8], _ts: Timestamp, out: &mut Vec<Vec<u8>>) {
-//!         out.push(bytes.to_vec());
-//!     }
-//!     fn feed_responder(&mut self, bytes: &[u8], _ts: Timestamp, out: &mut Vec<Vec<u8>>) {
-//!         out.push(bytes.to_vec());
-//!     }
-//! }
-//!
-//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
-//! let mut driver = FlowSessionDriver::new(FiveTuple::bidirectional(), EchoParser);
-//! for view in PcapFlowSource::open("trace.pcap")?.views() {
-//!     let view = view?;
-//!     for ev in driver.track(&view) {
-//!         match ev {
-//!             SessionEvent::Application { message, .. } => println!("{} bytes", message.len()),
-//!             _ => {}
-//!         }
-//!     }
-//! }
-//! # Ok(()) }
-//! ```
+//! This was the public `FlowSessionDriver` through 0.19; it was
+//! demoted to a private engine in 0.20 (#99) — the typed
+//! [`crate::driver::Driver`] plus one session slot is the supported
+//! single-parser surface now. The engine survives because the typed
+//! slots ([`crate::driver`]) and the offline [`crate::pcap`] source
+//! both need parser dispatch, which `FlowDriver` alone does not
+//! provide.
 
 use std::{collections::HashMap, hash::Hash};
 
@@ -51,7 +22,7 @@ use crate::{
     flow_driver::FlowDriver,
     reassembler::BufferedReassemblerFactory,
     session::{SessionEvent, SessionParser},
-    tracker::{FlowTracker, FlowTrackerConfig},
+    tracker::FlowTrackerConfig,
     view::PacketView,
 };
 
@@ -74,10 +45,6 @@ fn truncate_reason(s: &str) -> String {
     owned
 }
 
-/// Build a `BufferedReassemblerFactory` honouring the tracker
-/// config's `max_reassembler_buffer` / `overflow_policy` fields.
-/// Factored out so all four `FlowSessionDriver` constructors share
-/// the wiring.
 /// Boxed per-flow parser factory closure. Each new flow gets its
 /// parser by calling this on the flow's key.
 type ParserFactory<K, P> = Box<dyn FnMut(&K) -> P + Send + Sync>;
@@ -95,21 +62,18 @@ fn build_reassembler_factory(config: &FlowTrackerConfig) -> BufferedReassemblerF
     f
 }
 
-/// Sync session-event driver. Wraps a [`FlowDriver`] with
-/// [`BufferedReassemblerFactory`] and adds per-flow
+/// Crate-internal sync session-event engine. Wraps a [`FlowDriver`]
+/// with [`BufferedReassemblerFactory`] and adds per-flow
 /// [`SessionParser`] dispatch.
 ///
 /// Type parameters:
 /// - `E` — the flow extractor.
-/// - `P` — the session parser; `P: Clone` is required so the driver
-///   can mint per-flow instances by cloning a template (use
-///   [`Self::new`]). The bound is dropped on the factory-based
-///   constructor (see plan 58).
-/// - `S` — optional per-flow user state, defaulting to `()`. Use
-///   [`Self::new`] / [`Self::with_config`] for `S = ()` (no
-///   annotation required); use [`Self::with_state`] /
-///   [`Self::with_state_init`] when per-flow state is needed.
-pub struct FlowSessionDriver<E, P, S = ()>
+/// - `P` — the session parser; `P: Clone` is required so the engine
+///   can mint per-flow instances by cloning a template
+///   (use [`Self::new`]).
+/// - `S` — per-flow user state, fixed at `()` since 0.20 (the
+///   stateful constructors were dropped with the public surface).
+pub(crate) struct FlowSessionDriver<E, P, S = ()>
 where
     E: FlowExtractor,
     E::Key: Hash + Eq + Clone + Send + Sync + 'static,
@@ -135,6 +99,11 @@ where
 {
     /// Construct with default tracker config and `S = ()`. `parser`
     /// is cloned once per flow to give each session a fresh instance.
+    ///
+    /// Convenience entry used by the offline [`crate::pcap`] source
+    /// and the unit tests; the typed-driver slots build via
+    /// [`Self::with_config`].
+    #[cfg(any(feature = "pcap", test))]
     pub fn new(extractor: E, parser: P) -> Self {
         Self::with_config(extractor, parser, FlowTrackerConfig::default())
     }
@@ -152,156 +121,6 @@ where
     }
 }
 
-// Factory path — `S = ()`. `P` doesn't need `Clone`; each flow's
-// parser is minted by the caller-supplied closure. Use for parsers
-// with expensive setup (compiled regex sets, ML model weights, …)
-// where you'd rather share state via `Arc` than clone a template.
-impl<E, P> FlowSessionDriver<E, P, ()>
-where
-    E: FlowExtractor,
-    E::Key: Hash + Eq + Clone + Send + Sync + 'static,
-    P: SessionParser + Send + Sync + 'static,
-{
-    /// Construct with default tracker config and a per-flow parser
-    /// factory closure. Drops the `P: Clone` requirement of [`Self::new`].
-    pub fn with_factory<F>(extractor: E, factory: F) -> Self
-    where
-        F: FnMut(&E::Key) -> P + Send + Sync + 'static,
-    {
-        Self::with_factory_and_config(extractor, factory, FlowTrackerConfig::default())
-    }
-
-    /// Construct with explicit tracker config and a per-flow parser
-    /// factory closure.
-    pub fn with_factory_and_config<F>(extractor: E, factory: F, config: FlowTrackerConfig) -> Self
-    where
-        F: FnMut(&E::Key) -> P + Send + Sync + 'static,
-    {
-        let reassembler = build_reassembler_factory(&config);
-        Self {
-            driver: FlowDriver::with_config(extractor, reassembler, config),
-            parser_factory: Box::new(factory),
-            parsers: HashMap::with_hasher(RandomState::new()),
-        }
-    }
-}
-
-// Stateful template-parser path — `S: Default`, `P: Clone`.
-impl<E, P, S> FlowSessionDriver<E, P, S>
-where
-    E: FlowExtractor,
-    E::Key: Hash + Eq + Clone + Send + Sync + 'static,
-    P: SessionParser + Clone + Send + Sync + 'static,
-    S: Default + Send + 'static,
-{
-    /// Construct with default tracker config and per-flow state
-    /// initialised via `S::default()`.
-    pub fn with_state(extractor: E, parser: P) -> Self {
-        Self::with_state_and_config(extractor, parser, FlowTrackerConfig::default())
-    }
-
-    /// Construct with explicit tracker config and per-flow state
-    /// initialised via `S::default()`.
-    pub fn with_state_and_config(extractor: E, parser: P, config: FlowTrackerConfig) -> Self {
-        let reassembler = build_reassembler_factory(&config);
-        Self {
-            driver: FlowDriver::with_state_and_config(extractor, reassembler, config),
-            parser_factory: Box::new(move |_key| parser.clone()),
-            parsers: HashMap::with_hasher(RandomState::new()),
-        }
-    }
-}
-
-// Generic path — `S: Send + 'static` only. Custom state init +
-// every non-construction method. `P: Clone` for the
-// template-parser stateful ctors; the factory variants live on
-// the impl block below.
-impl<E, P, S> FlowSessionDriver<E, P, S>
-where
-    E: FlowExtractor,
-    E::Key: Hash + Eq + Clone + Send + Sync + 'static,
-    P: SessionParser + Clone + Send + Sync + 'static,
-    S: Send + 'static,
-{
-    /// Construct with default tracker config and a custom per-flow
-    /// state initialiser. Use when `S` isn't `Default` or when state
-    /// should be derived from the flow key.
-    pub fn with_state_init<G>(extractor: E, parser: P, init: G) -> Self
-    where
-        G: FnMut(&E::Key) -> S + Send + Sync + 'static,
-    {
-        Self::with_state_init_and_config(extractor, parser, FlowTrackerConfig::default(), init)
-    }
-
-    /// Construct with explicit tracker config and a custom per-flow
-    /// state initialiser.
-    pub fn with_state_init_and_config<G>(
-        extractor: E,
-        parser: P,
-        config: FlowTrackerConfig,
-        init: G,
-    ) -> Self
-    where
-        G: FnMut(&E::Key) -> S + Send + Sync + 'static,
-    {
-        let reassembler = build_reassembler_factory(&config);
-        Self {
-            driver: FlowDriver::with_state_init_and_config(extractor, reassembler, config, init),
-            parser_factory: Box::new(move |_key| parser.clone()),
-            parsers: HashMap::with_hasher(RandomState::new()),
-        }
-    }
-}
-
-// Stateful factory path — `S: Send + 'static`, no `P: Clone`.
-impl<E, P, S> FlowSessionDriver<E, P, S>
-where
-    E: FlowExtractor,
-    E::Key: Hash + Eq + Clone + Send + Sync + 'static,
-    P: SessionParser + Send + Sync + 'static,
-    S: Send + 'static,
-{
-    /// Construct with default tracker config, a per-flow parser
-    /// factory, and a custom per-flow state initialiser.
-    pub fn with_state_factory<FP, FS>(extractor: E, parser_factory: FP, state_init: FS) -> Self
-    where
-        FP: FnMut(&E::Key) -> P + Send + Sync + 'static,
-        FS: FnMut(&E::Key) -> S + Send + Sync + 'static,
-    {
-        Self::with_state_factory_and_config(
-            extractor,
-            parser_factory,
-            state_init,
-            FlowTrackerConfig::default(),
-        )
-    }
-
-    /// Construct with explicit tracker config, a per-flow parser
-    /// factory, and a custom per-flow state initialiser.
-    pub fn with_state_factory_and_config<FP, FS>(
-        extractor: E,
-        parser_factory: FP,
-        state_init: FS,
-        config: FlowTrackerConfig,
-    ) -> Self
-    where
-        FP: FnMut(&E::Key) -> P + Send + Sync + 'static,
-        FS: FnMut(&E::Key) -> S + Send + Sync + 'static,
-    {
-        let reassembler = build_reassembler_factory(&config);
-        Self {
-            driver: FlowDriver::with_state_init_and_config(
-                extractor,
-                reassembler,
-                config,
-                state_init,
-            ),
-            parser_factory: Box::new(parser_factory),
-            parsers: HashMap::with_hasher(RandomState::new()),
-        }
-    }
-}
-
 // All non-construction methods — apply to every `S` and every
 // parser-source variant (no `P: Clone` bound).
 impl<E, P, S> FlowSessionDriver<E, P, S>
@@ -311,43 +130,6 @@ where
     P: SessionParser + Send + Sync + 'static,
     S: Send + 'static,
 {
-    /// Opt in to forwarding [`SessionEvent::FlowAnomaly`] /
-    /// [`SessionEvent::TrackerAnomaly`] events through the
-    /// stream. Default: `false`. Mirrors
-    /// [`FlowDriver::with_emit_anomalies`].
-    ///
-    /// Anomalies are coalesced per (flow, side, kind) per tick by
-    /// the underlying [`FlowDriver`].
-    pub fn with_emit_anomalies(mut self, enable: bool) -> Self {
-        self.driver = self.driver.with_emit_anomalies(enable);
-        self
-    }
-
-    /// Set a per-key idle-timeout override on the underlying
-    /// tracker. Mirrors [`FlowDriver::with_idle_timeout_fn`].
-    pub fn with_idle_timeout_fn<G>(mut self, f: G) -> Self
-    where
-        G: Fn(&E::Key, Option<crate::L4Proto>) -> Option<std::time::Duration>
-            + Send
-            + Sync
-            + 'static,
-    {
-        self.driver = self.driver.with_idle_timeout_fn(f);
-        self
-    }
-
-    /// Filter incoming `PacketView`s through a content-hash
-    /// [`crate::Dedup`]. Mirrors [`FlowDriver::with_dedup`].
-    pub fn with_dedup(mut self, dedup: crate::dedup::Dedup) -> Self {
-        self.driver = self.driver.with_dedup(dedup);
-        self
-    }
-
-    /// Borrow the dedup state.
-    pub fn dedup(&self) -> Option<&crate::dedup::Dedup> {
-        self.driver.dedup()
-    }
-
     /// Opt in to strictly non-decreasing timestamps. Mirrors
     /// [`FlowDriver::with_monotonic_timestamps`].
     pub fn with_monotonic_timestamps(mut self, enable: bool) -> Self {
@@ -356,6 +138,11 @@ where
     }
 
     /// Drive one packet. Returns zero or more [`SessionEvent`]s.
+    ///
+    /// Allocating convenience used by the offline [`crate::pcap`]
+    /// source and the unit tests; the typed-driver slots use the
+    /// zero-alloc [`Self::track_into`].
+    #[cfg(any(feature = "pcap", test))]
     pub fn track<'v>(
         &mut self,
         view: impl Into<PacketView<'v>>,
@@ -484,23 +271,6 @@ where
         let driver_events = self.driver.force_close(key, now);
         out.extend(self.translate_events(&driver_events));
         out
-    }
-
-    /// Borrow the inner tracker (for stats, introspection).
-    pub fn tracker(&self) -> &FlowTracker<E, S> {
-        self.driver.tracker()
-    }
-
-    /// Borrow the inner tracker mutably.
-    pub fn tracker_mut(&mut self) -> &mut FlowTracker<E, S> {
-        self.driver.tracker_mut()
-    }
-
-    /// Iterate `(key, FlowStats)` for every live flow with
-    /// reassembler diagnostics patched in. Delegates to the inner
-    /// [`FlowDriver::snapshot_flow_stats`].
-    pub fn snapshot_flow_stats(&self) -> impl Iterator<Item = (E::Key, crate::FlowStats)> + '_ {
-        self.driver.snapshot_flow_stats()
     }
 
     /// Map a tick's `FlowEvent`s to `SessionEvent`s, draining
@@ -753,10 +523,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        AnomalyKind,
-        extract::{FiveTuple, parse::test_frames::ipv4_tcp},
-    };
+    use crate::extract::{FiveTuple, parse::test_frames::ipv4_tcp};
 
     fn view(frame: &[u8], sec: u32) -> PacketView<'_> {
         PacketView::new(frame, Timestamp::new(sec, 0))
@@ -777,56 +544,6 @@ mod tests {
             fn feed_responder(&mut self, _b: &[u8], _ts: Timestamp, _out: &mut Vec<()>) {}
         }
         let _d = FlowSessionDriver::new(FiveTuple::bidirectional(), ConfigParser { _limit: 4096 });
-    }
-
-    /// Plan 38: `FlowSessionDriver::with_state_init` threads `S`
-    /// through to the inner tracker.
-    #[test]
-    fn with_state_init_threads_s() {
-        #[derive(Debug)]
-        struct MyState(u64);
-        let d: FlowSessionDriver<_, _, MyState> = FlowSessionDriver::with_state_init(
-            FiveTuple::bidirectional(),
-            LineParser::default(),
-            |_key| MyState(7),
-        );
-        let tracker: &FlowTracker<FiveTuple, MyState> = d.tracker();
-        let states: Vec<u64> = tracker.iter_active().map(|f| f.user.0).collect();
-        let _ = states;
-    }
-
-    /// Plan 58: `with_factory` works with a `!Clone` parser.
-    #[test]
-    fn with_factory_accepts_non_clone_parser() {
-        // A parser that owns a *non-Clone* resource (`Box<u32>` —
-        // just a stand-in for a real expensive-setup type).
-        struct ExpensiveParser {
-            _heavy: Box<u32>,
-        }
-        impl SessionParser for ExpensiveParser {
-            type Message = ();
-            fn feed_initiator(&mut self, _b: &[u8], _ts: Timestamp, _out: &mut Vec<()>) {}
-            fn feed_responder(&mut self, _b: &[u8], _ts: Timestamp, _out: &mut Vec<()>) {}
-        }
-        // Wouldn't compile with FlowSessionDriver::new (needs Clone).
-        let mut d =
-            FlowSessionDriver::with_factory(FiveTuple::bidirectional(), |_k: &_| ExpensiveParser {
-                _heavy: Box::new(42),
-            });
-        // Drive a packet to make sure the factory is callable.
-        let _ = d.track(view(b"", 0));
-    }
-
-    /// Plan 38: `with_state` works for any `S: Default` parser.
-    #[test]
-    fn with_state_uses_default() {
-        #[derive(Debug, Default)]
-        struct Counter(u32);
-        let d: FlowSessionDriver<_, _, Counter> =
-            FlowSessionDriver::with_state(FiveTuple::bidirectional(), LineParser::default());
-        let tracker: &FlowTracker<FiveTuple, Counter> = d.tracker();
-        let counts: Vec<u32> = tracker.iter_active().map(|f| f.user.0).collect();
-        let _ = counts;
     }
 
     /// Tiny line-oriented parser: emits one Vec<u8> per newline-terminated frame.
@@ -1046,51 +763,6 @@ mod tests {
     }
 
     #[test]
-    fn anomaly_event_forwarded_when_emit_anomalies_on() {
-        let cfg = FlowTrackerConfig {
-            max_reassembler_buffer: Some(64),
-            ..FlowTrackerConfig::default()
-        };
-        let mut d =
-            FlowSessionDriver::with_config(FiveTuple::bidirectional(), LineParser::default(), cfg)
-                .with_emit_anomalies(true);
-
-        let mut events = Vec::new();
-        for f in build_3whs() {
-            events.extend(d.track(view(&f, 0)));
-        }
-        let mac = [0u8; 6];
-        let big = vec![b'A'; 200];
-        let data = ipv4_tcp(
-            mac,
-            mac,
-            [10, 0, 0, 1],
-            [10, 0, 0, 2],
-            1234,
-            80,
-            1001,
-            5001,
-            0x18,
-            &big,
-        );
-        events.extend(d.track(view(&data, 0)));
-
-        let buffer_overflow = events.iter().find(|e| {
-            matches!(
-                e,
-                SessionEvent::FlowAnomaly {
-                    kind: AnomalyKind::BufferOverflow { .. },
-                    ..
-                }
-            )
-        });
-        assert!(
-            buffer_overflow.is_some(),
-            "expected a BufferOverflow anomaly forwarded"
-        );
-    }
-
-    #[test]
     fn no_anomaly_events_by_default() {
         let cfg = FlowTrackerConfig {
             max_reassembler_buffer: Some(64),
@@ -1188,71 +860,6 @@ mod tests {
     }
 
     #[test]
-    fn parser_poison_with_anomalies_emits_parse_error_anomaly() {
-        let mut d = FlowSessionDriver::new(FiveTuple::bidirectional(), PoisonAfterBytes::default())
-            .with_emit_anomalies(true);
-        let mut events = Vec::new();
-        for f in build_3whs() {
-            events.extend(d.track(view(&f, 0)));
-        }
-        let mac = [0u8; 6];
-        let data = ipv4_tcp(
-            mac,
-            mac,
-            [10, 0, 0, 1],
-            [10, 0, 0, 2],
-            1234,
-            80,
-            1001,
-            5001,
-            0x18,
-            b"0123456789",
-        );
-        events.extend(d.track(view(&data, 0)));
-        let (anomaly_idx, _) = events
-            .iter()
-            .enumerate()
-            .find(|(_, e)| {
-                matches!(
-                    e,
-                    SessionEvent::FlowAnomaly {
-                        kind: AnomalyKind::SessionParseError { .. },
-                        ..
-                    }
-                )
-            })
-            .expect("ParseError anomaly");
-        let closed_idx = events
-            .iter()
-            .position(|e| {
-                matches!(
-                    e,
-                    SessionEvent::Closed {
-                        reason: EndReason::ParseError,
-                        ..
-                    }
-                )
-            })
-            .expect("ParseError Closed");
-        assert!(
-            anomaly_idx < closed_idx,
-            "anomaly must precede Closed (cause then effect)"
-        );
-        // Reason string is forwarded + truncated.
-        match &events[anomaly_idx] {
-            SessionEvent::FlowAnomaly {
-                kind: AnomalyKind::SessionParseError { reason, side },
-                ..
-            } => {
-                assert_eq!(*side, FlowSide::Initiator);
-                assert!(reason.as_ref().is_some());
-                assert!(reason.as_ref().unwrap().contains("poisoned"));
-            }
-            _ => unreachable!(),
-        }
-    }
-
-    #[test]
     fn non_poisoning_parser_unaffected_by_poison_path() {
         // LineParser never poisons; existing tests should still
         // produce no ParseError events.
@@ -1337,42 +944,6 @@ mod tests {
             })
             .expect("Closed event");
         assert_eq!(closed, EndReason::ParserDone);
-    }
-
-    #[test]
-    fn is_done_emits_no_anomaly() {
-        // ParserDone is a clean close — no FlowAnomaly should be
-        // synthesised even when emit_anomalies is on.
-        let mut d = FlowSessionDriver::new(FiveTuple::bidirectional(), DoneAfterOne::default())
-            .with_emit_anomalies(true);
-        let mut events = Vec::new();
-        for f in build_3whs() {
-            events.extend(d.track(view(&f, 0)));
-        }
-        let mac = [0u8; 6];
-        let data = ipv4_tcp(
-            mac,
-            mac,
-            [10, 0, 0, 1],
-            [10, 0, 0, 2],
-            1234,
-            80,
-            1001,
-            5001,
-            0x18,
-            b"hello",
-        );
-        events.extend(d.track(view(&data, 0)));
-        assert!(
-            !events.iter().any(|e| matches!(
-                e,
-                SessionEvent::FlowAnomaly {
-                    kind: AnomalyKind::SessionParseError { .. },
-                    ..
-                }
-            )),
-            "ParserDone close should not emit a SessionParseError anomaly"
-        );
     }
 
     /// Parser that returns `true` from BOTH is_poisoned and
@@ -1470,57 +1041,6 @@ mod tests {
             .filter(|e| matches!(e, SessionEvent::Closed { .. }))
             .count();
         assert_eq!(closed_count, 1, "expected exactly one Closed event");
-    }
-
-    #[test]
-    fn eviction_pressure_anomaly_has_no_key() {
-        let cfg = FlowTrackerConfig {
-            max_flows: 2,
-            ..FlowTrackerConfig::default()
-        };
-        let mut d =
-            FlowSessionDriver::with_config(FiveTuple::bidirectional(), LineParser::default(), cfg)
-                .with_emit_anomalies(true);
-        let mut events = Vec::new();
-        for src_port in [1234u16, 1235, 1236] {
-            let frame = ipv4_tcp(
-                [0; 6],
-                [0; 6],
-                [10, 0, 0, 1],
-                [10, 0, 0, 2],
-                src_port,
-                80,
-                0,
-                0,
-                0x02,
-                b"",
-            );
-            events.extend(d.track(view(&frame, 0)));
-        }
-        let pressure = events.iter().find(|e| {
-            matches!(
-                e,
-                SessionEvent::TrackerAnomaly {
-                    kind: AnomalyKind::FlowTableEvictionPressure { .. },
-                    ..
-                }
-            )
-        });
-        let pressure = pressure.expect("expected an eviction-pressure anomaly");
-        match pressure {
-            SessionEvent::TrackerAnomaly {
-                kind:
-                    AnomalyKind::FlowTableEvictionPressure {
-                        evicted_in_tick, ..
-                    },
-                ..
-            } => {
-                // TrackerAnomaly carries no key — its absence in the
-                // destructure pattern is the assertion.
-                assert_eq!(*evicted_in_tick, 1);
-            }
-            _ => unreachable!(),
-        }
     }
 
     #[test]
