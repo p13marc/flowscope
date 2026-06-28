@@ -433,6 +433,12 @@ impl<E: FlowExtractor, S: Send + 'static> FlowTracker<E, S> {
         } = extracted;
         let len = view.frame.len();
         let ts = view.timestamp;
+        // Physical capture leg (issue #120). `0` is the documented
+        // "unused" sentinel (`RxMetadata::source_idx`), so a zero here
+        // means "no leg info" — pcap / synthetic sources leave the
+        // per-orientation bindings `None`. Read before the `&mut entry`
+        // borrow below (it's `Copy`).
+        let source_idx = view.rx_metadata.source_idx;
 
         // ── lookup / insert ──────────────────────────────────────
         // Hot-cache fast path: when the same key reappears
@@ -518,6 +524,29 @@ impl<E: FlowExtractor, S: Send + 'static> FlowTracker<E, S> {
             .expect("flow entry just created or pre-existing");
 
         let side = entry.side_for(orientation);
+
+        // ── capture-leg binding (issue #120) ─────────────────────
+        // Fold the physical leg to a per-canonical-orientation
+        // attribute (IPFIX biflow-merge model), keeping the flow
+        // merged. First non-zero `source_idx` for an orientation binds
+        // it; a later *different* non-zero value flips the
+        // inconsistency IOC without overwriting the original binding.
+        if source_idx != 0 {
+            let current = match orientation {
+                Orientation::Forward => entry.stats.source_idx_forward,
+                Orientation::Reverse => entry.stats.source_idx_reverse,
+            };
+            match current {
+                None => match orientation {
+                    Orientation::Forward => entry.stats.source_idx_forward = Some(source_idx),
+                    Orientation::Reverse => entry.stats.source_idx_reverse = Some(source_idx),
+                },
+                Some(bound) if bound != source_idx => {
+                    entry.stats.capture_leg_inconsistent = true;
+                }
+                _ => {}
+            }
+        }
 
         // ── reassembler dispatch hook ────────────────────────────
         // Called inline before any events are queued. The callback

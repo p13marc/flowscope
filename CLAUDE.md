@@ -85,11 +85,18 @@ The largest pre-1.0 breaking batch yet. Three themes:
   three direction axes (logical role / canonical orientation /
   physical capture leg) are documented in `docs/concepts.md` →
   "Direction, orientation, and capture leg" (`#119`) with a
-  tap-merge recipe in `docs/recipes.md`. Phase 2 (#120, per-
-  direction `source_idx`) deferred.
+  tap-merge recipe in `docs/recipes.md`. Phase 2 (`#120`,
+  merge-preserving physical leg) shipped: `FlowStats`
+  `source_idx_forward`/`source_idx_reverse` +
+  `source_idx_for(orientation)` fold the capture leg
+  (`RxMetadata::source_idx`) to a per-`Orientation` binding on a
+  merged flow (IPFIX biflow-merge model), with
+  `capture_leg_inconsistent` as the tap-miswire IOC. Per-packet
+  leg fidelity (`#121`) + SYN-based initiator (`#122`) still
+  open.
 
 Test count after the convergence + strong-typing work:
-**1756 passing** (up from 1541 mid-0.18). Zero clippy warnings
+**1759 passing** (up from 1541 mid-0.18). Zero clippy warnings
 under `--all-features --all-targets -D warnings`, zero rustdoc
 warnings. New `parser_kind.rs` wiring + `src/pcap/pulses.rs` +
 `tests/orientation_axis.rs`. Migration recipes in
@@ -809,6 +816,7 @@ src/
 │                                # FlowStats::throughput_bps{,_pps,_for,_pps_for} safe-divide accessors (plan 173, 0.14.0)
 │                                # EventMask bitflags — tracker load-shedding (issue #79, 0.20.0)
 │                                # FlowEvent::{Started,Packet} carry orientation; FlowStats::initiator_orientation + side_for/orientation_for (issue #118, 0.20.0)
+│                                # FlowStats::source_idx_{forward,reverse} + source_idx_for + capture_leg_inconsistent — per-direction capture leg (issue #120, 0.20.0)
 ├── history.rs                   # HistoryString (Zeek-style ShAdaFf)
 ├── tcp_state.rs                 # TCP state machine (transitions + idle policy)
 ├── tracker.rs                   # FlowTracker<E, S>     (manual_tick alias added in 50.4)
@@ -976,8 +984,9 @@ The legacy `HttpFactory` / `TlsFactory` callback-handler shape
 - `tests/orientation_axis.rs` — canonical `Orientation` on
   `Started`/`Packet` is stable across arrival order while
   `FlowSide` flips under a tap-merge race; `FlowStats`
-  `side_for`/`orientation_for` axis translation (issue #118,
-  0.20.0).
+  `side_for`/`orientation_for` axis translation (issue #118);
+  per-direction capture-leg binding + `capture_leg_inconsistent`
+  IOC on a merged flow (issue #120, 0.20.0).
 - `tests/error_chain.rs` — unified `flowscope::Error` source
   chain across pcap I/O, ICMP, DNS (plan 96, 0.9.0).
 - `tests/quick_wins.rs` — Timestamp/FlowStats/EndReason/
