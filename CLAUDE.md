@@ -21,6 +21,63 @@ the core.
 
 ## Implementation Status
 
+**0.20.0 cycle** (driver/event convergence + 1.0-prep
+strong-typing sweep, in progress — unreleased).
+
+The largest pre-1.0 breaking batch yet. Three themes:
+
+- **Driver/event convergence (`#84`, closed).** The public
+  driver shape settles on ONE typed `driver::Driver<E>`:
+  register a session/datagram slot per parser
+  (`session_on_ports` / `datagram_on_ports`), drain typed
+  messages from a `SlotHandle`, consume flow lifecycle via
+  `Event<K>` (`track_into` / `run_pcap`). The per-parser
+  `FlowSessionDriver` / `FlowDatagramDriver` engines and the
+  `SessionEvent` carrier went crate-private (`#98` / `#99` /
+  `#100`); `DeferredDriverBuilder` / `Driver::deferred()` /
+  `build_with()` and `PcapFlowSource::sessions()` /
+  `datagrams()` were demoted/removed. `Event<K>` gained
+  emit-readiness + a shared `SlotDrain` trait across
+  `SlotHandle` / `BroadcastSlotHandle` (`#97` / `#101`). The
+  low-level `FlowDriver` stays. `netring` migration tracked in
+  netring`#107`.
+- **1.0-prep strong-typing sweep.**
+  - `SessionParser` / `DatagramParser::parser_kind()` now
+    return the typed `ParserKind` enum (default
+    `Unspecified`, was `""`); the enum grew to 26 built-in
+    variants + `Other(&'static str)` and threads through
+    `Event::ParserClosed` / `SlotHandle` / `SlotDrain` /
+    `BroadcastSlotHandle` (`#109`). Custom string serde keeps
+    emitted `parser_kind` JSON + metric labels byte-for-byte
+    unchanged.
+  - `Event<K>` variants drop the redundant `Flow` prefix to
+    match `FlowEvent<K>` (`FlowStarted`→`Started`, …; `#110`).
+  - Offline pcap surface: the strongly-typed per-parser
+    `*_from_pcap` helpers are KEPT (un-deprecated; `#86` /
+    `#108`) as the high-level front door over the generic
+    `pcap::session_messages::<P>` / `datagram_messages::<P>`
+    building blocks, plus a new unified lifecycle-and-message
+    `pcap::Pulse<K, M>` stream via `session_pulses::<P>` /
+    `datagram_pulses::<P>` (`#111`).
+  - `#[must_use]` on `DriverBuilder` / `RunPcap` /
+    `SlotHandle` / `BroadcastSlotHandle`.
+  - Fixed a latent `<parser>,pcap` build gap — `quic` / `dns`
+    / `kerberos` / `smb` / `ldap` now pull `reassembler` so
+    their pcap helpers compile; six new `<parser>,pcap` CI
+    rows pin it.
+- **Carried pre-1.0 breaks (landed earlier in the cycle):**
+  `parse()`→`Result<T, ParseError>` (`#85`), EVE `flow_hash`
+  → canonical `community_id` (`#88`), `#[non_exhaustive]`
+  project-wide (`#78`), and the `l7` / `full` feature-umbrella
+  correction + coarse tiers (`#87`).
+
+Test count after the convergence + strong-typing work:
+**1753 passing** (up from 1541 mid-0.18). Zero clippy warnings
+under `--all-features --all-targets -D warnings`, zero rustdoc
+warnings. New `parser_kind.rs` wiring + `src/pcap/pulses.rs`.
+Migration recipes in `docs/migration-0.19-to-0.20.md`. Not yet
+published to crates.io.
+
 **0.18.0 cycle** (Tier-2 protocol completion + ML features +
 IPFIX self-sufficiency, in progress).
 
