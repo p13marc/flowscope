@@ -14,7 +14,7 @@ use lru::LruCache;
 use smallvec::SmallVec;
 
 use crate::Timestamp;
-use crate::event::{EndReason, FlowEvent, FlowSide, FlowState, FlowStats};
+use crate::event::{EndReason, EventMask, FlowEvent, FlowSide, FlowState, FlowStats};
 use crate::extractor::{Extracted, FlowExtractor, L4Proto, Orientation};
 use crate::history::{HistoryString, push_for_flags};
 use crate::tcp_state;
@@ -164,6 +164,17 @@ pub struct FlowTrackerConfig {
     /// active/idle accounting entirely (saves a few cycles
     /// per packet).
     pub active_idle_threshold: Option<Duration>,
+    /// Source-level event-variant suppression for load-shedding
+    /// (issue #79). Any [`FlowEvent`] variant whose bit is set here
+    /// is never *constructed* by the tracker (or by drivers that
+    /// honour the mask) — most usefully [`EventMask::PACKET`], the
+    /// highest-volume variant. Accounting keeps running, so flows
+    /// still finalize correctly; only emission is shed.
+    ///
+    /// Default [`EventMask::empty()`] — suppresses nothing. Set via
+    /// [`Self::with_event_filter`]. For a *total*, episodic shed see
+    /// [`FlowTracker::pause_events`].
+    pub suppress_events: EventMask,
 }
 
 impl Default for FlowTrackerConfig {
@@ -184,7 +195,36 @@ impl Default for FlowTrackerConfig {
             reassembly_memcap: None,
             reassembly_memcap_policy: crate::event::MemcapPolicy::Ignore,
             active_idle_threshold: Some(Duration::from_secs(1)),
+            suppress_events: EventMask::empty(),
         }
+    }
+}
+
+impl FlowTrackerConfig {
+    /// Set the [`EventMask`] of [`FlowEvent`] variants the tracker
+    /// should never emit — a source-level load-shedding knob
+    /// (issue #79).
+    ///
+    /// Suppressed events are never constructed; accounting (TCP state
+    /// machine, byte/packet counters, idle bookkeeping) keeps running
+    /// so flows finalize correctly. Pure, additive, no behaviour
+    /// change when left at the default [`EventMask::empty()`].
+    ///
+    /// ```
+    /// use flowscope::{FlowTrackerConfig, EventMask};
+    /// // Shed the per-packet stream under sustained load.
+    /// let cfg = FlowTrackerConfig::default()
+    ///     .with_event_filter(EventMask::PACKET | EventMask::TICK);
+    /// ```
+    ///
+    /// For a *total*, episodic shed (stop emitting everything for the
+    /// duration of an overload spike) use
+    /// [`FlowTracker::pause_events`] / [`FlowTracker::resume_events`]
+    /// instead.
+    #[must_use]
+    pub fn with_event_filter(mut self, suppress: EventMask) -> Self {
+        self.suppress_events = suppress;
+        self
     }
 }
 
@@ -235,6 +275,12 @@ pub struct FlowTracker<E: FlowExtractor, S = ()> {
     /// `track()` runs an implicit sweep whenever
     /// `view.timestamp.saturating_sub(last_sweep_ts) >= d`.
     last_sweep_ts: Option<Timestamp>,
+    /// Runtime total-shed toggle (issue #79). When `true`, no
+    /// [`FlowEvent`] is emitted at all — accounting still runs so
+    /// flows finalize correctly when the episode ends. Flipped by
+    /// [`Self::pause_events`] / [`Self::resume_events`]; orthogonal
+    /// to the per-variant [`FlowTrackerConfig::suppress_events`] mask.
+    events_paused: bool,
 }
 
 impl<E: FlowExtractor, S: Send + 'static> FlowTracker<E, S> {
@@ -262,6 +308,7 @@ impl<E: FlowExtractor, S: Send + 'static> FlowTracker<E, S> {
             hot: None,
             idle_timeout_fn: None,
             last_sweep_ts: None,
+            events_paused: false,
         }
     }
 
@@ -284,6 +331,49 @@ impl<E: FlowExtractor, S: Send + 'static> FlowTracker<E, S> {
     pub fn with_auto_sweep(mut self, interval: Duration) -> Self {
         self.config.auto_sweep_interval = Some(interval);
         self
+    }
+
+    /// Stop emitting **all** [`FlowEvent`]s until [`Self::resume_events`]
+    /// — the "shunt mode" for an overload episode (issue #79).
+    ///
+    /// Accounting keeps running: the TCP state machine, byte/packet
+    /// counters and idle bookkeeping all advance, so flows finalize
+    /// correctly once emission resumes. Only the event *stream* is
+    /// shed — events that would have fired while paused (including
+    /// `Ended`) are dropped, not buffered.
+    ///
+    /// Orthogonal to [`FlowTrackerConfig::suppress_events`]: pause is a
+    /// runtime, all-or-nothing override; the mask is a static,
+    /// per-variant filter. While paused the mask is moot (nothing is
+    /// emitted regardless).
+    ///
+    /// Idempotent — pausing an already-paused tracker is a no-op.
+    pub fn pause_events(&mut self) {
+        self.events_paused = true;
+    }
+
+    /// Resume emitting [`FlowEvent`]s after [`Self::pause_events`].
+    /// Idempotent. The per-variant [`FlowTrackerConfig::suppress_events`]
+    /// mask (if any) applies again from here.
+    pub fn resume_events(&mut self) {
+        self.events_paused = false;
+    }
+
+    /// Whether event emission is currently paused
+    /// ([`Self::pause_events`]). Drivers consult this to shed their
+    /// own emissions (e.g. `Tick`) in lock-step with the tracker.
+    #[inline]
+    pub fn events_paused(&self) -> bool {
+        self.events_paused
+    }
+
+    /// Whether a given [`FlowEvent`] variant should be emitted right
+    /// now — i.e. not globally paused and not masked off by
+    /// [`FlowTrackerConfig::suppress_events`]. Gate every emit site on
+    /// this so suppressed events are never constructed.
+    #[inline]
+    fn emits(&self, variant: EventMask) -> bool {
+        !self.events_paused && !self.config.suppress_events.contains(variant)
     }
 
     /// Process a packet. Returns 0–3 events.
@@ -371,13 +461,15 @@ impl<E: FlowExtractor, S: Send + 'static> FlowTracker<E, S> {
                     }
                     crate::obs::record_flow_ended(EndReason::Evicted, &evicted_entry.stats);
                     crate::obs::trace_flow_ended(EndReason::Evicted, &evicted_entry.stats);
-                    events.push(FlowEvent::Ended {
-                        key: evicted_key,
-                        reason: EndReason::Evicted,
-                        stats: evicted_entry.stats,
-                        history: evicted_entry.history,
-                        l4: evicted_entry.l4,
-                    });
+                    if self.emits(EventMask::ENDED) {
+                        events.push(FlowEvent::Ended {
+                            key: evicted_key,
+                            reason: EndReason::Evicted,
+                            stats: evicted_entry.stats,
+                            history: evicted_entry.history,
+                            l4: evicted_entry.l4,
+                        });
+                    }
                     self.stats.flows_evicted += 1;
                     self.stats.flows_ended += 1;
                 }
@@ -387,13 +479,23 @@ impl<E: FlowExtractor, S: Send + 'static> FlowTracker<E, S> {
             crate::obs::record_flow_created(l4);
             crate::obs::trace_flow_started(l4);
 
-            events.push(FlowEvent::Started {
-                key: key.clone(),
-                side: FlowSide::Initiator,
-                ts,
-                l4,
-            });
+            if self.emits(EventMask::STARTED) {
+                events.push(FlowEvent::Started {
+                    key: key.clone(),
+                    side: FlowSide::Initiator,
+                    ts,
+                    l4,
+                });
+            }
         }
+
+        // Snapshot the load-shed gates (issue #79) before taking the
+        // `&mut entry` borrow below — `self.emits()` borrows `&self`
+        // and would conflict with the live entry borrow. Both inputs
+        // are `Copy` and can't change within this call.
+        let events_paused = self.events_paused;
+        let suppress = self.config.suppress_events;
+        let should_emit = |variant: EventMask| !events_paused && !suppress.contains(variant);
 
         // SAFETY-style invariant: we just ensured the entry exists.
         let entry = self
@@ -494,12 +596,14 @@ impl<E: FlowExtractor, S: Send + 'static> FlowTracker<E, S> {
             if trans.state != prev_state {
                 entry.state = trans.state;
                 if trans.became_established {
-                    events.push(FlowEvent::Established {
-                        key: key.clone(),
-                        ts,
-                        l4: entry.l4,
-                    });
-                } else {
+                    if should_emit(EventMask::ESTABLISHED) {
+                        events.push(FlowEvent::Established {
+                            key: key.clone(),
+                            ts,
+                            l4: entry.l4,
+                        });
+                    }
+                } else if should_emit(EventMask::STATE_CHANGE) {
                     events.push(FlowEvent::StateChange {
                         key: key.clone(),
                         from: prev_state,
@@ -511,12 +615,14 @@ impl<E: FlowExtractor, S: Send + 'static> FlowTracker<E, S> {
         }
 
         // ── per-packet event ─────────────────────────────────────
-        events.push(FlowEvent::Packet {
-            key: key.clone(),
-            side,
-            len,
-            ts,
-        });
+        if should_emit(EventMask::PACKET) {
+            events.push(FlowEvent::Packet {
+                key: key.clone(),
+                side,
+                len,
+                ts,
+            });
+        }
 
         // ── terminal-state cleanup ───────────────────────────────
         // Re-borrow because the previous &mut entry was still live.
@@ -535,13 +641,15 @@ impl<E: FlowExtractor, S: Send + 'static> FlowTracker<E, S> {
                 }
                 crate::obs::record_flow_ended(reason, &removed.stats);
                 crate::obs::trace_flow_ended(reason, &removed.stats);
-                events.push(FlowEvent::Ended {
-                    key,
-                    reason,
-                    stats: removed.stats,
-                    history: removed.history,
-                    l4: removed.l4,
-                });
+                if should_emit(EventMask::ENDED) {
+                    events.push(FlowEvent::Ended {
+                        key,
+                        reason,
+                        stats: removed.stats,
+                        history: removed.history,
+                        l4: removed.l4,
+                    });
+                }
                 self.stats.flows_ended += 1;
             }
         } else {
@@ -617,13 +725,15 @@ impl<E: FlowExtractor, S: Send + 'static> FlowTracker<E, S> {
                 }
                 crate::obs::record_flow_ended(reason, &entry.stats);
                 crate::obs::trace_flow_ended(reason, &entry.stats);
-                ended.push(FlowEvent::Ended {
-                    key,
-                    reason,
-                    stats: entry.stats,
-                    history: entry.history,
-                    l4: entry.l4,
-                });
+                if self.emits(EventMask::ENDED) {
+                    ended.push(FlowEvent::Ended {
+                        key,
+                        reason,
+                        stats: entry.stats,
+                        history: entry.history,
+                        l4: entry.l4,
+                    });
+                }
                 self.stats.flows_ended += 1;
             }
         }
@@ -1172,6 +1282,175 @@ mod tests {
             _ => unreachable!(),
         }
         assert_eq!(t.flow_count(), 0, "flow removed on RST");
+    }
+
+    // ── load-shedding: event-variant suppression + pause (issue #79) ──
+
+    #[test]
+    fn event_filter_suppresses_packet_keeps_started() {
+        let cfg = FlowTrackerConfig::default().with_event_filter(EventMask::PACKET);
+        let mut t = FlowTracker::<FiveTuple>::with_config(FiveTuple::bidirectional(), cfg);
+        let f = ipv4_udp([10, 0, 0, 1], [10, 0, 0, 2], 1234, 53, b"hi");
+        let evts = t.track(view(&f, 0));
+        assert_eq!(evts.len(), 1, "Packet shed, Started survives");
+        assert!(matches!(evts[0], FlowEvent::Started { .. }));
+        // Accounting still ran.
+        assert_eq!(t.flow_count(), 1);
+        assert_eq!(t.stats().flows_created, 1);
+        // A subsequent packet on the known flow now yields nothing.
+        assert!(t.track(view(&f, 1)).is_empty());
+    }
+
+    #[test]
+    fn event_filter_combination_sheds_both_but_accounts() {
+        let cfg =
+            FlowTrackerConfig::default().with_event_filter(EventMask::STARTED | EventMask::PACKET);
+        let mut t = FlowTracker::<FiveTuple>::with_config(FiveTuple::bidirectional(), cfg);
+        let f = ipv4_udp([10, 0, 0, 1], [10, 0, 0, 2], 1234, 53, b"hi");
+        assert!(t.track(view(&f, 0)).is_empty(), "both variants suppressed");
+        assert_eq!(t.flow_count(), 1);
+        assert_eq!(t.stats().flows_created, 1);
+    }
+
+    #[test]
+    fn event_filter_sheds_established_and_state_change() {
+        let cfg = FlowTrackerConfig::default()
+            .with_event_filter(EventMask::ESTABLISHED | EventMask::STATE_CHANGE);
+        let mut t = FlowTracker::<FiveTuple>::with_config(FiveTuple::bidirectional(), cfg);
+        let syn = ipv4_tcp(
+            [0; 6],
+            [0; 6],
+            [10, 0, 0, 1],
+            [10, 0, 0, 2],
+            1234,
+            80,
+            1000,
+            0,
+            0x02,
+            b"",
+        );
+        let synack = ipv4_tcp(
+            [0; 6],
+            [0; 6],
+            [10, 0, 0, 2],
+            [10, 0, 0, 1],
+            80,
+            1234,
+            5000,
+            1001,
+            0x12,
+            b"",
+        );
+        let ack = ipv4_tcp(
+            [0; 6],
+            [0; 6],
+            [10, 0, 0, 1],
+            [10, 0, 0, 2],
+            1234,
+            80,
+            1001,
+            5001,
+            0x10,
+            b"",
+        );
+        let mut all = Vec::new();
+        all.extend(t.track(view(&syn, 0)));
+        all.extend(t.track(view(&synack, 0)));
+        all.extend(t.track(view(&ack, 0)));
+        assert!(
+            !all.iter()
+                .any(|e| matches!(e, FlowEvent::Established { .. }))
+        );
+        assert!(
+            !all.iter()
+                .any(|e| matches!(e, FlowEvent::StateChange { .. }))
+        );
+        // Unmasked variants still flow.
+        assert!(all.iter().any(|e| matches!(e, FlowEvent::Started { .. })));
+        assert!(all.iter().any(|e| matches!(e, FlowEvent::Packet { .. })));
+    }
+
+    #[test]
+    fn event_filter_sheds_ended_but_flow_finalizes() {
+        let cfg = FlowTrackerConfig::default().with_event_filter(EventMask::ENDED);
+        let mut t = FlowTracker::<FiveTuple>::with_config(FiveTuple::bidirectional(), cfg);
+        let syn = ipv4_tcp(
+            [0; 6],
+            [0; 6],
+            [10, 0, 0, 1],
+            [10, 0, 0, 2],
+            1234,
+            80,
+            1,
+            0,
+            0x02,
+            b"",
+        );
+        let rst = ipv4_tcp(
+            [0; 6],
+            [0; 6],
+            [10, 0, 0, 2],
+            [10, 0, 0, 1],
+            80,
+            1234,
+            0,
+            0,
+            0x04,
+            b"",
+        );
+        t.track(view(&syn, 0));
+        let evts = t.track(view(&rst, 0));
+        assert!(
+            !evts.iter().any(|e| matches!(e, FlowEvent::Ended { .. })),
+            "Ended shed"
+        );
+        // Teardown still happened.
+        assert_eq!(t.flow_count(), 0, "flow removed despite suppressed Ended");
+        assert_eq!(t.stats().flows_ended, 1);
+    }
+
+    #[test]
+    fn pause_sheds_everything_resume_restores() {
+        let mut t = FlowTracker::<FiveTuple>::new(FiveTuple::bidirectional());
+        assert!(!t.events_paused());
+        t.pause_events();
+        t.pause_events(); // idempotent
+        assert!(t.events_paused());
+        let f = ipv4_udp([10, 0, 0, 1], [10, 0, 0, 2], 1234, 53, b"hi");
+        assert!(t.track(view(&f, 0)).is_empty(), "paused: nothing emitted");
+        // Accounting continued through the episode.
+        assert_eq!(t.flow_count(), 1);
+        assert_eq!(t.stats().flows_created, 1);
+        t.resume_events();
+        assert!(!t.events_paused());
+        let evts = t.track(view(&f, 1));
+        assert_eq!(evts.len(), 1);
+        assert!(matches!(evts[0], FlowEvent::Packet { .. }));
+    }
+
+    #[test]
+    fn pause_overrides_an_empty_mask_and_sweep_too() {
+        let mut t = FlowTracker::<FiveTuple>::new(FiveTuple::bidirectional());
+        let f = ipv4_udp([10, 0, 0, 1], [10, 0, 0, 2], 1, 2, b"x");
+        t.track(view(&f, 0));
+        t.pause_events();
+        // Idle sweep would normally emit an Ended; paused sheds it,
+        // but the flow is still evicted.
+        let ended = t.sweep(Timestamp::new(10_000, 0));
+        assert!(ended.is_empty(), "sweep Ended shed while paused");
+        assert_eq!(t.flow_count(), 0, "flow still swept out");
+    }
+
+    #[test]
+    fn default_config_emits_everything() {
+        // Guard: the feature is inert at the default (empty mask, not paused).
+        assert_eq!(
+            FlowTrackerConfig::default().suppress_events,
+            EventMask::empty()
+        );
+        let mut t = FlowTracker::<FiveTuple>::new(FiveTuple::bidirectional());
+        let f = ipv4_udp([10, 0, 0, 1], [10, 0, 0, 2], 1234, 53, b"hi");
+        assert_eq!(t.track(view(&f, 0)).len(), 2, "Started + Packet");
     }
 
     #[test]
