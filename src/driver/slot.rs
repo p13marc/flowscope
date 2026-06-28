@@ -152,6 +152,53 @@ where
     }
 }
 
+/// Shared drain surface across [`SlotHandle`] (competitive-consumer,
+/// MPMC) and [`super::BroadcastSlotHandle`] (fan-out). Lets a
+/// downstream drain loop stay generic over which delivery mode a
+/// slot was registered with — e.g. `fn pump(s: &mut impl SlotDrain<M, K>)`.
+///
+/// The four methods mirror the inherent ones on each handle (calling
+/// either form does the same thing). The type-specific extras
+/// ([`SlotHandle::drain_replacing`] / [`SlotHandle::clear`],
+/// [`super::BroadcastSlotHandle::subscribers`]) are intentionally
+/// *not* part of the trait — they have no cross-type meaning.
+///
+/// Added in 0.20 (#101) — purely additive.
+pub trait SlotDrain<M, K> {
+    /// Drain all currently-queued messages into `out`. Returns the
+    /// count drained.
+    fn drain(&mut self, out: &mut Vec<SlotMessage<M, K>>) -> usize;
+
+    /// Drain at most `max` messages into `out`. Returns the count
+    /// drained (`<= max`).
+    fn drain_n(&mut self, out: &mut Vec<SlotMessage<M, K>>, max: usize) -> usize;
+
+    /// Number of messages currently queued for this handle.
+    fn pending(&self) -> usize;
+
+    /// Stable parser-kind slug for the registered parser.
+    fn parser_kind(&self) -> &'static str;
+}
+
+impl<M, K> SlotDrain<M, K> for SlotHandle<M, K>
+where
+    M: Send + 'static,
+    K: Send + 'static,
+{
+    fn drain(&mut self, out: &mut Vec<SlotMessage<M, K>>) -> usize {
+        SlotHandle::drain(self, out)
+    }
+    fn drain_n(&mut self, out: &mut Vec<SlotMessage<M, K>>, max: usize) -> usize {
+        SlotHandle::drain_n(self, out, max)
+    }
+    fn pending(&self) -> usize {
+        SlotHandle::pending(self)
+    }
+    fn parser_kind(&self) -> &'static str {
+        SlotHandle::parser_kind(self)
+    }
+}
+
 impl<M, K> Clone for SlotHandle<M, K>
 where
     M: Send + 'static,

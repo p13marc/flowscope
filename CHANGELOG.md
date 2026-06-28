@@ -5,6 +5,18 @@
 Pure, no-async — fits the runtime-free lib rule. Carries the pre-1.0
 breaking batch (#85 / #88 / #78), so the version bumps 0.19 → 0.20.
 
+### Additive — `SlotDrain` shared trait (#101, driver-convergence 5/5)
+
+`driver::SlotDrain<M, K>` — a shared drain surface
+(`drain` / `drain_n` / `pending` / `parser_kind`) implemented by both
+`SlotHandle` (competitive-consumer) and `BroadcastSlotHandle`
+(fan-out), so a downstream drain loop can be generic over the
+delivery mode (`fn pump(s: &mut impl SlotDrain<M, K>)`). The
+type-specific extras (`SlotHandle::drain_replacing` / `clear`,
+`BroadcastSlotHandle::subscribers`) stay inherent. Purely additive —
+the existing inherent methods are unchanged. Re-exported from
+`flowscope::driver` and the prelude. Closes the #84 convergence.
+
 ### Additive — `Event<K>` emit-readiness (#97, driver-convergence 1/5)
 
 First (additive) step of the #84 driver/event convergence — makes the

@@ -54,6 +54,6 @@ mod typed_slot;
 mod typed_slot_heuristic;
 
 pub use broadcast::BroadcastSlotHandle;
-pub use slot::{SlotHandle, SlotMessage};
+pub use slot::{SlotDrain, SlotHandle, SlotMessage};
 pub use typed::{Driver, DriverBuilder, Event};
 pub use typed_slot_heuristic::{DEFAULT_PROBE_PACKETS, PROBE_BUFFER_CAP};

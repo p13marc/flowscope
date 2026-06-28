@@ -162,7 +162,7 @@ pub use crate::analysis::{AnalyzedFlow, FlowAnalyzer, L7Summary};
 /// The typed [`crate::driver::Driver`] +
 /// [`crate::driver::SlotHandle`] shape (plan 121).
 #[cfg(all(feature = "extractors", feature = "reassembler", feature = "session"))]
-pub use crate::driver::{Driver, DriverBuilder, Event, SlotHandle, SlotMessage};
+pub use crate::driver::{Driver, DriverBuilder, Event, SlotDrain, SlotHandle, SlotMessage};
 #[cfg(feature = "tracker")]
 pub use crate::event::{AnomalyKind, EndReason, EventMask, FlowEvent, FlowSide, FlowStats};
 #[cfg(feature = "extractors")]
