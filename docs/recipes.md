@@ -34,20 +34,13 @@ top-to-bottom; the first "yes" picks your API.
    wraps drivers with `S = ()`; if you need a custom `S`,
    build the inner driver yourself.
 
-4. **Need to register parsers before knowing the extractor
-   instance?** (consumer-built monitor chains)
-   → `Driver::<E>::deferred()` returns a
-   `DeferredDriverBuilder` that finalises via `build_with(ext)`.
-   No `build()` method; the compile-time guarantee is preserved
-   by type-system separation. (0.12)
-
-5. **Want typed L7 messages from a tokio task?**
+4. **Want typed L7 messages from a tokio task?**
    → Move the `SlotHandle` to the task (it's `Send + Sync`
    since 0.12) and drain on a worker thread, OR use netring's
    `AsyncCapture::flow_stream(...).session_stream(...)` /
    `.datagram_stream(...)` from the start.
 
-6. **Need both directions of one TCP flow as one ordered byte
+5. **Need both directions of one TCP flow as one ordered byte
    stream?** (request + response transcript)
    → `netring::Conversation<K>`.
 

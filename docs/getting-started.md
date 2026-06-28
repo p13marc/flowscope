@@ -100,9 +100,7 @@ message, not competitive-consumer), register through
 
 For per-flow user state on the central tracker, drop to
 `FlowDriver`. For raw sync session/datagram primitives, see
-`FlowSessionDriver` / `FlowDatagramDriver`. For deferred
-extractor selection (consumer-built monitor chains), use
-`Driver::deferred()` → `.build_with(ext)` (0.12).
+`FlowSessionDriver` / `FlowDatagramDriver`.
 
 **Read next:** [`concepts.md`](concepts.md) — the four-layer
 trait shape.

@@ -28,6 +28,23 @@ later breaking steps can retire `SessionEvent`.
   zero-copy via `Cow`). The typed `Driver<E>`'s emitted stream is
   unchanged (it still omits raw `StateChange`).
 
+### Breaking — one driver builder (#98, driver-convergence 2/5)
+
+Collapses the two `Driver<E>` builders into one. The
+`DeferredDriverBuilder` / `Driver::deferred()` / `build_with(ext)` split
+(plan 124, 0.12.0) existed to register parsers before the extractor
+instance was known; in practice nothing used it, and the eager
+`DriverBuilder` already carries every knob — including
+`session_on_ports_broadcast_each`, which the deferred mirror never had.
+
+- **Removed `Driver::deferred()`, `DeferredDriverBuilder`, and
+  `build_with(ext)`.** Use `Driver::builder(extractor)` → register
+  slots → `build()`. The extractor is supplied up front; registration
+  order is unchanged.
+- No change to `DriverBuilder`, `Driver<E>`, `Event<K>`, slot handles,
+  or the emitted stream. netring forwards no deferred-builder surface,
+  so no downstream change is required.
+
 ### Additive — generic pcap message iterators (#86)
 
 - **`pcap::session_messages::<P>(path)` / `pcap::datagram_messages::<P>(path)`**

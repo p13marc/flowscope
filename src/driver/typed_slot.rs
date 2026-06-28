@@ -102,10 +102,9 @@ where
         (slot, handle)
     }
 
-    /// Construct the slot around a pre-allocated queue. Used by
-    /// the deferred-builder path: the handle is returned at
-    /// registration time (sharing the queue via `Arc::clone`),
-    /// the slot is materialised here at `build_with` time.
+    /// Construct the slot around a pre-allocated queue, sharing it
+    /// with the returned handle via `Arc::clone`. The shared
+    /// constructor [`Self::new`] delegates here.
     pub(super) fn with_queue(
         extractor: E,
         parser: P,

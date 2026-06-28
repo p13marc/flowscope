@@ -48,26 +48,6 @@ tier sits atop the same `FlowExtractor` / `FlowTracker` /
 layered design below — and exposes a higher-level surface for
 common cases.
 
-### `Driver::deferred()` (0.12)
-
-For consumer-built monitor chains (e.g. netring's
-`MonitorBuilder`) that need to register protocol parsers
-*before* committing to an extractor instance, use
-`Driver::<E>::deferred()` — it returns a
-`DeferredDriverBuilder<E>` that's API-identical to
-`DriverBuilder<E>` minus `build()`. Finalise with
-`build_with(ext)`:
-
-```rust,ignore
-let mut builder = Driver::<FiveTuple>::deferred();
-let mut http = builder.session_on_ports(HttpParser::default(), [80]);
-// …later, after CLI / config resolution:
-let driver = builder.build_with(FiveTuple::bidirectional());
-```
-
-The compile-time guarantee that an extractor is set is
-preserved by type-system separation (no panicking `build()`).
-
 ## The pipeline
 
 ```
