@@ -131,7 +131,13 @@ pub(crate) fn step(
     Ok(true)
 }
 
-fn build_client_hello(
+/// Build a [`TlsClientHello`] from a `tls-parser` ClientHello.
+///
+/// Shared with the QUIC parser (issue #82): a QUIC Initial carries
+/// the same TLS 1.3 ClientHello in its CRYPTO stream, so the JA4
+/// fingerprint path reuses this conversion instead of duplicating
+/// the extension walk.
+pub(crate) fn build_client_hello(
     record_version: TlsVersion,
     ch: &tls_parser::TlsClientHelloContents<'_>,
 ) -> TlsClientHello {

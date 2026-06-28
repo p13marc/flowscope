@@ -1,7 +1,7 @@
 use bytes::Bytes;
 
 /// Parsed TLS ClientHello — what the client offered to the server.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]
 pub struct TlsClientHello {

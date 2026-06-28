@@ -69,3 +69,23 @@ pub use parser::{ParseError, parse, parser_kind};
 #[allow(deprecated)]
 pub use pcap_iter::initials_from_pcap;
 pub use types::{QuicInitial, QuicVersion};
+
+/// JA4 client fingerprint (transport `q`) for a decoded QUIC
+/// Initial — convenience over [`crate::tls::ja4_quic`] (issue #82).
+///
+/// Returns `None` when the Initial carried no parseable
+/// ClientHello (e.g. the CRYPTO stream was empty). Requires both
+/// `quic` and `tls-fingerprints`; license-clean (JA4 *client* is
+/// BSD-3-equivalent), so it is **not** behind `ja4plus`.
+///
+/// ```no_run
+/// # #[cfg(all(feature = "quic", feature = "tls-fingerprints"))]
+/// # fn demo(datagram: &[u8]) -> Option<String> {
+/// let initial = flowscope::quic::parse(datagram).ok()?;
+/// flowscope::quic::ja4(&initial)
+/// # }
+/// ```
+#[cfg(feature = "tls-fingerprints")]
+pub fn ja4(initial: &QuicInitial) -> Option<String> {
+    initial.client_hello.as_ref().map(crate::tls::ja4_quic)
+}
