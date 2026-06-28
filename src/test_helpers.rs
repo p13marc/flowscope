@@ -242,29 +242,29 @@ pub mod events {
             extractor::{L4Proto, TcpInfo},
         };
 
-        /// `Event::FlowStarted` with `l4 = None`.
+        /// `Event::Started` with `l4 = None`.
         pub fn flow_started<K>(key: K, ts: Timestamp) -> Event<K> {
-            Event::FlowStarted { key, ts, l4: None }
+            Event::Started { key, ts, l4: None }
         }
 
-        /// `Event::FlowStarted` with explicit L4.
+        /// `Event::Started` with explicit L4.
         pub fn flow_started_with_l4<K>(key: K, l4: L4Proto, ts: Timestamp) -> Event<K> {
-            Event::FlowStarted {
+            Event::Started {
                 key,
                 ts,
                 l4: Some(l4),
             }
         }
 
-        /// `Event::FlowEstablished` with `l4 = None`.
+        /// `Event::Established` with `l4 = None`.
         pub fn flow_established<K>(key: K, ts: Timestamp) -> Event<K> {
-            Event::FlowEstablished { key, ts, l4: None }
+            Event::Established { key, ts, l4: None }
         }
 
-        /// `Event::FlowEnded` with `EndReason::IdleTimeout` and
+        /// `Event::Ended` with `EndReason::IdleTimeout` and
         /// empty stats.
         pub fn flow_ended<K>(key: K, ts: Timestamp) -> Event<K> {
-            Event::FlowEnded {
+            Event::Ended {
                 key,
                 reason: EndReason::IdleTimeout,
                 stats: FlowStats::default(),
@@ -274,9 +274,9 @@ pub mod events {
             }
         }
 
-        /// `Event::FlowPacket` with `Initiator` side and no tcp info.
+        /// `Event::Packet` with `Initiator` side and no tcp info.
         pub fn flow_packet<K>(key: K, len: usize, ts: Timestamp) -> Event<K> {
-            Event::FlowPacket {
+            Event::Packet {
                 key,
                 side: FlowSide::Initiator,
                 len,
@@ -285,7 +285,7 @@ pub mod events {
             }
         }
 
-        /// `Event::FlowPacket` with explicit fields.
+        /// `Event::Packet` with explicit fields.
         pub fn flow_packet_full<K>(
             key: K,
             side: FlowSide,
@@ -293,7 +293,7 @@ pub mod events {
             tcp: Option<TcpInfo>,
             ts: Timestamp,
         ) -> Event<K> {
-            Event::FlowPacket {
+            Event::Packet {
                 key,
                 side,
                 len,
@@ -302,9 +302,9 @@ pub mod events {
             }
         }
 
-        /// `Event::FlowTick`.
+        /// `Event::Tick`.
         pub fn flow_tick<K>(key: K, ts: Timestamp) -> Event<K> {
-            Event::FlowTick {
+            Event::Tick {
                 key,
                 stats: FlowStats::default(),
                 ts,

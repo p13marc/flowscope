@@ -78,7 +78,7 @@ pub trait KeyFields {
     /// Issue #16 — needed by the
     /// [`FlowRecord::from_key_fields`](crate::FlowRecord::from_key_fields)
     /// generic constructor so emit writers can unify the
-    /// `write_event(FlowEnded)` → `write_flow_record` code path.
+    /// `write_event(Ended)` → `write_flow_record` code path.
     fn protocol_identifier(&self) -> Option<u8> {
         None
     }

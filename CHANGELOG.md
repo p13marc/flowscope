@@ -50,6 +50,32 @@ the crate-internal session/datagram engines, and the
 
 [`ParserKind`]: https://docs.rs/flowscope/latest/flowscope/enum.ParserKind.html
 
+### Breaking — `Event<K>` variant names aligned with `FlowEvent<K>` (#110)
+
+The high-level `driver::Event<K>` carried a redundant `Flow` prefix on
+six variants while the lower-level `event::FlowEvent<K>` did not — so the
+two event enums read with opposite conventions and `Event::FlowStarted`
+stuttered. The prefix is dropped to match `FlowEvent`:
+
+| before | after |
+|---|---|
+| `Event::FlowStarted` | `Event::Started` |
+| `Event::FlowEstablished` | `Event::Established` |
+| `Event::FlowStateChange` | `Event::StateChange` |
+| `Event::FlowPacket` | `Event::Packet` |
+| `Event::FlowEnded` | `Event::Ended` |
+| `Event::FlowTick` | `Event::Tick` |
+
+`FlowAnomaly` / `TrackerAnomaly` / `ParserClosed` are unchanged (already
+aligned / no `FlowEvent` analogue). A consequence: `Event` and `FlowEvent`
+now serialize to the **same** `type` tags (`"started"`, `"ended"`, …) — the
+`Event` serde `type` tag for these variants changes from `"flow_started"`
+&c. to `"started"` &c. No shipped emitter serializes `Event` (CSV / EVE /
+NDJSON all serialize `FlowEvent`), so structured-output formats are
+unaffected; only code that pattern-matches `Event::Flow*` or directly
+serializes `Event` needs the rename. Pre-1.0 breaking — recipe in
+`docs/migration-0.19-to-0.20.md`.
+
 ### Additive — `#[must_use]` on driver builder / handles / iterator
 
 Idiomatic lint coverage (Rust API guideline C-MUST-USE) on the types

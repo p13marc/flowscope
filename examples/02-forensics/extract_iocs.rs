@@ -106,7 +106,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         events.clear();
         driver.track_into(&view, &mut events);
         for ev in &events {
-            if let Event::FlowStarted { key, .. } = ev {
+            if let Event::Started { key, .. } = ev {
                 bucket_ip(&mut iocs, key.a.ip());
                 bucket_ip(&mut iocs, key.b.ip());
             }

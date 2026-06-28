@@ -140,13 +140,13 @@ fn driver_run_pcap_yields_lifecycle_events() {
     let mut ended = 0u32;
     for ev in driver.run_pcap(HTTP_PCAP).expect("open") {
         match ev.expect("event") {
-            Event::FlowStarted { .. } => started += 1,
-            Event::FlowEnded { .. } => ended += 1,
+            Event::Started { .. } => started += 1,
+            Event::Ended { .. } => ended += 1,
             _ => {}
         }
     }
-    assert!(started > 0, "expected ≥1 FlowStarted");
-    assert!(ended > 0, "expected ≥1 FlowEnded after iterator drain");
+    assert!(started > 0, "expected ≥1 Started");
+    assert!(ended > 0, "expected ≥1 Ended after iterator drain");
 }
 
 #[test]

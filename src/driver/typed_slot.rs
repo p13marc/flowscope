@@ -316,7 +316,7 @@ where
 /// Dispatch one inner-driver `SessionEvent`:
 /// - `Application` → typed message pushed onto the slot queue.
 /// - `Closed` → `ParserClosed` lifecycle event.
-/// - `Started` / `FlowTick` / anomalies → suppressed (the
+/// - `Started` / `Tick` / anomalies → suppressed (the
 ///   central tracker is the source of truth for those at the
 ///   `Driver<E>` layer; per-slot duplicates would confuse
 ///   consumers).
@@ -354,7 +354,7 @@ fn route_session_event<K, M>(
         SessionEvent::Started { .. }
         | SessionEvent::FlowAnomaly { .. }
         | SessionEvent::TrackerAnomaly { .. }
-        | SessionEvent::FlowTick { .. } => {
+        | SessionEvent::Tick { .. } => {
             // Suppressed; the central tracker is authoritative.
         }
     }
@@ -530,7 +530,7 @@ fn route_broadcast_event<K, M>(
         SessionEvent::Started { .. }
         | SessionEvent::FlowAnomaly { .. }
         | SessionEvent::TrackerAnomaly { .. }
-        | SessionEvent::FlowTick { .. } => {
+        | SessionEvent::Tick { .. } => {
             // Suppressed; the central tracker is authoritative.
         }
     }

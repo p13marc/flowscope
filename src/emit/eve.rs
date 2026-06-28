@@ -50,13 +50,13 @@ pub struct EveOptions {
     /// Interface name embedded as `in_iface`. Default empty —
     /// the field is omitted when empty.
     pub in_iface: String,
-    /// Include `event_type: "flow"` records for `FlowEnded`
+    /// Include `event_type: "flow"` records for `Ended`
     /// (default `true`).
     pub include_flow: bool,
     /// Include `event_type: "anomaly"` for `FlowAnomaly` +
     /// `TrackerAnomaly` (default `true`).
     pub include_anomalies: bool,
-    /// Include `event_type: "stats"` for `FlowTick`. Default
+    /// Include `event_type: "stats"` for `Tick`. Default
     /// `false` — high cardinality; opt in for verbose pipelines.
     pub include_stats: bool,
     /// Map flowscope's [`Severity`] to the EVE `severity` field

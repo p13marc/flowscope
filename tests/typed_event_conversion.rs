@@ -114,7 +114,7 @@ fn state_change_maps_to_flow_state_change() {
     });
     assert!(matches!(
         ev,
-        Event::FlowStateChange {
+        Event::StateChange {
             from: FlowState::Established,
             to: FlowState::FinWait,
             ..
@@ -163,7 +163,7 @@ fn event_serializes_with_type_tag() {
     });
     assert_eq!(
         serde_json::to_value(&started).unwrap()["type"],
-        serde_json::json!("flow_started")
+        serde_json::json!("started")
     );
     let pc: Event<FiveTupleKey> = Event::ParserClosed {
         key: key(),

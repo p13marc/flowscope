@@ -331,7 +331,7 @@ where
                     });
                 }
                 FlowEvent::Tick { key, stats, ts } => {
-                    out.push(SessionEvent::FlowTick {
+                    out.push(SessionEvent::Tick {
                         key: key.clone(),
                         stats: stats.clone(),
                         ts: *ts,

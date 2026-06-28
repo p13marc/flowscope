@@ -71,7 +71,11 @@ type IdleTimeoutFn<K> =
 /// [`FlowEvent`](crate::FlowEvent), and convertible from it via
 /// `Event::from(flow_event)` (issue #97). The conversion is
 /// lossless — [`FlowEvent::StateChange`] maps to
-/// [`Self::FlowStateChange`].
+/// [`Self::StateChange`].
+///
+/// Since 0.20 (#110) the variants share `FlowEvent`'s names (no
+/// redundant `Flow` prefix), so the two enums also serialize to the
+/// same `type` tags (`"started"`, `"established"`, `"ended"`, …).
 ///
 /// `Serialize` only (not `Deserialize`): the driver only ever emits
 /// events, so only the serialize half is derived. To read events back,
@@ -84,7 +88,7 @@ type IdleTimeoutFn<K> =
 #[non_exhaustive]
 pub enum Event<K> {
     /// First packet of a new flow.
-    FlowStarted {
+    Started {
         key: K,
         ts: Timestamp,
         l4: Option<L4Proto>,
@@ -92,7 +96,7 @@ pub enum Event<K> {
 
     /// TCP flow reached the `Established` state (3-way handshake
     /// complete). Not emitted for UDP / ICMP flows.
-    FlowEstablished {
+    Established {
         key: K,
         ts: Timestamp,
         l4: Option<L4Proto>,
@@ -103,11 +107,11 @@ pub enum Event<K> {
     /// counterpart of [`FlowEvent::StateChange`] (issue #97).
     ///
     /// The typed `Driver<E>` does **not** emit this today —
-    /// `FlowEstablished` covers the common case and the driver
+    /// `Established` covers the common case and the driver
     /// historically omits raw state churn — but the variant exists
     /// so `Event::from(FlowEvent::StateChange { .. })` is lossless
     /// and so future driver modes can surface it.
-    FlowStateChange {
+    StateChange {
         key: K,
         from: FlowState,
         to: FlowState,
@@ -126,7 +130,7 @@ pub enum Event<K> {
     /// bug. Use the convenience accessor [`Event::tcp`] when you
     /// want "tcp info if available, on any variant" without
     /// destructuring.
-    FlowPacket {
+    Packet {
         key: K,
         side: FlowSide,
         len: usize,
@@ -135,7 +139,7 @@ pub enum Event<K> {
     },
 
     /// Flow ended (FIN / RST / idle / eviction / parser close).
-    FlowEnded {
+    Ended {
         key: K,
         reason: EndReason,
         stats: FlowStats,
@@ -146,7 +150,7 @@ pub enum Event<K> {
 
     /// Periodic [`FlowStats`] snapshot — emitted when
     /// [`crate::FlowTrackerConfig::flow_tick_interval`] is set.
-    FlowTick {
+    Tick {
         key: K,
         stats: FlowStats,
         ts: Timestamp,
@@ -154,7 +158,7 @@ pub enum Event<K> {
 
     /// Parser-level close — a registered parser drained its
     /// `fin_*` accumulator or reported `is_done` / `is_poisoned`.
-    /// Distinct from [`Self::FlowEnded`]: this fires per
+    /// Distinct from [`Self::Ended`]: this fires per
     /// (parser, flow); the flow may still be alive.
     ParserClosed {
         key: K,
@@ -179,12 +183,12 @@ impl<K> Event<K> {
     /// Borrow the flow key, if the variant has one.
     pub fn key(&self) -> Option<&K> {
         match self {
-            Event::FlowStarted { key, .. }
-            | Event::FlowEstablished { key, .. }
-            | Event::FlowStateChange { key, .. }
-            | Event::FlowPacket { key, .. }
-            | Event::FlowEnded { key, .. }
-            | Event::FlowTick { key, .. }
+            Event::Started { key, .. }
+            | Event::Established { key, .. }
+            | Event::StateChange { key, .. }
+            | Event::Packet { key, .. }
+            | Event::Ended { key, .. }
+            | Event::Tick { key, .. }
             | Event::ParserClosed { key, .. }
             | Event::FlowAnomaly { key, .. } => Some(key),
             Event::TrackerAnomaly { .. } => None,
@@ -193,7 +197,7 @@ impl<K> Event<K> {
 
     /// Per-packet TCP details, when available.
     ///
-    /// Returns the `tcp` field for [`Self::FlowPacket`] events;
+    /// Returns the `tcp` field for [`Self::Packet`] events;
     /// `None` for every other variant. The field itself is only
     /// populated when the driver was built with
     /// [`DriverBuilder::emit_packet_details`]`(true)`; if you
@@ -202,10 +206,10 @@ impl<K> Event<K> {
     ///
     /// Useful for cross-variant pipelines that want "tcp info if
     /// the event carries any, otherwise None" without an explicit
-    /// destructuring `match` arm on `FlowPacket`.
+    /// destructuring `match` arm on `Packet`.
     pub fn tcp(&self) -> Option<&TcpInfo> {
         match self {
-            Event::FlowPacket { tcp, .. } => tcp.as_ref(),
+            Event::Packet { tcp, .. } => tcp.as_ref(),
             _ => None,
         }
     }
@@ -213,12 +217,12 @@ impl<K> Event<K> {
     /// Borrow the timestamp on the event.
     pub fn timestamp(&self) -> Timestamp {
         match self {
-            Event::FlowStarted { ts, .. }
-            | Event::FlowEstablished { ts, .. }
-            | Event::FlowStateChange { ts, .. }
-            | Event::FlowPacket { ts, .. }
-            | Event::FlowEnded { ts, .. }
-            | Event::FlowTick { ts, .. }
+            Event::Started { ts, .. }
+            | Event::Established { ts, .. }
+            | Event::StateChange { ts, .. }
+            | Event::Packet { ts, .. }
+            | Event::Ended { ts, .. }
+            | Event::Tick { ts, .. }
             | Event::ParserClosed { ts, .. }
             | Event::FlowAnomaly { ts, .. }
             | Event::TrackerAnomaly { ts, .. } => *ts,
@@ -230,8 +234,8 @@ impl<K> Event<K> {
     ///
     /// Returns `None` for [`Self::ParserClosed`] — a parser-level
     /// marker with no tracker-event counterpart. The
-    /// [`Self::FlowPacket`] `tcp` enrichment is dropped (`FlowEvent`
-    /// carries no per-packet TCP details) and [`Self::FlowEnded`]'s
+    /// [`Self::Packet`] `tcp` enrichment is dropped (`FlowEvent`
+    /// carries no per-packet TCP details) and [`Self::Ended`]'s
     /// explicit `ts` is folded back into `stats.last_seen`.
     ///
     /// This is the bridge that lets the `emit` writers — which speak
@@ -239,24 +243,24 @@ impl<K> Event<K> {
     /// [`crate::emit`] for the `write_event`-over-`Event` path.
     pub fn into_flow_event(self) -> Option<FlowEvent<K>> {
         Some(match self {
-            Event::FlowStarted { key, ts, l4 } => FlowEvent::Started {
+            Event::Started { key, ts, l4 } => FlowEvent::Started {
                 key,
                 side: FlowSide::Initiator,
                 ts,
                 l4,
             },
-            Event::FlowEstablished { key, ts, l4 } => FlowEvent::Established { key, ts, l4 },
-            Event::FlowStateChange { key, from, to, ts } => {
+            Event::Established { key, ts, l4 } => FlowEvent::Established { key, ts, l4 },
+            Event::StateChange { key, from, to, ts } => {
                 FlowEvent::StateChange { key, from, to, ts }
             }
-            Event::FlowPacket {
+            Event::Packet {
                 key,
                 side,
                 len,
                 ts,
                 tcp: _,
             } => FlowEvent::Packet { key, side, len, ts },
-            Event::FlowEnded {
+            Event::Ended {
                 key,
                 reason,
                 stats,
@@ -270,7 +274,7 @@ impl<K> Event<K> {
                 history,
                 l4,
             },
-            Event::FlowTick { key, stats, ts } => FlowEvent::Tick { key, stats, ts },
+            Event::Tick { key, stats, ts } => FlowEvent::Tick { key, stats, ts },
             Event::FlowAnomaly { key, kind, ts } => FlowEvent::FlowAnomaly { key, kind, ts },
             Event::TrackerAnomaly { kind, ts } => FlowEvent::TrackerAnomaly { kind, ts },
             Event::ParserClosed { .. } => return None,
@@ -293,19 +297,19 @@ impl<K> From<FlowEvent<K>> for Event<K> {
     /// driver event (issue #97).
     ///
     /// Every `FlowEvent` variant has an `Event` counterpart:
-    /// `StateChange` maps to [`Event::FlowStateChange`], `Ended`'s
+    /// `StateChange` maps to [`Event::StateChange`], `Ended`'s
     /// timestamp is taken from `stats.last_seen`, and
-    /// [`Event::FlowPacket`]'s `tcp` enrichment defaults to `None`
+    /// [`Event::Packet`]'s `tcp` enrichment defaults to `None`
     /// (it is a driver-only, opt-in field — populate it via the
     /// driver's `emit_packet_details`, not this conversion).
     fn from(ev: FlowEvent<K>) -> Self {
         match ev {
-            FlowEvent::Started { key, ts, l4, .. } => Event::FlowStarted { key, ts, l4 },
-            FlowEvent::Established { key, ts, l4 } => Event::FlowEstablished { key, ts, l4 },
+            FlowEvent::Started { key, ts, l4, .. } => Event::Started { key, ts, l4 },
+            FlowEvent::Established { key, ts, l4 } => Event::Established { key, ts, l4 },
             FlowEvent::StateChange { key, from, to, ts } => {
-                Event::FlowStateChange { key, from, to, ts }
+                Event::StateChange { key, from, to, ts }
             }
-            FlowEvent::Packet { key, side, len, ts } => Event::FlowPacket {
+            FlowEvent::Packet { key, side, len, ts } => Event::Packet {
                 key,
                 side,
                 len,
@@ -320,7 +324,7 @@ impl<K> From<FlowEvent<K>> for Event<K> {
                 l4,
             } => {
                 let ts = stats.last_seen;
-                Event::FlowEnded {
+                Event::Ended {
                     key,
                     reason,
                     stats,
@@ -329,7 +333,7 @@ impl<K> From<FlowEvent<K>> for Event<K> {
                     ts,
                 }
             }
-            FlowEvent::Tick { key, stats, ts } => Event::FlowTick { key, stats, ts },
+            FlowEvent::Tick { key, stats, ts } => Event::Tick { key, stats, ts },
             FlowEvent::FlowAnomaly { key, kind, ts } => Event::FlowAnomaly { key, kind, ts },
             FlowEvent::TrackerAnomaly { kind, ts } => Event::TrackerAnomaly { kind, ts },
         }
@@ -423,7 +427,7 @@ where
         }
     }
 
-    /// Periodic sweep. Drives idle-timeout `FlowEnded` events
+    /// Periodic sweep. Drives idle-timeout `Ended` events
     /// + each slot's `on_tick`.
     pub fn sweep(&mut self, now: Timestamp) -> Vec<Event<E::Key>> {
         let mut out = Vec::new();
@@ -513,7 +517,7 @@ where
     /// registered slot's parser (one last `feed_*` + `fin_*`
     /// per side); typed messages flushed by the parser land in
     /// their slot handle, [`Event::ParserClosed`] events land
-    /// in `out`, and a final [`Event::FlowEnded`] with reason
+    /// in `out`, and a final [`Event::Ended`] with reason
     /// [`crate::EndReason::ForceClosed`] is emitted by the
     /// central tracker.
     ///
@@ -529,7 +533,7 @@ where
     pub fn force_close_into(&mut self, key: &E::Key, now: Timestamp, out: &mut Vec<Event<E::Key>>) {
         // Slots first — they may drain reassembled bytes and
         // emit `ParserClosed` ahead of the central tracker's
-        // `FlowEnded`.
+        // `Ended`.
         for slot in &mut self.slots {
             slot.force_close_into(key, now, out);
         }
@@ -837,10 +841,10 @@ where
 /// Map a tracker-emitted [`FlowEvent`] into the typed
 /// [`Event<K>`] shape. Drops `Message` / `StateChange` (the
 /// former is now slot-handle-routed; the latter has no
-/// shipping equivalent — `FlowEstablished` covers it).
+/// shipping equivalent — `Established` covers it).
 fn map_flow_event<K>(ev: FlowEvent<K>, tcp: Option<TcpInfo>) -> Option<Event<K>> {
     // The typed driver historically omits raw TCP state churn —
-    // `FlowEstablished` covers the common case — so drop `StateChange`
+    // `Established` covers the common case — so drop `StateChange`
     // here even though `Event` can now represent it (issue #97). The
     // rest reuse the lossless `From` conversion, then patch in the
     // opt-in per-packet `tcp` details the conversion can't know about.
@@ -848,7 +852,7 @@ fn map_flow_event<K>(ev: FlowEvent<K>, tcp: Option<TcpInfo>) -> Option<Event<K>>
         return None;
     }
     let mut event = Event::from(ev);
-    if let Event::FlowPacket { tcp: slot, .. } = &mut event {
+    if let Event::Packet { tcp: slot, .. } = &mut event {
         *slot = tcp;
     }
     Some(event)

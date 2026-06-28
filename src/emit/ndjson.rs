@@ -144,7 +144,7 @@ impl<W: Write> FlowEventNdjsonWriter<W> {
     /// Issue #16 — emitter unification at the FlowRecord
     /// layer. Pairs with `write_event` for the FlowEvent
     /// shape. The two outputs have different schemas:
-    /// `write_event(FlowEnded)` emits the flowscope
+    /// `write_event(Ended)` emits the flowscope
     /// `FlowEvent::Ended` JSON shape; `write_flow_record`
     /// emits the IPFIX-keyed shape that downstream
     /// IPFIX-consuming pipelines expect.

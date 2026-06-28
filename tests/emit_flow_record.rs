@@ -228,7 +228,7 @@ fn eve_write_flow_record_matches_event_shape() {
 
 /// Issue #16 close — verify CSV preserves full 8-variant
 /// `EndReason` fidelity across every variant after the
-/// `write_event(FlowEnded)` → `write_flow_record` routing.
+/// `write_event(Ended)` → `write_flow_record` routing.
 /// Before the `original_end_reason` shadow field, `Rst` would
 /// have collapsed to `fin` via the IPFIX 5-state mapping.
 #[test]
