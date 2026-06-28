@@ -52,6 +52,25 @@ impl<W: Write> FlowEventNdjsonWriter<W> {
         Self { sink, options }
     }
 
+    /// Emit any [`LifecycleEvent`](crate::emit::LifecycleEvent) — both
+    /// the tracker's [`FlowEvent`] and the typed
+    /// driver's [`Event`](crate::driver::Event) (issue #97). The
+    /// `Event` is projected to its `FlowEvent` form first, so NDJSON
+    /// output keeps one schema regardless of source. Events with no
+    /// projection (e.g.
+    /// [`Event::ParserClosed`](crate::driver::Event::ParserClosed)) are
+    /// skipped.
+    pub fn write_lifecycle<T, K>(&mut self, ev: &T) -> io::Result<()>
+    where
+        T: crate::emit::LifecycleEvent<K>,
+        K: Serialize + Clone,
+    {
+        match ev.as_flow_event() {
+            Some(fe) => self.write_event(fe.as_ref()),
+            None => Ok(()),
+        }
+    }
+
     /// Write one event to the sink. Skipped variants (per
     /// [`NdjsonOptions`]) produce no output.
     pub fn write_event<K>(&mut self, ev: &FlowEvent<K>) -> io::Result<()>
