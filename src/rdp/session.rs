@@ -71,8 +71,8 @@ impl RdpParser {
 impl SessionParser for RdpParser {
     type Message = RdpMessage;
 
-    fn parser_kind(&self) -> &'static str {
-        PARSER_KIND
+    fn parser_kind(&self) -> crate::ParserKind {
+        crate::ParserKind::Rdp
     }
 
     fn feed_initiator(&mut self, bytes: &[u8], _ts: Timestamp, out: &mut Vec<Self::Message>) {
@@ -107,7 +107,7 @@ mod tests {
 
     #[test]
     fn parser_kind_label() {
-        assert_eq!(RdpParser::new().parser_kind(), "rdp");
+        assert_eq!(RdpParser::new().parser_kind().as_str(), "rdp");
         assert_eq!(RDP_PORT, 3389);
     }
 

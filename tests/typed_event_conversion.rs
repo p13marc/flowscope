@@ -126,7 +126,7 @@ fn state_change_maps_to_flow_state_change() {
 fn parser_closed_has_no_flow_event_projection() {
     let ev: Event<FiveTupleKey> = Event::ParserClosed {
         key: key(),
-        parser_kind: "http",
+        parser_kind: flowscope::ParserKind::Other("http"),
         reason: EndReason::ParserDone,
         ts: Timestamp::new(1, 0),
     };
@@ -167,7 +167,7 @@ fn event_serializes_with_type_tag() {
     );
     let pc: Event<FiveTupleKey> = Event::ParserClosed {
         key: key(),
-        parser_kind: "http",
+        parser_kind: flowscope::ParserKind::Other("http"),
         reason: EndReason::ParserDone,
         ts: Timestamp::new(1, 0),
     };
@@ -216,7 +216,7 @@ fn write_lifecycle_skips_parser_closed() {
 
     let ev: Event<FiveTupleKey> = Event::ParserClosed {
         key: key(),
-        parser_kind: "http",
+        parser_kind: flowscope::ParserKind::Other("http"),
         reason: EndReason::ParserDone,
         ts: Timestamp::new(1, 0),
     };

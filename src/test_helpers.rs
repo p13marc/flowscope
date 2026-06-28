@@ -69,8 +69,8 @@ impl SessionParser for OneShotSessionParser {
     fn is_done(&self) -> bool {
         self.done
     }
-    fn parser_kind(&self) -> &'static str {
-        "one-shot-session"
+    fn parser_kind(&self) -> crate::ParserKind {
+        crate::ParserKind::Other("one-shot-session")
     }
 }
 
@@ -89,8 +89,8 @@ impl DatagramParser for OneShotDatagramParser {
     fn is_done(&self) -> bool {
         self.done
     }
-    fn parser_kind(&self) -> &'static str {
-        "one-shot-datagram"
+    fn parser_kind(&self) -> crate::ParserKind {
+        crate::ParserKind::Other("one-shot-datagram")
     }
 }
 
@@ -312,7 +312,7 @@ pub mod events {
         }
 
         /// `Event::ParserClosed` with `EndReason::ParserDone`.
-        pub fn parser_closed<K>(key: K, parser_kind: &'static str, ts: Timestamp) -> Event<K> {
+        pub fn parser_closed<K>(key: K, parser_kind: crate::ParserKind, ts: Timestamp) -> Event<K> {
             Event::ParserClosed {
                 key,
                 parser_kind,

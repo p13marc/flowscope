@@ -31,8 +31,8 @@ impl WireGuardParser {
 impl DatagramParser for WireGuardParser {
     type Message = WireGuardMessage;
 
-    fn parser_kind(&self) -> &'static str {
-        PARSER_KIND
+    fn parser_kind(&self) -> crate::ParserKind {
+        crate::ParserKind::WireGuard
     }
 
     fn parse(
@@ -54,7 +54,7 @@ mod tests {
 
     #[test]
     fn parser_kind_and_port_constants() {
-        assert_eq!(WireGuardParser.parser_kind(), "wireguard");
+        assert_eq!(WireGuardParser.parser_kind().as_str(), "wireguard");
         assert_eq!(WIREGUARD_PORT, 51820);
     }
 

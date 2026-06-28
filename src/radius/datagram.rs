@@ -27,8 +27,8 @@ impl RadiusParser {
 impl DatagramParser for RadiusParser {
     type Message = RadiusMessage;
 
-    fn parser_kind(&self) -> &'static str {
-        PARSER_KIND
+    fn parser_kind(&self) -> crate::ParserKind {
+        crate::ParserKind::Radius
     }
 
     fn parse(
@@ -50,7 +50,7 @@ mod tests {
 
     #[test]
     fn parser_kind_label_and_ports() {
-        assert_eq!(RadiusParser.parser_kind(), "radius");
+        assert_eq!(RadiusParser.parser_kind().as_str(), "radius");
         assert_eq!(RADIUS_AUTH_PORT, 1812);
         assert_eq!(RADIUS_ACCT_PORT, 1813);
     }

@@ -90,8 +90,8 @@ impl SshParser {
 impl SessionParser for SshParser {
     type Message = SshMessage;
 
-    fn parser_kind(&self) -> &'static str {
-        PARSER_KIND
+    fn parser_kind(&self) -> crate::ParserKind {
+        crate::ParserKind::Ssh
     }
 
     fn feed_initiator(&mut self, bytes: &[u8], _ts: Timestamp, out: &mut Vec<Self::Message>) {
@@ -245,7 +245,7 @@ mod tests {
     #[test]
     fn parser_kind_label() {
         let p = SshParser::default();
-        assert_eq!(p.parser_kind(), "ssh");
+        assert_eq!(p.parser_kind().as_str(), "ssh");
     }
 
     #[test]

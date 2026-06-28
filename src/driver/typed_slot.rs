@@ -19,6 +19,7 @@ use crate::PacketView;
 use crate::Timestamp;
 use crate::datagram_driver::FlowDatagramDriver;
 use crate::extractor::FlowExtractor;
+use crate::parser_kind::ParserKind;
 use crate::session::{DatagramParser, SessionEvent, SessionParser};
 use crate::session_driver::FlowSessionDriver;
 use crate::tracker::FlowTrackerConfig;
@@ -62,7 +63,7 @@ where
     E::Key: Send + Sync + 'static,
 {
     driver: FlowSessionDriver<E, P, ()>,
-    parser_kind: &'static str,
+    parser_kind: ParserKind,
     ports: Option<smallvec::SmallVec<[u16; 4]>>,
     msg_buf: Arc<SegQueue<SlotMessage<P::Message, E::Key>>>,
     session_scratch: Vec<SessionEvent<E::Key, P::Message>>,
@@ -192,7 +193,7 @@ where
     E::Key: Send + Sync + 'static,
 {
     driver: FlowDatagramDriver<E, D, ()>,
-    parser_kind: &'static str,
+    parser_kind: ParserKind,
     ports: Option<smallvec::SmallVec<[u16; 4]>>,
     msg_buf: Arc<SegQueue<SlotMessage<D::Message, E::Key>>>,
     session_scratch: Vec<SessionEvent<E::Key, D::Message>>,
@@ -321,7 +322,7 @@ where
 ///   consumers).
 fn route_session_event<K, M>(
     ev: SessionEvent<K, M>,
-    parser_kind: &'static str,
+    parser_kind: ParserKind,
     buf: &SegQueue<SlotMessage<M, K>>,
     lifecycle_out: &mut Vec<Event<K>>,
 ) {
@@ -378,7 +379,7 @@ fn view_matches_ports(view: PacketView<'_>, ports: &[u16]) -> bool {
 /// they don't have to re-implement the routing logic).
 pub(super) fn route_session_event_pub<K, M>(
     ev: SessionEvent<K, M>,
-    parser_kind: &'static str,
+    parser_kind: ParserKind,
     buf: &SegQueue<SlotMessage<M, K>>,
     lifecycle_out: &mut Vec<Event<K>>,
 ) {
@@ -399,7 +400,7 @@ where
     E::Key: Send + Sync + Clone + 'static,
 {
     driver: FlowSessionDriver<E, P, ()>,
-    parser_kind: &'static str,
+    parser_kind: ParserKind,
     ports: Option<smallvec::SmallVec<[u16; 4]>>,
     broadcast: std::sync::Arc<super::broadcast::BroadcastInner<P::Message, E::Key>>,
     session_scratch: Vec<SessionEvent<E::Key, P::Message>>,
@@ -494,7 +495,7 @@ where
 /// `SegQueue`.
 fn route_broadcast_event<K, M>(
     ev: SessionEvent<K, M>,
-    parser_kind: &'static str,
+    parser_kind: ParserKind,
     broadcast: &super::broadcast::BroadcastInner<M, K>,
     lifecycle_out: &mut Vec<Event<K>>,
 ) where

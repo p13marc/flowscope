@@ -76,5 +76,5 @@ fn unanswered_query_yields_no_response_on_tick() {
 #[test]
 fn parser_kind_is_dns_exchange() {
     let p = DnsExchangeParser::new();
-    assert_eq!(p.parser_kind(), "dns-exchange");
+    assert_eq!(p.parser_kind().as_str(), "dns-exchange");
 }

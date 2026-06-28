@@ -20,6 +20,7 @@ use crossbeam_queue::SegQueue;
 
 use crate::Timestamp;
 use crate::event::FlowSide;
+use crate::parser_kind::ParserKind;
 
 /// One typed message emitted by a registered parser.
 ///
@@ -60,7 +61,7 @@ where
     K: Send + 'static,
 {
     pub(super) inner: Arc<SegQueue<SlotMessage<M, K>>>,
-    pub(super) parser_kind: &'static str,
+    pub(super) parser_kind: ParserKind,
 }
 
 impl<M, K> SlotHandle<M, K>
@@ -142,7 +143,7 @@ where
     /// Parser kind identifier (from
     /// [`crate::SessionParser::parser_kind`] /
     /// [`crate::DatagramParser::parser_kind`]).
-    pub fn parser_kind(&self) -> &'static str {
+    pub fn parser_kind(&self) -> ParserKind {
         self.parser_kind
     }
 
@@ -177,8 +178,8 @@ pub trait SlotDrain<M, K> {
     /// Number of messages currently queued for this handle.
     fn pending(&self) -> usize;
 
-    /// Stable parser-kind slug for the registered parser.
-    fn parser_kind(&self) -> &'static str;
+    /// Typed parser-kind identity for the registered parser.
+    fn parser_kind(&self) -> ParserKind;
 }
 
 impl<M, K> SlotDrain<M, K> for SlotHandle<M, K>
@@ -195,7 +196,7 @@ where
     fn pending(&self) -> usize {
         SlotHandle::pending(self)
     }
-    fn parser_kind(&self) -> &'static str {
+    fn parser_kind(&self) -> ParserKind {
         SlotHandle::parser_kind(self)
     }
 }
@@ -243,7 +244,7 @@ mod tests {
         let queue = Arc::new(SegQueue::<SlotMessage<u32, u8>>::new());
         let mut handle = SlotHandle::<u32, u8> {
             inner: Arc::clone(&queue),
-            parser_kind: "test",
+            parser_kind: crate::ParserKind::Other("test"),
         };
         assert_eq!(handle.pending(), 0);
         queue.push(SlotMessage {
@@ -279,7 +280,7 @@ mod tests {
         let queue = Arc::new(SegQueue::<SlotMessage<&'static str, u8>>::new());
         let mut handle = SlotHandle::<&'static str, u8> {
             inner: Arc::clone(&queue),
-            parser_kind: "test",
+            parser_kind: crate::ParserKind::Other("test"),
         };
         queue.push(SlotMessage {
             key: 1,
@@ -297,7 +298,7 @@ mod tests {
         let queue = Arc::new(SegQueue::<SlotMessage<u32, u8>>::new());
         let mut h1 = SlotHandle::<u32, u8> {
             inner: Arc::clone(&queue),
-            parser_kind: "test",
+            parser_kind: crate::ParserKind::Other("test"),
         };
         let mut h2 = h1.clone();
         for i in 0..10 {

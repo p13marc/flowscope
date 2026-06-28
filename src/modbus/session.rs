@@ -34,8 +34,8 @@ impl ModbusParser {
 impl SessionParser for ModbusParser {
     type Message = ModbusMessage;
 
-    fn parser_kind(&self) -> &'static str {
-        PARSER_KIND
+    fn parser_kind(&self) -> crate::ParserKind {
+        crate::ParserKind::Modbus
     }
 
     fn feed_initiator(&mut self, bytes: &[u8], _ts: Timestamp, out: &mut Vec<Self::Message>) {
@@ -78,7 +78,7 @@ mod tests {
 
     #[test]
     fn parser_kind_label() {
-        assert_eq!(ModbusParser::new().parser_kind(), "modbus");
+        assert_eq!(ModbusParser::new().parser_kind().as_str(), "modbus");
         assert_eq!(MODBUS_PORT, 502);
     }
 

@@ -17,6 +17,39 @@ type-specific extras (`SlotHandle::drain_replacing` / `clear`,
 the existing inherent methods are unchanged. Re-exported from
 `flowscope::driver` and the prelude. Closes the #84 convergence.
 
+### Breaking — `parser_kind()` returns the typed `ParserKind` enum (#109)
+
+The stringly-typed parser-identity seam is closed. `SessionParser` /
+`DatagramParser::parser_kind` now return [`ParserKind`] (default
+`ParserKind::Unspecified`, was `""`) instead of `&'static str`, and the
+enum — which shipped in 0.18 (#21) but was never wired in — gains a
+variant for **every** shipped parser (26 built-ins:
+`Http1` / `Tls` / `TlsHandshake` / `DnsUdp` / `DnsTcp` / `Icmp` / `Ssh` /
+`Ntp` / `Ssdp` / `Tftp` / `Mdns` / `NetbiosNs` / `Ftp` / `Smtp` /
+`WireGuard` / `Modbus` / `Stun` / `Rdp` / `Snmp` / `Radius` / `Dhcp` /
+`Quic` / `Smb` / `Ldap` / `Kerberos` / `Dnp3`), plus `Other(&'static str)`
+for downstream parsers.
+
+The lift threads through `driver::Event::ParserClosed::parser_kind`,
+`SlotHandle::parser_kind`, `SlotDrain::parser_kind`, `BroadcastSlotHandle`,
+the crate-internal session/datagram engines, and the
+`AccumulatingSessionParser::new` / `PerDatagramParser::new` /
+`test_helpers::events::parser_closed` constructors.
+
+- **Output is unchanged.** `ParserKind` has a custom serde impl that
+  serializes as its `as_str()` slug (a plain JSON string, not a tagged
+  object), so the `parser_kind` field in emitted events is byte-for-byte
+  identical to the old `&'static str`. Metric labels are unchanged.
+- New `ParserKind::from_slug(&str)` is the inverse for built-in slugs
+  (also backs `Deserialize`); the `parser_kinds::*` `&str` constants stay
+  for raw slug comparison.
+- Affects only **direct callers** and **downstream parser impls**; the
+  typed driver, slots, and `*_from_pcap` helpers need no change. Migration
+  recipe in `docs/migration-0.19-to-0.20.md`. `ParserKind` is now exported
+  from the prelude.
+
+[`ParserKind`]: https://docs.rs/flowscope/latest/flowscope/enum.ParserKind.html
+
 ### Additive — `#[must_use]` on driver builder / handles / iterator
 
 Idiomatic lint coverage (Rust API guideline C-MUST-USE) on the types

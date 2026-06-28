@@ -49,6 +49,7 @@ use crate::{
     extractor::{FlowExtractor, L4Proto, TcpInfo},
     flow_driver::FlowDriver,
     history::HistoryString,
+    parser_kind::ParserKind,
     reassembler::NoopReassemblerFactory,
     session::{DatagramParser, SessionParser},
     tracker::{FlowTracker, FlowTrackerConfig},
@@ -72,11 +73,10 @@ type IdleTimeoutFn<K> =
 /// lossless — [`FlowEvent::StateChange`] maps to
 /// [`Self::FlowStateChange`].
 ///
-/// `Serialize` only (not `Deserialize`): [`Self::ParserClosed`]
-/// carries a `parser_kind: &'static str`, which cannot be produced by
-/// a general `Deserialize` impl. To read events back, deserialize the
-/// tracker primitive [`FlowEvent`](crate::FlowEvent) (which is
-/// round-trippable) and `Event::from` it.
+/// `Serialize` only (not `Deserialize`): the driver only ever emits
+/// events, so only the serialize half is derived. To read events back,
+/// deserialize the tracker primitive [`FlowEvent`](crate::FlowEvent)
+/// (which is round-trippable) and `Event::from` it.
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[cfg_attr(feature = "serde", serde(tag = "type", rename_all = "snake_case"))]
@@ -158,7 +158,7 @@ pub enum Event<K> {
     /// (parser, flow); the flow may still be alive.
     ParserClosed {
         key: K,
-        parser_kind: &'static str,
+        parser_kind: ParserKind,
         reason: EndReason,
         ts: Timestamp,
     },

@@ -29,8 +29,8 @@ impl SessionParser for CountParser {
             out.push(b.len());
         }
     }
-    fn parser_kind(&self) -> &'static str {
-        "count"
+    fn parser_kind(&self) -> flowscope::ParserKind {
+        flowscope::ParserKind::Other("count")
     }
 }
 
@@ -103,7 +103,7 @@ fn broadcast_subscriber_dropped_is_pruned() {
 /// `SlotDrain` trait.
 #[test]
 fn slot_drain_trait_is_generic_over_both_handles() {
-    fn pump<S: SlotDrain<usize, FiveTupleKey>>(slot: &mut S) -> (usize, &'static str) {
+    fn pump<S: SlotDrain<usize, FiveTupleKey>>(slot: &mut S) -> (usize, flowscope::ParserKind) {
         let mut out = Vec::new();
         let n = slot.drain(&mut out);
         assert_eq!(n, out.len());
@@ -129,8 +129,8 @@ fn slot_drain_trait_is_generic_over_both_handles() {
     let (n_bcast, kind_bcast) = pump(&mut bcast);
     assert_eq!(n_plain, 1);
     assert_eq!(n_bcast, 1);
-    assert_eq!(kind_plain, "count");
-    assert_eq!(kind_bcast, "count");
+    assert_eq!(kind_plain.as_str(), "count");
+    assert_eq!(kind_bcast.as_str(), "count");
 }
 
 #[test]

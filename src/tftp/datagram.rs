@@ -33,8 +33,8 @@ impl TftpParser {
 impl DatagramParser for TftpParser {
     type Message = TftpMessage;
 
-    fn parser_kind(&self) -> &'static str {
-        PARSER_KIND
+    fn parser_kind(&self) -> crate::ParserKind {
+        crate::ParserKind::Tftp
     }
 
     fn parse(
@@ -58,7 +58,7 @@ mod tests {
     #[test]
     fn parser_kind_label() {
         let p = TftpParser;
-        assert_eq!(p.parser_kind(), "tftp");
+        assert_eq!(p.parser_kind().as_str(), "tftp");
     }
 
     #[test]

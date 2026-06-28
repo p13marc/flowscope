@@ -9,7 +9,7 @@
 
 use bytes::BytesMut;
 
-use super::parser::{PARSER_KIND_STR, parse};
+use super::parser::parse;
 use super::types::SmbMessage;
 use crate::Timestamp;
 use crate::session::SessionParser;
@@ -64,8 +64,8 @@ impl SmbParser {
 impl SessionParser for SmbParser {
     type Message = SmbMessage;
 
-    fn parser_kind(&self) -> &'static str {
-        PARSER_KIND_STR
+    fn parser_kind(&self) -> crate::ParserKind {
+        crate::ParserKind::Smb
     }
 
     fn feed_initiator(&mut self, bytes: &[u8], _ts: Timestamp, out: &mut Vec<Self::Message>) {
@@ -109,7 +109,7 @@ mod tests {
     #[test]
     fn parser_kind_and_port() {
         let p = SmbParser::new();
-        assert_eq!(p.parser_kind(), "smb");
+        assert_eq!(p.parser_kind().as_str(), "smb");
         assert_eq!(SMB_PORT, 445);
     }
 

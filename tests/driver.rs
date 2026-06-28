@@ -38,8 +38,8 @@ impl SessionParser for CountParser {
             out.push((FlowSide::Responder, b.len()));
         }
     }
-    fn parser_kind(&self) -> &'static str {
-        "count"
+    fn parser_kind(&self) -> flowscope::ParserKind {
+        flowscope::ParserKind::Other("count")
     }
 }
 
@@ -53,8 +53,8 @@ impl DatagramParser for UdpEcho {
             out.push(b.to_vec());
         }
     }
-    fn parser_kind(&self) -> &'static str {
-        "udp-echo"
+    fn parser_kind(&self) -> flowscope::ParserKind {
+        flowscope::ParserKind::Other("udp-echo")
     }
 }
 
@@ -256,7 +256,7 @@ fn parser_kind_is_propagated_to_handle() {
     let slot = builder.session_broadcast(CountParser);
     let _driver = builder.build();
 
-    assert_eq!(slot.parser_kind(), "count");
+    assert_eq!(slot.parser_kind().as_str(), "count");
 }
 
 #[test]

@@ -27,8 +27,8 @@ impl StunParser {
 impl DatagramParser for StunParser {
     type Message = StunMessage;
 
-    fn parser_kind(&self) -> &'static str {
-        PARSER_KIND
+    fn parser_kind(&self) -> crate::ParserKind {
+        crate::ParserKind::Stun
     }
 
     fn parse(
@@ -50,7 +50,7 @@ mod tests {
 
     #[test]
     fn parser_kind_and_port() {
-        assert_eq!(StunParser.parser_kind(), "stun");
+        assert_eq!(StunParser.parser_kind().as_str(), "stun");
         assert_eq!(STUN_PORT, 3478);
     }
 

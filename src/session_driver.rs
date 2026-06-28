@@ -1058,8 +1058,8 @@ mod tests {
             fn feed_responder(&mut self, _b: &[u8], _ts: Timestamp, out: &mut Vec<u8>) {
                 out.push(2);
             }
-            fn parser_kind(&self) -> &'static str {
-                "kinded"
+            fn parser_kind(&self) -> crate::ParserKind {
+                crate::ParserKind::Other("kinded")
             }
         }
         let mut d = FlowSessionDriver::new(FiveTuple::bidirectional(), KindedParser);
@@ -1086,7 +1086,7 @@ mod tests {
             .collect();
         assert!(!app.is_empty(), "expected at least one Application event");
         for k in app {
-            assert_eq!(k, "kinded");
+            assert_eq!(k.as_str(), "kinded");
         }
     }
 
@@ -1099,7 +1099,7 @@ mod tests {
             fn feed_initiator(&mut self, _b: &[u8], _ts: Timestamp, _out: &mut Vec<u8>) {}
             fn feed_responder(&mut self, _b: &[u8], _ts: Timestamp, _out: &mut Vec<u8>) {}
         }
-        assert_eq!(Noop.parser_kind(), "");
+        assert_eq!(Noop.parser_kind().as_str(), "");
     }
 
     #[cfg(all(feature = "http", feature = "tls", feature = "dns"))]
@@ -1111,10 +1111,10 @@ mod tests {
             http::HttpParser,
             tls::TlsParser,
         };
-        assert_eq!(HttpParser::default().parser_kind(), "http/1");
-        assert_eq!(TlsParser::default().parser_kind(), "tls");
-        assert_eq!(DnsTcpParser::default().parser_kind(), "dns-tcp");
-        assert_eq!(DnsUdpParser::default().parser_kind(), "dns-udp");
+        assert_eq!(HttpParser::default().parser_kind().as_str(), "http/1");
+        assert_eq!(TlsParser::default().parser_kind().as_str(), "tls");
+        assert_eq!(DnsTcpParser::default().parser_kind().as_str(), "dns-tcp");
+        assert_eq!(DnsUdpParser::default().parser_kind().as_str(), "dns-udp");
     }
 
     #[test]

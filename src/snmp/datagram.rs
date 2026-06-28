@@ -29,8 +29,8 @@ impl SnmpParser {
 impl DatagramParser for SnmpParser {
     type Message = SnmpMessage;
 
-    fn parser_kind(&self) -> &'static str {
-        PARSER_KIND
+    fn parser_kind(&self) -> crate::ParserKind {
+        crate::ParserKind::Snmp
     }
 
     fn parse(
@@ -52,7 +52,7 @@ mod tests {
 
     #[test]
     fn parser_kind_label() {
-        assert_eq!(SnmpParser.parser_kind(), "snmp");
+        assert_eq!(SnmpParser.parser_kind().as_str(), "snmp");
         assert_eq!(SNMP_PORT, 161);
         assert_eq!(SNMP_TRAP_PORT, 162);
     }

@@ -164,8 +164,8 @@ impl SessionParser for HttpExchangeParser {
         self.reset_pending();
     }
 
-    fn parser_kind(&self) -> &'static str {
-        "http-exchange"
+    fn parser_kind(&self) -> crate::ParserKind {
+        crate::ParserKind::Other("http-exchange")
     }
 
     fn is_poisoned(&self) -> bool {
