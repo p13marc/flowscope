@@ -114,4 +114,12 @@ pub struct QuicInitial {
     /// extension (e.g. `["h3", "h3-29"]`). Empty when the
     /// extension was absent.
     pub alpn: Vec<String>,
+    /// The full TLS ClientHello recovered from the Initial's
+    /// CRYPTO stream — present only when the `tls` feature is also
+    /// enabled (issue #82). Carries the cipher / extension /
+    /// version lists JA4 needs; feed it to [`crate::tls::ja4_quic`]
+    /// or use the [`crate::quic::ja4`] convenience. `None` when the
+    /// CRYPTO stream held no parseable ClientHello.
+    #[cfg(feature = "tls")]
+    pub client_hello: Option<crate::tls::TlsClientHello>,
 }

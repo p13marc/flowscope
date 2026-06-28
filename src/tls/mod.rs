@@ -93,12 +93,15 @@ mod types;
 
 pub use ech::EchState;
 pub use handshake::{EchOutcome, HandshakeOutcome, TlsHandshake, TlsHandshakeParser};
+// Reused by the QUIC parser to build a `TlsClientHello` from the
+// ClientHello carried in a QUIC Initial CRYPTO stream (issue #82).
 #[cfg(feature = "tls-fingerprints")]
-pub use ja4::{Ja4Parts, ja4 as ja4_fingerprint, ja4_parts};
+pub use ja4::{Ja4Parts, ja4 as ja4_fingerprint, ja4_parts, ja4_quic, ja4_quic_parts};
 #[cfg(feature = "ja4plus")]
 pub use ja4s::{Ja4sParts, ja4s as ja4s_fingerprint, ja4s_parts};
 #[cfg(feature = "ja4plus")]
 pub use ja4x::{ja4x_for_chain, ja4x_for_der};
+pub(crate) use parser::build_client_hello;
 #[cfg(feature = "pcap")]
 pub use pcap_iter::{client_hellos_from_pcap, handshakes_from_pcap};
 pub use session::{TlsMessage, TlsParser};

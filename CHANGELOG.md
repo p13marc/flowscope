@@ -5,6 +5,22 @@
 Pure, no-async — fits the runtime-free lib rule. Carries the pre-1.0
 breaking batch (#85 / #88 / #78), so the version bumps 0.19 → 0.20.
 
+### Additive — JA4-QUIC client fingerprint (#82)
+
+- **`tls::ja4_quic` / `tls::ja4_quic_parts`** — JA4 *client* fingerprint
+  with the QUIC transport marker (`q…` instead of `t…`). License-clean
+  (JA4 client is BSD-3-equivalent), gated on `tls-fingerprints` — **not**
+  `ja4plus`. Byte-identical to `ja4` except the leading transport char.
+- **`QuicInitial::client_hello: Option<TlsClientHello>`** — the QUIC
+  parser now surfaces the full ClientHello recovered from the Initial's
+  CRYPTO stream (cipher / extension / version lists), reusing the shared
+  `tls` conversion. Present only when the `tls` feature is also enabled
+  (additive field on a `#[non_exhaustive]` struct).
+- **`quic::ja4(&QuicInitial) -> Option<String>`** — one-call convenience
+  (gated on `tls-fingerprints`). Verified against the RFC 9001 §A.1
+  Client Initial golden vector.
+- `TlsClientHello` gained `PartialEq` + `Eq` derives (additive).
+
 ### 1.0-prep issue batch (#69, #78, #85, #87, #88)
 
 - **BREAKING — `#[non_exhaustive]` coverage sweep** (#78). Brought 43

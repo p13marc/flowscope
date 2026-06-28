@@ -10,7 +10,8 @@
 //! Format: `[t|q][version][SNI?d:i][cipher_count][ext_count][alpn] _ [hash_a] _ [hash_b]`
 //!
 //! Where:
-//! - `t`/`q` = TCP/QUIC transport (flowscope is TCP-only today).
+//! - `t`/`q` = TCP/QUIC transport. [`ja4`] emits `t`; [`ja4_quic`]
+//!   emits `q` for a ClientHello pulled from a QUIC Initial (#82).
 //! - `version` = highest TLS version from `supported_versions`
 //!   (e.g. "13" for TLS 1.3, "12" for TLS 1.2).
 //! - `d` if SNI present, `i` if absent.
@@ -63,7 +64,32 @@ pub fn ja4(ch: &TlsClientHello) -> String {
 
 /// Return the JA4 parts before assembly.
 pub fn ja4_parts(ch: &TlsClientHello) -> Ja4Parts {
-    let header = build_header(ch);
+    ja4_parts_with_transport(ch, 't')
+}
+
+/// Compute the JA4 client fingerprint for a ClientHello carried
+/// over **QUIC** — identical to [`ja4`] except the transport
+/// marker is `'q'` instead of `'t'` (issue #82). License-clean
+/// (JA4 *client* is BSD-3-equivalent), so it lives under
+/// `tls-fingerprints`, not `ja4plus`.
+///
+/// Pair with [`crate::quic::QuicInitial::client_hello`] (populated
+/// when both `quic` and `tls` are enabled) or the
+/// [`crate::quic::ja4`] convenience.
+pub fn ja4_quic(ch: &TlsClientHello) -> String {
+    ja4_quic_parts(ch).to_string()
+}
+
+/// Return the JA4-over-QUIC parts before assembly (transport `'q'`).
+pub fn ja4_quic_parts(ch: &TlsClientHello) -> Ja4Parts {
+    ja4_parts_with_transport(ch, 'q')
+}
+
+/// Shared JA4 assembly parameterised by the transport marker
+/// (`'t'` for TCP, `'q'` for QUIC). The cipher/extension hashing is
+/// transport-independent; only the header's first character differs.
+pub(crate) fn ja4_parts_with_transport(ch: &TlsClientHello, transport: char) -> Ja4Parts {
+    let header = build_header(ch, transport);
     let ciphers = sorted_non_grease_hex(ch.cipher_suites.iter().copied());
     let exts = sorted_non_grease_hex(ch.extension_types.iter().copied());
     let cipher_hash = sha256_prefix(&ciphers);
@@ -75,10 +101,7 @@ pub fn ja4_parts(ch: &TlsClientHello) -> Ja4Parts {
     }
 }
 
-fn build_header(ch: &TlsClientHello) -> String {
-    // Transport: TCP only (flowscope doesn't observe QUIC yet).
-    let transport = 't';
-
+fn build_header(ch: &TlsClientHello, transport: char) -> String {
     // Version: highest from supported_versions if present, else
     // legacy_version. Encoded as 2-digit decimal: 10/11/12/13.
     let version = pick_version(ch);
@@ -236,6 +259,20 @@ mod tests {
         let parts = ja4_parts(&ch);
         assert!(parts.header.contains('i'));
         assert!(!parts.header.contains('d'));
+    }
+
+    #[test]
+    fn quic_transport_marker_only_differs() {
+        // JA4-QUIC (#82) is byte-identical to JA4 except the leading
+        // transport char: `t…` (TCP) vs `q…` (QUIC).
+        let ch = sample_ch();
+        let tcp = ja4(&ch);
+        let quic = ja4_quic(&ch);
+        assert!(tcp.starts_with('t'));
+        assert!(quic.starts_with('q'));
+        assert_eq!(&tcp[1..], &quic[1..]);
+        // The parts helper agrees with the string form.
+        assert_eq!(ja4_quic_parts(&ch).to_string(), quic);
     }
 
     #[test]

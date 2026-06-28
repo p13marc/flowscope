@@ -112,3 +112,42 @@ fn parses_rfc9001_client_initial_with_sni() {
     assert!(!msg.token_present);
     assert_eq!(msg.sni.as_deref(), Some("example.com"));
 }
+
+// JA4-over-QUIC (issue #82). Requires `tls` to surface the full
+// ClientHello and `tls-fingerprints` for the JA4 builder.
+#[cfg(feature = "tls-fingerprints")]
+#[test]
+fn rfc9001_initial_yields_ja4_quic() {
+    let datagram = rfc9001_client_initial();
+    let msg = parse(&datagram).expect("parse should yield a QuicInitial");
+
+    // The full ClientHello is surfaced under `tls`.
+    let ch = msg
+        .client_hello
+        .as_ref()
+        .expect("RFC 9001 Initial carries a ClientHello");
+    assert_eq!(ch.sni.as_deref(), Some("example.com"));
+    assert!(
+        !ch.cipher_suites.is_empty(),
+        "JA4 needs the cipher list surfaced"
+    );
+
+    // `quic::ja4` convenience == `tls::ja4_quic` on the ClientHello.
+    let fp = flowscope::quic::ja4(&msg).expect("ja4-quic over the Initial");
+    assert_eq!(fp, flowscope::tls::ja4_quic(ch));
+
+    // Transport marker is `q`, version TLS 1.3, SNI present (`d`).
+    assert!(
+        fp.starts_with("q13d"),
+        "expected q13d… JA4-QUIC header, got {fp}"
+    );
+
+    // Byte-identical to the TCP JA4 except the leading transport char.
+    let tcp = flowscope::tls::ja4_fingerprint(ch);
+    assert!(tcp.starts_with("t13d"));
+    assert_eq!(
+        &fp[1..],
+        &tcp[1..],
+        "q/t fingerprints differ only in transport"
+    );
+}
