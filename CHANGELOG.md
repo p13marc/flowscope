@@ -1,9 +1,24 @@
 # Changelog
 
-## 0.20.0 (unreleased) — NSM primitives + 1.0-prep API sweep
+## 0.20.0 (unreleased) — NSM primitives + driver/event convergence + 1.0-prep API sweep
 
-Pure, no-async — fits the runtime-free lib rule. Carries the pre-1.0
-breaking batch (#85 / #88 / #78), so the version bumps 0.19 → 0.20.
+Pure, no-async — fits the runtime-free lib rule. The largest pre-1.0
+breaking batch yet, so the version bumps 0.19 → 0.20.
+
+Three themes:
+
+- **Driver/event convergence (#84, closed).** One typed
+  `driver::Driver<E>` is the public driver shape; the per-parser
+  `Flow{Session,Datagram}Driver` engines and the `SessionEvent` carrier
+  go crate-private (#98 / #99 / #100), and the public surface settles on
+  `Event<K>` + `SlotHandle`/`SlotDrain` (#97 / #101).
+- **1.0-prep strong-typing sweep.** `parser_kind()` returns a typed
+  `ParserKind` enum (#109); `Event<K>` variants drop the redundant
+  `Flow` prefix to match `FlowEvent<K>` (#110); the offline pcap surface
+  keeps the strongly-typed `*_from_pcap` helpers (un-deprecated, #86 /
+  #108) and gains a unified lifecycle-plus-message `Pulse` stream (#111).
+- **Carried pre-1.0 breaks:** `parse()`→`Result` (#85), EVE `flow_hash`
+  → `community_id` (#88), `#[non_exhaustive]` everywhere (#78).
 
 ### Additive — unified offline `Pulse` stream (#111)
 
