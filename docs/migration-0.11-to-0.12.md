@@ -115,6 +115,11 @@ chrono with `default-features = false, features = ["alloc"]`.
 
 ## 3. `Driver::deferred()`
 
+> **Removed in 0.20 (#98).** The deferred builder was retired —
+> nothing used it, and the eager `DriverBuilder` carries every knob.
+> Use `Driver::builder(extractor)` → register slots → `build()`. The
+> recipe below is kept for historical context only.
+
 If you build the driver from a chain that doesn't know the
 extractor instance until finalisation:
 
