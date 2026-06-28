@@ -33,7 +33,7 @@
 //!
 //! Closes #40.
 
-use flowscope::ldap::{LdapAuthKind, LdapOperation, messages_from_pcap};
+use flowscope::ldap::{LdapAuthKind, LdapOperation, LdapParser};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let path = std::env::args()
@@ -45,7 +45,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut total_searches = 0u64;
     let mut total_binds = 0u64;
 
-    for (key, msg) in messages_from_pcap(&path)? {
+    for (key, msg) in flowscope::pcap::session_messages::<LdapParser>(&path)? {
         match msg.operation {
             LdapOperation::SearchRequest => {
                 total_searches += 1;

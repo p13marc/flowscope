@@ -54,6 +54,7 @@ pub use parser::{
     ParseError, compute_hassh, kexinit_message_byte, parse_kexinit_payload, version_banner_prefix,
 };
 #[cfg(feature = "pcap")]
+#[allow(deprecated)]
 pub use pcap_iter::messages_from_pcap;
 pub use session::{PARSER_KIND, SshParser};
 pub use types::{SshKexInit, SshMessage};

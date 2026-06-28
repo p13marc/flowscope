@@ -20,10 +20,17 @@
 //! # Ok(()) }
 //! ```
 
+// Generic per-parser message iterators (issue #86) — need the
+// session pipeline to drive a SessionParser / DatagramParser.
+#[cfg(all(feature = "session", feature = "reassembler"))]
+mod messages;
 mod source;
 #[cfg(feature = "tracker")]
 mod summaries;
 
+#[cfg(all(feature = "session", feature = "reassembler"))]
+pub use messages::{datagram_messages, session_messages};
 pub use source::{EventIter, OwnedPacketView, PcapFlowSource, ViewIter};
 #[cfg(feature = "tracker")]
-pub use summaries::{FlowSummary, flow_summaries_from_pcap};
+#[allow(deprecated)]
+pub use summaries::{FlowSummary, flow_summaries, flow_summaries_from_pcap};

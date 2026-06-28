@@ -34,7 +34,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut ntlm_authens = 0u64;
     let mut dcerpc_binds = 0u64;
 
-    for (key, msg) in flowscope::smb::messages_from_pcap(&path)? {
+    for (key, msg) in flowscope::pcap::session_messages::<flowscope::smb::SmbParser>(&path)? {
         let src = format!("{}:{}", key.a.ip(), key.a.port());
         let dst = format!("{}:{}", key.b.ip(), key.b.port());
 

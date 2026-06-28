@@ -100,6 +100,7 @@ pub use ja4s::{Ja4sParts, ja4s as ja4s_fingerprint, ja4s_parts};
 #[cfg(feature = "ja4plus")]
 pub use ja4x::{ja4x_for_chain, ja4x_for_der};
 #[cfg(feature = "pcap")]
+#[allow(deprecated)]
 pub use pcap_iter::{client_hellos_from_pcap, handshakes_from_pcap};
 pub use session::{TlsMessage, TlsParser};
 pub use types::*;

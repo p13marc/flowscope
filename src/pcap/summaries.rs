@@ -27,7 +27,7 @@ pub type FlowSummary = (FiveTupleKey, FlowStats, EndReason);
 /// `PcapFlowSource::open(...).views()` + your own tracker loop.
 ///
 /// ```no_run
-/// for (key, stats, reason) in flowscope::pcap::flow_summaries_from_pcap("trace.pcap")? {
+/// for (key, stats, reason) in flowscope::pcap::flow_summaries("trace.pcap")? {
 ///     println!(
 ///         "{key:?}  {} pkts / {} bytes  ended: {reason:?}",
 ///         stats.packets_initiator + stats.packets_responder,
@@ -36,9 +36,7 @@ pub type FlowSummary = (FiveTupleKey, FlowStats, EndReason);
 /// }
 /// # Ok::<(), flowscope::Error>(())
 /// ```
-pub fn flow_summaries_from_pcap<P: AsRef<Path>>(
-    path: P,
-) -> Result<impl Iterator<Item = FlowSummary>> {
+pub fn flow_summaries<P: AsRef<Path>>(path: P) -> Result<impl Iterator<Item = FlowSummary>> {
     let mut tracker: FlowTracker<FiveTuple, ()> = FlowTracker::new(FiveTuple::bidirectional());
     let mut out: Vec<FlowSummary> = Vec::new();
 
@@ -63,4 +61,16 @@ pub fn flow_summaries_from_pcap<P: AsRef<Path>>(
     }
 
     Ok(out.into_iter())
+}
+
+/// Deprecated alias for [`flow_summaries`] (renamed for naming
+/// consistency in the issue #86 pcap-helper sweep).
+#[deprecated(
+    since = "0.20.0",
+    note = "renamed to `flowscope::pcap::flow_summaries`"
+)]
+pub fn flow_summaries_from_pcap<P: AsRef<Path>>(
+    path: P,
+) -> Result<impl Iterator<Item = FlowSummary>> {
+    flow_summaries(path)
 }

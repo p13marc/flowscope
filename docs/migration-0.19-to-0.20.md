@@ -232,3 +232,34 @@ match msg {
 **Not affected:** field *reads* (`key.proto`, `rec.ttl`, …) work exactly
 as before; only construction and exhaustive matching from outside the
 crate change.
+
+## Deprecation — 13 `*_from_pcap` helpers → generic iterators (#86)
+
+The per-parser pcap helpers are replaced by two generic, registration-free
+entries. The old helpers still work for one release (they are
+`#[deprecated]` aliases) and are removed next major.
+
+```rust
+// before (0.19)
+for (key, hello) in flowscope::tls::client_hellos_from_pcap("trace.pcap")? { … }
+for (key, init)  in flowscope::quic::initials_from_pcap("trace.pcap")? { … }
+for (key, msg)   in flowscope::smb::messages_from_pcap("trace.pcap")? { … }
+
+// after (0.20) — one generic entry per transport, any parser
+use flowscope::tls::TlsParser;
+use flowscope::quic::QuicUdpParser;
+use flowscope::smb::SmbParser;
+for (key, msg) in flowscope::pcap::session_messages::<TlsParser>("trace.pcap")? { … }
+for (key, msg) in flowscope::pcap::datagram_messages::<QuicUdpParser>("trace.pcap")? { … }
+for (key, msg) in flowscope::pcap::session_messages::<SmbParser>("trace.pcap")? { … }
+```
+
+- `session_messages::<P>` drives a TCP `SessionParser`; `datagram_messages::<P>`
+  drives a UDP `DatagramParser`. Both key by `FiveTupleKey` and use the
+  bidirectional 5-tuple extractor.
+- The HTTP `requests`/`responses` helpers projected a single
+  `HttpMessage` variant — replicate by matching on the yielded message:
+  `session_messages::<HttpParser>(p)?.filter_map(|(k, m)| match m { HttpMessage::Request(r) => Some((k, r)), _ => None })`.
+- `flow_summaries_from_pcap` → **`flow_summaries`** (no parser; raw flow
+  records — kept, just renamed).
+- The multi-parser case stays `Driver::run_pcap`.

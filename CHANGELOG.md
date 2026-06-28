@@ -5,6 +5,25 @@
 Pure, no-async — fits the runtime-free lib rule. Carries the pre-1.0
 breaking batch (#85 / #88 / #78), so the version bumps 0.19 → 0.20.
 
+### Additive — generic pcap message iterators (#86)
+
+- **`pcap::session_messages::<P>(path)` / `pcap::datagram_messages::<P>(path)`**
+  — two generic one-call iterators that yield `(FiveTupleKey, P::Message)`
+  for *any* `SessionParser` / `DatagramParser` with a `Default`, replacing
+  the 13 hand-written per-parser `*_from_pcap` helpers. Zero per-parser
+  code; every current and future parser is first-class. (Two functions,
+  not one `messages::<P>()`: `SessionParser` and `DatagramParser` are
+  distinct traits, and overlapping blanket impls over `P` are rejected by
+  coherence — splitting by transport keeps the API registration-free.)
+- **`pcap::flow_summaries(path)`** — renamed from `flow_summaries_from_pcap`
+  for naming consistency.
+- **Deprecated (kept one release as `#[deprecated]` aliases):** the 13
+  bespoke helpers — `http::{requests,responses,exchanges}_from_pcap`,
+  `dns::{messages,exchanges}_from_pcap`, `tls::{client_hellos,handshakes}_from_pcap`,
+  `quic::initials_from_pcap`, `{smb,kerberos,ldap,ssh}::messages_from_pcap`,
+  and `pcap::flow_summaries_from_pcap`. Migrate to the generic entries;
+  see `docs/migration-0.19-to-0.20.md`.
+
 ### 1.0-prep issue batch (#69, #78, #85, #87, #88)
 
 - **BREAKING — `#[non_exhaustive]` coverage sweep** (#78). Brought 43
