@@ -9,8 +9,8 @@
 
 use flowscope::{
     PacketView, SessionParser, Timestamp,
-    driver::{BroadcastSlotHandle, Driver},
-    extract::{FiveTuple, parse::test_frames::ipv4_tcp},
+    driver::{BroadcastSlotHandle, Driver, SlotDrain},
+    extract::{FiveTuple, FiveTupleKey, parse::test_frames::ipv4_tcp},
 };
 use static_assertions::assert_impl_all;
 
@@ -96,6 +96,41 @@ fn broadcast_subscriber_dropped_is_pruned() {
     let mut out = Vec::new();
     sub_a.drain(&mut out);
     assert_eq!(out.len(), 1);
+}
+
+/// #101: one generic drain loop works over both the competitive
+/// `SlotHandle` and the fan-out `BroadcastSlotHandle` via the shared
+/// `SlotDrain` trait.
+#[test]
+fn slot_drain_trait_is_generic_over_both_handles() {
+    fn pump<S: SlotDrain<usize, FiveTupleKey>>(slot: &mut S) -> (usize, &'static str) {
+        let mut out = Vec::new();
+        let n = slot.drain(&mut out);
+        assert_eq!(n, out.len());
+        (n, slot.parser_kind())
+    }
+
+    let mut builder = Driver::builder(FiveTuple::bidirectional());
+    let mut plain = builder.session_on_ports(CountParser, [80]);
+    let mut bcast = builder.session_on_ports_broadcast_each(CountParser, [443]);
+    let mut driver = builder.build();
+
+    let mut events = Vec::new();
+    for (i, dport) in [80u16, 443].into_iter().enumerate() {
+        let frame = tcp_packet(33000 + i as u16, dport, 1000, b"abcd");
+        let view = PacketView::new(&frame, Timestamp::new(i as u32, 0));
+        driver.track_into(view, &mut events);
+    }
+
+    // Same trait, two delivery modes, one loop.
+    assert_eq!(plain.pending(), 1);
+    assert_eq!(bcast.pending(), 1);
+    let (n_plain, kind_plain) = pump(&mut plain);
+    let (n_bcast, kind_bcast) = pump(&mut bcast);
+    assert_eq!(n_plain, 1);
+    assert_eq!(n_bcast, 1);
+    assert_eq!(kind_plain, "count");
+    assert_eq!(kind_bcast, "count");
 }
 
 #[test]

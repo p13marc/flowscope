@@ -168,6 +168,25 @@ where
     }
 }
 
+impl<M, K> super::SlotDrain<M, K> for BroadcastSlotHandle<M, K>
+where
+    M: Send + Sync + Clone + 'static,
+    K: Send + Sync + Clone + 'static,
+{
+    fn drain(&mut self, out: &mut Vec<SlotMessage<M, K>>) -> usize {
+        BroadcastSlotHandle::drain(self, out)
+    }
+    fn drain_n(&mut self, out: &mut Vec<SlotMessage<M, K>>, max: usize) -> usize {
+        BroadcastSlotHandle::drain_n(self, out, max)
+    }
+    fn pending(&self) -> usize {
+        BroadcastSlotHandle::pending(self)
+    }
+    fn parser_kind(&self) -> &'static str {
+        BroadcastSlotHandle::parser_kind(self)
+    }
+}
+
 impl<M, K> Clone for BroadcastSlotHandle<M, K>
 where
     M: Send + Sync + Clone + 'static,
