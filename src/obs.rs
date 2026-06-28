@@ -296,7 +296,15 @@ pub(crate) fn trace_anomaly(_kind: &AnomalyKind) {}
 // `tracing-subscriber` `EnvFilter` (e.g.
 // `EnvFilter::new("info,flowscope.message=warn")`).
 
-#[cfg(all(feature = "tracing", feature = "reassembler", feature = "session"))]
+// Gated on `extractors` too: the only callers are the crate-private
+// session/datagram engines, which compile only alongside the typed
+// `driver` module (see #99, 0.20).
+#[cfg(all(
+    feature = "tracing",
+    feature = "extractors",
+    feature = "reassembler",
+    feature = "session"
+))]
 pub(crate) fn trace_session_message<M: std::fmt::Debug>(side: crate::event::FlowSide, msg: &M) {
     tracing::trace!(
         target: "flowscope.message",
@@ -308,6 +316,11 @@ pub(crate) fn trace_session_message<M: std::fmt::Debug>(side: crate::event::Flow
 
 // Stub for `tracing` off / `session` off — keep the function name
 // stable so the call sites don't need cfg gates.
-#[cfg(all(feature = "reassembler", feature = "session", not(feature = "tracing")))]
+#[cfg(all(
+    feature = "extractors",
+    feature = "reassembler",
+    feature = "session",
+    not(feature = "tracing")
+))]
 #[inline(always)]
 pub(crate) fn trace_session_message<M>(_side: crate::event::FlowSide, _msg: &M) {}
