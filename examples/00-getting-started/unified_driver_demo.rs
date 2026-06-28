@@ -92,8 +92,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         for ev in &events {
             match ev {
-                Event::FlowStarted { .. } => flow_starts += 1,
-                Event::FlowEnded { .. } => flow_ends += 1,
+                Event::Started { .. } => flow_starts += 1,
+                Event::Ended { .. } => flow_ends += 1,
                 _ => {}
             }
         }
@@ -120,7 +120,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     dns_msgs.clear();
     dns_slot.drain(&mut dns_msgs);
     for ev in &events {
-        if matches!(ev, Event::FlowEnded { .. }) {
+        if matches!(ev, Event::Ended { .. }) {
             flow_ends += 1;
         }
     }

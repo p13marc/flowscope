@@ -70,7 +70,7 @@ the categories sort logically in `ls`.
 | **`composite_c2`** | `pcap,extractors,tracker,dns,tls,emit-eve` | Composite AND of `BeaconDetector` ∧ `DgaScorer` ∧ weak-TLS-version per source IP; ≥2-of-3 legs → Suricata EVE anomaly via `write_owned_anomaly`. |
 | **`tcp_evasion_detector`** | `pcap,extractors,tracker,reassembler` | Ptacek-Newsham TCP overlap IOC via `AnomalyKind::TcpRexmitInconsistency` surfaced by `FlowDriver::with_emit_anomalies(true)`. |
 | **`flow_analysis`** | `analysis,tls,dns,emit-eve` | The `analysis` composition layer: `FlowAnalyzer` accumulates per-flow `L7Summary`, `finalize` computes `FlowRisk` + screens an `IocSet`, yielding enriched `AnalyzedFlow` records printed as a table and as SIEM-ready EVE JSON (`write_analyzed_flow`). Synthetic flows; no pcap (#83). |
-| **`flow_analysis_driver`** | `analysis,tls,dns,pcap,emit-eve` | The same `FlowAnalyzer` wired to a real typed `Driver<E>` over a pcap: drain `TlsHandshakeParser`/`DnsUdpParser` slots into the analyzer, `finalize` on `Event::FlowEnded` → enriched EVE (#83). |
+| **`flow_analysis_driver`** | `analysis,tls,dns,pcap,emit-eve` | The same `FlowAnalyzer` wired to a real typed `Driver<E>` over a pcap: drain `TlsHandshakeParser`/`DnsUdpParser` slots into the analyzer, `finalize` on `Event::Ended` → enriched EVE (#83). |
 
 ## 04 — observability / SRE
 

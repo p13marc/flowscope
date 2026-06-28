@@ -242,7 +242,7 @@ impl FlowRecord {
 
     /// Generic constructor — build a [`FlowRecord`] from any
     /// `K: KeyFields`. Used by every emit writer's
-    /// `write_event(FlowEnded)` path so the IE-keyed FlowRecord
+    /// `write_event(Ended)` path so the IE-keyed FlowRecord
     /// is the single canonical record shape; emit writers are
     /// pure views over it.
     ///

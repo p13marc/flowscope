@@ -76,7 +76,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("{:?} {:?}", m.side, m.message);
         }
         for ev in &events {
-            if let Event::FlowStarted { key, .. } = ev {
+            if let Event::Started { key, .. } = ev {
                 println!("+ flow {key:?}");
             }
         }

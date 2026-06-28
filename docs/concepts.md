@@ -343,15 +343,15 @@ the typed parser messages drained from each protocol's `SlotHandle`.
 
 | Variant | Fires |
 |---------|-------|
-| `FlowStarted { key, ts, l4 }` | First sight of a flow |
-| `FlowEstablished { key, ts, l4 }` | TCP handshake completed |
-| `FlowPacket { key, side, len, ts, tcp }` | Per-packet (opt-in) |
-| `FlowEnded { key, reason, stats, history, l4, ts }` | Flow concluded |
-| `FlowStateChange { key, from, to, ts }` | TCP state transition |
+| `Started { key, ts, l4 }` | First sight of a flow |
+| `Established { key, ts, l4 }` | TCP handshake completed |
+| `Packet { key, side, len, ts, tcp }` | Per-packet (opt-in) |
+| `Ended { key, reason, stats, history, l4, ts }` | Flow concluded |
+| `StateChange { key, from, to, ts }` | TCP state transition |
 | `ParserClosed { key, parser_kind, reason, ts }` | A slot's parser finished/erred |
 | `FlowAnomaly { key, kind, ts }` | Per-flow anomaly (opt-in) |
 | `TrackerAnomaly { kind, ts }` | Tracker-global anomaly (opt-in) |
-| `FlowTick { key, stats, ts }` | Periodic snapshot (opt-in) |
+| `Tick { key, stats, ts }` | Periodic snapshot (opt-in) |
 
 Typed messages arrive as `SlotMessage { key, side, message }` from
 the per-parser `SlotHandle` returned at registration. Register HTTP

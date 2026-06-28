@@ -774,7 +774,7 @@ pub(crate) enum SessionEvent<K, M> {
     /// [`crate::FlowEvent::Tick`]. Emitted when the underlying
     /// [`crate::FlowTrackerConfig::flow_tick_interval`] is `Some`.
     /// New in 0.5.0.
-    FlowTick {
+    Tick {
         key: K,
         stats: FlowStats,
         ts: Timestamp,

@@ -50,7 +50,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         smtp_slot.drain(&mut msgs);
 
         for ev in &events {
-            if matches!(ev, Event::FlowEnded { .. }) {
+            if matches!(ev, Event::Ended { .. }) {
                 closed += 1;
             }
         }
@@ -84,7 +84,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
     for ev in driver.finish() {
-        if matches!(ev, Event::FlowEnded { .. }) {
+        if matches!(ev, Event::Ended { .. }) {
             closed += 1;
         }
     }

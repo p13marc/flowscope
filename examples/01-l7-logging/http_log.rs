@@ -4,7 +4,7 @@
 //! offline driver that yields the flow-lifecycle [`Event`] stream
 //! while per-parser typed messages flow through the registered
 //! [`SlotHandle`](flowscope::driver::SlotHandle). We pull HTTP
-//! messages from the slot and count flow ends off `Event::FlowEnded`.
+//! messages from the slot and count flow ends off `Event::Ended`.
 //!
 //! Usage:
 //!     cargo run --features http,pcap --example http_log -- trace.pcap
@@ -61,7 +61,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     for ev in driver.run_pcap(&path)? {
-        if matches!(ev?, Event::FlowEnded { .. }) {
+        if matches!(ev?, Event::Ended { .. }) {
             closed += 1;
         }
         msgs.clear();

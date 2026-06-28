@@ -69,8 +69,8 @@ fn run_pcap_yields_session_lifecycle() {
     let mut ended = 0usize;
     for ev in driver.run_pcap(HTTP_SESSION_PATH).expect("open pcap") {
         match ev.expect("event") {
-            Event::FlowStarted { .. } => started += 1,
-            Event::FlowEnded { .. } => ended += 1,
+            Event::Started { .. } => started += 1,
+            Event::Ended { .. } => ended += 1,
             _ => {}
         }
     }
@@ -97,8 +97,8 @@ fn run_pcap_yields_datagram_lifecycle() {
     let mut ended = 0usize;
     for ev in driver.run_pcap(DNS_QUERIES_PATH).expect("open pcap") {
         match ev.expect("event") {
-            Event::FlowStarted { .. } => started += 1,
-            Event::FlowEnded { .. } => ended += 1,
+            Event::Started { .. } => started += 1,
+            Event::Ended { .. } => ended += 1,
             _ => {}
         }
     }

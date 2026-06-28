@@ -80,7 +80,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         events.clear();
         driver.track_into(PacketView::from(&owned), &mut events);
         for ev in &events {
-            if matches!(ev, Event::FlowStarted { .. }) {
+            if matches!(ev, Event::Started { .. }) {
                 flows += 1;
             }
         }

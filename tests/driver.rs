@@ -82,15 +82,15 @@ fn driver_with_no_slots_emits_lifecycle_only() {
     let mut events = Vec::new();
     driver.track_into(view, &mut events);
 
-    // Expect FlowStarted + FlowPacket (no Established for the
+    // Expect Started + Packet (no Established for the
     // single packet — that takes a 3WHS).
     let started = events
         .iter()
-        .filter(|e| matches!(e, Event::FlowStarted { .. }))
+        .filter(|e| matches!(e, Event::Started { .. }))
         .count();
     let packets = events
         .iter()
-        .filter(|e| matches!(e, Event::FlowPacket { .. }))
+        .filter(|e| matches!(e, Event::Packet { .. }))
         .count();
     assert_eq!(started, 1);
     assert_eq!(packets, 1);
@@ -108,14 +108,10 @@ fn session_slot_drains_typed_messages() {
     let mut events = Vec::new();
     driver.track_into(view, &mut events);
 
-    // Lifecycle should have FlowStarted + FlowPacket — but NO
+    // Lifecycle should have Started + Packet — but NO
     // Message variant (it doesn't exist on Event<K>).
-    assert!(
-        events
-            .iter()
-            .any(|e| matches!(e, Event::FlowStarted { .. }))
-    );
-    assert!(events.iter().any(|e| matches!(e, Event::FlowPacket { .. })));
+    assert!(events.iter().any(|e| matches!(e, Event::Started { .. })));
+    assert!(events.iter().any(|e| matches!(e, Event::Packet { .. })));
 
     // Typed messages drain from the slot handle.
     let mut msgs: Vec<SlotMessage<(FlowSide, usize), _>> = Vec::new();
@@ -285,10 +281,10 @@ fn force_close_emits_flow_ended_with_force_closed_reason() {
 
     let ended = events
         .iter()
-        .any(|e| matches!(e, Event::FlowEnded { reason, .. } if *reason == EndReason::ForceClosed));
+        .any(|e| matches!(e, Event::Ended { reason, .. } if *reason == EndReason::ForceClosed));
     assert!(
         ended,
-        "force_close should emit FlowEnded with ForceClosed reason; got {events:?}",
+        "force_close should emit Ended with ForceClosed reason; got {events:?}",
     );
 
     let parser_closed = events
@@ -321,7 +317,7 @@ fn force_close_on_unknown_flow_is_noop() {
 }
 
 // Plan 130: Event::tcp() accessor — additive cross-variant
-// accessor that returns the FlowPacket.tcp field when present,
+// accessor that returns the Packet.tcp field when present,
 // None on every other variant.
 #[test]
 fn event_tcp_accessor_returns_none_for_non_packet_variants() {
@@ -334,7 +330,7 @@ fn event_tcp_accessor_returns_none_for_non_packet_variants() {
     let mut events = Vec::new();
     driver.track_into(view, &mut events);
 
-    // Without emit_packet_details(true), FlowPacket.tcp stays
+    // Without emit_packet_details(true), Packet.tcp stays
     // None; every other variant also returns None.
     for ev in &events {
         assert!(
@@ -342,13 +338,9 @@ fn event_tcp_accessor_returns_none_for_non_packet_variants() {
             "default-config driver should never expose tcp(); got {ev:?}",
         );
     }
-    // At least one FlowStarted must be present so the loop
+    // At least one Started must be present so the loop
     // exercised the accessor.
-    assert!(
-        events
-            .iter()
-            .any(|e| matches!(e, Event::FlowStarted { .. }))
-    );
+    assert!(events.iter().any(|e| matches!(e, Event::Started { .. })));
 }
 
 #[test]
@@ -359,7 +351,7 @@ fn event_tcp_accessor_populated_when_emit_packet_details_on() {
     let mut driver = builder.build();
 
     // First packet establishes the flow — second packet
-    // produces a FlowPacket event whose tcp field is populated.
+    // produces a Packet event whose tcp field is populated.
     let frame1 = tcp_packet(33000, 80, b"hello");
     let mut events = Vec::new();
     driver.track_into(PacketView::new(&frame1, Timestamp::new(0, 0)), &mut events);
@@ -369,9 +361,9 @@ fn event_tcp_accessor_populated_when_emit_packet_details_on() {
 
     let packet_event_has_tcp = events
         .iter()
-        .any(|e| matches!(e, Event::FlowPacket { .. }) && e.tcp().is_some());
+        .any(|e| matches!(e, Event::Packet { .. }) && e.tcp().is_some());
     assert!(
         packet_event_has_tcp,
-        "FlowPacket.tcp should be populated when emit_packet_details(true)"
+        "Packet.tcp should be populated when emit_packet_details(true)"
     );
 }

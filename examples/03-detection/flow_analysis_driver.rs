@@ -11,7 +11,7 @@
 //!    the slots fill with typed messages;
 //! 3. drain the slots and feed each message to the analyzer
 //!    (`observe_*`, keyed by the message's flow key);
-//! 4. on each `Event::FlowEnded`, `finalize` the flow → an
+//! 4. on each `Event::Ended`, `finalize` the flow → an
 //!    [`AnalyzedFlow`] you log / ship.
 //!
 //! Run:
@@ -60,7 +60,7 @@ fn pump(
 
     let (mut analyzed, mut alerted) = (0, 0);
     for ev in events {
-        if let Event::FlowEnded { key, stats, .. } = ev {
+        if let Event::Ended { key, stats, .. } = ev {
             let rec = analyzer.finalize(key, stats.clone());
             analyzed += 1;
             if !rec.is_clean() {

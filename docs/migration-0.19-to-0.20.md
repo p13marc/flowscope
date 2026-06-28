@@ -302,3 +302,37 @@ match ev { Event::ParserClosed { parser_kind, .. }
   comparison.
 
 [`ParserKind`]: https://docs.rs/flowscope/latest/flowscope/enum.ParserKind.html
+
+## Breaking change — `Event<K>` variants drop the `Flow` prefix (#110)
+
+`driver::Event<K>` variants are renamed to match `event::FlowEvent<K>`
+(which never had the prefix). Mechanical rename at every match / construct
+site:
+
+```rust
+// before (0.19)
+match ev {
+    Event::FlowStarted { key, .. }   => …,
+    Event::FlowPacket { len, .. }    => …,
+    Event::FlowEnded { reason, .. }  => …,
+    _ => {}
+}
+
+// after (0.20)
+match ev {
+    Event::Started { key, .. }   => …,
+    Event::Packet { len, .. }    => …,
+    Event::Ended { reason, .. }  => …,
+    _ => {}
+}
+```
+
+Full mapping: `FlowStarted → Started`, `FlowEstablished → Established`,
+`FlowStateChange → StateChange`, `FlowPacket → Packet`,
+`FlowEnded → Ended`, `FlowTick → Tick`. `FlowAnomaly`, `TrackerAnomaly`,
+and `ParserClosed` are unchanged.
+
+- If you serialize `Event` directly, the `type` tag for these variants
+  changes from `"flow_started"` &c. to `"started"` &c. (now identical to
+  `FlowEvent`'s tags). The shipped CSV / EVE / NDJSON emitters serialize
+  `FlowEvent`, not `Event`, so their output is unchanged.

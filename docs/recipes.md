@@ -342,13 +342,13 @@ slot.drain(&mut msgs);
 
 for ev in &events {
     match ev {
-        Event::FlowStarted { key, ts, .. } => {
+        Event::Started { key, ts, .. } => {
             state.insert(key.clone(), PerFlow {
                 first_seen_at: Some(*ts),
                 ..Default::default()
             });
         }
-        Event::FlowEnded { key, .. } => {
+        Event::Ended { key, .. } => {
             state.remove(key);
         }
         _ => {}
@@ -893,9 +893,9 @@ for owned in source.views() {
     http_alt.drain(&mut alt_m);
     for ev in &events {
         match ev {
-            Event::FlowStarted { key, .. } => /* lifecycle */ {}
+            Event::Started { key, .. } => /* lifecycle */ {}
             Event::ParserClosed { parser_kind, .. } => /* per-parser close */ {}
-            Event::FlowEnded { key, reason, stats, .. } => /* lifecycle */ {}
+            Event::Ended { key, reason, stats, .. } => /* lifecycle */ {}
             _ => {}
         }
     }
@@ -981,7 +981,7 @@ let mut bw: RollingRate<&'static str, u64> =
     RollingRate::new_unbounded(Duration::from_secs(60), Duration::from_secs(1));
 
 for event in driver_events {
-    if let Event::FlowPacket { key, len, ts, .. } = event {
+    if let Event::Packet { key, len, ts, .. } = event {
         // app_label is always-Some; falls back to L4 name
         // ("tcp" / "udp" / "sctp") for unknown ports.
         bw.record(key.app_label(), len as u64, ts);
@@ -1279,7 +1279,7 @@ for event in driver_events {
     // Drive lifecycle: evict on Ended, refresh last-seen on others.
     state.feed(&event);
 
-    if let Event::FlowPacket { key, len, ts, .. } = event {
+    if let Event::Packet { key, len, ts, .. } = event {
         let entry = state.get_or_default(&key, ts);
         entry.packets += 1;
         entry.bytes += len as u64;

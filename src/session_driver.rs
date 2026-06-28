@@ -378,7 +378,7 @@ where
                     });
                 }
                 FlowEvent::Tick { key, stats, ts } => {
-                    out.push(SessionEvent::FlowTick {
+                    out.push(SessionEvent::Tick {
                         key: key.clone(),
                         stats: stats.clone(),
                         ts: *ts,
@@ -1141,8 +1141,8 @@ mod tests {
         assert!(
             events
                 .iter()
-                .any(|e| matches!(e, SessionEvent::FlowTick { .. })),
-            "first packet should emit initial FlowTick, got: {:?}",
+                .any(|e| matches!(e, SessionEvent::Tick { .. })),
+            "first packet should emit initial Tick, got: {:?}",
             events
         );
     }
