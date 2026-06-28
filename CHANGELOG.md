@@ -22,7 +22,7 @@ Three themes:
   canonical-direction fix — `Started`/`Packet` events now carry both
   `side` and a deterministic `orientation` (#118).
 
-### Breaking — canonical `Orientation` on flow events (#118, epic #123)
+### Breaking — canonical `Orientation` on flow events (#118 / #119, epic #123)
 
 `FlowEvent::{Started, Packet}` and `Event::{Started, Packet}` gain an
 `orientation: Orientation` field alongside the existing `side`. This
