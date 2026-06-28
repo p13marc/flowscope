@@ -337,6 +337,13 @@ Rule of thumb:
 - **Need a stable per-direction label** across sensors / dedup /
   Community ID / biflow keying: `orientation`.
 
+If you need `side` itself to be race-robust on a tap-merge, set
+`FlowTrackerConfig::infer_tcp_initiator = true` — for TCP the tracker
+then derives the initiator from the handshake (a `SYN+ACK`-first flow
+is flipped so the SYN sender stays `Initiator`), and
+`FlowStats::direction_flipped` flags any flow it corrected. Opt-in;
+single-tap captures don't need it.
+
 On a finished flow, recover one axis from the other via
 `FlowStats::side_for(orientation)` / `orientation_for(side)`;
 `FlowStats::initiator_orientation` records which `Orientation` the

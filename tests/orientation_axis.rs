@@ -225,6 +225,112 @@ fn no_source_idx_leaves_legs_unbound() {
     assert!(!stats.capture_leg_inconsistent);
 }
 
+// ── Issue #122 — SYN-based initiator inference ─────────────────────
+
+fn tcp_a_to_b(flags: u8, payload: &[u8]) -> Vec<u8> {
+    test_frames::ipv4_tcp(
+        [0; 6], [0; 6], A_IP, B_IP, A_PORT, B_PORT, 0, 0, flags, payload,
+    )
+}
+
+fn tcp_b_to_a(flags: u8, payload: &[u8]) -> Vec<u8> {
+    test_frames::ipv4_tcp(
+        [0; 6], [0; 6], B_IP, A_IP, B_PORT, A_PORT, 0, 0, flags, payload,
+    )
+}
+
+const SYN: u8 = 0x02;
+const SYN_ACK: u8 = 0x12;
+
+/// Drive TCP frames through a tracker built with `infer`, returning the
+/// single flow's stats and the `side` carried on its `Started` event.
+fn drive_tcp(infer: bool, frames: &[Vec<u8>]) -> (FlowStats, FlowSide) {
+    use flowscope::FlowTrackerConfig;
+    let mut cfg = FlowTrackerConfig::default();
+    cfg.infer_tcp_initiator = infer;
+    let mut tracker: FlowTracker<_, ()> = FlowTracker::with_config(FiveTuple::bidirectional(), cfg);
+    let mut started_side = None;
+    for (t, frame) in frames.iter().enumerate() {
+        for ev in tracker.track(PacketView::new(frame, Timestamp::new(t as u32, 0))) {
+            if let FlowEvent::Started { side, .. } = ev {
+                started_side = Some(side);
+            }
+        }
+    }
+    let mut stats = None;
+    for (_k, entry) in tracker.flows() {
+        stats = Some(entry.stats.clone());
+    }
+    (
+        stats.expect("flow created"),
+        started_side.expect("Started emitted"),
+    )
+}
+
+#[test]
+fn syn_ack_first_flips_initiator_when_inference_on() {
+    // Tap-merge race: the server's SYN+ACK (B→A) is delivered before
+    // the client's SYN (A→B). With inference ON, the SYN sender (A→B,
+    // Forward) must still be the initiator.
+    let (stats, started_side) = drive_tcp(true, &[tcp_b_to_a(SYN_ACK, b""), tcp_a_to_b(SYN, b"")]);
+
+    assert_eq!(
+        stats.initiator_orientation,
+        Orientation::Forward,
+        "the SYN sender (A→B = Forward) is the initiator despite arriving second"
+    );
+    assert!(stats.direction_flipped, "a SYN+ACK-first flow was flipped");
+    assert_eq!(
+        stats.side_for(Orientation::Forward),
+        FlowSide::Initiator,
+        "Forward (the SYN direction) maps to Initiator"
+    );
+    // The first packet (the SYN+ACK) is the responder, so Started says so.
+    assert_eq!(started_side, FlowSide::Responder);
+}
+
+#[test]
+fn syn_ack_first_mislabels_without_inference() {
+    // Same race, inference OFF (default): first-seen wins, so the
+    // server (B→A, Reverse) is wrongly labelled the initiator. This is
+    // the bug #122 fixes — asserted here so a regression is visible.
+    let (stats, started_side) = drive_tcp(false, &[tcp_b_to_a(SYN_ACK, b""), tcp_a_to_b(SYN, b"")]);
+
+    assert_eq!(stats.initiator_orientation, Orientation::Reverse);
+    assert!(!stats.direction_flipped, "no flip happened");
+    assert_eq!(started_side, FlowSide::Initiator);
+}
+
+#[test]
+fn normal_syn_order_is_not_flipped() {
+    // SYN seen first (the common case): inference ON changes nothing.
+    let (stats, started_side) = drive_tcp(true, &[tcp_a_to_b(SYN, b""), tcp_b_to_a(SYN_ACK, b"")]);
+
+    assert_eq!(stats.initiator_orientation, Orientation::Forward);
+    assert!(
+        !stats.direction_flipped,
+        "SYN arrived first — no flip needed"
+    );
+    assert_eq!(started_side, FlowSide::Initiator);
+}
+
+#[test]
+fn non_handshake_first_packet_falls_back_to_arrival_order() {
+    // Mid-stream capture: first packet is a bare ACK+PSH (no SYN). Even
+    // with inference ON, fall back to arrival order (can't know better).
+    const ACK_PSH: u8 = 0x18;
+    let (stats, _side) = drive_tcp(
+        true,
+        &[tcp_b_to_a(ACK_PSH, b"data"), tcp_a_to_b(ACK_PSH, b"x")],
+    );
+    assert_eq!(
+        stats.initiator_orientation,
+        Orientation::Reverse,
+        "first-seen (B→A) wins when no SYN is visible"
+    );
+    assert!(!stats.direction_flipped);
+}
+
 #[test]
 fn orientation_helpers_round_trip() {
     assert_eq!(Orientation::Forward.flipped(), Orientation::Reverse);

@@ -91,12 +91,16 @@ The largest pre-1.0 breaking batch yet. Three themes:
   `source_idx_for(orientation)` fold the capture leg
   (`RxMetadata::source_idx`) to a per-`Orientation` binding on a
   merged flow (IPFIX biflow-merge model), with
-  `capture_leg_inconsistent` as the tap-miswire IOC. Per-packet
-  leg fidelity (`#121`) + SYN-based initiator (`#122`) still
-  open.
+  `capture_leg_inconsistent` as the tap-miswire IOC. Phase 3
+  SYN-based initiator (`#122`) shipped: opt-in
+  `FlowTrackerConfig::infer_tcp_initiator` flips a
+  `SYN+ACK`-first flow at creation so the SYN sender stays
+  `Initiator` (race-robust role axis), recording
+  `FlowStats::direction_flipped` (Zeek `^`). Per-packet leg
+  fidelity (`#121`) still open.
 
 Test count after the convergence + strong-typing work:
-**1759 passing** (up from 1541 mid-0.18). Zero clippy warnings
+**1763 passing** (up from 1541 mid-0.18). Zero clippy warnings
 under `--all-features --all-targets -D warnings`, zero rustdoc
 warnings. New `parser_kind.rs` wiring + `src/pcap/pulses.rs` +
 `tests/orientation_axis.rs`. Migration recipes in
@@ -817,6 +821,7 @@ src/
 │                                # EventMask bitflags — tracker load-shedding (issue #79, 0.20.0)
 │                                # FlowEvent::{Started,Packet} carry orientation; FlowStats::initiator_orientation + side_for/orientation_for (issue #118, 0.20.0)
 │                                # FlowStats::source_idx_{forward,reverse} + source_idx_for + capture_leg_inconsistent — per-direction capture leg (issue #120, 0.20.0)
+│                                # FlowStats::direction_flipped + FlowTrackerConfig::infer_tcp_initiator — SYN-based initiator inference (issue #122, 0.20.0)
 ├── history.rs                   # HistoryString (Zeek-style ShAdaFf)
 ├── tcp_state.rs                 # TCP state machine (transitions + idle policy)
 ├── tracker.rs                   # FlowTracker<E, S>     (manual_tick alias added in 50.4)
@@ -986,7 +991,9 @@ The legacy `HttpFactory` / `TlsFactory` callback-handler shape
   `FlowSide` flips under a tap-merge race; `FlowStats`
   `side_for`/`orientation_for` axis translation (issue #118);
   per-direction capture-leg binding + `capture_leg_inconsistent`
-  IOC on a merged flow (issue #120, 0.20.0).
+  IOC on a merged flow (issue #120); SYN-based initiator
+  inference flips a `SYN+ACK`-first flow + `direction_flipped`
+  (issue #122, 0.20.0).
 - `tests/error_chain.rs` — unified `flowscope::Error` source
   chain across pcap I/O, ICMP, DNS (plan 96, 0.9.0).
 - `tests/quick_wins.rs` — Timestamp/FlowStats/EndReason/

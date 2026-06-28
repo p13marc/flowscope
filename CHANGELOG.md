@@ -90,6 +90,26 @@ on `Ended` / `Tick` / `snapshot_stats`. Purely additive (`FlowStats` is
 `#[non_exhaustive]`); existing consumers unaffected. Per-*packet* leg
 fidelity (audit tier) is tracked separately (#121).
 
+### Additive — SYN-based initiator inference (#122, epic #123 phase 3)
+
+A new opt-in `FlowTrackerConfig::infer_tcp_initiator` (default `false`)
+makes the **logical role** axis (`FlowSide`) race-robust for TCP. When
+enabled, a flow whose first observed packet is a `SYN+ACK` — the
+response delivered before the request, a tap-merge / two-queue race —
+has its inferred initiator **flipped** at flow creation so the SYN
+sender is correctly labelled `Initiator`, and the new
+`FlowStats::direction_flipped` flag is set (the analogue of Zeek's
+`conn.log` `^`). A bare `SYN` first packet (the common case), a
+non-handshake packet (mid-stream capture), or a non-TCP flow falls back
+to arrival order unchanged.
+
+Default-off preserves the historical first-seen semantics for
+single-tap consumers (where the SYN is always seen first, so the flag
+changes nothing). This corrects the role axis specifically; the
+canonical `Orientation` axis (#118) is already race-immune for every
+protocol regardless of this flag. Additive — only the new config field
+and `FlowStats` flag are added.
+
 ### Additive — unified offline `Pulse` stream (#111)
 
 `pcap::session_pulses::<P>(path)` / `datagram_pulses::<P>(path)` replay a
