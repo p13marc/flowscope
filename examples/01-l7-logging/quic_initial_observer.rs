@@ -23,7 +23,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut with_sni = 0u64;
     let mut total_alpn = 0u64;
 
-    for (key, msg) in flowscope::quic::initials_from_pcap(&path)? {
+    for (key, msg) in flowscope::pcap::datagram_messages::<flowscope::quic::QuicUdpParser>(&path)? {
         initials += 1;
         let sni = msg.sni.as_deref();
         let alpn = msg.alpn.join(",");

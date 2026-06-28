@@ -26,7 +26,7 @@
 //!
 //! Closes #39.
 
-use flowscope::kerberos::{KerberosMessageKind, messages_from_pcap};
+use flowscope::kerberos::{KerberosMessageKind, KerberosUdpParser};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let path = std::env::args()
@@ -36,7 +36,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut hits = 0u64;
     let mut total_tgs_req = 0u64;
 
-    for (key, msg) in messages_from_pcap(&path)? {
+    for (key, msg) in flowscope::pcap::datagram_messages::<KerberosUdpParser>(&path)? {
         if matches!(msg.kind, KerberosMessageKind::TgsReq) {
             total_tgs_req += 1;
         }

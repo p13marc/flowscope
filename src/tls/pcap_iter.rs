@@ -22,6 +22,7 @@ use crate::{Result, SessionEvent};
 /// in one call.
 ///
 /// ```no_run
+/// # #![allow(deprecated)]
 /// for (key, hello) in flowscope::tls::client_hellos_from_pcap("trace.pcap")? {
 ///     let sni = hello.sni.as_deref().unwrap_or("(none)");
 ///     println!("{key:?}  SNI={sni}");
@@ -30,6 +31,10 @@ use crate::{Result, SessionEvent};
 /// ```
 ///
 /// Iterator stops on the first pcap-decode error.
+#[deprecated(
+    since = "0.20.0",
+    note = "use flowscope::pcap::session_messages::<P>() / datagram_messages::<P>() (issue #86)"
+)]
 pub fn client_hellos_from_pcap<P: AsRef<Path>>(
     path: P,
 ) -> Result<impl Iterator<Item = (FiveTupleKey, Box<TlsClientHello>)>> {
@@ -54,11 +59,16 @@ pub fn client_hellos_from_pcap<P: AsRef<Path>>(
 /// rather than one per TLS record.
 ///
 /// ```no_run
+/// # #![allow(deprecated)]
 /// for (key, hs) in flowscope::tls::handshakes_from_pcap("trace.pcap")? {
 ///     println!("{key:?}  sni={:?} ja4={:?} outcome={:?}", hs.sni, hs.ja4, hs.outcome);
 /// }
 /// # Ok::<(), flowscope::Error>(())
 /// ```
+#[deprecated(
+    since = "0.20.0",
+    note = "use flowscope::pcap::session_messages::<P>() / datagram_messages::<P>() (issue #86)"
+)]
 pub fn handshakes_from_pcap<P: AsRef<Path>>(
     path: P,
 ) -> Result<impl Iterator<Item = (FiveTupleKey, TlsHandshake)>> {

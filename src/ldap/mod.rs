@@ -51,6 +51,7 @@ mod types;
 
 pub use parser::{ParseError, parse, parser_kind};
 #[cfg(feature = "pcap")]
+#[allow(deprecated)]
 pub use pcap_iter::messages_from_pcap;
 pub use session::{LDAP_PORT, LdapParser};
 pub use types::{LdapAuthKind, LdapMessage, LdapOperation, LdapResultCode, LdapSearchScope};

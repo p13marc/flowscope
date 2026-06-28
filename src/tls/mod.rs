@@ -106,6 +106,7 @@ pub use ja4x::{ja4x_for_chain, ja4x_for_der};
 #[cfg(feature = "quic")]
 pub(crate) use parser::build_client_hello;
 #[cfg(feature = "pcap")]
+#[allow(deprecated)]
 pub use pcap_iter::{client_hellos_from_pcap, handshakes_from_pcap};
 pub use session::{TlsMessage, TlsParser};
 pub use types::*;
