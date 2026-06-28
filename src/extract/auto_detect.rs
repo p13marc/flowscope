@@ -17,6 +17,7 @@ use super::{InnerGre, InnerGtpU, InnerVxlan, StripMpls, StripVlan};
 /// Order is fixed: plain → VLAN → MPLS → VXLAN → GTP-U → GRE. The
 /// first match wins.
 #[derive(Debug, Clone, Copy)]
+#[non_exhaustive]
 pub struct AutoEncapVariants {
     /// Try `StripVlan(...)`.
     pub vlan: bool,
@@ -63,6 +64,7 @@ impl Default for AutoEncapVariants {
 /// Run `extractor` over plain frames first, then over the enabled
 /// decap variants, returning the first match.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct AutoDetectEncap<E> {
     /// The wrapped extractor that processes the (possibly decapped) frame.
     pub extractor: E,

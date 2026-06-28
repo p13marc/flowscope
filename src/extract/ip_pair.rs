@@ -19,9 +19,20 @@ pub struct IpPair;
 
 #[derive(Debug, Clone, Copy, Hash, Eq, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[non_exhaustive]
 pub struct IpPairKey {
     pub a: IpAddr,
     pub b: IpAddr,
+}
+
+impl IpPairKey {
+    /// Construct a key from its two endpoints. For tests, fixtures,
+    /// and manual construction now that the struct is
+    /// `#[non_exhaustive]`.
+    #[inline]
+    pub fn new(a: IpAddr, b: IpAddr) -> Self {
+        Self { a, b }
+    }
 }
 
 impl FlowExtractor for IpPair {

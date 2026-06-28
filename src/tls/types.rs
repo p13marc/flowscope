@@ -115,9 +115,17 @@ pub struct TlsServerHello {
 /// TLS Alert record (RFC 5246 §7.2).
 #[derive(Debug, Clone, Copy)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[non_exhaustive]
 pub struct TlsAlert {
     pub level: TlsAlertLevel,
     pub description: u8,
+}
+
+impl TlsAlert {
+    /// Construct a TLS alert record.
+    pub fn new(level: TlsAlertLevel, description: u8) -> Self {
+        Self { level, description }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -178,6 +186,7 @@ impl TlsVersion {
 
 /// Tunables for the TLS observer.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct TlsConfig {
     /// Compute JA3 fingerprints for every ClientHello (requires
     /// `tls-fingerprints` feature; was `ja3` pre-0.12). Default:

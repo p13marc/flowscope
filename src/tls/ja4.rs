@@ -31,6 +31,7 @@ use super::types::{TlsClientHello, TlsVersion};
 /// Parts of a JA4 fingerprint, before assembly into the
 /// underscore-joined string.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct Ja4Parts {
     /// The `[t|q][version][SNI?d:i][cipher_count][ext_count][alpn]`
     /// header section.

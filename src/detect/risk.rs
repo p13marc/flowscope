@@ -68,6 +68,7 @@ bitflags::bitflags! {
 /// Severity tier for a risk flag — the nDPI ladder.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[non_exhaustive]
 pub enum RiskSeverity {
     /// Informational / low concern.
     Low,

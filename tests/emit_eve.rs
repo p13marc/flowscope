@@ -10,11 +10,11 @@ use flowscope::{
 };
 
 fn key() -> FiveTupleKey {
-    FiveTupleKey {
-        proto: L4Proto::Tcp,
-        a: "10.0.0.1:33000".parse().unwrap(),
-        b: "10.0.0.2:80".parse().unwrap(),
-    }
+    FiveTupleKey::new(
+        L4Proto::Tcp,
+        "10.0.0.1:33000".parse().unwrap(),
+        "10.0.0.2:80".parse().unwrap(),
+    )
 }
 
 fn parse_lines(out: &[u8]) -> Vec<serde_json::Value> {
@@ -27,11 +27,11 @@ fn parse_lines(out: &[u8]) -> Vec<serde_json::Value> {
 
 fn flipped_key() -> FiveTupleKey {
     // Same flow, reverse direction.
-    FiveTupleKey {
-        proto: L4Proto::Tcp,
-        a: "10.0.0.2:80".parse().unwrap(),
-        b: "10.0.0.1:33000".parse().unwrap(),
-    }
+    FiveTupleKey::new(
+        L4Proto::Tcp,
+        "10.0.0.2:80".parse().unwrap(),
+        "10.0.0.1:33000".parse().unwrap(),
+    )
 }
 
 /// The proprietary FNV-1a `flow_hash` was dropped from default EVE

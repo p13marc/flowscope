@@ -50,6 +50,7 @@ const ETH_TEB: u16 = 0x6558;
 /// L2-aware extractors keep working). Transparent Ethernet Bridging
 /// (TEB) inner frames are passed through unchanged.
 #[derive(Debug, Clone, Copy)]
+#[non_exhaustive]
 pub struct InnerGre<E> {
     /// The wrapped extractor that processes the inner frame.
     pub extractor: E,

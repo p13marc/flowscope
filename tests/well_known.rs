@@ -14,7 +14,7 @@ fn key(a: &str, b: &str, proto: L4Proto) -> FiveTupleKey {
     let a: SocketAddr = a.parse().expect("parse a");
     let b: SocketAddr = b.parse().expect("parse b");
     let (a, b) = if a < b { (a, b) } else { (b, a) };
-    FiveTupleKey { proto, a, b }
+    FiveTupleKey::new(proto, a, b)
 }
 
 #[test]

@@ -34,6 +34,7 @@ pub struct BurstDetector<K, E> {
 
 /// One hit emitted by [`BurstDetector::observe`].
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct BurstHit<K> {
     pub key: K,
     pub burst_count: u32,

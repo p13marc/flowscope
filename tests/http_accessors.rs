@@ -11,11 +11,11 @@ mod http_request {
     use flowscope::http::{HttpRequest, HttpVersion};
 
     fn fixture_with(headers: Vec<(&str, &[u8])>) -> HttpRequest {
-        HttpRequest {
-            method: Bytes::from_static(b"GET"),
-            path: Bytes::from_static(b"/"),
-            version: HttpVersion::Http1_1,
-            headers: headers
+        HttpRequest::new(
+            Bytes::from_static(b"GET"),
+            Bytes::from_static(b"/"),
+            HttpVersion::Http1_1,
+            headers
                 .into_iter()
                 .map(|(k, v)| {
                     (
@@ -24,8 +24,8 @@ mod http_request {
                     )
                 })
                 .collect(),
-            body: Bytes::new(),
-        }
+            Bytes::new(),
+        )
     }
 
     #[test]
@@ -120,11 +120,11 @@ mod http_response {
     use flowscope::http::{HttpResponse, HttpVersion};
 
     fn fixture_with(headers: Vec<(&str, &[u8])>) -> HttpResponse {
-        HttpResponse {
-            status: 200,
-            reason: Bytes::from_static(b"OK"),
-            version: HttpVersion::Http1_1,
-            headers: headers
+        HttpResponse::new(
+            200,
+            Bytes::from_static(b"OK"),
+            HttpVersion::Http1_1,
+            headers
                 .into_iter()
                 .map(|(k, v)| {
                     (
@@ -133,8 +133,8 @@ mod http_response {
                     )
                 })
                 .collect(),
-            body: Bytes::new(),
-        }
+            Bytes::new(),
+        )
     }
 
     #[test]

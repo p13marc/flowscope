@@ -30,6 +30,7 @@ use crate::layers::{TcpOption, TcpSlice};
 
 /// Decomposed JA4T pieces, before assembly into the underscore-joined string.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct Ja4tParts {
     /// Advertised TCP window size.
     pub window: u16,

@@ -41,6 +41,7 @@ use super::{
 /// Parts of a JA4S fingerprint, before assembly into the
 /// underscore-joined string.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct Ja4sParts {
     /// The `[t|q][version][ext_count][alpn]` header section.
     pub header: String,

@@ -18,6 +18,7 @@ impl Captured {
             match m {
                 HttpMessage::Request(r) => self.reqs.push(r),
                 HttpMessage::Response(r) => self.resps.push(r),
+                _ => {}
             }
         }
     }

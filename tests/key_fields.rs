@@ -41,11 +41,11 @@ fn l4proto_other_returns_none() {
 // ── FiveTupleKey ──────────────────────────────────────────────
 
 fn key() -> FiveTupleKey {
-    FiveTupleKey {
-        proto: L4Proto::Tcp,
-        a: "10.0.0.1:33000".parse().unwrap(),
-        b: "10.0.0.2:80".parse().unwrap(),
-    }
+    FiveTupleKey::new(
+        L4Proto::Tcp,
+        "10.0.0.1:33000".parse().unwrap(),
+        "10.0.0.2:80".parse().unwrap(),
+    )
 }
 
 #[test]

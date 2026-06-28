@@ -126,6 +126,7 @@ fn handle(
                 .unwrap_or_else(|| "(unknown)".to_string());
             buckets.entry(host).or_default().add_status(resp.status);
         }
+        _ => {}
     }
 }
 

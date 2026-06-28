@@ -15,6 +15,7 @@ use super::constants::SET_ID_DATA_MIN;
 /// becomes 1 on the wire when present).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[non_exhaustive]
 pub struct FieldSpec {
     pub information_element_id: u16,
     pub length: u16,
@@ -49,6 +50,7 @@ impl FieldSpec {
 /// matches `template_id`.
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[non_exhaustive]
 pub struct TemplateDefinition {
     pub template_id: u16,
     pub fields: Vec<FieldSpec>,

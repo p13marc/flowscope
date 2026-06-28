@@ -11,6 +11,7 @@ use crate::{
 };
 
 /// Outcome of one TCP-flag transition.
+#[non_exhaustive]
 pub struct Transition {
     /// New state (may equal the old state).
     pub state: FlowState,

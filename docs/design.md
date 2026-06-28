@@ -234,6 +234,29 @@ The serde wire format (above) is the first surface to opt out of
 this policy early — it locked at 0.8 because downstream dashboards
 depend on it.
 
+## Trait extensibility — open vs. sealed (1.0 decision)
+
+The public extension traits are **deliberately left open** (not
+sealed) for 1.0. Reviewed as part of the pre-1.0 API-stability sweep
+(issue #78):
+
+| Trait | Decision | Why |
+|-------|----------|-----|
+| `SessionParser` / `DatagramParser` | **open** | Custom protocol parsers are the documented headline use case (`examples/06-custom-protocols/`, `tests/length_prefixed_example.rs`). Sealing would defeat the point of the trait. |
+| `FlowExtractor` | **open** | Custom extractors and decap combinators (`StripVlan(InnerVxlan(FiveTuple))`) are a core composition story; downstream keys are expected. |
+| `KeyFields` | **open** | The emit writers are generic over `K: KeyFields`, and `anomaly_fields.rs` documents + tests `impl KeyFields for CustomKey`. A downstream crate with its own flow key *must* implement it to use the CSV/Zeek/NDJSON/EVE writers — it is a genuine extension point, not just an internal emitter contract. |
+| `DetectorScore` | **open** | Custom detectors that produce an `OwnedAnomaly` for the structured sinks are a supported pattern. |
+
+**Consequence we accept:** because these traits are open, *adding a
+required (non-defaulted) method is a breaking change* post-1.0.
+Mitigation: every accessor on `KeyFields` / `AnomalyFields` /
+`DetectorScore` defaults (to `None` / a derived value), and future
+additions will too — so the traits grow additively without breaking
+downstream impls. We do **not** use a `mod sealed { pub trait Sealed }`
+super-trait bound on any of these. (The numeric `RateValue` helper in
+`correlate::rolling_rate` is "sealed-style" only by documentation; it
+is not a hard-sealed trait either.)
+
 ## What we deliberately don't ship
 
 A few things we get asked for and consistently say no to, because

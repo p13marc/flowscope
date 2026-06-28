@@ -43,6 +43,7 @@ pub struct ActiveFlow<'a, K, S> {
 
 /// Per-flow accounting + user state.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct FlowEntry<S> {
     pub stats: FlowStats,
     pub state: FlowState,
@@ -189,6 +190,7 @@ impl Default for FlowTrackerConfig {
 
 /// Tracker-level statistics (cumulative since construction).
 #[derive(Debug, Clone, Default)]
+#[non_exhaustive]
 pub struct FlowTrackerStats {
     pub flows_created: u64,
     pub flows_ended: u64,
