@@ -127,7 +127,7 @@ pub trait SessionParser: Send + 'static {
 | `on_tick` | Time-driven messages (DNS query timeout, heartbeat detection) |
 | `is_poisoned` | Unrecoverable parse error; driver synthesises `ParseError` close |
 | `is_done` | Successful completion ahead of FIN (HTTP/1.0 body done, DNS-TCP pair complete) |
-| `parser_kind` | Stable slug for `SessionEvent::Application::parser_kind` routing |
+| `parser_kind` | Stable slug surfaced on `Event::ParserClosed::parser_kind` (register one slot per parser to route by protocol) |
 
 `DatagramParser` mirrors the same shape with `parse(payload,
 side, ts)` instead of `feed_initiator` / `feed_responder`.
@@ -228,23 +228,18 @@ variants) holds the embedded original-packet header; `error_inner()`
 extracts it in one call.
 
 ```rust,ignore
-use flowscope::icmp::{IcmpMessage, IcmpParser};
-use flowscope::pcap::PcapFlowSource;
-use flowscope::extract::FiveTuple;
-use flowscope::SessionEvent;
+use flowscope::icmp::IcmpParser;
+use flowscope::pcap;
 
-let source = PcapFlowSource::open("trace.pcap")?
-    .datagrams(FiveTuple::bidirectional(), IcmpParser::new());
-
-for evt in source {
-    if let SessionEvent::Application { message, .. } = evt? {
-        if let Some((kind, inner)) = message.error_inner() {
-            println!("ICMP {kind}: orig {} → {} (proto={}, {}:{} → {}:{})",
-                kind,
-                inner.src, inner.dst, inner.proto,
-                inner.src, inner.src_port.unwrap_or(0),
-                inner.dst, inner.dst_port.unwrap_or(0));
-        }
+// `datagram_messages` yields (key, message) for any DatagramParser
+// with a Default — the public offline message iterator.
+for (_key, message) in pcap::datagram_messages::<IcmpParser>("trace.pcap")? {
+    if let Some((kind, inner)) = message.error_inner() {
+        println!("ICMP {kind}: orig {} → {} (proto={}, {}:{} → {}:{})",
+            kind,
+            inner.src, inner.dst, inner.proto,
+            inner.src, inner.src_port.unwrap_or(0),
+            inner.dst, inner.dst_port.unwrap_or(0));
     }
 }
 ```
@@ -322,6 +317,8 @@ through every parser call.
 
 ```rust,ignore
 use std::collections::HashMap;
+use flowscope::driver::{Driver, Event};
+use flowscope::extract::{FiveTuple, FiveTupleKey};
 
 #[derive(Default)]
 struct PerFlow {
@@ -329,26 +326,38 @@ struct PerFlow {
     first_seen_at: Option<Timestamp>,
 }
 
-let mut state: HashMap<FiveTupleKey, PerFlow> = HashMap::new();
+let mut builder = Driver::builder(FiveTuple::bidirectional());
+let mut slot = builder.session_on_ports(MyParser::default(), [PORT]);
+let mut driver = builder.build();
 
-for ev in driver.track(view) {
+let mut state: HashMap<FiveTupleKey, PerFlow> = HashMap::new();
+let mut events = Vec::new();
+let mut msgs = Vec::new();
+
+// Per packet:
+events.clear();
+msgs.clear();
+driver.track_into(view, &mut events);
+slot.drain(&mut msgs);
+
+for ev in &events {
     match ev {
-        SessionEvent::Started { key, ts } => {
-            state.insert(key, PerFlow {
-                first_seen_at: Some(ts),
+        Event::FlowStarted { key, ts, .. } => {
+            state.insert(key.clone(), PerFlow {
+                first_seen_at: Some(*ts),
                 ..Default::default()
             });
         }
-        SessionEvent::Application { key, ts, .. } => {
-            let pf = state.entry(key).or_default();
-            pf.messages += 1;
-            // ... whatever else you need ...
-        }
-        SessionEvent::Closed { key, .. } => {
-            state.remove(&key);
+        Event::FlowEnded { key, .. } => {
+            state.remove(key);
         }
         _ => {}
     }
+}
+for m in &msgs {
+    let pf = state.entry(m.key.clone()).or_default();
+    pf.messages += 1;
+    // ... whatever else you need ...
 }
 ```
 

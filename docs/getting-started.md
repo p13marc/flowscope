@@ -214,7 +214,6 @@ use futures::StreamExt;
 use netring::AsyncCapture;
 use flowscope::extract::FiveTuple;
 use flowscope::http::{HttpMessage, HttpParser};
-use flowscope::SessionEvent;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -222,8 +221,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .flow_stream(FiveTuple::bidirectional())
         .session_stream(HttpParser::default());
 
+    // netring owns its async session-event type as of the
+    // 0.20-coordinated release — flowscope no longer exports
+    // `SessionEvent`. Its `Application` arm carries the parser
+    // message; see netring's docs for the exact item type.
     while let Some(evt) = stream.next().await {
-        if let SessionEvent::Application {
+        if let netring::SessionEvent::Application {
             message: HttpMessage::Request(req), ..
         } = evt?
         {

@@ -15,12 +15,10 @@
 //! ```
 //!
 //! Closes issues #32 (UTF-8 panic on User-Agent slice) and #37
-//! (port to the high-level `PcapFlowSource::sessions` shape).
+//! (port to the high-level `flowscope::pcap::session_messages` shape).
 
-use flowscope::SessionEvent;
-use flowscope::extract::FiveTuple;
 use flowscope::http::{HttpExchangeParser, HttpOutcome};
-use flowscope::pcap::PcapFlowSource;
+use flowscope::pcap::session_messages;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let path = std::env::args()
@@ -32,15 +30,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "outcome", "status", "src → dst", "host + method + path", "ua", "ms", "bytes"
     );
 
-    for evt in
-        PcapFlowSource::open(&path)?.sessions(FiveTuple::bidirectional(), HttpExchangeParser::new())
-    {
-        let SessionEvent::Application {
-            key, message: ex, ..
-        } = evt?
-        else {
-            continue;
-        };
+    for (key, ex) in session_messages::<HttpExchangeParser>(&path)? {
         let outcome = match ex.outcome {
             HttpOutcome::Completed if ex.is_success() => "2xx",
             HttpOutcome::Completed if ex.status_class() == Some(3) => "3xx",

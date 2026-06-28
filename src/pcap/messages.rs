@@ -20,7 +20,8 @@ use std::path::Path;
 
 use crate::extract::{FiveTuple, FiveTupleKey};
 use crate::pcap::PcapFlowSource;
-use crate::{DatagramParser, Result, SessionEvent, SessionParser};
+use crate::session::SessionEvent;
+use crate::{DatagramParser, Result, SessionParser};
 
 /// Iterate every application message a [`SessionParser`] `P` produces
 /// over the TCP flows in a pcap, paired with the [`FiveTupleKey`] of

@@ -4,14 +4,16 @@ use std::path::Path;
 
 #[cfg(all(feature = "session", feature = "reassembler", feature = "extractors"))]
 use crate::DatagramParser;
+#[cfg(all(feature = "session", feature = "reassembler"))]
+use crate::SessionParser;
 #[cfg(all(feature = "session", feature = "reassembler", feature = "extractors"))]
 use crate::datagram_driver::FlowDatagramDriver;
+#[cfg(all(feature = "session", feature = "reassembler"))]
+use crate::session::SessionEvent;
 #[cfg(all(feature = "session", feature = "reassembler", feature = "extractors"))]
 use crate::session_driver::FlowSessionDriver;
 use crate::tracker::FlowEvents;
 use crate::{FlowEvent, FlowExtractor, FlowTracker, Timestamp};
-#[cfg(all(feature = "session", feature = "reassembler"))]
-use crate::{SessionEvent, SessionParser};
 
 use pcap_file::pcap::PcapReader;
 
@@ -142,41 +144,15 @@ impl<R: Read> PcapFlowSource<R> {
         }
     }
 
-    /// One-step offline TCP-session pipeline: every packet flows
-    /// through `extractor` + a per-flow `parser`, yielding typed L7
-    /// [`SessionEvent`]s. The end-of-input flush is automatic — when
-    /// the pcap is exhausted the iterator drains every still-open
-    /// flow via the internal session engine's finish step.
-    ///
-    /// ```no_run
-    /// use flowscope::extract::FiveTuple;
-    /// use flowscope::pcap::PcapFlowSource;
-    /// use flowscope::{SessionEvent, SessionParser, Timestamp};
-    ///
-    /// #[derive(Default, Clone)]
-    /// struct Echo;
-    /// impl SessionParser for Echo {
-    ///     type Message = Vec<u8>;
-    ///     fn feed_initiator(&mut self, b: &[u8], _ts: Timestamp, out: &mut Vec<Vec<u8>>) {
-    ///         out.push(b.to_vec());
-    ///     }
-    ///     fn feed_responder(&mut self, b: &[u8], _ts: Timestamp, out: &mut Vec<Vec<u8>>) {
-    ///         out.push(b.to_vec());
-    ///     }
-    /// }
-    ///
-    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// for evt in PcapFlowSource::open("trace.pcap")?
-    ///     .sessions(FiveTuple::bidirectional(), Echo::default())
-    /// {
-    ///     if let SessionEvent::Application { message, .. } = evt? {
-    ///         println!("{} bytes", message.len());
-    ///     }
-    /// }
-    /// # Ok(()) }
-    /// ```
+    /// Crate-internal one-step offline TCP-session pipeline: every
+    /// packet flows through `extractor` + a per-flow `parser`,
+    /// yielding the engine's `SessionEvent`s. The end-of-input flush
+    /// is automatic. The per-parser `*_from_pcap` helpers and
+    /// [`crate::pcap::session_messages`] are built on this; the
+    /// public offline surfaces are those helpers and
+    /// [`crate::driver::Driver::run_pcap`] (#100, 0.20).
     #[cfg(all(feature = "session", feature = "reassembler"))]
-    pub fn sessions<E, P>(self, extractor: E, parser: P) -> SessionIter<R, E, P>
+    pub(crate) fn sessions<E, P>(self, extractor: E, parser: P) -> SessionIter<R, E, P>
     where
         E: FlowExtractor,
         E::Key: std::hash::Hash + Eq + Clone + Send + Sync + 'static,
@@ -190,11 +166,12 @@ impl<R: Read> PcapFlowSource<R> {
         }
     }
 
-    /// One-step offline UDP-datagram pipeline — the
-    /// [`DatagramParser`] mirror of [`Self::sessions`]. The
-    /// end-of-input flush is automatic.
+    /// Crate-internal one-step offline UDP-datagram pipeline — the
+    /// [`DatagramParser`] mirror of [`Self::sessions`]. Backs
+    /// [`crate::pcap::datagram_messages`] and the per-parser
+    /// datagram `*_from_pcap` helpers.
     #[cfg(all(feature = "session", feature = "reassembler", feature = "extractors"))]
-    pub fn datagrams<E, P>(self, extractor: E, parser: P) -> DatagramIter<R, E, P>
+    pub(crate) fn datagrams<E, P>(self, extractor: E, parser: P) -> DatagramIter<R, E, P>
     where
         E: FlowExtractor,
         E::Key: std::hash::Hash + Eq + Clone + Send + Sync + 'static,
@@ -318,7 +295,7 @@ where
 /// [`FlowSessionDriver`] over the pcap stream; after the pcap is
 /// exhausted, one `finish()` flushes every still-open flow.
 #[cfg(all(feature = "session", feature = "reassembler"))]
-pub struct SessionIter<R: Read, E, P>
+pub(crate) struct SessionIter<R: Read, E, P>
 where
     E: FlowExtractor,
     E::Key: std::hash::Hash + Eq + Clone + Send + Sync + 'static,
@@ -370,7 +347,7 @@ where
 /// Produced by [`PcapFlowSource::datagrams`] — the UDP mirror of
 /// [`SessionIter`].
 #[cfg(all(feature = "session", feature = "reassembler", feature = "extractors"))]
-pub struct DatagramIter<R: Read, E, P>
+pub(crate) struct DatagramIter<R: Read, E, P>
 where
     E: FlowExtractor,
     E::Key: std::hash::Hash + Eq + Clone + Send + Sync + 'static,

@@ -63,7 +63,7 @@ common cases.
                                                   └──────────────────┘
                                                               │
                                                               ▼
-                                                       SessionEvent
+                                            Event<K> + SlotHandle messages
 ```
 
 Each arrow is a contract: a packet at the source produces zero or
@@ -335,25 +335,36 @@ slots and the offline `pcap` source share is no longer a public type.
 
 ## Events at the L7 layer
 
-`SessionEvent<K, M>`:
+With the typed [`driver::Driver<E>`], L7 output is split in two: the
+flow-lifecycle `Event<K>` stream (from `track_into` / `run_pcap`) and
+the typed parser messages drained from each protocol's `SlotHandle`.
+
+`Event<K>`:
 
 | Variant | Fires |
 |---------|-------|
-| `Started { key, ts }` | First sight of a flow |
-| `Application { key, side, message, ts, parser_kind }` | Parser emitted a message |
-| `Closed { key, reason, stats, l4 }` | Flow concluded |
+| `FlowStarted { key, ts, l4 }` | First sight of a flow |
+| `FlowEstablished { key, ts, l4 }` | TCP handshake completed |
+| `FlowPacket { key, side, len, ts, tcp }` | Per-packet (opt-in) |
+| `FlowEnded { key, reason, stats, history, l4, ts }` | Flow concluded |
+| `FlowStateChange { key, from, to, ts }` | TCP state transition |
+| `ParserClosed { key, parser_kind, reason, ts }` | A slot's parser finished/erred |
 | `FlowAnomaly { key, kind, ts }` | Per-flow anomaly (opt-in) |
 | `TrackerAnomaly { kind, ts }` | Tracker-global anomaly (opt-in) |
 | `FlowTick { key, stats, ts }` | Periodic snapshot (opt-in) |
 
-The `parser_kind` field on `Application` lets consumers running
-multiple parsers route by protocol string — match against the
-exported constants for typo-safe matching.
+Typed messages arrive as `SlotMessage { key, side, message }` from
+the per-parser `SlotHandle` returned at registration. Register HTTP
+on 80/8080, TLS on 443, DNS on 53; drain each independently.
+
+(The crate-private engine still uses a `SessionEvent` carrier between
+parser and slot, but it is not part of the public API since 0.20 —
+the two public event enums are `FlowEvent<K>` and `Event<K>`.)
 
 ## Async integration
 
-flowscope is **runtime-free**. To get a `Stream<FlowEvent>` /
-`Stream<SessionEvent>`, layer on
+flowscope is **runtime-free**. To get a `Stream<FlowEvent>` or the
+async session-event stream, layer on
 [`netring`](https://crates.io/crates/netring):
 
 ```rust,ignore

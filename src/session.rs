@@ -558,8 +558,8 @@ pub trait SessionParser: Send + 'static {
     /// poisoned. Consulted only when [`is_poisoned`](Self::is_poisoned)
     /// returns `true`. Default: `None`.
     ///
-    /// The driver truncates to ~256 bytes when forwarding via
-    /// [`crate::SessionEvent::FlowAnomaly`].
+    /// The driver truncates to ~256 bytes when forwarding the
+    /// resulting `FlowAnomaly` ([`AnomalyKind::SessionParseError`]).
     fn poison_reason(&self) -> Option<&str> {
         None
     }
@@ -569,8 +569,7 @@ pub trait SessionParser: Send + 'static {
     ///
     /// Returning `true` tells the driver this parser has no more
     /// useful work to extract — the flow can close ahead of FIN
-    /// / idle-timeout. The driver responds by synthesising
-    /// [`crate::SessionEvent::Closed`] with
+    /// / idle-timeout. The driver responds by closing the flow with
     /// [`crate::EndReason::ParserDone`] on the next check, after
     /// flushing any pending messages from the same `feed_*` /
     /// `on_tick` call.
@@ -591,8 +590,8 @@ pub trait SessionParser: Send + 'static {
         false
     }
 
-    /// Identifier for this parser, threaded into
-    /// [`crate::SessionEvent::Application::parser_kind`]. New in
+    /// Identifier for this parser, surfaced on
+    /// [`crate::driver::Event::ParserClosed::parser_kind`]. New in
     /// 0.5.0.
     ///
     /// Use a stable, label-safe identifier — operators route
@@ -698,13 +697,17 @@ where
     }
 }
 
-/// Output of a [`SessionParser`] or [`DatagramParser`]-backed stream.
+/// Crate-internal output of the session/datagram parser-dispatch
+/// engines. `K` is the flow key, `M` is the parser's message type.
 ///
-/// `K` is the flow key, `M` is the parser's message type.
-///
-/// `#[non_exhaustive]` to keep future variants additive without
-/// breaking exhaustive external `match` blocks. Match with a
-/// trailing `_ => {}` arm for forward-compatibility.
+/// This was the public output of `FlowSessionDriver` /
+/// `FlowDatagramDriver` through 0.19. With those drivers removed
+/// (#99) and the typed [`crate::driver::Driver`] (`Event<K>` +
+/// `SlotHandle` messages) as the supported surface, `SessionEvent`
+/// was demoted to a private engine type in 0.20 (#100) — the
+/// two-enum end state keeps only `FlowEvent<K>` and `Event<K>`
+/// public. It survives as the currency between the engines and the
+/// typed slots / offline pcap helpers.
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(tag = "type", rename_all = "snake_case"))]
@@ -716,7 +719,14 @@ where
     ))
 )]
 #[non_exhaustive]
-pub enum SessionEvent<K, M> {
+// Internal carrier between the parser-dispatch engines and their
+// sinks. Different sinks read different subsets — the typed-driver
+// slots suppress `Started`/anomaly/tick events and ignore
+// `parser_kind` / `l4`, while the pcap-iter / serde sinks read more.
+// The fields are meaningful engine state, not dead, so allow the
+// per-field dead-code lint that fires in non-serde feature combos.
+#[allow(dead_code)]
+pub(crate) enum SessionEvent<K, M> {
     /// First packet of a new session.
     Started { key: K, ts: Timestamp },
     /// Parser emitted a complete L7 message.
@@ -771,8 +781,10 @@ pub enum SessionEvent<K, M> {
 impl<K, M> SessionEvent<K, M> {
     /// Borrow the anomaly kind if this event is an anomaly (either
     /// per-flow or tracker-global). Returns `None` for the
-    /// non-anomaly variants.
-    pub fn anomaly_kind(&self) -> Option<&AnomalyKind> {
+    /// non-anomaly variants. Used by the engines' unit tests; the
+    /// production anomaly path goes through `FlowEvent` / `Event`.
+    #[cfg(test)]
+    pub(crate) fn anomaly_kind(&self) -> Option<&AnomalyKind> {
         match self {
             SessionEvent::FlowAnomaly { kind, .. } | SessionEvent::TrackerAnomaly { kind, .. } => {
                 Some(kind)

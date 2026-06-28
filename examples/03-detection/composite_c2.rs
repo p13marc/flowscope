@@ -58,7 +58,7 @@ use flowscope::emit::EveJsonWriter;
 use flowscope::event::Severity;
 use flowscope::pcap::PcapFlowSource;
 use flowscope::tls::{TlsParser, TlsVersion};
-use flowscope::{KeyFields, OwnedAnomaly, PacketView, SessionEvent, SessionParser, Timestamp};
+use flowscope::{KeyFields, OwnedAnomaly, PacketView, SessionParser, Timestamp};
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
 struct SrcIpKey(IpAddr);
@@ -145,13 +145,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // (3) Weak-TLS signal — second walk via the session driver
     // is cleaner than threading TLS reassembly state into the
     // packet loop above.
-    for evt in PcapFlowSource::open(&path)?.sessions(
-        flowscope::extract::FiveTuple::bidirectional(),
-        TlsParser::default(),
-    ) {
-        let Ok(evt) = evt else { continue };
-        if let SessionEvent::Application { key, message, .. } = evt
-            && let Some(version) = handshake_version(&message)
+    for (key, message) in flowscope::pcap::session_messages::<TlsParser>(&path)? {
+        if let Some(version) = handshake_version(&message)
             && matches!(
                 version,
                 TlsVersion::Ssl3_0 | TlsVersion::Tls1_0 | TlsVersion::Tls1_1

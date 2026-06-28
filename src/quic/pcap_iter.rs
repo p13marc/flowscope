@@ -3,11 +3,12 @@
 
 use std::path::Path;
 
+use crate::Result;
 use crate::extract::{FiveTuple, FiveTupleKey};
 use crate::pcap::PcapFlowSource;
 use crate::quic::datagram::QuicUdpParser;
 use crate::quic::types::QuicInitial;
-use crate::{Result, SessionEvent};
+use crate::session::SessionEvent;
 
 /// Iterate every [`QuicInitial`] in the pcap, paired with
 /// the [`FiveTupleKey`] of the UDP flow it was seen on.

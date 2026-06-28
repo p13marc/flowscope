@@ -28,6 +28,33 @@ later breaking steps can retire `SessionEvent`.
   zero-copy via `Cow`). The typed `Driver<E>`'s emitted stream is
   unchanged (it still omits raw `StateChange`).
 
+### Breaking — retire `SessionEvent` from the public API (#100, driver-convergence 4/5)
+
+Completes the two-enum end state: the public event vocabulary is now
+just `FlowEvent<K>` (tracker primitive + emit/serde input) and
+`Event<K>` (typed-driver consumer event). `SessionEvent<K, M>` — the
+redundant third enum, whose only unique arm was `Application{message}`
+— is demoted to a crate-private engine carrier (the typed slots and
+the offline pcap helpers still use it internally).
+
+- **Removed `SessionEvent` from the crate root and prelude.** Typed L7
+  messages now arrive as `SlotMessage { key, side, message }` from a
+  parser's `SlotHandle`; flow lifecycle arrives as `Event<K>`.
+- **`PcapFlowSource::sessions()` / `datagrams()` are no longer public.**
+  They backed the per-parser `*_from_pcap` helpers and remain as the
+  private engine for them. The public offline surfaces are unchanged:
+  `pcap::session_messages::<P>` / `pcap::datagram_messages::<P>`
+  (yield `(key, message)`), the per-parser `*_from_pcap` helpers, and
+  `Driver::run_pcap` (lifecycle `Event<K>` + slot messages).
+- **Migration:** replace
+  `for ev in source.sessions(ext, P) { if let SessionEvent::Application { message, .. } = ev? { … } }`
+  with `for (key, message) in pcap::session_messages::<P>(path)? { … }`
+  (path-based) or, for a non-path reader / combined lifecycle, a
+  `Driver::builder` + `session_on_ports` + `track_into`/`drain` loop.
+- netring is the only known external consumer; it owns its async
+  session-event type and migrates in the coordinated 0.20 release
+  (netring#107). flowscope CI does not build netring.
+
 ### Breaking — delete `FlowSessionDriver` / `FlowDatagramDriver` (#99, driver-convergence 3/5)
 
 Removes the two single-parser convenience drivers (and their 20

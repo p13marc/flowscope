@@ -2,11 +2,12 @@
 
 use std::path::Path;
 
+use crate::Result;
 use crate::extract::{FiveTuple, FiveTupleKey};
 use crate::pcap::PcapFlowSource;
+use crate::session::SessionEvent;
 use crate::ssh::session::SshParser;
 use crate::ssh::types::SshMessage;
-use crate::{Result, SessionEvent};
 
 /// Iterate every [`SshMessage`] in the pcap (banner + KEXINIT —
 /// the unencrypted portion of the SSH handshake), paired with the
