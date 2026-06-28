@@ -22,7 +22,7 @@ the core.
 ## Implementation Status
 
 **0.20.0 cycle** (driver/event convergence + 1.0-prep
-strong-typing sweep, in progress — unreleased).
+strong-typing sweep, shipped 2026-06-29).
 
 The largest pre-1.0 breaking batch yet. Three themes:
 
@@ -104,8 +104,8 @@ Test count after the convergence + strong-typing work:
 under `--all-features --all-targets -D warnings`, zero rustdoc
 warnings. New `parser_kind.rs` wiring + `src/pcap/pulses.rs` +
 `tests/orientation_axis.rs`. Migration recipes in
-`docs/migration-0.19-to-0.20.md`. Not yet published to
-crates.io.
+`docs/migration-0.19-to-0.20.md`. Published to crates.io as
+`0.20.0` on 2026-06-29.
 
 **0.18.0 cycle** (Tier-2 protocol completion + ML features +
 IPFIX self-sufficiency, in progress).

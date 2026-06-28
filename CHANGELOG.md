@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.20.0 (unreleased) — NSM primitives + driver/event convergence + 1.0-prep API sweep
+## 0.20.0 (2026-06-29) — NSM primitives + driver/event convergence + 1.0-prep API sweep
 
 Pure, no-async — fits the runtime-free lib rule. The largest pre-1.0
 breaking batch yet, so the version bumps 0.19 → 0.20.
