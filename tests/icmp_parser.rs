@@ -319,7 +319,7 @@ fn datagram_parser_returns_one_message_per_call() {
 fn datagram_parser_kind_is_icmp() {
     use flowscope::DatagramParser;
     let p = IcmpParser::new();
-    assert_eq!(p.parser_kind(), "icmp");
+    assert_eq!(p.parser_kind().as_str(), "icmp");
 }
 
 #[test]

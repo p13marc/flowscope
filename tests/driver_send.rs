@@ -42,8 +42,8 @@ impl SessionParser for CountParser {
             out.push(b.len());
         }
     }
-    fn parser_kind(&self) -> &'static str {
-        "count"
+    fn parser_kind(&self) -> flowscope::ParserKind {
+        flowscope::ParserKind::Other("count")
     }
 }
 

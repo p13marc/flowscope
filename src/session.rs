@@ -67,6 +67,7 @@
 
 use crate::{
     event::{AnomalyKind, EndReason, FlowSide, FlowStats},
+    parser_kind::ParserKind,
     timestamp::Timestamp,
 };
 
@@ -273,9 +274,10 @@ impl<M> BufferedFrameDrain<M> {
 ///
 /// ```rust
 /// # use flowscope::session::AccumulatingSessionParser;
+/// # use flowscope::ParserKind;
 /// # #[derive(Debug, Clone)] struct Msg;
 /// # fn parse_one(b: &[u8]) -> Option<(Msg, usize)> { None }
-/// let parser = AccumulatingSessionParser::new("my-protocol", parse_one);
+/// let parser = AccumulatingSessionParser::new(ParserKind::Other("my-protocol"), parse_one);
 /// ```
 ///
 /// The closure must be `Clone + Send + 'static` so the parser
@@ -289,7 +291,7 @@ where
     F: Fn(&[u8]) -> Option<(M, usize)> + Clone + Send + 'static,
     M: Send + std::fmt::Debug + 'static,
 {
-    parser_kind: &'static str,
+    parser_kind: ParserKind,
     parse_one: F,
     max_buffer: usize,
     init: BufferedFrameDrain<M>,
@@ -340,12 +342,12 @@ where
 {
     /// Construct with the [default per-side buffer
     /// cap](DEFAULT_FRAME_DRAIN_MAX_BUFFER).
-    pub fn new(parser_kind: &'static str, parse_one: F) -> Self {
+    pub fn new(parser_kind: ParserKind, parse_one: F) -> Self {
         Self::with_max_buffer(parser_kind, parse_one, DEFAULT_FRAME_DRAIN_MAX_BUFFER)
     }
 
     /// Construct with a custom per-side buffer cap.
-    pub fn with_max_buffer(parser_kind: &'static str, parse_one: F, max_buffer: usize) -> Self {
+    pub fn with_max_buffer(parser_kind: ParserKind, parse_one: F, max_buffer: usize) -> Self {
         Self {
             parser_kind,
             parse_one,
@@ -383,7 +385,7 @@ where
         out.append(&mut self.resp.take_messages());
     }
 
-    fn parser_kind(&self) -> &'static str {
+    fn parser_kind(&self) -> ParserKind {
         self.parser_kind
     }
 
@@ -414,7 +416,7 @@ where
     F: Fn(&[u8]) -> Option<M> + Clone + Send + 'static,
     M: Send + std::fmt::Debug + 'static,
 {
-    parser_kind: &'static str,
+    parser_kind: ParserKind,
     parse_one: F,
 }
 
@@ -448,7 +450,7 @@ where
     F: Fn(&[u8]) -> Option<M> + Clone + Send + 'static,
     M: Send + std::fmt::Debug + 'static,
 {
-    pub fn new(parser_kind: &'static str, parse_one: F) -> Self {
+    pub fn new(parser_kind: ParserKind, parse_one: F) -> Self {
         Self {
             parser_kind,
             parse_one,
@@ -469,7 +471,7 @@ where
         }
     }
 
-    fn parser_kind(&self) -> &'static str {
+    fn parser_kind(&self) -> ParserKind {
         self.parser_kind
     }
 }
@@ -590,24 +592,22 @@ pub trait SessionParser: Send + 'static {
         false
     }
 
-    /// Identifier for this parser, surfaced on
-    /// [`crate::driver::Event::ParserClosed::parser_kind`]. New in
-    /// 0.5.0.
+    /// Typed identity of this parser, surfaced on
+    /// [`crate::driver::Event::ParserClosed::parser_kind`] and
+    /// [`crate::driver::SlotHandle::parser_kind`]. Lifted from
+    /// `&'static str` to the [`ParserKind`] enum in 0.20 (#109);
+    /// originally added in 0.5.0.
     ///
-    /// Use a stable, label-safe identifier — operators route
-    /// metrics on this string. Convention:
+    /// Built-in parsers return their dedicated variant
+    /// ([`ParserKind::Http1`], [`ParserKind::DnsUdp`], …).
+    /// Downstream parsers either add a [`ParserKind::Other`] with a
+    /// stable, label-safe slug (`"crate-name/protocol"`) or leave
+    /// the default.
     ///
-    /// - Lowercase, ASCII, snake-case or slash-separated
-    ///   (`http/1`, `dns-udp`, `rtp`, `length-prefixed`).
-    /// - Stable for the lifetime of the parser instance.
-    /// - Default: `""` (no kind set).
-    ///
-    /// `&'static str` rather than `Cow` so the value can flow into
-    /// `metrics::counter!` labels without allocation. Parsers
-    /// needing a dynamic kind should bake it into
-    /// [`Self::Message`].
-    fn parser_kind(&self) -> &'static str {
-        ""
+    /// - Default: [`ParserKind::Unspecified`] (no kind set).
+    /// - `as_str()` yields the metric-label slug (allocation-free).
+    fn parser_kind(&self) -> ParserKind {
+        ParserKind::Unspecified
     }
 }
 
@@ -675,9 +675,10 @@ pub trait DatagramParser: Send + 'static {
         false
     }
 
-    /// See [`SessionParser::parser_kind`]. Default `""`.
-    fn parser_kind(&self) -> &'static str {
-        ""
+    /// See [`SessionParser::parser_kind`]. Default
+    /// [`ParserKind::Unspecified`].
+    fn parser_kind(&self) -> ParserKind {
+        ParserKind::Unspecified
     }
 }
 
@@ -737,9 +738,11 @@ pub(crate) enum SessionEvent<K, M> {
         ts: Timestamp,
         /// Identifier of the parser that produced this message —
         /// the value returned by [`SessionParser::parser_kind`] (or
-        /// [`DatagramParser::parser_kind`] for UDP). New in 0.5.0.
-        /// `""` when the parser doesn't override the default.
-        parser_kind: &'static str,
+        /// [`DatagramParser::parser_kind`] for UDP). New in 0.5.0;
+        /// lifted to [`ParserKind`] in 0.20 (#109).
+        /// [`ParserKind::Unspecified`] when the parser doesn't
+        /// override the default.
+        parser_kind: ParserKind,
     },
     /// Session ended (FIN/RST/idle/eviction). Any messages the
     /// parser flushed on close arrive as `Application` events

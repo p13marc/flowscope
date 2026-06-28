@@ -1,6 +1,6 @@
 //! [`QuicUdpParser`] — `DatagramParser` over UDP/443.
 
-use super::parser::{PARSER_KIND_STR, parse};
+use super::parser::parse;
 use super::types::QuicInitial;
 use crate::Timestamp;
 use crate::event::FlowSide;
@@ -23,8 +23,8 @@ impl QuicUdpParser {
 impl DatagramParser for QuicUdpParser {
     type Message = QuicInitial;
 
-    fn parser_kind(&self) -> &'static str {
-        PARSER_KIND_STR
+    fn parser_kind(&self) -> crate::ParserKind {
+        crate::ParserKind::Quic
     }
 
     fn parse(
@@ -47,7 +47,7 @@ mod tests {
     #[test]
     fn parser_kind_and_port() {
         let p = QuicUdpParser::new();
-        assert_eq!(p.parser_kind(), "quic");
+        assert_eq!(p.parser_kind().as_str(), "quic");
         assert_eq!(QUIC_PORT, 443);
     }
 

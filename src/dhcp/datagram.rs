@@ -23,15 +23,11 @@ impl DhcpParser {
     }
 }
 
-/// Stable identifier for the parser. Mirrors the
-/// [`crate::parser_kinds`] convention.
-pub const PARSER_KIND: &str = "dhcp";
-
 impl DatagramParser for DhcpParser {
     type Message = DhcpMessage;
 
-    fn parser_kind(&self) -> &'static str {
-        PARSER_KIND
+    fn parser_kind(&self) -> crate::ParserKind {
+        crate::ParserKind::Dhcp
     }
 
     fn parse(
@@ -55,7 +51,7 @@ mod tests {
     #[test]
     fn parser_kind_label() {
         let p = DhcpParser;
-        assert_eq!(p.parser_kind(), "dhcp");
+        assert_eq!(p.parser_kind().as_str(), "dhcp");
     }
 
     #[test]

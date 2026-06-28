@@ -24,8 +24,8 @@ impl NtpParser {
 impl DatagramParser for NtpParser {
     type Message = NtpMessage;
 
-    fn parser_kind(&self) -> &'static str {
-        PARSER_KIND
+    fn parser_kind(&self) -> crate::ParserKind {
+        crate::ParserKind::Ntp
     }
 
     fn parse(
@@ -49,7 +49,7 @@ mod tests {
     #[test]
     fn parser_kind_label() {
         let p = NtpParser;
-        assert_eq!(p.parser_kind(), "ntp");
+        assert_eq!(p.parser_kind().as_str(), "ntp");
     }
 
     #[test]

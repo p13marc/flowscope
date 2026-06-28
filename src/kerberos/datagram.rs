@@ -1,7 +1,7 @@
 //! [`KerberosUdpParser`] — `DatagramParser` over UDP/88
 //! Kerberos.
 
-use super::parser::{PARSER_KIND_STR, parse};
+use super::parser::parse;
 use super::types::KerberosMessage;
 use crate::Timestamp;
 use crate::event::FlowSide;
@@ -22,8 +22,8 @@ impl KerberosUdpParser {
 impl DatagramParser for KerberosUdpParser {
     type Message = KerberosMessage;
 
-    fn parser_kind(&self) -> &'static str {
-        PARSER_KIND_STR
+    fn parser_kind(&self) -> crate::ParserKind {
+        crate::ParserKind::Kerberos
     }
 
     fn parse(
@@ -46,7 +46,7 @@ mod tests {
     #[test]
     fn parser_kind_and_port() {
         let p = KerberosUdpParser::new();
-        assert_eq!(p.parser_kind(), "kerberos");
+        assert_eq!(p.parser_kind().as_str(), "kerberos");
         assert_eq!(KERBEROS_PORT, 88);
     }
 

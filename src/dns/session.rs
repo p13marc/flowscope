@@ -93,8 +93,8 @@ impl SessionParser for DnsTcpParser {
         self.resp_buf.clear();
     }
 
-    fn parser_kind(&self) -> &'static str {
-        crate::dns::PARSER_KIND_TCP
+    fn parser_kind(&self) -> crate::ParserKind {
+        crate::ParserKind::DnsTcp
     }
 }
 

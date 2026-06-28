@@ -138,8 +138,8 @@ impl SessionParser for HttpParser {
         self.resp_state = DirState::Headers;
     }
 
-    fn parser_kind(&self) -> &'static str {
-        crate::http::PARSER_KIND
+    fn parser_kind(&self) -> crate::ParserKind {
+        crate::ParserKind::Http1
     }
 }
 

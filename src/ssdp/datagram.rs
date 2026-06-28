@@ -27,8 +27,8 @@ impl SsdpParser {
 impl DatagramParser for SsdpParser {
     type Message = SsdpMessage;
 
-    fn parser_kind(&self) -> &'static str {
-        PARSER_KIND
+    fn parser_kind(&self) -> crate::ParserKind {
+        crate::ParserKind::Ssdp
     }
 
     fn parse(
@@ -52,7 +52,7 @@ mod tests {
     #[test]
     fn parser_kind_label() {
         let p = SsdpParser;
-        assert_eq!(p.parser_kind(), "ssdp");
+        assert_eq!(p.parser_kind().as_str(), "ssdp");
     }
 
     #[test]

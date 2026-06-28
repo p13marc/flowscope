@@ -76,8 +76,8 @@ impl SessionParser for RespParser {
         drain(&mut self.resp_buf, out);
     }
 
-    fn parser_kind(&self) -> &'static str {
-        "redis-resp"
+    fn parser_kind(&self) -> flowscope::ParserKind {
+        flowscope::ParserKind::Other("redis-resp")
     }
 }
 

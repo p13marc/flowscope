@@ -27,8 +27,8 @@ impl NbnsParser {
 impl DatagramParser for NbnsParser {
     type Message = NbnsMessage;
 
-    fn parser_kind(&self) -> &'static str {
-        PARSER_KIND
+    fn parser_kind(&self) -> crate::ParserKind {
+        crate::ParserKind::NetbiosNs
     }
 
     fn parse(
@@ -51,7 +51,7 @@ mod tests {
     #[test]
     fn parser_kind_label() {
         let p = NbnsParser;
-        assert_eq!(p.parser_kind(), "netbios-ns");
+        assert_eq!(p.parser_kind().as_str(), "netbios-ns");
     }
 
     #[test]

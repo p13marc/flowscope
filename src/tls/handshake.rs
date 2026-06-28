@@ -306,8 +306,8 @@ impl TlsHandshakeParser {
 impl SessionParser for TlsHandshakeParser {
     type Message = TlsHandshake;
 
-    fn parser_kind(&self) -> &'static str {
-        PARSER_KIND
+    fn parser_kind(&self) -> crate::ParserKind {
+        crate::ParserKind::TlsHandshake
     }
 
     fn feed_initiator(&mut self, bytes: &[u8], ts: Timestamp, out: &mut Vec<Self::Message>) {
@@ -355,7 +355,7 @@ mod tests {
     #[test]
     fn parser_kind_label() {
         let p = TlsHandshakeParser::default();
-        assert_eq!(p.parser_kind(), "tls-handshake");
+        assert_eq!(p.parser_kind().as_str(), "tls-handshake");
     }
 
     #[cfg(feature = "ja4plus")]

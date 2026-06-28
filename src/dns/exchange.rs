@@ -158,7 +158,7 @@ impl DatagramParser for DnsExchangeParser {
         }
     }
 
-    fn parser_kind(&self) -> &'static str {
-        "dns-exchange"
+    fn parser_kind(&self) -> crate::ParserKind {
+        crate::ParserKind::Other("dns-exchange")
     }
 }

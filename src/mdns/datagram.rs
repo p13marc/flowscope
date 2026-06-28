@@ -33,8 +33,8 @@ impl MdnsParser {
 impl DatagramParser for MdnsParser {
     type Message = DnsMessage;
 
-    fn parser_kind(&self) -> &'static str {
-        PARSER_KIND
+    fn parser_kind(&self) -> crate::ParserKind {
+        crate::ParserKind::Mdns
     }
 
     fn parse(
@@ -55,6 +55,6 @@ mod tests {
     #[test]
     fn parser_kind_label() {
         let p = MdnsParser::default();
-        assert_eq!(p.parser_kind(), "mdns");
+        assert_eq!(p.parser_kind().as_str(), "mdns");
     }
 }

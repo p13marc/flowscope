@@ -233,33 +233,72 @@ match msg {
 as before; only construction and exhaustive matching from outside the
 crate change.
 
-## Deprecation — 13 `*_from_pcap` helpers → generic iterators (#86)
+## Additive — generic pcap iterators alongside the typed helpers (#86)
 
-The per-parser pcap helpers are replaced by two generic, registration-free
-entries. The old helpers still work for one release (they are
-`#[deprecated]` aliases) and are removed next major.
+**No migration needed.** The per-parser `*_from_pcap` helpers are **kept**
+— they are the strongly-typed, high-level front door and return the
+*specific* message type (`Box<TlsClientHello>`, `QuicInitial`,
+`HttpRequest`). 0.20 adds two generic, registration-free building blocks
+*underneath* them for parsers without a bespoke helper (or with non-`Default`
+config):
 
 ```rust
-// before (0.19)
+// The typed helper — unchanged, still the recommended path:
 for (key, hello) in flowscope::tls::client_hellos_from_pcap("trace.pcap")? { … }
-for (key, init)  in flowscope::quic::initials_from_pcap("trace.pcap")? { … }
-for (key, msg)   in flowscope::smb::messages_from_pcap("trace.pcap")? { … }
 
-// after (0.20) — one generic entry per transport, any parser
-use flowscope::tls::TlsParser;
-use flowscope::quic::QuicUdpParser;
-use flowscope::smb::SmbParser;
-for (key, msg) in flowscope::pcap::session_messages::<TlsParser>("trace.pcap")? { … }
-for (key, msg) in flowscope::pcap::datagram_messages::<QuicUdpParser>("trace.pcap")? { … }
-for (key, msg) in flowscope::pcap::session_messages::<SmbParser>("trace.pcap")? { … }
+// New generic building block — any SessionParser / DatagramParser:
+use flowscope::stun::StunParser;
+for (key, msg) in flowscope::pcap::session_messages::<StunParser>("trace.pcap")? { … }
 ```
 
 - `session_messages::<P>` drives a TCP `SessionParser`; `datagram_messages::<P>`
-  drives a UDP `DatagramParser`. Both key by `FiveTupleKey` and use the
-  bidirectional 5-tuple extractor.
-- The HTTP `requests`/`responses` helpers projected a single
-  `HttpMessage` variant — replicate by matching on the yielded message:
-  `session_messages::<HttpParser>(p)?.filter_map(|(k, m)| match m { HttpMessage::Request(r) => Some((k, r)), _ => None })`.
-- `flow_summaries_from_pcap` → **`flow_summaries`** (no parser; raw flow
-  records — kept, just renamed).
-- The multi-parser case stays `Driver::run_pcap`.
+  drives a UDP `DatagramParser`. Both key by `FiveTupleKey`, use the
+  bidirectional 5-tuple extractor, and require `P: Default`.
+- The only deprecation: `flow_summaries_from_pcap` → **`flow_summaries`**
+  (a pure rename; the old name is a `#[deprecated]` alias).
+- The multi-parser case stays `Driver::run_pcap` + per-parser slot drain.
+
+## Breaking change — `parser_kind()` returns `ParserKind`, not `&'static str` (#109)
+
+`SessionParser::parser_kind` / `DatagramParser::parser_kind` now return the
+typed [`ParserKind`] enum (default `ParserKind::Unspecified`, was `""`). The
+same lift applies to `driver::Event::ParserClosed::parser_kind`,
+`SlotHandle::parser_kind` / `SlotDrain::parser_kind`, `BroadcastSlotHandle`,
+and the `AccumulatingSessionParser::new` / `PerDatagramParser::new` /
+`test_helpers::events::parser_closed` constructors.
+
+Only **direct callers** and **downstream parser impls** are affected — the
+typed driver, slots, and `*_from_pcap` helpers are unchanged.
+
+```rust
+// before (0.19) — downstream parser impl
+fn parser_kind(&self) -> &'static str { "my-proto" }
+
+// after (0.20)
+fn parser_kind(&self) -> flowscope::ParserKind {
+    flowscope::ParserKind::Other("my-proto")  // or a built-in variant
+}
+```
+
+```rust
+// before — reading the kind off a slot / event
+let label: &str = slot.parser_kind();
+match ev { Event::ParserClosed { parser_kind, .. } if parser_kind == "tls" => … }
+
+// after — match the variant, or `.as_str()` for the slug
+let label: &str = slot.parser_kind().as_str();
+match ev { Event::ParserClosed { parser_kind, .. }
+    if parser_kind == flowscope::ParserKind::Tls => … }
+```
+
+- **Built-in parsers** return a dedicated variant (`ParserKind::Http1`,
+  `ParserKind::DnsUdp`, `ParserKind::Quic`, …). `parser_kind().as_str()`
+  yields the identical slug the `&'static str` did, so metric labels and
+  emitted JSON are byte-for-byte unchanged (the `parser_kind` field still
+  serializes as a plain string).
+- **Custom parsers** wrap a stable slug in `ParserKind::Other("crate/proto")`.
+- `ParserKind::from_slug(s)` is the inverse for built-in slugs; the
+  `parser_kinds::*` `&str` constants are still available for raw slug
+  comparison.
+
+[`ParserKind`]: https://docs.rs/flowscope/latest/flowscope/enum.ParserKind.html

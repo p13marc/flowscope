@@ -5,7 +5,7 @@
 
 use bytes::BytesMut;
 
-use super::parser::{PARSER_KIND_STR, parse_with_len};
+use super::parser::parse_with_len;
 use super::types::LdapMessage;
 use crate::Timestamp;
 use crate::session::SessionParser;
@@ -52,8 +52,8 @@ impl LdapParser {
 impl SessionParser for LdapParser {
     type Message = LdapMessage;
 
-    fn parser_kind(&self) -> &'static str {
-        PARSER_KIND_STR
+    fn parser_kind(&self) -> crate::ParserKind {
+        crate::ParserKind::Ldap
     }
 
     fn feed_initiator(&mut self, bytes: &[u8], _ts: Timestamp, out: &mut Vec<Self::Message>) {
@@ -86,7 +86,7 @@ mod tests {
     #[test]
     fn parser_kind_and_port() {
         let p = LdapParser::new();
-        assert_eq!(p.parser_kind(), "ldap");
+        assert_eq!(p.parser_kind().as_str(), "ldap");
         assert_eq!(LDAP_PORT, 389);
     }
 

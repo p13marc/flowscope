@@ -54,7 +54,7 @@ fn parse_function_handles_query() {
 #[test]
 fn parser_kind_label_is_netbios_ns() {
     let p = NbnsParser;
-    assert_eq!(p.parser_kind(), "netbios-ns");
+    assert_eq!(p.parser_kind().as_str(), "netbios-ns");
 }
 
 #[test]

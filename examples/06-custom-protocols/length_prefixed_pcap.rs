@@ -63,8 +63,8 @@ impl SessionParser for LengthPrefixedParser {
         Self::drain(&mut self.resp_buf, bytes, FlowSide::Responder, out);
     }
 
-    fn parser_kind(&self) -> &'static str {
-        "length-prefixed"
+    fn parser_kind(&self) -> flowscope::ParserKind {
+        flowscope::ParserKind::Other("length-prefixed")
     }
 }
 

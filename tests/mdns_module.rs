@@ -38,7 +38,7 @@ fn constants_match_iana_assignment() {
 fn mdns_parser_uses_dns_parser_kind_slug() {
     let p = MdnsParser::default();
     use flowscope::DatagramParser;
-    assert_eq!(p.parser_kind(), "mdns");
+    assert_eq!(p.parser_kind().as_str(), "mdns");
 }
 
 #[test]

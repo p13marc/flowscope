@@ -14,6 +14,7 @@ use std::sync::{Arc, Mutex, Weak};
 use crossbeam_queue::SegQueue;
 
 use super::slot::SlotMessage;
+use crate::parser_kind::ParserKind;
 
 /// Per-subscriber broadcast handle. Each [`Clone`] yields a new
 /// subscriber with its own private queue; every push to the
@@ -43,7 +44,7 @@ where
 {
     inner: Arc<BroadcastInner<M, K>>,
     my_queue: SubscriberQueue<M, K>,
-    parser_kind: &'static str,
+    parser_kind: ParserKind,
 }
 
 /// Per-subscriber queue handle held in the broadcast list.
@@ -116,7 +117,7 @@ where
 {
     /// Internal constructor for the typed slot. Public only via
     /// the broadcast registration builders.
-    pub(crate) fn new(inner: Arc<BroadcastInner<M, K>>, parser_kind: &'static str) -> Self {
+    pub(crate) fn new(inner: Arc<BroadcastInner<M, K>>, parser_kind: ParserKind) -> Self {
         let my_queue = inner.subscribe();
         Self {
             inner,
@@ -163,8 +164,8 @@ where
             .unwrap_or(0)
     }
 
-    /// Parser-kind slug from registration.
-    pub fn parser_kind(&self) -> &'static str {
+    /// Parser-kind identity from registration.
+    pub fn parser_kind(&self) -> ParserKind {
         self.parser_kind
     }
 }
@@ -183,7 +184,7 @@ where
     fn pending(&self) -> usize {
         BroadcastSlotHandle::pending(self)
     }
-    fn parser_kind(&self) -> &'static str {
+    fn parser_kind(&self) -> ParserKind {
         BroadcastSlotHandle::parser_kind(self)
     }
 }

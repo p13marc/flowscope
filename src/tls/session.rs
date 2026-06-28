@@ -202,8 +202,8 @@ impl SessionParser for TlsParser {
         self.resp_state = DirState::Reading;
     }
 
-    fn parser_kind(&self) -> &'static str {
-        crate::tls::PARSER_KIND
+    fn parser_kind(&self) -> crate::ParserKind {
+        crate::ParserKind::Tls
     }
 }
 

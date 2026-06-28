@@ -106,8 +106,8 @@ impl DatagramParser for DnsUdpParser {
         }
     }
 
-    fn parser_kind(&self) -> &'static str {
-        crate::dns::PARSER_KIND_UDP
+    fn parser_kind(&self) -> crate::ParserKind {
+        crate::ParserKind::DnsUdp
     }
 }
 

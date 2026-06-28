@@ -184,6 +184,11 @@ pub use crate::pcap::PcapFlowSource;
 // building block under the per-parser `*_from_pcap` helpers).
 #[cfg(all(feature = "pcap", feature = "session", feature = "reassembler"))]
 pub use crate::pcap::{datagram_messages, session_messages};
+// Issue #109 (0.20): typed parser identity — returned by
+// `SessionParser`/`DatagramParser::parser_kind` and carried on
+// `Event::ParserClosed` / `SlotHandle::parser_kind`.
+#[cfg(feature = "session")]
+pub use crate::parser_kind::ParserKind;
 // Issue #8 (0.18): ECH GREASE-vs-real classification — surface
 // next to the rest of the TLS handshake vocabulary.
 #[cfg(feature = "session")]

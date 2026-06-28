@@ -21,7 +21,7 @@ fn http_constant_matches_parser_kind() {
         http::{HttpParser, PARSER_KIND},
     };
     let p = HttpParser::default();
-    assert_eq!(p.parser_kind(), PARSER_KIND);
+    assert_eq!(p.parser_kind().as_str(), PARSER_KIND);
     assert_eq!(PARSER_KIND, "http/1");
 }
 
@@ -33,7 +33,7 @@ fn dns_udp_constant_matches_parser_kind() {
         dns::{DnsUdpParser, PARSER_KIND_UDP},
     };
     let p = DnsUdpParser::default();
-    assert_eq!(p.parser_kind(), PARSER_KIND_UDP);
+    assert_eq!(p.parser_kind().as_str(), PARSER_KIND_UDP);
     assert_eq!(PARSER_KIND_UDP, "dns-udp");
 }
 
@@ -45,7 +45,7 @@ fn dns_tcp_constant_matches_parser_kind() {
         dns::{DnsTcpParser, PARSER_KIND_TCP},
     };
     let p = DnsTcpParser::default();
-    assert_eq!(p.parser_kind(), PARSER_KIND_TCP);
+    assert_eq!(p.parser_kind().as_str(), PARSER_KIND_TCP);
     assert_eq!(PARSER_KIND_TCP, "dns-tcp");
 }
 
@@ -57,7 +57,7 @@ fn tls_constant_matches_parser_kind() {
         tls::{PARSER_KIND, TlsParser},
     };
     let p = TlsParser::default();
-    assert_eq!(p.parser_kind(), PARSER_KIND);
+    assert_eq!(p.parser_kind().as_str(), PARSER_KIND);
     assert_eq!(PARSER_KIND, "tls");
 }
 
@@ -69,7 +69,7 @@ fn icmp_constant_matches_parser_kind() {
         icmp::{IcmpParser, PARSER_KIND},
     };
     let p = IcmpParser::new();
-    assert_eq!(p.parser_kind(), PARSER_KIND);
+    assert_eq!(p.parser_kind().as_str(), PARSER_KIND);
     assert_eq!(PARSER_KIND, "icmp");
 }
 

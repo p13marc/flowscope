@@ -79,5 +79,5 @@ fn fin_drains_pending_requests_as_no_response() {
 #[test]
 fn parser_kind_is_http_exchange() {
     let p = HttpExchangeParser::new();
-    assert_eq!(p.parser_kind(), "http-exchange");
+    assert_eq!(p.parser_kind().as_str(), "http-exchange");
 }

@@ -41,7 +41,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .unwrap_or_else(|| "tests/data/http_session.pcap".to_string());
 
     // ONE constructor call replaces a ~25-LoC SessionParser impl.
-    let parser = AccumulatingSessionParser::new("line", parse_one);
+    let parser = AccumulatingSessionParser::new(flowscope::ParserKind::Other("line"), parse_one);
     let mut builder = Driver::builder(FiveTuple::bidirectional());
     let mut line_slot = builder.session_broadcast(parser);
     let mut driver = builder.build();

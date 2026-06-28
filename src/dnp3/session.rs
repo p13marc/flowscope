@@ -109,8 +109,8 @@ fn total_frame_len(length_byte: u8) -> usize {
 impl SessionParser for DnpParser {
     type Message = DnpMessage;
 
-    fn parser_kind(&self) -> &'static str {
-        PARSER_KIND
+    fn parser_kind(&self) -> crate::ParserKind {
+        crate::ParserKind::Dnp3
     }
 
     fn feed_initiator(&mut self, bytes: &[u8], _ts: Timestamp, out: &mut Vec<Self::Message>) {
@@ -150,7 +150,7 @@ mod tests {
 
     #[test]
     fn parser_kind_and_port_constants() {
-        assert_eq!(DnpParser::new().parser_kind(), "dnp3");
+        assert_eq!(DnpParser::new().parser_kind().as_str(), "dnp3");
         assert_eq!(DNP3_PORT, 20000);
         // datagram-parser sanity: confirm we're NOT a
         // DatagramParser (the trait should not be in scope

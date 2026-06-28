@@ -72,7 +72,8 @@ fn zero_byte_advance_poisons() {
 
 #[test]
 fn accumulating_parser_emits_per_side() {
-    let mut parser = AccumulatingSessionParser::new("line", parse_one_line);
+    let mut parser =
+        AccumulatingSessionParser::new(flowscope::ParserKind::Other("line"), parse_one_line);
     let mut msgs = Vec::new();
     parser.feed_initiator(b"GET /\nPOST /\n", Timestamp::default(), &mut msgs);
     assert_eq!(msgs, vec!["GET /".to_string(), "POST /".to_string()]);
@@ -83,7 +84,8 @@ fn accumulating_parser_emits_per_side() {
 
 #[test]
 fn accumulating_parser_buffers_partial_messages() {
-    let mut parser = AccumulatingSessionParser::new("line", parse_one_line);
+    let mut parser =
+        AccumulatingSessionParser::new(flowscope::ParserKind::Other("line"), parse_one_line);
     let mut msgs = Vec::new();
     parser.feed_initiator(b"GET /", Timestamp::default(), &mut msgs);
     assert!(msgs.is_empty());
@@ -93,7 +95,11 @@ fn accumulating_parser_buffers_partial_messages() {
 
 #[test]
 fn accumulating_parser_poisons_on_overflow() {
-    let mut parser = AccumulatingSessionParser::with_max_buffer("line", parse_one_line, 4);
+    let mut parser = AccumulatingSessionParser::with_max_buffer(
+        flowscope::ParserKind::Other("line"),
+        parse_one_line,
+        4,
+    );
     let mut sink = Vec::new();
     parser.feed_initiator(b"hello world\n", Timestamp::default(), &mut sink);
     assert!(parser.is_poisoned());
@@ -102,13 +108,18 @@ fn accumulating_parser_poisons_on_overflow() {
 
 #[test]
 fn accumulating_parser_kind_label_is_threaded_through() {
-    let parser = AccumulatingSessionParser::new("my-protocol", parse_one_line);
-    assert_eq!(parser.parser_kind(), "my-protocol");
+    let parser =
+        AccumulatingSessionParser::new(flowscope::ParserKind::Other("my-protocol"), parse_one_line);
+    assert_eq!(parser.parser_kind().as_str(), "my-protocol");
 }
 
 #[test]
 fn accumulating_parser_clones_with_fresh_state() {
-    let mut a = AccumulatingSessionParser::with_max_buffer("line", parse_one_line, 32);
+    let mut a = AccumulatingSessionParser::with_max_buffer(
+        flowscope::ParserKind::Other("line"),
+        parse_one_line,
+        32,
+    );
     let mut sink = Vec::new();
     a.feed_initiator(b"hello\n", Timestamp::default(), &mut sink);
     let mut b = a.clone();
@@ -123,12 +134,9 @@ fn accumulating_parser_clones_with_fresh_state() {
 
 #[test]
 fn per_datagram_parser_emits_one_per_packet() {
-    let mut parser = PerDatagramParser::new(
-        "len",
-        |b: &[u8]| {
-            if b.is_empty() { None } else { Some(b.len()) }
-        },
-    );
+    let mut parser = PerDatagramParser::new(flowscope::ParserKind::Other("len"), |b: &[u8]| {
+        if b.is_empty() { None } else { Some(b.len()) }
+    });
     let mut msgs = Vec::new();
     parser.parse(
         b"hello",
@@ -144,6 +152,6 @@ fn per_datagram_parser_emits_one_per_packet() {
 
 #[test]
 fn per_datagram_parser_threads_kind_label() {
-    let parser = PerDatagramParser::new("len", |_b: &[u8]| Some(()));
-    assert_eq!(parser.parser_kind(), "len");
+    let parser = PerDatagramParser::new(flowscope::ParserKind::Other("len"), |_b: &[u8]| Some(()));
+    assert_eq!(parser.parser_kind().as_str(), "len");
 }

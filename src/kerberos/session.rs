@@ -4,7 +4,7 @@
 
 use bytes::BytesMut;
 
-use super::parser::{PARSER_KIND_STR, parse};
+use super::parser::parse;
 use super::types::KerberosMessage;
 use crate::Timestamp;
 use crate::session::SessionParser;
@@ -49,8 +49,8 @@ impl KerberosTcpParser {
 impl SessionParser for KerberosTcpParser {
     type Message = KerberosMessage;
 
-    fn parser_kind(&self) -> &'static str {
-        PARSER_KIND_STR
+    fn parser_kind(&self) -> crate::ParserKind {
+        crate::ParserKind::Kerberos
     }
 
     fn feed_initiator(&mut self, bytes: &[u8], _ts: Timestamp, out: &mut Vec<Self::Message>) {
@@ -77,7 +77,7 @@ mod tests {
     #[test]
     fn parser_kind() {
         let p = KerberosTcpParser::new();
-        assert_eq!(p.parser_kind(), "kerberos");
+        assert_eq!(p.parser_kind().as_str(), "kerberos");
     }
 
     #[test]
