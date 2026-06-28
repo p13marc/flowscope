@@ -303,6 +303,52 @@ match ev { Event::ParserClosed { parser_kind, .. }
 
 [`ParserKind`]: https://docs.rs/flowscope/latest/flowscope/enum.ParserKind.html
 
+## Breaking change — driver/event convergence: removed driver types (#98 / #99 / #100)
+
+The public driver surface converges on the single typed
+`driver::Driver<E>`. Three older shapes are gone:
+
+**1. `FlowSessionDriver` / `FlowDatagramDriver` removed (#99).** The
+per-parser session/datagram engines are now crate-private. Register the
+parser as a slot on the typed driver instead:
+
+```rust
+// before (0.19) — one engine per parser
+let mut driver = FlowSessionDriver::new(FiveTuple::bidirectional(), HttpParser::default());
+for ev in driver.handle(view) { /* SessionEvent */ }
+
+// after (0.20) — one typed Driver, one slot per parser
+let mut builder = Driver::builder(FiveTuple::bidirectional());
+let http = builder.session_on_ports(HttpParser::default(), [80, 8080]);
+let mut driver = builder.build();
+let mut events = Vec::new();
+driver.track_into(view, &mut events);   // flow lifecycle Event<K>
+let mut msgs = Vec::new();
+http.drain(&mut msgs);                   // typed HttpParser messages
+```
+
+For the common offline case, the per-parser `*_from_pcap` helpers and
+the generic `pcap::session_messages::<P>` / `datagram_messages::<P>`
+building blocks (see the #86 section above) cover most former
+`FlowSessionDriver`/`FlowDatagramDriver` uses without touching the
+driver at all.
+
+**2. `Driver::deferred()` / `DeferredDriverBuilder` / `build_with()`
+removed (#98).** The deferred-builder split is gone; build the driver
+directly with `Driver::builder(extractor)` and register slots before
+`build()`. If you previously deferred slot registration until an
+extractor was available, restructure so the extractor is known at
+`builder(...)` time (it almost always is).
+
+**3. `SessionEvent` retired from the public API (#100).** The internal
+engine carrier is no longer exported. Consume flow lifecycle via
+`Event<K>` from the typed driver (`track_into` / `run_pcap`), and typed
+messages via the parser's `SlotHandle` (`drain` / `drain_n`). For the
+offline single-parser case, `pcap::session_pulses::<P>` / `Pulse<K, M>`
+(#111) deliver both lifecycle and messages in one ordered stream.
+
+The low-level `FlowDriver` (the sync reassembly wrapper) is unchanged.
+
 ## Breaking change — `Event<K>` variants drop the `Flow` prefix (#110)
 
 `driver::Event<K>` variants are renamed to match `event::FlowEvent<K>`

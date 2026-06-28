@@ -44,7 +44,7 @@ Ok(m.finish())
 ```rust,no_run
 // CICFlowMeter-shaped ML feature vector for IDS training.
 # #[cfg(feature = "ml-features")]
-# fn ex(rec: &flowscope::FlowRecord, stats: &flowscope::correlate::WelfordStats)
+# fn ex(rec: &flowscope::FlowRecord, stats: &flowscope::FlowStats)
 #   -> flowscope::ml_features::CicFlowFeatures {
 flowscope::ml_features::CicFlowFeatures::from_flow_record(rec).with_iat(stats)
 # }
@@ -93,7 +93,10 @@ door over a generic building block: for any protocol — including
 parsers without a dedicated helper — use
 `flowscope::pcap::session_messages::<P>(path)` /
 `datagram_messages::<P>(path)`, which yield `(FiveTupleKey, P::Message)`
-for any `SessionParser` / `DatagramParser`.
+for any `SessionParser` / `DatagramParser`. To interleave flow
+lifecycle **and** typed messages from one parser in wire order, use
+`flowscope::pcap::session_pulses::<P>(path)` / `datagram_pulses::<P>`,
+which yield a single ordered `Pulse<K, M>` stream.
 
 For per-port filtering, multiple parsers per pcap, or live
 NIC capture, drop down to `Driver::builder(ext)` — the typed
@@ -169,6 +172,14 @@ may grow, deterministic state machines, no `unsafe` outside justified zero-copy
 spots. `Driver<E>` and `SlotHandle<M, K>` are `Send + Sync` —
 `tokio::spawn(driver_task)` just works.
 
+Every flow event also carries a **deterministic `Orientation`** (address-sorted
+`Forward`/`Reverse`) next to the arrival-order `FlowSide` — stable across a
+tap-merge race, so Community ID ordering, biflow keys and cross-sensor dedup
+agree between captures. Merged flows even remember which NIC each direction
+arrived on (`FlowStats::source_idx_for`). See
+[`docs/concepts.md`](docs/concepts.md) → "Direction, orientation, and capture
+leg".
+
 ## Where flowscope sits
 
 - vs. **Suricata / Zeek**: same protocol coverage, library-shaped. Embed in a
@@ -191,12 +202,15 @@ AF_XDP) which consumes flowscope's traits.
 
 ```toml
 [dependencies]
-flowscope = { version = "0.19", features = ["full"] }
+flowscope = { version = "0.20", features = ["full"] }
 ```
 
 MSRV is Rust 1.88. The `full` feature pulls in everything; for production
 builds, name the parsers you actually use to minimise compile time and binary
-size. Per-feature dependency tree is documented inline in
+size. Coarse umbrellas sit between "one parser" and `full`: `l7` (all
+license-clean wire parsers), the `parsers-core` / `parsers-l2l3` /
+`parsers-tier2` tiers, and the capability bundles `nsm`, `ml`, and `export`.
+Per-feature dependency tree is documented inline in
 [`Cargo.toml`](Cargo.toml).
 
 ## Going further

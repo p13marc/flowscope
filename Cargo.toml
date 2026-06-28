@@ -711,6 +711,11 @@ path = "examples/04-observability/direction_skew_anomaly.rs"
 required-features = ["pcap", "extractors", "tracker"]
 
 [[example]]
+name = "tap_merge_orientation"
+path = "examples/04-observability/tap_merge_orientation.rs"
+required-features = ["extractors", "tracker", "test-helpers"]
+
+[[example]]
 name = "ml_features_pipeline"
 path = "examples/04-observability/ml_features_pipeline.rs"
 required-features = ["pcap", "ml-features", "serde"]

@@ -41,6 +41,7 @@ the categories sort logically in `ls`.
 | **`http_log`** | `http,pcap` | One-line summary of every HTTP request + response (per-message). |
 | **`http_exchanges`** | `http,pcap` | One log line per request/response PAIR via `HttpExchangeParser` (plan 107). Access-log-shaped rows with RTT and outcome. |
 | **`tls_observer`** | `tls,pcap` | SNI / ALPN / cipher list for every TLS ClientHello + ServerHello. |
+| **`quic_initial_observer`** *(0.18)* | `quic,pcap` | SNI / ALPN for every QUIC Initial packet (passive Initial decrypt). |
 | **`pcap_pulses`** | `tls,pcap` | Unified `session_pulses::<P>` stream — flow lifecycle **and** typed L7 messages from one loop, in wire order (#111). |
 | **`dns_log`** | `dns,pcap` | Query / response pairs with RTT correlation via `Correlator`. |
 
@@ -56,6 +57,9 @@ the categories sort logically in `ls`.
 | **`ldap_recon_hunter`** *(0.18)* | `pcap,ldap` | BloodHound / GetUserSPNs enumeration (T1087.002) — flags LDAP searches for `servicePrincipalName` + Simple binds with cleartext credentials. |
 | **`asset_inventory`** *(0.18)* | `pcap,asset,arp` | Build a MAC-keyed `flowscope::asset::Inventory` from ARP traffic. |
 | **`client_fingerprint_catalog`** *(0.18)* | `pcap,tls,tls-fingerprints,http,ssh,extractors,tracker` | Per-source-IP join of JA3 / JA4 / JA4H (gated on `ja4plus`) / HASSH / HTTP User-Agent — the cross-protocol client identity catalog. |
+| **`arp_spoof_detector`** *(0.18)* | `arp,pcap` | Flag ARP-cache-poisoning patterns via IP→MAC binding changes (`NeighborTable`). |
+| **`smb_lateral_movement`** *(0.18)* | `smb,pcap` | SMB2/3 lateral-movement signals — tree connects, NTLM identity tuples, DCE-RPC binds. |
+| **`smtp_credentials`** *(0.18)* | `smtp,pcap` | SMTP cleartext AUTH credential + named-exfil (MAIL FROM / RCPT TO) detector. |
 
 ## 03 — security / detection
 
@@ -87,6 +91,8 @@ the categories sort logically in `ls`.
 | **`bandwidth_by_app`** *(0.14)* | `pcap,extractors,tracker` | Per-app bytes/sec via `RollingRate` + `top_k` (plan 171), keyed by `FiveTupleKey::app_label_with(&LabelTable)` (plan 165). |
 | **`icmp_explained_drops`** *(0.14)* | `pcap,icmp,extractors,tracker` | Join every ICMP error back to a live flow via `FlowTracker::lookup_inner` (plan 161); classify v4/v6 unreachable + MTU events via `DestUnreachableKind` (plan 162) + `MtuSignalKind` (plan 170). |
 | **`direction_skew_anomaly`** *(0.14)* | `pcap,extractors,tracker` | One-sided-flow detection via `FlowStats::direction_skew` (plan 168) + per-side `bytes_for` / `throughput_bps_for` (plans 168 + 173). |
+| **`tap_merge_orientation`** *(0.20)* | `extractors,tracker,test-helpers` | The three direction axes (#118–#122): deterministic `Orientation` vs arrival-order `FlowSide` under a tap-merge race, per-direction capture-leg binding (`source_idx_for`), and SYN-based initiator inference (`infer_tcp_initiator` + `direction_flipped`). Synthetic frames; no pcap. |
+| **`ml_features_pipeline`** *(0.18)* | `pcap,ml-features,serde` | Full CICFlowMeter feature-vector export — one `CicFlowFeatures` row per finalized flow. |
 | **`tcp_retransmit_audit`** | `pcap,extractors,reassembler` | Per-flow retransmit-rate ranking. Production reliability signal. |
 
 ## 05 — data export
