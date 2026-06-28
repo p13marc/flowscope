@@ -708,10 +708,10 @@ src/
 │   └── mod.rs                   # protocol_label / entries / curated table + LabelTable site-custom overrides (plan 165, 0.14.0)
 ├── layers/fast.rs               # LayerParser + LayerStack zero-alloc (plan 94 Tier 3 fast path, 0.9.0)
 ├── driver/                      # flowscope::driver — typed Driver<E> + SlotHandle<M, K> (plan 121, 0.11.0; Send+Sync since plan 156, 0.13.0)
-│   ├── mod.rs                   # public re-exports (Driver / DriverBuilder / DeferredDriverBuilder / Event / SlotHandle / SlotMessage / BroadcastSlotHandle)
-│   ├── broadcast.rs             # BroadcastSlotHandle<M, K> + BroadcastInner — fan-out delivery (plan 150, 0.13.0)
-│   ├── slot.rs                  # SlotHandle<M, K> + SlotMessage<M, K> — Arc<crossbeam_queue::SegQueue> backing (Send + Sync, plan 122, 0.12.0; .drain_n added plan 149, 0.13.0)
-│   ├── typed.rs                 # Driver<E> + DriverBuilder<E> + DeferredDriverBuilder<E> + Event<K> + map_flow_event (plan 124, 0.12.0; .session_on_ports_broadcast_each added plan 150, 0.13.0)
+│   ├── mod.rs                   # public re-exports (Driver / DriverBuilder / Event / SlotHandle / SlotMessage / SlotDrain / BroadcastSlotHandle). DeferredDriverBuilder removed in #98 (0.20)
+│   ├── broadcast.rs             # BroadcastSlotHandle<M, K> + BroadcastInner — fan-out delivery (plan 150, 0.13.0; impls SlotDrain #101)
+│   ├── slot.rs                  # SlotHandle<M, K> + SlotMessage<M, K> + SlotDrain trait — Arc<crossbeam_queue::SegQueue> backing (Send + Sync, plan 122, 0.12.0; .drain_n added plan 149, 0.13.0; SlotDrain added #101, 0.20)
+│   ├── typed.rs                 # Driver<E> + DriverBuilder<E> + Event<K> + map_flow_event + run_pcap (plan 124, 0.12.0; .session_on_ports_broadcast_each added plan 150, 0.13.0; DeferredDriverBuilder removed #98, 0.20)
 │   ├── typed_slot.rs            # TypedConcreteSlot + TypedConcreteDatagramSlot + TypedBroadcastSlot (plan 150 broadcast variant, 0.13.0)
 │   └── typed_slot_heuristic.rs  # TypedHeuristicSessionSlot + TypedHeuristicDatagramSlot (FlowDetection FSM)
 ├── segment_reassembler.rs       # SegmentBufferReassembler OOO hole-fill (plan 74, 0.9.0)
@@ -885,10 +885,10 @@ The legacy `HttpFactory` / `TlsFactory` callback-handler shape
 - `tests/driver_send.rs` — `static_assertions::assert_impl_all!`
   on `SlotHandle: Send + Sync` + cross-thread drain +
   competitive-consumer clone semantics (plan 122, 0.12.0).
-- `tests/driver_deferred.rs` — `Driver::deferred()` +
-  `DeferredDriverBuilder::build_with(ext)` equivalence with
-  the eager path + every builder knob propagates (plan 124,
-  0.12.0).
+- `tests/driver_broadcast.rs` — `BroadcastSlotHandle` fan-out
+  semantics + the `SlotDrain` trait generic over both handle
+  types (#101, 0.20). (The former `tests/driver_deferred.rs`
+  was deleted with `DeferredDriverBuilder` in #98.)
 - `tests/anomaly_fields.rs` — `AnomalyFields` impls on
   `FiveTupleKey` / `L4Proto` / `AnomalyKind` (plan 126,
   0.12.0).
@@ -995,10 +995,12 @@ for (key, init)  in flowscope::quic::initials_from_pcap("trace.pcap")? { … }
 for (key, msg)   in flowscope::smb::messages_from_pcap("trace.pcap")? { … }
 ```
 
-These wrap `PcapFlowSource::sessions` / `.datagrams` (the
-generic offline pipeline helpers) with the appropriate
-parser. For unsurveyed parsers, use
-`PcapFlowSource::sessions(extractor, parser)` directly. The
+These are the strongly-typed front door over the generic
+`flowscope::pcap::session_messages::<P>` /
+`datagram_messages::<P>` building block. For unsurveyed
+parsers, call `pcap::session_messages::<P>(path)` /
+`datagram_messages::<P>(path)` directly (they yield
+`(FiveTupleKey, P::Message)`). The
 old 0.10-era `flowscope::Pipeline` type was removed in
 plan 121 (0.11); the typed-driver shape replaced it.
 

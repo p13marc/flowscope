@@ -16,7 +16,6 @@ use crate::smb::types::SmbMessage;
 /// in one call.
 ///
 /// ```no_run
-/// # #![allow(deprecated)]
 /// for (key, msg) in flowscope::smb::messages_from_pcap("trace.pcap")? {
 ///     if msg.create_is_admin_named_pipe {
 ///         println!("{key:?}  admin-pipe CREATE on {:?}", msg.create_path);
@@ -24,10 +23,6 @@ use crate::smb::types::SmbMessage;
 /// }
 /// # Ok::<(), flowscope::Error>(())
 /// ```
-#[deprecated(
-    since = "0.20.0",
-    note = "use flowscope::pcap::session_messages::<P>() / datagram_messages::<P>() (issue #86)"
-)]
 pub fn messages_from_pcap<P: AsRef<Path>>(
     path: P,
 ) -> Result<impl Iterator<Item = (FiveTupleKey, SmbMessage)>> {

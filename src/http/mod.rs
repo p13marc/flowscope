@@ -114,7 +114,6 @@ pub use exchange::{HttpExchange, HttpExchangeParser, HttpOutcome};
 #[cfg(feature = "ja4plus")]
 pub use ja4h::{Ja4hParts, ja4h as ja4h_fingerprint, ja4h_parts};
 #[cfg(feature = "pcap")]
-#[allow(deprecated)]
 pub use pcap_iter::{exchanges_from_pcap, requests_from_pcap, responses_from_pcap};
 pub use session::{HttpMessage, HttpParser};
 pub use types::{HttpConfig, HttpRequest, HttpResponse, HttpVersion};

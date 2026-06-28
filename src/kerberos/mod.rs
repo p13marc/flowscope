@@ -50,7 +50,6 @@ mod types;
 pub use datagram::{KERBEROS_PORT, KerberosUdpParser};
 pub use parser::{ParseError, parse, parser_kind};
 #[cfg(feature = "pcap")]
-#[allow(deprecated)]
 pub use pcap_iter::messages_from_pcap;
 pub use session::KerberosTcpParser;
 pub use types::{KerberosErrorCode, KerberosEtype, KerberosMessage, KerberosMessageKind};

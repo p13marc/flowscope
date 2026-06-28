@@ -99,6 +99,15 @@ jobs:
           - "analysis,tls,dns"  # 0.19: analysis layer with the gated observe_* adapters (issue #83)
           - "l7"                # 0.19: L7 umbrella builds on its own (issue #87)
           - "full"              # 0.19: `full` ⊇ `l7` + all license-clean caps (issue #87)
+          # 0.20: the high-level `*_from_pcap` typed helpers need the offline
+          # engine (session+reassembler). These combos pin that the
+          # per-parser feature pulls reassembler so `<parser>,pcap` compiles.
+          - "quic,pcap"         # datagram helper (initials_from_pcap)
+          - "dns,pcap"          # datagram + TCP helpers (messages/exchanges_from_pcap)
+          - "kerberos,pcap"     # datagram + TCP helpers (messages_from_pcap)
+          - "smb,pcap"          # session helper (messages_from_pcap)
+          - "ldap,pcap"         # session helper (messages_from_pcap)
+          - "tls,pcap"          # session helper (client_hellos/handshakes_from_pcap)
           - "parsers-core"      # 0.19: tier — http/tls/dns/icmp (issue #87)
           - "parsers-l2l3"      # 0.19: tier — arp/ndp/lldp/cdp/dhcp (issue #87)
           - "parsers-tier2"     # 0.19: tier — the 19 Tier-2 parsers (issue #87)

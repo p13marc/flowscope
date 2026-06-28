@@ -91,7 +91,6 @@ mod types;
 
 pub use parser::{ParseError, parse, parser_kind};
 #[cfg(feature = "pcap")]
-#[allow(deprecated)]
 pub use pcap_iter::messages_from_pcap;
 pub use session::{SMB_PORT, SmbParser};
 pub use types::{DceRpcInterfaceUuid, NtlmAuth, SmbCommand, SmbDialect, SmbMessage};

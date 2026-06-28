@@ -15,7 +15,6 @@ use crate::ssh::types::SshMessage;
 /// variant carries the HASSH client fingerprint.
 ///
 /// ```no_run
-/// # #![allow(deprecated)]
 /// use flowscope::ssh::SshMessage;
 /// for (key, msg) in flowscope::ssh::messages_from_pcap("trace.pcap")? {
 ///     if let SshMessage::KexInit(kex) = msg {
@@ -24,10 +23,6 @@ use crate::ssh::types::SshMessage;
 /// }
 /// # Ok::<(), flowscope::Error>(())
 /// ```
-#[deprecated(
-    since = "0.20.0",
-    note = "use flowscope::pcap::session_messages::<P>() / datagram_messages::<P>() (issue #86)"
-)]
 pub fn messages_from_pcap<P: AsRef<Path>>(
     path: P,
 ) -> Result<impl Iterator<Item = (FiveTupleKey, SshMessage)>> {
