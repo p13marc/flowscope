@@ -65,8 +65,8 @@ jobs:
           - "ntp"               # 0.18: NTP parser + amplification detection (issue #14 sub-piece)
           - "ssdp"              # 0.18: SSDP parser + IoT asset discovery (issue #14 sub-piece)
           - "tftp"              # 0.18: TFTP parser + device-config-theft detection (issue #14 sub-piece)
-          - "asset"             # 0.18: asset-inventory composition (issue #27)
-          - "asset,arp,ndp,dhcp,lldp,cdp,ssdp"  # 0.18: asset adapters require parsers
+          - "asset"             # 0.19: self-sufficient — pulls its discovery parsers (issue #87)
+          - "asset,arp,ndp,dhcp,lldp,cdp,ssdp"  # 0.18: explicit-parser combo (now redundant but kept)
           - "mdns"              # 0.18: mDNS module (issue #14 sub-piece)
           - "asset,mdns"        # 0.18: mDNS asset adapter
           - "ml-features"       # 0.18: CICFlowMeter ml-features subset (issue #15 sub-piece)
@@ -96,6 +96,12 @@ jobs:
           - "analysis,tls,dns"  # 0.19: analysis layer with the gated observe_* adapters (issue #83)
           - "l7"                # 0.19: L7 umbrella builds on its own (issue #87)
           - "full"              # 0.19: `full` ⊇ `l7` + all license-clean caps (issue #87)
+          - "parsers-core"      # 0.19: tier — http/tls/dns/icmp (issue #87)
+          - "parsers-l2l3"      # 0.19: tier — arp/ndp/lldp/cdp/dhcp (issue #87)
+          - "parsers-tier2"     # 0.19: tier — the 19 Tier-2 parsers (issue #87)
+          - "nsm"               # 0.19: tier — fingerprint+tls-fingerprints+analysis (issue #87)
+          - "ml"                # 0.19: tier — ml-features + ml-features-nprint (issue #87)
+          - "export"            # 0.19: tier — ipfix(+export) + emit writers (issue #87)
     steps:
       - uses: actions/checkout@v4
       - name: Build (--no-default-features --features "${{ matrix.features }}")

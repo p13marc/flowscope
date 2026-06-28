@@ -147,7 +147,10 @@ dns = ["extractors", "tracker", "session", "dep:simple-dns", "dep:bytes"]
 icmp = ["extractors", "tracker", "session", "dep:bytes"]
 # ARP visibility — datagram-style parser for EtherType 0x0806 (Issue #1, 0.17).
 # `MacAddr` is unconditional at the crate root; `arp` adds the message types,
-# parser, and the NeighborTable correlator.
+# parser, and the NeighborTable correlator. (`session` is not used by
+# `ArpParser` — a stateless marker — but is kept in the dep set: dropping it
+# is a `feature_no_longer_enables_feature` semver-major break for no real
+# gain, so `arp` stays slightly heavier than its `ndp`/`lldp`/`cdp` siblings.)
 arp = ["extractors", "tracker", "session", "dep:bytes"]
 # NDP (IPv6 Neighbor Discovery) visibility — ICMPv6 types 135/136
 # parser. The IPv6 sibling of `arp`; pairs with the always-on
@@ -184,10 +187,16 @@ ssdp = ["extractors", "tracker", "session"]
 tftp = ["extractors", "tracker", "session"]
 # Asset-inventory composition module — `flowscope::asset` —
 # unified `Asset` record + LRU-bounded `Inventory` over the
-# events emitted by the L2 / L3 / L4 asset-discovery
-# parsers (ARP / NDP / DHCP / LLDP / CDP / SSDP). Pure
-# composition; no new wire-format work. Issue #27 (0.18).
-asset = ["tracker"]
+# events emitted by the L2 / L3 / L4 asset-discovery parsers.
+# Pulls in its source parsers so `--features asset` is
+# self-sufficient: the `from_*` adapters in `asset/core.rs` are
+# each gated on their parser feature, so `asset` alone (pre-#87)
+# compiled an empty inventory. `mdns` transitively enables `dns`.
+# Issue #27 (0.18); self-sufficiency fix issue #87 (0.19).
+asset = [
+    "tracker",
+    "arp", "ndp", "dhcp", "lldp", "cdp", "ssdp", "mdns", "netbios-ns",
+]
 # analysis — the opt-in composition layer wiring parser output
 # to the flow lifecycle: `FlowAnalyzer` accumulates a per-flow
 # `L7Summary`, then `finalize` computes `FlowRisk` + screens an
@@ -314,8 +323,12 @@ rdp = ["session", "dep:bytes"]
 # subset of the ~80 CICFlowMeter features that's computable
 # from `FlowRecord` alone (no per-packet IAT tracking). Plus
 # Zeek `conn_state` + `history` already on every Ended event.
-# Pairs with `ipfix` for the FlowRecord source-of-truth.
-# Issue #15 scoped sub-piece.
+# Pulls `ipfix` by design (NOT incidental coupling): the feature
+# vector is computed from `crate::ipfix::FlowRecord`, the canonical
+# IPFIX-IE-keyed flow record, via `count_tcp_flags` /
+# `CicFlowFeatures::from_flow_record`. `ipfix = []` carries zero
+# transitive deps (pure IANA IE vocabulary), so the edge is free.
+# Issue #15 scoped sub-piece; coupling documented per issue #87.
 ml-features = ["ipfix", "tracker", "extractors"]
 # ml-features-nprint — nPrint (CCS 2021) model-agnostic per-
 # packet ternary header-bit matrix. Each packet becomes a
@@ -355,19 +368,40 @@ ssh = ["reassembler", "session", "dep:bytes", "dep:md-5", "dep:hex"]
 # zero-alloc per packet (fixed-size ArrayVec). Issue #4 (0.17).
 fingerprint = ["dep:arrayvec"]
 
-# Umbrella: enable every shipped, license-clean protocol parser at once.
-# Strict subset of `full` (no `pcap`, no observability). Excludes only the
-# FoxIO-licensed `ja4plus` suite (off by default for licensing). Invariant
-# guarded by `src/feature_umbrellas.rs`: every parser feature below must be
-# a member here, and `full` must be a superset of `l7`.
-l7 = [
-    "http", "tls", "tls-fingerprints", "dns", "icmp",
-    "arp", "ndp", "dhcp", "lldp", "cdp",
-    "ssh", "ntp", "ssdp", "tftp", "mdns",
-    "netbios-ns", "ftp", "smtp", "wireguard", "modbus",
-    "stun", "rdp", "snmp", "radius", "quic",
+# ─── Coarse tiers (issue #87) ──────────────────────────────────────
+# Correct, coarse umbrellas between "one parser" and `l7`/`full`, so
+# consumers don't hand-assemble parser lists. Granular leaf flags stay
+# available; these only group them. `l7` / `full` are recomposed from
+# these tiers (single source of truth — the leaf list lives here, not
+# duplicated). All memberships are mirrored by `compile_error!` drift
+# guards in `src/feature_umbrellas.rs`.
+
+# L7 application parsers shipped since 0.1 (the "core four").
+parsers-core = ["http", "tls", "dns", "icmp"]
+# L2 / L3 asset-discovery parsers (link- and network-layer).
+parsers-l2l3 = ["arp", "ndp", "lldp", "cdp", "dhcp"]
+# Tier-2 protocol completion (0.18) — everything else license-clean.
+parsers-tier2 = [
+    "ssh", "ntp", "ssdp", "tftp", "mdns", "netbios-ns", "ftp", "smtp",
+    "wireguard", "modbus", "stun", "rdp", "snmp", "radius", "quic",
     "smb", "ldap", "kerberos", "dnp3",
 ]
+# ML feature extraction (running-stats + per-packet nPrint matrix).
+ml = ["ml-features", "ml-features-nprint"]
+# IPFIX vocabulary + binary export + structured event emitters.
+export = ["ipfix", "ipfix-export", "emit", "emit-ndjson", "emit-eve"]
+# Network-security-monitoring composition: passive fingerprints +
+# the risk / IOC analysis layer. (`detect` is always-on, not gated.)
+nsm = ["fingerprint", "tls-fingerprints", "analysis"]
+
+# Umbrella: enable every shipped, license-clean protocol parser at once.
+# Recomposed from the `parsers-*` tiers plus `tls-fingerprints` (a
+# fingerprint, not a wire parser, but historically an `l7` member).
+# Strict subset of `full` (no `pcap`, no observability). Excludes only
+# the FoxIO-licensed `ja4plus` suite (off by default for licensing).
+# Invariant guarded by `src/feature_umbrellas.rs`: every parser feature
+# must be a member here, and `full` must be a superset of `l7`.
+l7 = ["parsers-core", "parsers-l2l3", "parsers-tier2", "tls-fingerprints"]
 
 # pcap source adapter (offline replay).
 pcap = ["extractors", "tracker", "dep:pcap-file"]
@@ -424,30 +458,32 @@ community-id = ["dep:sha1", "dep:base64"]
 # chrono can interop without a manual conversion.
 chrono = ["dep:chrono"]
 
-# Convenience: turn everything license-clean on. Superset of `l7` (by
-# direct reference) plus every observability / emit / ml / ipfix / asset /
-# fingerprint capability. Deliberately EXCLUDES the FoxIO-licensed
-# `ja4plus` suite — `full` stays royalty-free-clean. `--all-features`
-# (docs.rs / CI) is the only build that also pulls `ja4plus`. Invariant
-# guarded by `src/feature_umbrellas.rs`.
+# Convenience: turn everything license-clean on. Recomposed from `l7`
+# plus the capability tiers (`nsm` / `ml` / `export`), `asset`, and the
+# remaining observability / source / misc features. Deliberately
+# EXCLUDES the FoxIO-licensed `ja4plus` suite — `full` stays
+# royalty-free-clean. `--all-features` (docs.rs / CI) is the only build
+# that also pulls `ja4plus`. Invariant guarded by
+# `src/feature_umbrellas.rs`.
+#
+# Note: `nsm` pulls `tls-fingerprints` (also in `l7`), `analysis`,
+# `fingerprint`; `ml` pulls `ml-features` + `ml-features-nprint`;
+# `export` pulls `ipfix` + `ipfix-export` + the `emit*` writers;
+# `asset` pulls its discovery parsers (all already in `l7`).
 full = [
     "l7",
-    # non-l7 parsers / passive fingerprints
+    # capability tiers
+    "nsm", "ml", "export",
+    # asset inventory composition (pulls its discovery parsers)
+    "asset",
+    # non-l7 passive fingerprint
     "tcp_fingerprint",
-    # asset inventory + analysis composition
-    "asset", "analysis",
-    # ml feature extraction
-    "ml-features", "ml-features-nprint",
-    # ipfix vocabulary + binary export
-    "ipfix", "ipfix-export",
     # pcap source
     "pcap",
     # observability
     "metrics", "tracing",
-    # structured emitters
-    "serde", "emit", "emit-ndjson", "emit-eve",
-    # everything else license-clean
-    "aggregate", "chrono", "file-hash", "fingerprint", "community-id",
+    # serde wire-format + everything else license-clean
+    "serde", "aggregate", "chrono", "file-hash", "community-id",
 ]
 
 [package.metadata.docs.rs]

@@ -113,7 +113,10 @@ netring.
 Test count after the 0.18 cycle: **1541 passing** (up from
 920 at 0.14.0 release). Zero clippy warnings under
 `--all-features --all-targets -D warnings`. Zero rustdoc
-warnings. 19 CI feature-matrix entries.
+warnings. The CI feature-matrix builds every leaf feature plus
+the `l7` / `full` umbrellas and (since #87) the coarse
+`parsers-core` / `parsers-l2l3` / `parsers-tier2` / `ml` /
+`export` / `nsm` tiers, each solo.
 
 New modules registered in `src/`:
 `arp/`, `ndp/`, `dhcp/`, `lldp/`, `cdp/`, `ssh/`,

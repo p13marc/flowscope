@@ -45,6 +45,26 @@ Additive over 0.19. Pure, no-async — fits the runtime-free lib rule.
   `ja4plus`. Compile-time `compile_error!` guards
   (`src/feature_umbrellas.rs`) + new `l7` / `full` CI matrix entries
   prevent silent drift.
+- **Feature tier restructure + odd-gating fixes** (#87 part 2). Coarse,
+  correct umbrellas between "one parser" and `l7`/`full`, so consumers
+  stop hand-assembling parser lists; granular leaf flags are unchanged.
+  New tiers: `parsers-core` (http/tls/dns/icmp), `parsers-l2l3`
+  (arp/ndp/lldp/cdp/dhcp), `parsers-tier2` (the 19 Tier-2 parsers),
+  `ml` (ml-features + nprint), `export` (ipfix(+export) + emit writers),
+  `nsm` (fingerprint + tls-fingerprints + analysis). `l7` and `full` are
+  now *recomposed* from these tiers (single source of truth); each tier
+  has its own `compile_error!` drift guard, and CI builds every tier
+  solo. Odd-gating fixes:
+  - **`asset` is now self-sufficient** — it pulls its discovery parsers
+    (`arp`/`ndp`/`dhcp`/`lldp`/`cdp`/`ssdp`/`mdns`/`netbios-ns`), so
+    `--features asset` no longer compiles an empty inventory. Additive;
+    `mdns` transitively enables `dns`.
+  - **`ml-features` → `ipfix` coupling documented** as intentional
+    (the feature vector is computed from the dep-free
+    `ipfix::FlowRecord`), not decoupled.
+  - **`lib.rs` feature table** rewritten — was stale (http/tls/dns/pcap
+    only); now documents every umbrella, tier, parser, and capability
+    (Rust API guideline C-FEATURE).
 - **`PacketView::with_source_idx(u32)` / `OwnedPacketView::with_source_idx`
   + `RxMetadata::from_source_idx(u32)`** (#69) — one-call per-packet
   source-index builders (cross-crate-friendly given `RxMetadata` is
