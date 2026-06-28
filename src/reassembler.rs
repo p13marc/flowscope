@@ -175,9 +175,8 @@ pub trait ReassemblerFactory<K>: Send + 'static {
 /// [`crate::driver::Driver`] as the central
 /// [`FlowDriver`](crate::FlowDriver)'s reassembler factory when
 /// the driver itself doesn't need byte-stream reassembly — that
-/// work happens inside each registered slot's own
-/// [`FlowSessionDriver`](crate::FlowSessionDriver). Plan-116
-/// support.
+/// work happens inside each registered slot's own internal
+/// session engine. Plan-116 support.
 ///
 /// New in 0.10.0.
 #[derive(Debug, Default, Clone, Copy)]

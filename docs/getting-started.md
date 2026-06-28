@@ -99,8 +99,9 @@ message, not competitive-consumer), register through
 (0.13).
 
 For per-flow user state on the central tracker, drop to
-`FlowDriver`. For raw sync session/datagram primitives, see
-`FlowSessionDriver` / `FlowDatagramDriver`.
+`FlowDriver`. The typed `Driver<E>` is the single supported
+single-parser surface — register one slot per protocol and drain
+it.
 
 **Read next:** [`concepts.md`](concepts.md) — the four-layer
 trait shape.
@@ -148,42 +149,41 @@ Build with `cargo run --features pcap`.
 **Read next:** [`concepts.md`](concepts.md) — Layer 1 (extractor)
 and Layer 2 (tracker).
 
-## 2. Typed HTTP messages from a pcap (raw `FlowSessionDriver`)
+## 2. Typed HTTP messages from a pcap (`Driver<E>` + a session slot)
 
-If you want a single-parser pipeline without the `Driver<E>`
-slot dance — or you need the raw `SessionEvent` stream
-(`Started` / `Application` / `Closed` / anomalies) — use the
-sync `FlowSessionDriver` directly:
+A single-parser pipeline is just section 0 with one slot. The
+slot drains typed `HttpMessage`s; the lifecycle `Event<K>` stream
+comes out of `track_into`:
 
 ```rust,ignore
-use flowscope::extract::FiveTuple;
+use flowscope::driver::{Driver, Event, SlotMessage};
+use flowscope::extract::{FiveTuple, FiveTupleKey};
 use flowscope::http::{HttpMessage, HttpParser};
 use flowscope::pcap::PcapFlowSource;
-use flowscope::{FlowSessionDriver, PacketView, SessionEvent};
+use flowscope::PacketView;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let mut driver = FlowSessionDriver::new(
-        FiveTuple::bidirectional(),
-        HttpParser::default(),
-    );
+    let mut builder = Driver::builder(FiveTuple::bidirectional());
+    let mut http = builder.session_on_ports(HttpParser::default(), [80, 8080]);
+    let mut driver = builder.build();
 
-    let mut events = Vec::new();
+    let mut events: Vec<Event<FiveTupleKey>> = Vec::new();
+    let mut msgs: Vec<SlotMessage<HttpMessage, FiveTupleKey>> = Vec::new();
+
     for owned in PcapFlowSource::open("trace.pcap")?.views() {
         let owned = owned?;
         events.clear();
+        msgs.clear();
         driver.track_into(PacketView::from(&owned), &mut events);
-        for ev in &events {
-            match ev {
-                SessionEvent::Application {
-                    message: HttpMessage::Request(req), ..
-                } => {
+        http.drain(&mut msgs);
+        for m in &msgs {
+            match &m.message {
+                HttpMessage::Request(req) => {
                     println!("{:?} {:?} (host={})",
                         req.method, req.path,
                         req.host().unwrap_or("?"));
                 }
-                SessionEvent::Application {
-                    message: HttpMessage::Response(resp), ..
-                } => {
+                HttpMessage::Response(resp) => {
                     println!("  → {} {:?}", resp.status, resp.reason);
                 }
                 _ => {}

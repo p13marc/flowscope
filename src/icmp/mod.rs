@@ -2,8 +2,8 @@
 //!
 //! [`IcmpParser`] is the integration point — a
 //! [`DatagramParser`](crate::DatagramParser) impl yielding a
-//! typed [`IcmpMessage`] stream. Pair it with
-//! [`crate::FlowDatagramDriver`],
+//! typed [`IcmpMessage`] stream. Pair it with the typed
+//! [`crate::driver::Driver`] (via `datagram_on_ports`),
 //! [`crate::pcap::PcapFlowSource::datagrams`], or netring's
 //! `datagram_stream`.
 //!

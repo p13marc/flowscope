@@ -1,39 +1,13 @@
-//! Sync companion to netring's async `datagram_stream`. Wraps a
-//! [`FlowDriver`] (with a no-op reassembler factory) and adds
-//! per-flow [`DatagramParser`] dispatch.
+//! Crate-internal sync UDP-datagram engine. Wraps a [`FlowDriver`]
+//! (with a no-op reassembler factory) and adds per-flow
+//! [`DatagramParser`] dispatch, yielding [`SessionEvent`]s.
 //!
-//! Use this when you want typed L7 messages from a synchronous
-//! UDP-driving loop (DNS-over-UDP, syslog, NTP, SNMP, custom
-//! binary datagram protocols).
-//!
-//! # Example
-//!
-//! ```no_run
-//! use flowscope::extract::FiveTuple;
-//! use flowscope::pcap::PcapFlowSource;
-//! use flowscope::{DatagramParser, FlowDatagramDriver, FlowSide, SessionEvent, Timestamp};
-//!
-//! #[derive(Default, Clone)]
-//! struct EchoUdp;
-//! impl DatagramParser for EchoUdp {
-//!     type Message = Vec<u8>;
-//!     fn parse(&mut self, payload: &[u8], _side: FlowSide, _ts: Timestamp, out: &mut Vec<Vec<u8>>) {
-//!         out.push(payload.to_vec());
-//!     }
-//! }
-//!
-//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
-//! let mut driver = FlowDatagramDriver::new(FiveTuple::bidirectional(), EchoUdp);
-//! for view in PcapFlowSource::open("trace.pcap")?.views() {
-//!     let view = view?;
-//!     for ev in driver.track(&view) {
-//!         if let SessionEvent::Application { message, .. } = ev {
-//!             println!("{} bytes", message.len());
-//!         }
-//!     }
-//! }
-//! # Ok(()) }
-//! ```
+//! This was the public `FlowDatagramDriver` through 0.19; it was
+//! demoted to a private engine in 0.20 (#99) — the typed
+//! [`crate::driver::Driver`] plus one datagram slot is the supported
+//! single-parser surface now. The engine survives because the typed
+//! slots ([`crate::driver`]) and the offline [`crate::pcap`] source
+//! both need parser dispatch.
 
 use std::{collections::HashMap, hash::Hash};
 
@@ -46,7 +20,7 @@ use crate::{
     flow_driver::FlowDriver,
     reassembler::{Reassembler, ReassemblerFactory},
     session::{DatagramParser, SessionEvent},
-    tracker::{FlowTracker, FlowTrackerConfig},
+    tracker::FlowTrackerConfig,
     view::PacketView,
 };
 
@@ -92,15 +66,11 @@ impl<K: Send + 'static> ReassemblerFactory<K> for NoopReassemblerFactory {
     }
 }
 
-/// Sync UDP-datagram driver. Owns a flow tracker + per-flow
-/// [`DatagramParser`] instances, yielding [`SessionEvent`]s.
-///
-/// Builder methods mirror [`crate::FlowSessionDriver`] so users
-/// running mixed TCP/UDP traffic can pair the two drivers with
-/// identical configuration. `S` defaults to `()`; use
-/// [`Self::with_state`] / [`Self::with_state_init`] for per-flow
-/// user state.
-pub struct FlowDatagramDriver<E, P, S = ()>
+/// Crate-internal sync UDP-datagram engine. Owns a flow tracker +
+/// per-flow [`DatagramParser`] instances, yielding [`SessionEvent`]s.
+/// `S` is fixed at `()` since 0.20 (the stateful constructors were
+/// dropped with the public surface).
+pub(crate) struct FlowDatagramDriver<E, P, S = ()>
 where
     E: FlowExtractor,
     E::Key: Hash + Eq + Clone + Send + Sync + 'static,
@@ -121,6 +91,11 @@ where
 {
     /// Construct with default tracker config and `S = ()`. `parser`
     /// is cloned once per flow to give each flow a fresh instance.
+    ///
+    /// Convenience entry used by the offline [`crate::pcap`] source
+    /// and the unit tests; the typed-driver slots build via
+    /// [`Self::with_config`].
+    #[cfg(any(feature = "pcap", test))]
     pub fn new(extractor: E, parser: P) -> Self {
         Self::with_config(extractor, parser, FlowTrackerConfig::default())
     }
@@ -135,150 +110,6 @@ where
     }
 }
 
-// Factory path — `S = ()`, no `P: Clone`.
-impl<E, P> FlowDatagramDriver<E, P, ()>
-where
-    E: FlowExtractor,
-    E::Key: Hash + Eq + Clone + Send + Sync + 'static,
-    P: DatagramParser + Send + Sync + 'static,
-{
-    /// Construct with default tracker config and a per-flow parser
-    /// factory closure. Drops the `P: Clone` requirement of [`Self::new`].
-    pub fn with_factory<F>(extractor: E, factory: F) -> Self
-    where
-        F: FnMut(&E::Key) -> P + Send + Sync + 'static,
-    {
-        Self::with_factory_and_config(extractor, factory, FlowTrackerConfig::default())
-    }
-
-    /// Construct with explicit tracker config and a per-flow parser
-    /// factory closure.
-    pub fn with_factory_and_config<F>(extractor: E, factory: F, config: FlowTrackerConfig) -> Self
-    where
-        F: FnMut(&E::Key) -> P + Send + Sync + 'static,
-    {
-        Self {
-            driver: FlowDriver::with_config(extractor, NoopReassemblerFactory, config),
-            parser_factory: Box::new(factory),
-            parsers: HashMap::with_hasher(RandomState::new()),
-        }
-    }
-}
-
-// Stateful template-parser path — `S: Default`, `P: Clone`.
-impl<E, P, S> FlowDatagramDriver<E, P, S>
-where
-    E: FlowExtractor,
-    E::Key: Hash + Eq + Clone + Send + Sync + 'static,
-    P: DatagramParser + Clone + Send + Sync + 'static,
-    S: Default + Send + 'static,
-{
-    /// Construct with default tracker config and per-flow state
-    /// initialised via `S::default()`.
-    pub fn with_state(extractor: E, parser: P) -> Self {
-        Self::with_state_and_config(extractor, parser, FlowTrackerConfig::default())
-    }
-
-    /// Construct with explicit tracker config and per-flow state
-    /// initialised via `S::default()`.
-    pub fn with_state_and_config(extractor: E, parser: P, config: FlowTrackerConfig) -> Self {
-        Self {
-            driver: FlowDriver::with_state_and_config(extractor, NoopReassemblerFactory, config),
-            parser_factory: Box::new(move |_key| parser.clone()),
-            parsers: HashMap::with_hasher(RandomState::new()),
-        }
-    }
-}
-
-// Generic template-parser path — `P: Clone`, `S: Send + 'static`.
-impl<E, P, S> FlowDatagramDriver<E, P, S>
-where
-    E: FlowExtractor,
-    E::Key: Hash + Eq + Clone + Send + Sync + 'static,
-    P: DatagramParser + Clone + Send + Sync + 'static,
-    S: Send + 'static,
-{
-    /// Construct with default tracker config and a custom per-flow
-    /// state initialiser.
-    pub fn with_state_init<G>(extractor: E, parser: P, init: G) -> Self
-    where
-        G: FnMut(&E::Key) -> S + Send + Sync + 'static,
-    {
-        Self::with_state_init_and_config(extractor, parser, FlowTrackerConfig::default(), init)
-    }
-
-    /// Construct with explicit tracker config and a custom per-flow
-    /// state initialiser.
-    pub fn with_state_init_and_config<G>(
-        extractor: E,
-        parser: P,
-        config: FlowTrackerConfig,
-        init: G,
-    ) -> Self
-    where
-        G: FnMut(&E::Key) -> S + Send + Sync + 'static,
-    {
-        Self {
-            driver: FlowDriver::with_state_init_and_config(
-                extractor,
-                NoopReassemblerFactory,
-                config,
-                init,
-            ),
-            parser_factory: Box::new(move |_key| parser.clone()),
-            parsers: HashMap::with_hasher(RandomState::new()),
-        }
-    }
-}
-
-// Stateful factory path — `S: Send + 'static`, no `P: Clone`.
-impl<E, P, S> FlowDatagramDriver<E, P, S>
-where
-    E: FlowExtractor,
-    E::Key: Hash + Eq + Clone + Send + Sync + 'static,
-    P: DatagramParser + Send + Sync + 'static,
-    S: Send + 'static,
-{
-    /// Construct with default tracker config, a per-flow parser
-    /// factory, and a custom per-flow state initialiser.
-    pub fn with_state_factory<FP, FS>(extractor: E, parser_factory: FP, state_init: FS) -> Self
-    where
-        FP: FnMut(&E::Key) -> P + Send + Sync + 'static,
-        FS: FnMut(&E::Key) -> S + Send + Sync + 'static,
-    {
-        Self::with_state_factory_and_config(
-            extractor,
-            parser_factory,
-            state_init,
-            FlowTrackerConfig::default(),
-        )
-    }
-
-    /// Construct with explicit tracker config, a per-flow parser
-    /// factory, and a custom per-flow state initialiser.
-    pub fn with_state_factory_and_config<FP, FS>(
-        extractor: E,
-        parser_factory: FP,
-        state_init: FS,
-        config: FlowTrackerConfig,
-    ) -> Self
-    where
-        FP: FnMut(&E::Key) -> P + Send + Sync + 'static,
-        FS: FnMut(&E::Key) -> S + Send + Sync + 'static,
-    {
-        Self {
-            driver: FlowDriver::with_state_init_and_config(
-                extractor,
-                NoopReassemblerFactory,
-                config,
-                state_init,
-            ),
-            parser_factory: Box::new(parser_factory),
-            parsers: HashMap::with_hasher(RandomState::new()),
-        }
-    }
-}
-
 // All non-construction methods — apply to every `S` and every
 // parser-source variant.
 impl<E, P, S> FlowDatagramDriver<E, P, S>
@@ -288,31 +119,6 @@ where
     P: DatagramParser + Send + Sync + 'static,
     S: Send + 'static,
 {
-    /// Opt in to forwarding [`SessionEvent::FlowAnomaly`] /
-    /// [`SessionEvent::TrackerAnomaly`] events.
-    pub fn with_emit_anomalies(mut self, enable: bool) -> Self {
-        self.driver = self.driver.with_emit_anomalies(enable);
-        self
-    }
-
-    /// Set a per-key idle-timeout override.
-    pub fn with_idle_timeout_fn<G>(mut self, f: G) -> Self
-    where
-        G: Fn(&E::Key, Option<crate::L4Proto>) -> Option<std::time::Duration>
-            + Send
-            + Sync
-            + 'static,
-    {
-        self.driver = self.driver.with_idle_timeout_fn(f);
-        self
-    }
-
-    /// Filter via content-hash [`crate::Dedup`].
-    pub fn with_dedup(mut self, dedup: crate::dedup::Dedup) -> Self {
-        self.driver = self.driver.with_dedup(dedup);
-        self
-    }
-
     /// Opt in to monotonic timestamps.
     pub fn with_monotonic_timestamps(mut self, enable: bool) -> Self {
         self.driver = self.driver.with_monotonic_timestamps(enable);
@@ -320,6 +126,11 @@ where
     }
 
     /// Drive one packet. Returns zero or more [`SessionEvent`]s.
+    ///
+    /// Allocating convenience used by the offline [`crate::pcap`]
+    /// source and the unit tests; the typed-driver slots use the
+    /// zero-alloc [`Self::track_into`].
+    #[cfg(any(feature = "pcap", test))]
     pub fn track<'v>(
         &mut self,
         view: impl Into<PacketView<'v>>,
@@ -432,26 +243,6 @@ where
         self.parsers.remove(key);
         let driver_events = self.driver.force_close(key, now);
         self.translate_events(&driver_events, None)
-    }
-
-    /// Borrow the inner tracker.
-    pub fn tracker(&self) -> &FlowTracker<E, S> {
-        self.driver.tracker()
-    }
-
-    /// Borrow the inner tracker mutably.
-    pub fn tracker_mut(&mut self) -> &mut FlowTracker<E, S> {
-        self.driver.tracker_mut()
-    }
-
-    /// Iterate `(key, FlowStats)` for every live flow.
-    pub fn snapshot_flow_stats(&self) -> impl Iterator<Item = (E::Key, crate::FlowStats)> + '_ {
-        self.driver.snapshot_flow_stats()
-    }
-
-    /// Borrow the dedup state.
-    pub fn dedup(&self) -> Option<&crate::dedup::Dedup> {
-        self.driver.dedup()
     }
 
     fn translate_events(
@@ -656,25 +447,6 @@ mod tests {
         ) {
             out.push((side, payload.to_vec()));
         }
-    }
-
-    /// Plan 38: `FlowDatagramDriver::with_state_init` threads `S`.
-    #[test]
-    fn with_state_init_threads_s() {
-        #[derive(Debug)]
-        struct MyState(u64);
-        let d: FlowDatagramDriver<_, _, MyState> =
-            FlowDatagramDriver::with_state_init(FiveTuple::bidirectional(), EchoUdp, |_key| {
-                MyState(7)
-            });
-        let _: &FlowTracker<FiveTuple, MyState> = d.tracker();
-        // Read the inner value so it's not dead code.
-        let snapshot: Vec<u64> = d
-            .tracker()
-            .iter_active()
-            .map(|entry| entry.user.0)
-            .collect();
-        assert!(snapshot.is_empty(), "no flows tracked yet");
     }
 
     /// Plan 33: `finish()` closes every still-open UDP flow.

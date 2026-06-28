@@ -747,9 +747,10 @@ src/
 ├── session.rs                   # SessionParser / DatagramParser traits + factories + SessionEvent
 │                                # + AccumulatingSessionParser / PerDatagramParser /
 │                                #   BufferedFrameDrain / FrameDrainError (plan 106, 0.10)
-├── session_driver.rs            # FlowSessionDriver — sync mirror of session_stream (plan 25, 0.2.0)
-│                                # Refactored to wrap FlowDriver (plan 51, 0.3.0)
-├── datagram_driver.rs           # FlowDatagramDriver — sync UDP mirror (plan 57, 0.3.0)
+├── session_driver.rs            # FlowSessionDriver — crate-PRIVATE session-dispatch engine
+│                                # (was public through 0.19; demoted in #99, 0.20). Used by
+│                                # the typed driver slots + pcap source. Wraps FlowDriver.
+├── datagram_driver.rs           # FlowDatagramDriver — crate-PRIVATE UDP engine (private since #99, 0.20)
 ├── dedup.rs                     # Dedup — content-hash + window dedup (plan 49, 0.3.0)
 ├── obs.rs                       # metrics / tracing hooks (plan 40, 0.2.0)
 │                                # (former tracing-messages sub-feature removed in 0.12, plan 131 — always-on under `tracing`)
@@ -870,8 +871,8 @@ The legacy `HttpFactory` / `TlsFactory` callback-handler shape
   callback-factory removal).
 - `tests/{http,pcap}_pcap.rs`, `tests/pcap_integration.rs`,
   `tests/pcap_fixtures.rs` — pcap-driven integration tests.
-- `tests/length_prefixed_example.rs` — sync `FlowSessionDriver` +
-  custom protocol parser, paired with
+- `tests/length_prefixed_example.rs` — typed `Driver<E>` + session
+  slot with a custom protocol parser, paired with
   `tests/fixtures/length_prefixed/sample.pcap` (0.2.0).
 - `tests/metrics_integration.rs` — DebuggingRecorder snapshot test
   for the `metrics` feature (0.2.0).
@@ -974,14 +975,16 @@ was removed in 0.9.
 
 Two driver helpers:
 
-- Sync, no runtime: **`FlowSessionDriver<E, P, S = ()>`** in
-  flowscope (0.2.0; `S` restored in 0.5 — see plan 38). The 0.9
-  release adds `FlowSessionDriver::builder(ext)` chainable
-  construction alongside the existing constructors.
+- Sync, no runtime: the typed **`driver::Driver<E>`** with one
+  session/datagram slot per parser
+  (`builder.session_on_ports(parser, ports)` /
+  `datagram_on_ports`). This replaced the per-parser
+  `FlowSessionDriver` / `FlowDatagramDriver` in 0.20 (#99); the
+  parser-dispatch engine survives as a crate-private detail.
 - Async tokio: **`flow_stream(...).session_stream(parser)`** in
   netring.
 
-Both produce the same `SessionEvent`s for the same wire bytes.
+Both produce typed L7 messages for the same wire bytes.
 
 For the highest-level convenience, marquee parsers each ship
 a one-call pcap iterator:
@@ -1164,10 +1167,12 @@ needs a corresponding re-export under `netring::flow::*`.
 - `src/lib.rs` — top-level rustdoc + feature/module wiring.
 - `src/session.rs` — the strategic 1.0 abstraction
   (`SessionParser` / `DatagramParser`).
-- `src/session_driver.rs` — `FlowSessionDriver`, the sync mirror of
-  netring's `session_stream`.
-- `src/datagram_driver.rs` — `FlowDatagramDriver`, the sync mirror
-  of netring's `datagram_stream`.
+- `src/driver/` — the typed `Driver<E>` + per-parser slots; the
+  public sync mirror of netring's `session_stream` / `datagram_stream`.
+- `src/session_driver.rs` / `src/datagram_driver.rs` — crate-private
+  session/datagram parser-dispatch engines (the public
+  `FlowSessionDriver` / `FlowDatagramDriver` were removed in 0.20, #99).
+  Retained because the typed driver slots + the `pcap` source need them.
 - `src/dedup.rs` — content-hash dedup primitive.
 - `src/obs.rs` — metrics + tracing hooks; metric-name constants
   exported here.

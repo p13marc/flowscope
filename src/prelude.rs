@@ -187,10 +187,6 @@ pub use crate::tls::EchState;
 #[cfg(feature = "tracker")]
 pub use crate::tracker::{FlowTracker, FlowTrackerConfig};
 // Plan 165 (0.14): site-custom port label table.
-#[cfg(all(feature = "extractors", feature = "reassembler", feature = "session"))]
-pub use crate::FlowDatagramDriver;
-#[cfg(all(feature = "reassembler", feature = "session"))]
-pub use crate::FlowSessionDriver;
 #[cfg(feature = "extractors")]
 pub use crate::well_known::LabelTable;
 pub use crate::{

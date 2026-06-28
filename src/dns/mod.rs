@@ -4,7 +4,8 @@
 //!
 //! [`DnsUdpParser`] is the integration point — a
 //! [`DatagramParser`](crate::DatagramParser) impl yielding a typed
-//! [`DnsMessage`] stream. Pair it with [`crate::FlowDatagramDriver`],
+//! [`DnsMessage`] stream. Pair it with the typed
+//! [`crate::driver::Driver`] (via `datagram_on_ports`),
 //! [`PcapFlowSource::datagrams`](crate::pcap::PcapFlowSource::datagrams),
 //! or netring's `datagram_stream`. With correlation enabled
 //! ([`DnsUdpParser::with_correlation`]) it matches responses to

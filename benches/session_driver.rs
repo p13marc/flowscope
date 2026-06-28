@@ -1,4 +1,9 @@
-//! `FlowSessionDriver` end-to-end throughput.
+//! Typed `Driver<E>` session-slot end-to-end throughput.
+//!
+//! Benchmarks the same TCP session-dispatch path that the (now
+//! crate-private) `FlowSessionDriver` engine drives, via the
+//! public typed [`flowscope::driver::Driver`] with a single
+//! session slot.
 //!
 //! Run with:
 //!
@@ -7,8 +12,9 @@
 
 use criterion::{Criterion, Throughput, black_box, criterion_group, criterion_main};
 use flowscope::{
-    FlowSessionDriver, FlowSide, PacketView, SessionParser, Timestamp,
-    extract::{FiveTuple, parse::test_frames::ipv4_tcp},
+    FlowSide, PacketView, SessionParser, Timestamp,
+    driver::{Driver, Event, SlotMessage},
+    extract::{FiveTuple, FiveTupleKey, parse::test_frames::ipv4_tcp},
 };
 
 /// No-op parser: returns no messages, just measures the driver's
@@ -25,7 +31,13 @@ fn bench_passthrough(c: &mut Criterion) {
     let mut group = c.benchmark_group("session_driver");
     group.throughput(Throughput::Elements(1));
     group.bench_function("passthrough", |b| {
-        let mut d = FlowSessionDriver::new(FiveTuple::bidirectional(), NoopParser);
+        let mut builder = Driver::builder(FiveTuple::bidirectional());
+        let mut slot = builder.session_on_ports(NoopParser, [80]);
+        let mut d = builder.build();
+
+        let mut events: Vec<Event<FiveTupleKey>> = Vec::new();
+        let mut msgs: Vec<SlotMessage<(), FiveTupleKey>> = Vec::new();
+
         // 3WHS first so the flow is established before benchmarking.
         let mac = [0u8; 6];
         let syn = ipv4_tcp(
@@ -65,7 +77,8 @@ fn bench_passthrough(c: &mut Criterion) {
             b"",
         );
         for f in &[syn, synack, ack] {
-            d.track(PacketView::new(f, Timestamp::default()));
+            d.track_into(PacketView::new(f, Timestamp::default()), &mut events);
+            events.clear();
         }
         let payload = vec![b'A'; 1400];
         let data = ipv4_tcp(
@@ -95,7 +108,11 @@ fn bench_passthrough(c: &mut Criterion) {
                 0x18,
                 &payload,
             );
-            black_box(d.track(PacketView::new(&frame, Timestamp::default())));
+            events.clear();
+            d.track_into(PacketView::new(&frame, Timestamp::default()), &mut events);
+            slot.drain(&mut msgs);
+            black_box((&events, &msgs));
+            msgs.clear();
             seq = seq.wrapping_add(payload.len() as u32);
         });
         // Reference to silence unused-variable warnings.

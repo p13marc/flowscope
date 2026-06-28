@@ -28,6 +28,37 @@ later breaking steps can retire `SessionEvent`.
   zero-copy via `Cow`). The typed `Driver<E>`'s emitted stream is
   unchanged (it still omits raw `StateChange`).
 
+### Breaking — delete `FlowSessionDriver` / `FlowDatagramDriver` (#99, driver-convergence 3/5)
+
+Removes the two single-parser convenience drivers (and their 20
+constructors — the `new` / `with_config` / `with_factory*` /
+`with_state*` explosion) from the public API. Their single-parser job
+is subsumed by the typed [`driver::Driver<E>`] plus one slot, and the
+reassembly-vs-noop distinction is already a registration choice
+(`session_on_ports` vs `datagram_on_ports`). **`FlowDriver` stays** as
+the documented low-level run-to-completion primitive.
+
+- **Removed `FlowSessionDriver` and `FlowDatagramDriver`** from the
+  crate root and the prelude. The parser-dispatch engine survives as a
+  crate-private detail (the typed `Driver` slots and the offline `pcap`
+  source still need it), but it is no longer nameable or constructible
+  by downstream code.
+- **Migration:** replace
+  `FlowSessionDriver::new(ext, parser)` + `driver.track(view)` with
+  ```rust,ignore
+  let mut builder = Driver::builder(ext);
+  let mut slot = builder.session_on_ports(parser, [port, ..]);  // datagram_on_ports for UDP
+  let mut driver = builder.build();
+  // per packet: driver.track_into(view, &mut events); slot.drain(&mut msgs);
+  ```
+  The raw `SessionEvent` stream becomes `Event<K>` (flow lifecycle) +
+  typed `SlotHandle` messages. The offline one-liners
+  (`pcap::session_messages` / `flow_summaries`, the `*_from_pcap`
+  helpers) are unaffected.
+- netring's `pcap_flow.rs` is the only known external consumer; it
+  migrates when it adopts flowscope 0.20 (netring#107) and is
+  unaffected until then.
+
 ### Breaking — one driver builder (#98, driver-convergence 2/5)
 
 Collapses the two `Driver<E>` builders into one. The

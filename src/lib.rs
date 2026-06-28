@@ -22,8 +22,10 @@
 //! - [`FlowDriver`] — sync wrapper combining the tracker with a
 //!   reassembler factory; optional anomaly emission via
 //!   [`FlowDriver::with_emit_anomalies`].
-//! - [`FlowSessionDriver`] — sync mirror of netring's
-//!   `session_stream` for offline / no-tokio session-event consumers.
+//! - [`driver::Driver`] — typed flow-lifecycle driver; register one
+//!   session/datagram slot per protocol for typed L7 messages. This
+//!   replaced the per-parser `FlowSessionDriver` / `FlowDatagramDriver`
+//!   in 0.20 (#99).
 //!
 //! Built-in extractors and decap combinators (`extractors` feature):
 //!
@@ -117,15 +119,15 @@
 //! For async iteration over flow / session / datagram events, see
 //! [`netring`](https://crates.io/crates/netring)'s `AsyncCapture::flow_stream`
 //! / `.session_stream` / `.datagram_stream`. Those depend on this
-//! crate's traits. The sync analogue for `session_stream` is
-//! [`FlowSessionDriver`].
+//! crate's traits. The sync analogue is the typed [`driver::Driver`]
+//! with one session/datagram slot per protocol.
 //!
 //! ## Re-exporting flowscope types
 //!
 //! Crates that re-export flowscope types (`netring`, sister crates,
 //! internal forks) should write intra-doc links in the bare
-//! `` [`FlowSessionDriver`] `` form, **not** the explicit
-//! `` [`FlowSessionDriver`](flowscope::FlowSessionDriver) `` form.
+//! `` [`FlowDriver`] `` form, **not** the explicit
+//! `` [`FlowDriver`](flowscope::FlowDriver) `` form.
 //! The explicit path duplicates what rustdoc already resolves through
 //! the re-export and trips the `redundant_explicit_links` lint under
 //! `-D warnings`. See recipes.md's "Re-exporting flowscope types"
@@ -207,11 +209,15 @@ pub use segment_reassembler::SegmentBufferReassembler;
 #[cfg(feature = "tracker")]
 pub mod dedup;
 
-#[cfg(all(feature = "reassembler", feature = "session"))]
-pub mod session_driver;
+// Crate-internal session/datagram engines (the public
+// `FlowSessionDriver` / `FlowDatagramDriver` were removed in 0.20,
+// #99). Retained privately because the typed `driver` slots and the
+// offline `pcap` source both need per-flow parser dispatch.
+#[cfg(all(feature = "extractors", feature = "reassembler", feature = "session"))]
+pub(crate) mod session_driver;
 
 #[cfg(all(feature = "extractors", feature = "reassembler", feature = "session"))]
-pub mod datagram_driver;
+pub(crate) mod datagram_driver;
 
 #[cfg(all(feature = "extractors", feature = "reassembler", feature = "session"))]
 pub mod driver;
@@ -491,8 +497,6 @@ pub mod parser_kinds {
 }
 
 pub use anomaly_fields::{AnomalyFields, KeyFields};
-#[cfg(all(feature = "extractors", feature = "reassembler", feature = "session"))]
-pub use datagram_driver::FlowDatagramDriver;
 #[cfg(feature = "tracker")]
 pub use dedup::Dedup;
 #[cfg(feature = "tracker")]
@@ -515,7 +519,5 @@ pub use session::{
     AccumulatingSessionParser, BufferedFrameDrain, DatagramParser, DatagramParserFactory,
     FrameDrainError, PerDatagramParser, SessionEvent, SessionParser, SessionParserFactory,
 };
-#[cfg(all(feature = "reassembler", feature = "session"))]
-pub use session_driver::FlowSessionDriver;
 #[cfg(feature = "tracker")]
 pub use tracker::{FlowEntry, FlowEvents, FlowTracker, FlowTrackerConfig, FlowTrackerStats};

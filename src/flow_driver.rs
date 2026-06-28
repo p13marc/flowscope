@@ -289,7 +289,7 @@ where
     /// You MUST call [`Self::finalize`] before the next
     /// `track_pending` / `sweep_pending` / `track` / `sweep` call —
     /// otherwise reassemblers for ended flows are never cleaned up.
-    /// Typical use: [`crate::FlowSessionDriver`] calls
+    /// Typical use: the internal session engine calls
     /// `track_pending`, drains buffered bytes from reassemblers, then
     /// calls `finalize`.
     pub fn track_pending<'v>(&mut self, view: impl Into<PacketView<'v>>) -> FlowEvents<E::Key> {
@@ -841,8 +841,8 @@ where
     }
 
     /// True when [`Self::with_emit_anomalies`] was called with
-    /// `true`. Used by wrappers (e.g. [`crate::FlowSessionDriver`])
-    /// that need to mirror the same anomaly-emission policy.
+    /// `true`. Used by wrappers (e.g. the internal `FlowSessionDriver`
+    /// engine) that need to mirror the same anomaly-emission policy.
     pub fn emits_anomalies(&self) -> bool {
         self.emit_anomalies
     }
@@ -890,7 +890,7 @@ where
     /// Specialisation of [`Self::reassembler`] for the
     /// [`crate::BufferedReassemblerFactory`] case — calls
     /// [`crate::BufferedReassembler::take`] on the reassembler.
-    /// Used by [`crate::FlowSessionDriver`] between `track_pending`
+    /// Used by the internal session engine between `track_pending`
     /// and `finalize` to harvest payload bytes before ended-flow
     /// reassemblers are dropped.
     pub fn drain_buffer(&mut self, key: &E::Key, side: FlowSide) -> Vec<u8> {

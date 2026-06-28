@@ -17,15 +17,18 @@
 //!
 //! # Quick start
 //!
-//! ```no_run
-//! use flowscope::extract::FiveTuple;
-//! use flowscope::tls::{TlsMessage, TlsParser};
-//! use flowscope::{FlowSessionDriver, SessionEvent};
+//! Register a [`TlsParser`] on the typed
+//! [`Driver`](crate::driver::Driver) and drain its slot:
 //!
-//! let _driver = FlowSessionDriver::new(
-//!     FiveTuple::bidirectional(),
-//!     TlsParser::default(),
-//! );
+//! ```
+//! use flowscope::driver::Driver;
+//! use flowscope::extract::FiveTuple;
+//! use flowscope::tls::TlsParser;
+//!
+//! let mut builder = Driver::builder(FiveTuple::bidirectional());
+//! let mut tls = builder.session_on_ports(TlsParser::default(), [443]);
+//! let _driver = builder.build();
+//! # let _ = &mut tls;
 //! ```
 //!
 //! # Scope

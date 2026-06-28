@@ -27,7 +27,7 @@ criterion writes HTML reports to `target/criterion/`. Open
 | `extractor` | `FiveTuple` parsing over IPv4 TCP / IPv4 UDP. The floor every other layer pays. |
 | `tracker` | `FlowTracker::track` for varying flow-table sizes — validates the hot-cache fast path. |
 | `reassembler` | `BufferedReassembler::segment` for in-order, OOO, capped, poisoned cases. |
-| `session_driver` | End-to-end `FlowSessionDriver::track` with a no-op parser. |
+| `session_driver` | End-to-end typed `Driver<E>` session slot with a no-op parser. |
 | `dedup` | `Dedup` content-hash + lookup over typical and MTU-sized frames. |
 
 Each `bench_function` measures one hot-path call; criterion
@@ -100,9 +100,9 @@ for the bug class it prevents.
 |-------|-------------|
 | `session_driver/passthrough` | ~500–800 ns |
 
-End-to-end `FlowSessionDriver::track` with a no-op `SessionParser`.
-Dominated by tracker + reassembler dispatch + the per-side drain
-loop.
+End-to-end typed `Driver<E>` with a single session slot and a no-op
+`SessionParser`. Dominated by tracker + reassembler dispatch + the
+per-side drain loop.
 
 ## Reading the numbers
 

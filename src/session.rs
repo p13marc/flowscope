@@ -489,7 +489,7 @@ where
 /// the reassembler and the parser — TCP rich stats, application-
 /// level counters, middleware state machines — keep that state on
 /// [`crate::FlowEntry::user`] (typed via the `S` parameter on
-/// [`crate::FlowSessionDriver`]) and update it from your event
+/// the internal session engine) and update it from your event
 /// loop after `track()`. The pattern is documented in
 /// `docs/recipes.md` → "Per-flow user state via the consumer
 /// loop". Avoid piping `&mut S` through `feed_*` — it would

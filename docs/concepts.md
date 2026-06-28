@@ -27,13 +27,12 @@ gives you out of the box:
 │  default multi-thread runtime just works.                   │
 │  `Driver::builder(ext).session_on_ports(p, [80]).build()`   │
 └─────────────────────────────────────────────────────────────┘
-┌─ Tier 2 — raw `FlowSessionDriver` / `FlowDatagramDriver` ───┐
-│  One parser per driver. Direct access to the                │
-│  `SessionEvent` stream (`Started` / `Application` /         │
-│  `Closed` / anomalies).                                     │
-│  Per-flow user state via the `S` parameter on               │
-│  `FlowSessionDriver<E, P, S>`.                              │
-│  `FlowSessionDriver::new(ext, parser)`                      │
+┌─ Tier 2 — `FlowDriver` low-level primitive ─────────────────┐
+│  Tracker + reassembler, run-to-completion. Emits            │
+│  the `FlowEvent` lifecycle stream — you own the loop        │
+│  and feed parsers yourself. The low-level primitive         │
+│  under the typed `Driver`; use it for custom pipelines.     │
+│  `FlowDriver::new(ext, reassembler_factory)`                │
 └─────────────────────────────────────────────────────────────┘
 ┌─ Tier 3 — flowscope::layers ────────────────────────────────┐
 │  Per-packet zero-copy L2/L3/L4 view + dynamic walk.         │
@@ -314,25 +313,25 @@ lookups:
 
 ## Drivers
 
-Layers 2–4 stitch together. flowscope ships three sync wrappers:
+Layers 2–4 stitch together. flowscope ships two sync surfaces:
 
-- **`FlowDriver<E, F, S>`** — tracker + reassembler factory. Emits
-  `FlowEvent`. The low-level building block — use it directly when
-  you want flow lifecycle events without per-flow L7 parsing.
-- **`FlowSessionDriver<E, P, S>`** — adds a `SessionParser`. Emits
-  `SessionEvent`.
-- **`FlowDatagramDriver<E, P, S>`** — adds a `DatagramParser`.
-  Emits `SessionEvent` for UDP-shaped protocols.
+- **`driver::Driver<E>`** (Tier 1) — the typed driver. Register one
+  session/datagram slot per protocol with
+  `builder.session_on_ports(parser, ports)` /
+  `builder.datagram_on_ports(parser, ports)`; the slot's
+  `SlotHandle<M, K>` yields typed L7 messages while the driver emits
+  the flow-lifecycle `Event<K>` stream. This is the supported
+  single-parser surface — it replaced the per-parser
+  `FlowSessionDriver` / `FlowDatagramDriver` in 0.20 (#99).
+- **`FlowDriver<E, F, S>`** (Tier 2) — tracker + reassembler factory.
+  Emits `FlowEvent`. The low-level building block — use it directly
+  when you want flow lifecycle events without per-flow L7 parsing, or
+  to build a custom run-to-completion loop. Supports per-flow user
+  state via `S`, `force_close(key, now)`, and the underlying tracker
+  via `tracker()` / `tracker_mut()`.
 
-`S` defaults to `()` — common-case constructors (`new`,
-`with_config`) need no type annotation. For per-flow state, use
-`with_state`, `with_state_init`, `with_state_factory`. For
-expensive-init parsers, `with_factory` skips the `P: Clone`
-requirement.
-
-All three expose `finish()` (sweep at `Timestamp::MAX`),
-`force_close(key, now)`, and the underlying tracker via
-`tracker()` / `tracker_mut()`.
+The internal session/datagram parser-dispatch engine that the typed
+slots and the offline `pcap` source share is no longer a public type.
 
 ## Events at the L7 layer
 

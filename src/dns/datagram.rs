@@ -3,7 +3,7 @@
 //! correlation.
 //!
 //! Pair with `netring::FlowStream::datagram_stream(...)` for an
-//! async iterator API, or [`crate::FlowDatagramDriver`] /
+//! async iterator API, or the typed [`crate::driver::Driver`] /
 //! [`crate::pcap::PcapFlowSource::datagrams`] for the sync path.
 
 use crate::{DatagramParser, FlowSide, Timestamp};
