@@ -143,14 +143,16 @@ pub mod events {
     use crate::{
         Timestamp,
         event::{AnomalyKind, EndReason, FlowEvent, FlowSide, FlowStats},
-        extractor::L4Proto,
+        extractor::{L4Proto, Orientation},
     };
 
-    /// `FlowEvent::Started` with `l4 = None` and `Initiator` side.
+    /// `FlowEvent::Started` with `l4 = None`, `Initiator` side and
+    /// `Forward` orientation.
     pub fn started<K>(key: K, ts: Timestamp) -> FlowEvent<K> {
         FlowEvent::Started {
             key,
             side: FlowSide::Initiator,
+            orientation: Orientation::Forward,
             ts,
             l4: None,
         }
@@ -161,6 +163,7 @@ pub mod events {
         FlowEvent::Started {
             key,
             side: FlowSide::Initiator,
+            orientation: Orientation::Forward,
             ts,
             l4: Some(l4),
         }
@@ -217,19 +220,33 @@ pub mod events {
         FlowEvent::TrackerAnomaly { kind, ts }
     }
 
-    /// `FlowEvent::Packet` with default `Initiator` side.
+    /// `FlowEvent::Packet` with default `Initiator` side / `Forward`
+    /// orientation.
     pub fn packet<K>(key: K, len: usize, ts: Timestamp) -> FlowEvent<K> {
         FlowEvent::Packet {
             key,
             side: FlowSide::Initiator,
+            orientation: Orientation::Forward,
             len,
             ts,
         }
     }
 
-    /// `FlowEvent::Packet` with explicit side.
+    /// `FlowEvent::Packet` with explicit side. Orientation is derived
+    /// to be self-consistent (`Initiator` → `Forward`,
+    /// `Responder` → `Reverse`).
     pub fn packet_side<K>(key: K, side: FlowSide, len: usize, ts: Timestamp) -> FlowEvent<K> {
-        FlowEvent::Packet { key, side, len, ts }
+        let orientation = match side {
+            FlowSide::Initiator => Orientation::Forward,
+            FlowSide::Responder => Orientation::Reverse,
+        };
+        FlowEvent::Packet {
+            key,
+            side,
+            orientation,
+            len,
+            ts,
+        }
     }
 
     /// Typed `driver::Event<K>` constructors.
@@ -239,18 +256,24 @@ pub mod events {
             Timestamp,
             driver::Event,
             event::{AnomalyKind, EndReason, FlowSide, FlowStats},
-            extractor::{L4Proto, TcpInfo},
+            extractor::{L4Proto, Orientation, TcpInfo},
         };
 
-        /// `Event::Started` with `l4 = None`.
+        /// `Event::Started` with `l4 = None` and `Forward` orientation.
         pub fn flow_started<K>(key: K, ts: Timestamp) -> Event<K> {
-            Event::Started { key, ts, l4: None }
+            Event::Started {
+                key,
+                orientation: Orientation::Forward,
+                ts,
+                l4: None,
+            }
         }
 
         /// `Event::Started` with explicit L4.
         pub fn flow_started_with_l4<K>(key: K, l4: L4Proto, ts: Timestamp) -> Event<K> {
             Event::Started {
                 key,
+                orientation: Orientation::Forward,
                 ts,
                 l4: Some(l4),
             }
@@ -274,18 +297,22 @@ pub mod events {
             }
         }
 
-        /// `Event::Packet` with `Initiator` side and no tcp info.
+        /// `Event::Packet` with `Initiator` side / `Forward`
+        /// orientation and no tcp info.
         pub fn flow_packet<K>(key: K, len: usize, ts: Timestamp) -> Event<K> {
             Event::Packet {
                 key,
                 side: FlowSide::Initiator,
+                orientation: Orientation::Forward,
                 len,
                 ts,
                 tcp: None,
             }
         }
 
-        /// `Event::Packet` with explicit fields.
+        /// `Event::Packet` with explicit fields. Orientation is
+        /// derived to be self-consistent with `side` (`Initiator` →
+        /// `Forward`, `Responder` → `Reverse`).
         pub fn flow_packet_full<K>(
             key: K,
             side: FlowSide,
@@ -293,9 +320,14 @@ pub mod events {
             tcp: Option<TcpInfo>,
             ts: Timestamp,
         ) -> Event<K> {
+            let orientation = match side {
+                FlowSide::Initiator => Orientation::Forward,
+                FlowSide::Responder => Orientation::Reverse,
+            };
             Event::Packet {
                 key,
                 side,
+                orientation,
                 len,
                 ts,
                 tcp,

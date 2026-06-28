@@ -55,6 +55,7 @@ fn packet_events_skipped_by_default() {
     let pkt = FlowEvent::Packet {
         key: key("10.0.0.1:1234", "10.0.0.2:80", L4Proto::Tcp),
         side: FlowSide::Initiator,
+        orientation: flowscope::Orientation::Forward,
         len: 100,
         ts: Timestamp::new(101, 0),
     };
@@ -73,6 +74,7 @@ fn include_packets_emits_them() {
     let pkt = FlowEvent::Packet {
         key: key("10.0.0.1:1234", "10.0.0.2:80", L4Proto::Tcp),
         side: FlowSide::Initiator,
+        orientation: flowscope::Orientation::Forward,
         len: 100,
         ts: Timestamp::new(101, 0),
     };

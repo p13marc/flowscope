@@ -68,6 +68,16 @@ impl<S> FlowEntry<S> {
             FlowSide::Responder
         }
     }
+
+    /// The canonical [`Orientation`] of this flow's initiator
+    /// (first-seen packet) — the deterministic, address-sorted
+    /// direction the [`FlowSide`] mapping is anchored to. New in
+    /// 0.20.0 (issue #118). Mirrors
+    /// [`FlowStats::initiator_orientation`].
+    #[inline]
+    pub fn initiator_orientation(&self) -> Orientation {
+        self.initiator_orientation
+    }
 }
 
 /// Tracker configuration. Defaults follow Suricata's normal-mode values.
@@ -437,6 +447,7 @@ impl<E: FlowExtractor, S: Send + 'static> FlowTracker<E, S> {
                 stats: FlowStats {
                     started: ts,
                     last_seen: ts,
+                    initiator_orientation: orientation,
                     ..FlowStats::default()
                 },
                 // TCP flows transition out of Active via the
@@ -483,6 +494,9 @@ impl<E: FlowExtractor, S: Send + 'static> FlowTracker<E, S> {
                 events.push(FlowEvent::Started {
                     key: key.clone(),
                     side: FlowSide::Initiator,
+                    // First packet defines the initiator orientation,
+                    // so the canonical axis equals it here (issue #118).
+                    orientation,
                     ts,
                     l4,
                 });
@@ -619,6 +633,7 @@ impl<E: FlowExtractor, S: Send + 'static> FlowTracker<E, S> {
             events.push(FlowEvent::Packet {
                 key: key.clone(),
                 side,
+                orientation,
                 len,
                 ts,
             });

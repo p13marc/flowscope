@@ -2,15 +2,43 @@
 
 use bitflags::bitflags;
 
-use crate::{Timestamp, extractor::L4Proto, history::HistoryString};
+use crate::{
+    Timestamp,
+    extractor::{L4Proto, Orientation},
+    history::HistoryString,
+};
 
-/// Which side of a flow a packet belongs to.
+/// Which side of a flow a packet belongs to — the **logical role**
+/// direction axis (who started the conversation).
 ///
 /// Derived from the [`crate::Orientation`] reported by the extractor:
 /// - The **first** orientation seen for a flow becomes the
 ///   `Initiator` direction.
 /// - Packets matching that orientation are `Initiator`, packets in
 ///   the opposite orientation are `Responder`.
+///
+/// # First-seen is arrival-order-relative — not deterministic
+///
+/// `Initiator` binds to whichever endpoint flowscope saw **first**,
+/// which is usually the SYN sender but is ultimately "first packet
+/// of this flow to reach the tracker". On a single capture point that
+/// is reliable. Across a **tap-merge** (two NICs / two queues feeding
+/// one tracker, with a scheduling race) the first-seen packet can be
+/// the *response*, so `Initiator` may bind to the server on some flows
+/// and the client on others — non-deterministically.
+///
+/// When you need a direction label two independent captures of the
+/// same flow will agree on, use [`crate::Orientation`] (deterministic,
+/// address-sorted) instead. flowscope keeps both: the
+/// [`FlowEvent::Started`] / [`FlowEvent::Packet`] events carry **both**
+/// `side` (this axis) and `orientation` (the canonical axis), and
+/// [`FlowStats::initiator_orientation`] records which `Orientation` the
+/// initiator's first packet had so you can translate between them on a
+/// finished flow. See `docs/concepts.md` →
+/// "Direction, orientation, and capture leg".
+///
+/// Maps to IPFIX `biflowDirection` (IE 239, RFC 5103): `Initiator` ≈
+/// `initiator` (value 1), `Responder` ≈ `reverseInitiator` (value 2).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
@@ -355,6 +383,17 @@ pub struct FlowStats {
     /// inspect mid-flow state. `Option` to avoid the
     /// "real packet at ts=0 vs sentinel default" trap.
     pub active_period_start: Option<Timestamp>,
+    /// New in 0.20.0 (issue #118): the canonical [`Orientation`] the
+    /// flow's **initiator** (first-seen packet) had. This is the
+    /// bridge between the two direction axes on a finished flow:
+    /// a packet whose `orientation == initiator_orientation` is on
+    /// the [`FlowSide::Initiator`] side, the opposite orientation is
+    /// [`FlowSide::Responder`]. Deterministic — unlike `FlowSide`
+    /// itself, it does not depend on packet arrival order.
+    ///
+    /// Defaults to [`Orientation::Forward`] for a default-constructed
+    /// `FlowStats`; a tracked flow always carries the real value.
+    pub initiator_orientation: Orientation,
 }
 
 impl FlowStats {
@@ -399,6 +438,35 @@ impl FlowStats {
     /// dashboard / divisor arithmetic. New in 0.10.0.
     pub fn duration_secs(&self) -> f64 {
         self.duration().as_secs_f64()
+    }
+
+    /// Translate a canonical [`Orientation`] into the logical
+    /// [`FlowSide`] for **this** flow, using
+    /// [`Self::initiator_orientation`].
+    ///
+    /// A packet whose orientation equals the initiator's orientation
+    /// is on the [`FlowSide::Initiator`] side; the opposite is
+    /// [`FlowSide::Responder`]. This is the deterministic bridge
+    /// between the two direction axes — see [`Orientation`] vs
+    /// [`FlowSide`]. New in 0.20.0 (issue #118).
+    #[inline]
+    pub fn side_for(&self, orientation: Orientation) -> FlowSide {
+        if orientation == self.initiator_orientation {
+            FlowSide::Initiator
+        } else {
+            FlowSide::Responder
+        }
+    }
+
+    /// Translate a logical [`FlowSide`] into the canonical
+    /// [`Orientation`] for **this** flow — the inverse of
+    /// [`Self::side_for`]. New in 0.20.0 (issue #118).
+    #[inline]
+    pub fn orientation_for(&self, side: FlowSide) -> Orientation {
+        match side {
+            FlowSide::Initiator => self.initiator_orientation,
+            FlowSide::Responder => self.initiator_orientation.flipped(),
+        }
     }
 
     /// Bytes attributed to the given side. Sugar over the
@@ -860,17 +928,36 @@ bitflags! {
 #[non_exhaustive]
 pub enum FlowEvent<K> {
     /// First packet of a new flow.
+    ///
+    /// Carries **both** direction axes (issue #118): `side` is the
+    /// logical role ([`FlowSide::Initiator`] for the first packet),
+    /// `orientation` is the deterministic canonical direction
+    /// ([`Orientation`]) — equal to the flow's
+    /// [`FlowStats::initiator_orientation`].
     Started {
         key: K,
         side: FlowSide,
+        /// Canonical (address-sorted) orientation of this packet —
+        /// deterministic regardless of arrival order. See
+        /// [`Orientation`] and [`FlowSide`] for the distinction.
+        orientation: Orientation,
         ts: Timestamp,
         l4: Option<L4Proto>,
     },
 
     /// Subsequent packet on a known flow.
+    ///
+    /// Carries **both** direction axes (issue #118): `side` is the
+    /// logical role relative to the flow's initiator, `orientation`
+    /// is this packet's deterministic canonical direction.
     Packet {
         key: K,
         side: FlowSide,
+        /// Canonical (address-sorted) orientation of this packet.
+        /// Together with the flow's
+        /// [`FlowStats::initiator_orientation`] this recovers `side`
+        /// deterministically. See [`Orientation`] vs [`FlowSide`].
+        orientation: Orientation,
         len: usize,
         ts: Timestamp,
     },
@@ -992,6 +1079,7 @@ mod tests {
         let evt: FlowEvent<u32> = FlowEvent::Packet {
             key: 7,
             side: FlowSide::Initiator,
+            orientation: Orientation::Forward,
             len: 100,
             ts: Timestamp::default(),
         };
