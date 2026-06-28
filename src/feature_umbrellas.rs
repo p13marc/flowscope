@@ -16,6 +16,11 @@
 //! 3. **`full` enables every license-clean capability** (parsers via `l7`,
 //!    plus the non-l7 parser/fingerprint/asset/ml/ipfix/observability/emit
 //!    groups). `ja4plus` stays excluded so `full` is royalty-free-clean.
+//! 4. **Each coarse tier enables its own members** (issue #87) —
+//!    `parsers-core` / `parsers-l2l3` / `parsers-tier2` / `ml` / `export` /
+//!    `nsm`. `l7` / `full` are recomposed from these tiers, so the leaves
+//!    are already covered transitively; the tier guards pin membership even
+//!    when a tier is built on its own.
 //!
 //! This module is intentionally empty at runtime — it exists only for its
 //! `cfg`-gated `compile_error!` arms.
@@ -97,3 +102,29 @@ full_requires!(
     "fingerprint",
     "community-id",
 );
+
+// ── 4. Coarse tiers ⊇ their members (issue #87) ───────────────────────
+// `l7` / `full` are recomposed from these tiers, so the invariants above
+// already cover the leaves transitively. These extra guards pin each
+// tier's own membership so a tier can't silently lose a parser even when
+// built on its own (`--features parsers-tier2`).
+macro_rules! tier_requires {
+    ($tier:literal => $($feat:literal),* $(,)?) => {
+        $(
+            #[cfg(all(feature = $tier, not(feature = $feat)))]
+            compile_error!(concat!("`", $tier, "` tier must enable `", $feat, "`"));
+        )*
+    };
+}
+
+tier_requires!("parsers-core" => "http", "tls", "dns", "icmp");
+tier_requires!("parsers-l2l3" => "arp", "ndp", "lldp", "cdp", "dhcp");
+tier_requires!("parsers-tier2" =>
+    "ssh", "ntp", "ssdp", "tftp", "mdns", "netbios-ns", "ftp", "smtp",
+    "wireguard", "modbus", "stun", "rdp", "snmp", "radius", "quic",
+    "smb", "ldap", "kerberos", "dnp3",
+);
+tier_requires!("ml" => "ml-features", "ml-features-nprint");
+tier_requires!("export" =>
+    "ipfix", "ipfix-export", "emit", "emit-ndjson", "emit-eve");
+tier_requires!("nsm" => "fingerprint", "tls-fingerprints", "analysis");

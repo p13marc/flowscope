@@ -33,16 +33,79 @@
 //!   [`extract::InnerGre`], [`extract::AutoDetectEncap`],
 //!   [`extract::FlowLabel`]
 //!
-//! Protocol parsers (each behind its own feature):
+//! ## Cargo features
 //!
-//! | Feature | Module    | What you get |
-//! |---------|-----------|--------------|
-//! | `http`  | [`http`]  | HTTP/1.x request/response parser |
-//! | `tls`   | [`tls`]   | TLS handshake observer (ClientHello/ServerHello/Alert), optional JA3 |
-//! | `dns`   | [`dns`]   | DNS-over-UDP and DNS-over-TCP message parsers + query/response correlator |
-//! | `pcap`  | [`pcap`]  | pcap file source for offline replay |
+//! Granular leaf flags compose into coarse umbrellas. Pick the smallest
+//! that fits; `--all-features` (docs.rs) turns on everything including the
+//! FoxIO-licensed `ja4plus`.
 //!
-//! Observability (each behind its own feature, zero-cost when off):
+//! **Umbrellas & tiers** — correct, coarse groupings (issue #87):
+//!
+//! | Feature         | Pulls |
+//! |-----------------|-------|
+//! | `full`          | `l7` + every license-clean capability (excludes FoxIO `ja4plus`) |
+//! | `l7`            | every license-clean wire parser (the three `parsers-*` tiers + `tls-fingerprints`) |
+//! | `parsers-core`  | `http` `tls` `dns` `icmp` |
+//! | `parsers-l2l3`  | `arp` `ndp` `lldp` `cdp` `dhcp` (L2/L3 asset discovery) |
+//! | `parsers-tier2` | the 19 Tier-2 parsers (`ssh` `ntp` `ssdp` `tftp` `mdns` `netbios-ns` `ftp` `smtp` `wireguard` `modbus` `stun` `rdp` `snmp` `radius` `quic` `smb` `ldap` `kerberos` `dnp3`) |
+//! | `nsm`           | network-security monitoring: `fingerprint` + `tls-fingerprints` + `analysis` |
+//! | `ml`            | `ml-features` + `ml-features-nprint` |
+//! | `export`        | `ipfix` + `ipfix-export` + the `emit*` writers |
+//!
+//! **Protocol parsers** (each behind its own feature):
+//!
+//! | Feature | Module | What you get |
+//! |---------|--------|--------------|
+//! | `http` | [`http`] | HTTP/1.x request/response parser |
+//! | `tls` | [`tls`] | TLS handshake observer (ClientHello/ServerHello/Alert) |
+//! | `dns` | [`dns`] | DNS-over-UDP/TCP parsers + query/response correlator |
+//! | `icmp` | [`icmp`] | ICMPv4/v6 decoder + inner-flow correlation |
+//! | `arp` | [`arp`] | ARP + `correlate::NeighborTable` binding tracker |
+//! | `ndp` | [`ndp`] | IPv6 Neighbor Discovery (ICMPv6 135/136) |
+//! | `dhcp` | [`dhcp`] | DHCP/BOOTP options + Fingerbank-style fingerprint |
+//! | `lldp` | [`lldp`] | LLDP (IEEE 802.1AB) L2 asset discovery |
+//! | `cdp` | [`cdp`] | Cisco Discovery Protocol |
+//! | `ssh` | [`ssh`] | SSH banner + KEXINIT + HASSH fingerprint |
+//! | `ntp` | [`ntp`] | NTP (UDP/123); monlist amplification signal |
+//! | `ssdp` | [`ssdp`] | SSDP/UPnP IoT discovery |
+//! | `tftp` | [`tftp`] | TFTP (UDP/69) device-config-theft visibility |
+//! | `mdns` | [`mdns`] | mDNS / DNS-SD service walker (pulls `dns`) |
+//! | `netbios-ns` | [`netbios_ns`] | NetBIOS Name Service (UDP/137) |
+//! | `ftp` | [`ftp`] | FTP control channel + AUTH-TLS upgrade |
+//! | `smtp` | [`smtp`] | SMTP + AUTH base64 decode + STARTTLS |
+//! | `wireguard` | [`wireguard`] | WireGuard handshake metadata |
+//! | `modbus` | [`modbus`] | Modbus/TCP (502) ICS visibility |
+//! | `stun` | [`stun`] | STUN (RFC 5389) WebRTC / NAT discovery |
+//! | `rdp` | [`rdp`] | RDP X.224 negotiation metadata |
+//! | `snmp` | [`snmp`] | SNMP v1/v2c (rusticata snmp-parser) |
+//! | `radius` | [`radius`] | RADIUS auth/accounting (rusticata radius-parser) |
+//! | `quic` | [`quic`] | QUIC Initial passive decrypt → SNI/ALPN |
+//! | `smb` | [`smb`] | SMB2/3 lateral-movement decode |
+//! | `ldap` | [`ldap`] | LDAP bind/search (rusticata ldap-parser) |
+//! | `kerberos` | [`kerberos`] | Kerberos AS/TGS/KRB-ERROR |
+//! | `dnp3` | [`dnp3`] | DNP3 (TCP/20000) OT/SCADA metadata |
+//!
+//! **Capabilities & output:**
+//!
+//! | Feature | Module | What you get |
+//! |---------|--------|--------------|
+//! | `asset` | [`asset`] | `Asset` + LRU `Inventory`; self-sufficient (pulls its discovery parsers) |
+//! | `analysis` | [`analysis`] | `FlowAnalyzer` → risk / IOC enriched flow records |
+//! | `tcp_fingerprint` | [`tcp_fingerprint`] | p0f-style passive TCP/IP OS fingerprint |
+//! | `fingerprint` | [`detect::fingerprint`] | encrypted-flow behavioural fingerprint |
+//! | `tls-fingerprints` | [`tls`] | JA3 + JA4 TLS *client* fingerprints (royalty-free) |
+//! | `ja4plus` | [`tls`] | JA4S/JA4X server fingerprints (**FoxIO License 1.1**, off by default) |
+//! | `ml-features` / `ml-features-nprint` | [`ml_features`] / [`nprint`] | CICFlowMeter vector / nPrint bit matrix |
+//! | `ipfix` / `ipfix-export` | [`ipfix`] | IANA IE vocabulary / RFC 7011 binary encoder |
+//! | `emit` / `emit-ndjson` / `emit-eve` | [`emit`] | CSV+Zeek / NDJSON / Suricata EVE writers |
+//! | `aggregate` | [`aggregate`] | `Histogram` + `Percentile` (t-digest) |
+//! | `file-hash` | [`detect::file`](detect) | streaming SHA-256/MD5 + MIME-class detection |
+//! | `community-id` | [`well_known`] | Corelight Community ID v1 flow hashing |
+//! | `chrono` | [`Timestamp`] | `chrono::DateTime<Utc>` interop |
+//! | `pcap` | [`pcap`] | pcap file source for offline replay |
+//! | `serde` | — | `Serialize`/`Deserialize` on every public type (locks wire vocabulary) |
+//!
+//! **Observability** (zero-cost when off):
 //!
 //! | Feature   | What you get |
 //! |-----------|--------------|
