@@ -6,8 +6,8 @@
 //! [`DatagramParser`](crate::DatagramParser) impl yielding a typed
 //! [`DnsMessage`] stream. Pair it with the typed
 //! [`crate::driver::Driver`] (via `datagram_on_ports`),
-//! [`PcapFlowSource::datagrams`](crate::pcap::PcapFlowSource::datagrams),
-//! or netring's `datagram_stream`. With correlation enabled
+//! [`crate::pcap::datagram_messages`], or netring's
+//! `datagram_stream`. With correlation enabled
 //! ([`DnsUdpParser::with_correlation`]) it matches responses to
 //! queries — round-trip time lands in `DnsResponse::elapsed`, and
 //! `on_tick` emits [`DnsMessage::Unanswered`] for queries that time

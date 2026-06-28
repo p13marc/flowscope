@@ -517,7 +517,7 @@ pub use reassembler::{
 #[cfg(feature = "session")]
 pub use session::{
     AccumulatingSessionParser, BufferedFrameDrain, DatagramParser, DatagramParserFactory,
-    FrameDrainError, PerDatagramParser, SessionEvent, SessionParser, SessionParserFactory,
+    FrameDrainError, PerDatagramParser, SessionParser, SessionParserFactory,
 };
 #[cfg(feature = "tracker")]
 pub use tracker::{FlowEntry, FlowEvents, FlowTracker, FlowTrackerConfig, FlowTrackerStats};

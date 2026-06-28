@@ -181,7 +181,7 @@ pub use crate::pcap::PcapFlowSource;
 // Issue #8 (0.18): ECH GREASE-vs-real classification — surface
 // next to the rest of the TLS handshake vocabulary.
 #[cfg(feature = "session")]
-pub use crate::session::{DatagramParser, SessionEvent, SessionParser};
+pub use crate::session::{DatagramParser, SessionParser};
 #[cfg(feature = "tls")]
 pub use crate::tls::EchState;
 #[cfg(feature = "tracker")]

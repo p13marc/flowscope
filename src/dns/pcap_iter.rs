@@ -2,11 +2,12 @@
 
 use std::path::Path;
 
+use crate::Result;
 use crate::dns::datagram::{DnsMessage, DnsUdpParser};
 use crate::dns::exchange::{DnsExchange, DnsExchangeParser};
 use crate::extract::{FiveTuple, FiveTupleKey};
 use crate::pcap::PcapFlowSource;
-use crate::{Result, SessionEvent};
+use crate::session::SessionEvent;
 
 /// Iterate every [`DnsMessage`] in the pcap (UDP path only),
 /// paired with the [`FiveTupleKey`] of the flow it was seen on.

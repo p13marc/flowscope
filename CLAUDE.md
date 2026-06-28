@@ -744,7 +744,7 @@ src/
 ├── driver.rs                    # FlowDriver<E, F, S = ()> (sync wrapper)
 │                                # diagnostics patch + BufferOverflow synthesis +
 │                                # with_emit_anomalies      (plan 42 §2/§3, 0.2.0)
-├── session.rs                   # SessionParser / DatagramParser traits + factories + SessionEvent
+├── session.rs                   # SessionParser / DatagramParser traits + factories + SessionEvent (crate-private engine carrier since #100, 0.20)
 │                                # + AccumulatingSessionParser / PerDatagramParser /
 │                                #   BufferedFrameDrain / FrameDrainError (plan 106, 0.10)
 ├── session_driver.rs            # FlowSessionDriver — crate-PRIVATE session-dispatch engine
@@ -969,9 +969,9 @@ was removed in 0.9.
 - **`SessionParser` / `DatagramParser`** — typed message stream.
   `feed_initiator` / `feed_responder` / `parse` return
   `Vec<Self::Message>`; both traits have a defaulted `on_tick`.
-- A consumer who wants callback ergonomics writes
-  `for ev in driver.track(...) { match ev { … } }` and
-  dispatches inside the `SessionEvent::Application` arm.
+- A consumer who wants callback ergonomics writes a
+  `driver.track_into(view, &mut events)` + `slot.drain(&mut msgs)`
+  loop and dispatches on the typed `SlotMessage`s + `Event<K>`.
 
 Two driver helpers:
 

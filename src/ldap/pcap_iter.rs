@@ -2,11 +2,12 @@
 
 use std::path::Path;
 
+use crate::Result;
 use crate::extract::{FiveTuple, FiveTupleKey};
 use crate::ldap::session::LdapParser;
 use crate::ldap::types::LdapMessage;
 use crate::pcap::PcapFlowSource;
-use crate::{Result, SessionEvent};
+use crate::session::SessionEvent;
 
 /// Iterate every [`LdapMessage`] in the pcap, paired with the
 /// [`FiveTupleKey`] of the flow it was seen on.

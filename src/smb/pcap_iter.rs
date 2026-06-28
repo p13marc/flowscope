@@ -3,11 +3,12 @@
 
 use std::path::Path;
 
+use crate::Result;
 use crate::extract::{FiveTuple, FiveTupleKey};
 use crate::pcap::PcapFlowSource;
+use crate::session::SessionEvent;
 use crate::smb::session::SmbParser;
 use crate::smb::types::SmbMessage;
-use crate::{Result, SessionEvent};
 
 /// Iterate every [`SmbMessage`] in the pcap, paired with the
 /// [`FiveTupleKey`] of the flow it was seen on. Wraps the

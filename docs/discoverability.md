@@ -116,7 +116,7 @@ For the conceptual layer-by-layer reference, see
 
 **`tracker` + `extractors`:** `FlowStateMap`.
 
-**`session`:** `DatagramParser`, `SessionEvent`, `SessionParser`.
+**`session`:** `DatagramParser`, `SessionParser`.
 
 **`extractors` + `reassembler` + `session`:** `Driver`,
 `DriverBuilder`, `Event`, `SlotHandle`, `SlotMessage`. (Register one

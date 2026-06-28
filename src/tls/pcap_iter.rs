@@ -9,12 +9,13 @@
 
 use std::path::Path;
 
+use crate::Result;
 use crate::extract::{FiveTuple, FiveTupleKey};
 use crate::pcap::PcapFlowSource;
+use crate::session::SessionEvent;
 use crate::tls::handshake::{TlsHandshake, TlsHandshakeParser};
 use crate::tls::session::{TlsMessage, TlsParser};
 use crate::tls::types::TlsClientHello;
-use crate::{Result, SessionEvent};
 
 /// Iterate every [`TlsClientHello`] in the pcap, paired with
 /// the [`FiveTupleKey`] of the flow it was seen on. Wraps

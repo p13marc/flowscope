@@ -2,11 +2,12 @@
 
 use std::path::Path;
 
+use crate::Result;
 use crate::extract::{FiveTuple, FiveTupleKey};
 use crate::kerberos::datagram::KerberosUdpParser;
 use crate::kerberos::types::KerberosMessage;
 use crate::pcap::PcapFlowSource;
-use crate::{Result, SessionEvent};
+use crate::session::SessionEvent;
 
 /// Iterate every [`KerberosMessage`] in the pcap (UDP/88 path),
 /// paired with the [`FiveTupleKey`] of the flow it was seen on.

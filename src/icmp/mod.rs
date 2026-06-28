@@ -4,7 +4,7 @@
 //! [`DatagramParser`](crate::DatagramParser) impl yielding a
 //! typed [`IcmpMessage`] stream. Pair it with the typed
 //! [`crate::driver::Driver`] (via `datagram_on_ports`),
-//! [`crate::pcap::PcapFlowSource::datagrams`], or netring's
+//! [`crate::pcap::datagram_messages`], or netring's
 //! `datagram_stream`.
 //!
 //! The killer feature for network monitoring is **`IcmpInner`**:

@@ -1,11 +1,12 @@
 //! Print a one-line summary for every DNS query / response observed
 //! in a pcap, with query/response RTT correlation.
 //!
-//! Demonstrates `PcapFlowSource::datagrams()` driving a correlating
-//! `DnsUdpParser` — the typed-message DNS pipeline. `with_correlation()`
-//! matches responses to queries (RTT in `DnsResponse::elapsed`) and
-//! surfaces timed-out queries as `DnsMessage::Unanswered` via the
-//! parser's `on_tick` hook.
+//! Demonstrates a typed [`Driver`] with a correlating
+//! `DnsUdpParser` datagram slot — the typed-message DNS pipeline.
+//! `with_correlation()` matches responses to queries (RTT in
+//! `DnsResponse::elapsed`) and surfaces timed-out queries as
+//! `DnsMessage::Unanswered` via the parser's `on_tick` hook, driven
+//! by the driver's end-of-input `finish`.
 //!
 //! Usage:
 //!     cargo run --features dns,pcap --example dns_log -- trace.pcap
@@ -13,9 +14,9 @@
 use std::env;
 
 use flowscope::{
-    SessionEvent,
     dns::{DnsMessage, DnsQuery, DnsRdata, DnsResponse, DnsUdpParser},
-    extract::FiveTuple,
+    driver::{Driver, Event, SlotMessage},
+    extract::{FiveTuple, FiveTupleKey},
     pcap::PcapFlowSource,
 };
 
@@ -58,27 +59,49 @@ fn log_response(r: &DnsResponse) {
     );
 }
 
+fn log_messages(msgs: &mut Vec<SlotMessage<DnsMessage, FiveTupleKey>>) {
+    for m in msgs.drain(..) {
+        match m.message {
+            DnsMessage::Query(q) => log_query(&q),
+            DnsMessage::Response(r) => log_response(&r),
+            DnsMessage::Unanswered(q) => {
+                let n = q.questions.first().map(|q| q.name.as_str()).unwrap_or("?");
+                println!("⏱  unanswered id=0x{:04x} {n}", q.transaction_id);
+            }
+            _ => {}
+        }
+    }
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let path = env::args().nth(1).ok_or("usage: dns_log <trace.pcap>")?;
 
-    // `datagrams()` runs the extractor + a per-flow DnsUdpParser over
-    // the pcap and flushes at end-of-input — the final flush drives
-    // `on_tick`, which emits any still-unanswered queries.
-    let source = PcapFlowSource::open(&path)?
-        .datagrams(FiveTuple::bidirectional(), DnsUdpParser::with_correlation());
+    // A correlating DnsUdpParser is non-`Default`, so use the manual
+    // driver loop rather than the path-based `datagram_messages`
+    // helper. The end-of-input `finish` drives `on_tick`, which
+    // emits any still-unanswered queries.
+    let mut builder = Driver::builder(FiveTuple::bidirectional());
+    let mut dns_slot = builder.datagram_on_ports(DnsUdpParser::with_correlation(), [53]);
+    let mut driver = builder.build();
 
-    for evt in source {
-        if let SessionEvent::Application { message, .. } = evt? {
-            match message {
-                DnsMessage::Query(q) => log_query(&q),
-                DnsMessage::Response(r) => log_response(&r),
-                DnsMessage::Unanswered(q) => {
-                    let n = q.questions.first().map(|q| q.name.as_str()).unwrap_or("?");
-                    println!("⏱  unanswered id=0x{:04x} {n}", q.transaction_id);
-                }
-                _ => {}
-            }
-        }
+    let mut events: Vec<Event<FiveTupleKey>> = Vec::new();
+    let mut msgs: Vec<SlotMessage<DnsMessage, FiveTupleKey>> = Vec::new();
+
+    for owned in PcapFlowSource::open(&path)?.views() {
+        let owned = owned?;
+        events.clear();
+        driver.track_into(&owned, &mut events);
+        msgs.clear();
+        dns_slot.drain(&mut msgs);
+        log_messages(&mut msgs);
     }
+
+    // Final flush — drives `on_tick` so unanswered queries surface.
+    events.clear();
+    driver.finish_into(&mut events);
+    msgs.clear();
+    dns_slot.drain(&mut msgs);
+    log_messages(&mut msgs);
+
     Ok(())
 }

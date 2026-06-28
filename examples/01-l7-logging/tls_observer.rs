@@ -2,10 +2,10 @@
 //! pcap.
 //!
 //! Demonstrates the high-level offline pipeline:
-//! [`PcapFlowSource::sessions`] composes pcap source +
-//! extractor + per-flow `TlsParser` into a single iterator of
-//! [`SessionEvent`]s. No manual `Driver::builder` / `SlotHandle`
-//! / `clear+drain` per-packet plumbing.
+//! [`flowscope::pcap::session_messages`] composes pcap source +
+//! extractor + per-flow `TlsParser` into a single iterator of typed
+//! `(key, TlsMessage)` pairs. No manual `Driver::builder` /
+//! `SlotHandle` / `clear+drain` per-packet plumbing.
 //!
 //! Usage:
 //!     cargo run --features tls,pcap --example tls_observer -- trace.pcap
@@ -13,9 +13,7 @@
 use std::env;
 
 use flowscope::{
-    SessionEvent,
-    extract::FiveTuple,
-    pcap::PcapFlowSource,
+    pcap::session_messages,
     tls::{TlsMessage, TlsParser},
 };
 
@@ -27,12 +25,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut client_hellos = 0u64;
     let mut server_hellos = 0u64;
 
-    for evt in
-        PcapFlowSource::open(&path)?.sessions(FiveTuple::bidirectional(), TlsParser::default())
-    {
-        let SessionEvent::Application { message, .. } = evt? else {
-            continue;
-        };
+    for (_key, message) in session_messages::<TlsParser>(&path)? {
         match message {
             TlsMessage::ClientHello(h) => {
                 client_hellos += 1;

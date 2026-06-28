@@ -110,8 +110,8 @@ typed-stream shape: a `SessionParser` (TCP) or `DatagramParser`
 (UDP) implementation that drains typed messages into a
 caller-supplied `&mut Vec<Message>` sink from `feed_*` / `parse`
 (the alloc-free idiom adopted in 0.11, plan 119 — was a returned
-`Vec<Message>` through 0.10); the consumer iterates
-`SessionEvent::Application` arms.
+`Vec<Message>` through 0.10); the consumer drains typed messages
+from each parser's `SlotHandle`.
 
 TLS additionally ships `TlsHandshakeParser` — also a
 `SessionParser`, but aggregating ClientHello + ServerHello +
@@ -121,10 +121,9 @@ for the two granularities consumers want.
 
 **Why one shape:**
 
-- Typed parsers compose naturally with `Stream<SessionEvent>`
-  async iteration and the sync typed `driver::Driver<E>` (one
-  session/datagram slot per parser) alike — the same parser drives
-  both paths.
+- Typed parsers compose naturally with netring's async session-event
+  stream and the sync typed `driver::Driver<E>` (one session/datagram
+  slot per parser) alike — the same parser drives both paths.
 - A consumer who wants callback ergonomics writes a
   `driver.track_into(view, &mut events)` + `slot.drain(&mut msgs)`
   loop and dispatches inside the arms — no need for a separate

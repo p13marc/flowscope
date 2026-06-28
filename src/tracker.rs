@@ -981,8 +981,8 @@ impl<E: FlowExtractor, S: Send + 'static> FlowTracker<E, S> {
     /// Snapshot the L4 protocol of a live flow without ending it.
     /// Returns `None` when the key is unknown. New in 0.7.0; used
     /// by [`crate::FlowDriver`] to populate
-    /// [`FlowEvent::Ended::l4`] / [`crate::SessionEvent::Closed::l4`]
-    /// on driver-synthesised Ended events
+    /// [`FlowEvent::Ended::l4`] (and the internal session engine's
+    /// `Closed.l4`) on driver-synthesised Ended events
     /// (`BufferOverflow` / `ParseError` / `ParserDone`) where the
     /// tracker hasn't yet observed the natural `Ended` and so
     /// hasn't pushed the field through itself.

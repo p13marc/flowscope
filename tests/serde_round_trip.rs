@@ -2,8 +2,7 @@
 //!
 //! Coverage focuses on:
 //! 1. Every top-level event type that consumers ship to log
-//!    pipelines (FlowEvent, SessionEvent, all L7 messages, anomaly
-//!    kinds).
+//!    pipelines (FlowEvent, all L7 messages, anomaly kinds).
 //! 2. The wire format — snake_case + adjacent tagging — is what
 //!    actually lands in serialized JSON. Renames here would break
 //!    downstream dashboards.
