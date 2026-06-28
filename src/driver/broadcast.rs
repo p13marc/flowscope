@@ -35,6 +35,7 @@ use super::slot::SlotMessage;
 /// [`Weak::upgrade`]). Slow subscribers' queues grow until
 /// they're drained or dropped — bound externally via
 /// [`Self::drain_n`] from plan 149.
+#[must_use = "drop the BroadcastSlotHandle and this subscriber never sees the parser's messages — keep it and drain it"]
 pub struct BroadcastSlotHandle<M, K>
 where
     M: Send + Sync + Clone + 'static,

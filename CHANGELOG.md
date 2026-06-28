@@ -17,6 +17,15 @@ type-specific extras (`SlotHandle::drain_replacing` / `clear`,
 the existing inherent methods are unchanged. Re-exported from
 `flowscope::driver` and the prelude. Closes the #84 convergence.
 
+### Additive — `#[must_use]` on driver builder / handles / iterator
+
+Idiomatic lint coverage (Rust API guideline C-MUST-USE) on the types
+where dropping the value is a silent bug: `DriverBuilder` (does nothing
+until `.build()`), `RunPcap` (a lazy pcap-replay iterator — drops do no
+work), and `SlotHandle` / `BroadcastSlotHandle` (drop the handle and the
+parser's typed messages are never read). Purely additive — a `let _ =`
+silences it where dropping is intentional.
+
 ### Fixed — `<parser>,pcap` feature combos compile
 
 The high-level `*_from_pcap` typed helpers are built on the offline

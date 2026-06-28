@@ -553,6 +553,7 @@ where
 
 /// Builder for [`Driver`]. Mutates in place; each
 /// session/datagram registration returns a typed [`SlotHandle`].
+#[must_use = "a DriverBuilder does nothing until you register parsers and call `.build()`"]
 pub struct DriverBuilder<E>
 where
     E: FlowExtractor,
@@ -854,6 +855,7 @@ fn map_flow_event<K>(ev: FlowEvent<K>, tcp: Option<TcpInfo>) -> Option<Event<K>>
 }
 
 #[cfg(feature = "pcap")]
+#[must_use = "RunPcap is a lazy iterator — it replays no packets until consumed (e.g. in a `for` loop)"]
 pub struct RunPcap<E>
 where
     E: FlowExtractor + Clone + Send + 'static,
