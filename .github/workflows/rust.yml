@@ -89,6 +89,7 @@ jobs:
           - "ldap"              # 0.18: LDAP parser (issue #13)
           - "smb"               # 0.18: SMB2/3 parser M1 (issue #12)
           - "quic"              # 0.18: QUIC Initial parser (issue #3)
+          - "tls-fingerprints,quic"  # 0.20: JA4-QUIC client fingerprint (issue #82)
           - "community-id"      # 0.19: Corelight Community ID v1 flow hashing (issue #76)
           - "community-id,emit-eve"  # 0.19: community_id in the EVE writer
           - "ja4plus"           # 0.19: JA4L latency fingerprint (issue #77)

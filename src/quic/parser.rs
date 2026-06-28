@@ -1,7 +1,9 @@
 //! QUIC Initial decoder + ClientHello extraction pipeline.
 
 use quic_parser::{decrypt_initial, parse_crypto_frames, parse_initial, reassemble_crypto_stream};
-use tls_parser::{TlsClientHelloContents, TlsExtension, TlsMessage, TlsMessageHandshake};
+#[cfg(not(feature = "tls"))]
+use tls_parser::{TlsClientHelloContents, TlsExtension};
+use tls_parser::{TlsMessage, TlsMessageHandshake};
 
 use super::types::{QuicInitial, QuicVersion};
 
@@ -68,7 +70,20 @@ pub fn parse(datagram: &[u8]) -> Result<QuicInitial, ParseError> {
     let frames = parse_crypto_frames(&decrypted).map_err(|_| ParseError::CryptoFrameDecode)?;
     let crypto_stream = reassemble_crypto_stream(&frames);
 
+    // With `tls` on, build the full `TlsClientHello` once (it carries
+    // sni + alpn already) so JA4-over-QUIC has the cipher / extension
+    // lists. Without `tls`, fall back to the lightweight sni/alpn-only
+    // walk.
+    #[cfg(feature = "tls")]
+    let client_hello = extract_client_hello(&crypto_stream);
+    #[cfg(feature = "tls")]
+    let (sni, alpn) = client_hello
+        .as_ref()
+        .map(|ch| (ch.sni.clone(), ch.alpn.clone()))
+        .unwrap_or((None, Vec::new()));
+    #[cfg(not(feature = "tls"))]
     let (sni, alpn) = extract_tls_metadata(&crypto_stream).unwrap_or((None, Vec::new()));
+
     Ok(QuicInitial {
         version: QuicVersion::from_raw(header.version),
         dcid: header.dcid.to_vec(),
@@ -76,11 +91,34 @@ pub fn parse(datagram: &[u8]) -> Result<QuicInitial, ParseError> {
         token_present: !header.token.is_empty(),
         sni,
         alpn,
+        #[cfg(feature = "tls")]
+        client_hello,
     })
 }
 
+/// Build the full [`crate::tls::TlsClientHello`] from the CRYPTO
+/// stream, reusing the shared `tls` conversion (issue #82). QUIC
+/// mandates TLS 1.3 and has no TLS record layer, so the nominal
+/// record version is `Tls1_3` (unused by JA4, which reads
+/// `supported_versions` / `legacy_version`).
+#[cfg(feature = "tls")]
+fn extract_client_hello(crypto_stream: &[u8]) -> Option<crate::tls::TlsClientHello> {
+    let (_, msg) = tls_parser::parse_tls_message_handshake(crypto_stream).ok()?;
+    let ch = match msg {
+        TlsMessage::Handshake(TlsMessageHandshake::ClientHello(ch)) => ch,
+        _ => return None,
+    };
+    Some(crate::tls::build_client_hello(
+        crate::tls::TlsVersion::Tls1_3,
+        &ch,
+    ))
+}
+
 /// Walk the CRYPTO-stream bytes as a TLS handshake message
-/// and pull SNI + ALPN from the ClientHello extensions.
+/// and pull SNI + ALPN from the ClientHello extensions. Used only
+/// when `tls` is off; otherwise [`extract_client_hello`] supplies
+/// the same data from the full ClientHello.
+#[cfg(not(feature = "tls"))]
 fn extract_tls_metadata(crypto_stream: &[u8]) -> Option<(Option<String>, Vec<String>)> {
     let (_, msgs) = tls_parser::parse_tls_message_handshake(crypto_stream).ok()?;
     let ch = match msgs {
@@ -91,6 +129,7 @@ fn extract_tls_metadata(crypto_stream: &[u8]) -> Option<(Option<String>, Vec<Str
     Some((sni, alpn))
 }
 
+#[cfg(not(feature = "tls"))]
 fn extract_from_client_hello(ch: &TlsClientHelloContents<'_>) -> (Option<String>, Vec<String>) {
     let mut sni = None;
     let mut alpn = Vec::new();
