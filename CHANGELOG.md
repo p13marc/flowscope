@@ -128,6 +128,38 @@ feed/drain plumbing.
   cross-signal ∧-logic showcase (the registry keeps detectors
   independent by design).
 
+### Added — four upstreamed NDR detectors (#132)
+
+Four network-detection-and-response detectors in
+`flowscope::detect::patterns` (gated on `tracker`), each a native
+`Detector<K>` impl on the #131 trait + a `#[non_exhaustive]`
+score type + `DetectorScore` + builders + bounded state. All take
+pre-extracted values (zero `dns`-feature coupling) and gate
+emission behind thresholds + cooldowns.
+
+- **`DnsTunnelDetector`** (T1071.004) — distinct-subdomain
+  cardinality per `(source, registered domain)` in a
+  `TimeBucketedSet`; fires on ≥ 50 distinct ≥ 50-byte qnames
+  under one domain in a 300 s window.
+- **`NewlyObservedDomainDetector`** (T1568) — first-contact with
+  a registered domain via `FirstSeen` (cap 100 k, 7-day TTL),
+  after a 600 s warmup so a cold start doesn't flag the whole
+  baseline. `Info` severity (a context signal, not a verdict).
+- **`ConnectionFloodDetector`** (T1498) — per-source new-flow
+  rate via `TimeBucketedCounter`; fires on ≥ 100 flows / 10 s.
+  Rate-shaped DoS, distinct from `PortScanDetector`'s
+  fan-out-shaped T1046.
+- **`DataExfilDetector`** (T1048) — per-source outbound-volume
+  N-sigma outlier over an `EwmaVar` baseline of `bytes_initiator`;
+  fires on `mean + 3σ`, ≥ 10 samples, ≥ 1 MiB floor. Observes at
+  flow end (tick stats are cumulative → per-tick would
+  double-count). A zero-variance (perfectly constant) baseline
+  never alarms by design — the `min_bytes` floor is the backstop.
+- Rewrote `examples/03-detection/dns_tunnel_detector.rs` on the
+  new detector via a `DetectorRegistry` (kept its ATT&CK / FP
+  rustdoc); registered all four in `detector_registry`;
+  `tests/ndr_detectors.rs`; docs in `detect-patterns.md`.
+
 ## 0.20.0 (2026-06-29) — NSM primitives + driver/event convergence + 1.0-prep API sweep
 
 Pure, no-async — fits the runtime-free lib rule. The largest pre-1.0

@@ -28,7 +28,27 @@ pub mod dga;
 pub mod portscan;
 pub mod rita_beacon;
 
+// Issue #132 — upstreamed NDR detectors on the unified `Detector`
+// trait. Gated on `tracker` (they build on `correlate` primitives).
+#[cfg(feature = "tracker")]
+pub mod conn_flood;
+#[cfg(feature = "tracker")]
+pub mod data_exfil;
+#[cfg(feature = "tracker")]
+pub mod dns_tunnel;
+#[cfg(feature = "tracker")]
+pub mod nod;
+
 pub use beacon::{BeaconDetector, BeaconScore};
 pub use dga::{DgaScore, DgaScorer};
 pub use portscan::{PortScanDetector, ScanScore, ScanVerdict};
 pub use rita_beacon::{RitaBeaconDetector, RitaBeaconScore};
+
+#[cfg(feature = "tracker")]
+pub use conn_flood::{ConnectionFloodDetector, FloodScore};
+#[cfg(feature = "tracker")]
+pub use data_exfil::{DataExfilDetector, ExfilScore};
+#[cfg(feature = "tracker")]
+pub use dns_tunnel::{DnsTunnelDetector, DnsTunnelScore};
+#[cfg(feature = "tracker")]
+pub use nod::{NewlyObservedDomainDetector, NodScore};

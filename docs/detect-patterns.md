@@ -319,6 +319,50 @@ Every emitted [`OwnedAnomaly`] carries its typed
 gives the MITRE ATT&CK technique ID and `EveJsonWriter` emits
 `anomaly.attack_technique` automatically.
 
+## NDR detectors (0.21, #132)
+
+Four network-detection-and-response detectors built on the
+[`correlate`](crate::correlate) streaming primitives, each a
+[`Detector`] you can drop into a [`DetectorRegistry`] or drive
+standalone via its `observe` method. All take **pre-extracted**
+values (an `IpAddr`, a `&str` qname, a byte count), so `detect`
+stays independent of the `dns` Cargo feature, and all bound their
+state + gate emission behind thresholds and cooldowns (a drain is
+alert-shaped, not score-shaped).
+
+| Detector | Feed hook | State | Fires when (defaults) | ATT&CK |
+|---|---|---|---|---|
+| [`DnsTunnelDetector`] | `on_dns_query` | `TimeBucketedSet<(IpAddr, domain), u64>` — distinct hashed subdomains | ≥ 50 distinct ≥ 50-byte qnames under one registered domain in 300 s | T1071.004 |
+| [`NewlyObservedDomainDetector`] | `on_dns_query` | `FirstSeen<String>` (cap 100 k, 7-day TTL) | first sight of a registered domain, after a 600 s warmup | T1568 |
+| [`ConnectionFloodDetector`] | `on_flow_start` | `TimeBucketedCounter<IpAddr>` | ≥ 100 new flows per source per 10 s | T1498 |
+| [`DataExfilDetector`] | `on_flow_end` | `EwmaVar<IpAddr>` over `bytes_initiator` | flow > mean + 3σ of the source's own baseline, ≥ 10 samples, ≥ 1 MiB floor | T1048 |
+
+Notes and gotchas:
+
+- **Registered-domain rollup** uses a PSL-free last-two-labels
+  rule (`a.b.evil.com` → `evil.com`), the same caveat as
+  [`detect::risk`](crate::detect::risk) — imperfect for
+  `co.uk`-style public suffixes; pre-extract or allowlist when
+  it matters.
+- **`DataExfilDetector` needs a non-degenerate baseline.** A
+  source that sends *exactly* the same byte count every flow has
+  zero variance, so no z-score exists and it never alarms
+  (`EwmaVar::zscore` returns 0.0 during zero-variance warmup — by
+  design, so a cold/flat baseline can't false-positive). Real
+  traffic jitters; a perfectly constant baseline is a test
+  artifact. The absolute `min_bytes` floor is the backstop.
+- **`DataExfilDetector` observes at flow end, not per tick** —
+  tick stats are cumulative, so naive per-tick recording would
+  double-count a flow's bytes. Delta-tracking is a follow-up.
+- **`ConnectionFloodDetector` is rate-shaped (DoS, T1498)**;
+  scan-shaped fan-out across many destinations is
+  [`PortScanDetector`]'s job (T1046). Both can fire on the same
+  aggressive source — that's fine, they answer different
+  questions.
+- **NOD is a context signal, not a verdict** (`Info` severity) —
+  every legitimate first visit is "newly observed". Pair it with
+  beaconing / reputation / volume.
+
 ## Examples
 
 - `examples/03-detection/c2_beacon_finder.rs` — replay a pcap,
@@ -333,6 +377,10 @@ gives the MITRE ATT&CK technique ID and `EveJsonWriter` emits
   register beacon / RITA-beacon / port-scan / DGA once, drive
   them all from one event stream, emit each anomaly (with its
   ATT&CK technique) as EVE.
+- `examples/03-detection/dns_tunnel_detector.rs` (0.21, #132) —
+  the `DnsTunnelDetector` distinct-subdomain heuristic driven
+  through a registry over a DNS pcap, emitting T1071.004 EVE
+  anomalies.
 
 ## Why these three
 
