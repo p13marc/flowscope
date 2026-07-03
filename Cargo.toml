@@ -947,8 +947,12 @@ name = "dns_resolution_cache"
 required-features = ["dns"]
 
 [[test]]
+name = "typed_event_conversion"
+required-features = ["extractors", "reassembler", "session", "test-helpers"]
+
+[[test]]
 name = "serde_round_trip"
-required-features = ["serde", "tracker"]
+required-features = ["serde", "tracker", "session", "test-helpers"]
 
 [[test]]
 name = "emit_csv"
@@ -956,7 +960,7 @@ required-features = ["emit"]
 
 [[test]]
 name = "emit_ndjson"
-required-features = ["emit-ndjson"]
+required-features = ["emit-ndjson", "session", "test-helpers"]
 
 [[test]]
 name = "emit_zeek"

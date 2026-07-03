@@ -5,7 +5,7 @@
 use std::net::SocketAddr;
 
 use flowscope::{
-    EndReason, FlowEvent, FlowSide, FlowStats, Timestamp,
+    EndReason, FlowEvent, FlowStats, Timestamp,
     emit::{FlowEventNdjsonWriter, NdjsonOptions},
     extract::FiveTupleKey,
     extractor::L4Proto,
@@ -52,13 +52,11 @@ fn ended_emits_one_line_per_event() {
 fn packet_events_skipped_by_default() {
     let mut buf = Vec::new();
     let mut writer = FlowEventNdjsonWriter::new(&mut buf);
-    let pkt = FlowEvent::Packet {
-        key: key("10.0.0.1:1234", "10.0.0.2:80", L4Proto::Tcp),
-        side: FlowSide::Initiator,
-        orientation: flowscope::Orientation::Forward,
-        len: 100,
-        ts: Timestamp::new(101, 0),
-    };
+    let pkt = flowscope::test_helpers::events::packet(
+        key("10.0.0.1:1234", "10.0.0.2:80", L4Proto::Tcp),
+        100,
+        Timestamp::new(101, 0),
+    );
     writer.write_event(&pkt).unwrap();
     writer.finish().unwrap();
     let text = String::from_utf8(buf).unwrap();
@@ -71,13 +69,11 @@ fn include_packets_emits_them() {
     let mut opts = NdjsonOptions::default();
     opts.include_packets = true;
     let mut writer = FlowEventNdjsonWriter::with_options(&mut buf, opts);
-    let pkt = FlowEvent::Packet {
-        key: key("10.0.0.1:1234", "10.0.0.2:80", L4Proto::Tcp),
-        side: FlowSide::Initiator,
-        orientation: flowscope::Orientation::Forward,
-        len: 100,
-        ts: Timestamp::new(101, 0),
-    };
+    let pkt = flowscope::test_helpers::events::packet(
+        key("10.0.0.1:1234", "10.0.0.2:80", L4Proto::Tcp),
+        100,
+        Timestamp::new(101, 0),
+    );
     writer.write_event(&pkt).unwrap();
     writer.finish().unwrap();
     let text = String::from_utf8(buf).unwrap();

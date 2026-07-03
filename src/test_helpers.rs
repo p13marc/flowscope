@@ -229,6 +229,7 @@ pub mod events {
             orientation: Orientation::Forward,
             len,
             ts,
+            source_idx: None,
         }
     }
 
@@ -246,6 +247,7 @@ pub mod events {
             orientation,
             len,
             ts,
+            source_idx: None,
         }
     }
 
@@ -307,6 +309,7 @@ pub mod events {
                 len,
                 ts,
                 tcp: None,
+                source_idx: None,
             }
         }
 
@@ -331,6 +334,7 @@ pub mod events {
                 len,
                 ts,
                 tcp,
+                source_idx: None,
             }
         }
 

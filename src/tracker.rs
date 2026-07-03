@@ -207,6 +207,23 @@ pub struct FlowTrackerConfig {
     /// [`Orientation`] axis is already race-immune regardless of this
     /// flag.
     pub infer_tcp_initiator: bool,
+    /// Populate [`FlowEvent::Packet`]'s `source_idx` field with the
+    /// physical capture leg ([`crate::RxMetadata::source_idx`]) of
+    /// every packet — full per-packet leg fidelity for tap/SPAN
+    /// auditing ("did this packet arrive on the wrong leg?") and
+    /// forensic provenance (issue #121, tap-merge epic #123
+    /// phase 3).
+    ///
+    /// Default `false`: the field stays `None` and the hot path pays
+    /// nothing (the leg value is already read for the issue-#120
+    /// per-direction binding). The `0` "unused" sentinel is never
+    /// surfaced — sources without leg info yield `None` even when
+    /// this flag is on. For merged-tap consumers the per-direction
+    /// [`FlowStats::source_idx_forward`] /
+    /// [`FlowStats::source_idx_reverse`] binding (issue #120) is the
+    /// mainstream answer; enable this only for the audit/forensic
+    /// tier.
+    pub emit_packet_source_idx: bool,
 }
 
 impl Default for FlowTrackerConfig {
@@ -229,6 +246,7 @@ impl Default for FlowTrackerConfig {
             active_idle_threshold: Some(Duration::from_secs(1)),
             suppress_events: EventMask::empty(),
             infer_tcp_initiator: false,
+            emit_packet_source_idx: false,
         }
     }
 }
@@ -564,6 +582,7 @@ impl<E: FlowExtractor, S: Send + 'static> FlowTracker<E, S> {
         let events_paused = self.events_paused;
         let suppress = self.config.suppress_events;
         let should_emit = |variant: EventMask| !events_paused && !suppress.contains(variant);
+        let emit_packet_source_idx = self.config.emit_packet_source_idx;
 
         // SAFETY-style invariant: we just ensured the entry exists.
         let entry = self
@@ -707,12 +726,17 @@ impl<E: FlowExtractor, S: Send + 'static> FlowTracker<E, S> {
 
         // ── per-packet event ─────────────────────────────────────
         if should_emit(EventMask::PACKET) {
+            // Opt-in per-packet capture leg (issue #121). `0` is the
+            // documented "no leg info" sentinel — never surfaced.
+            let packet_source_idx =
+                (emit_packet_source_idx && source_idx != 0).then_some(source_idx);
             events.push(FlowEvent::Packet {
                 key: key.clone(),
                 side,
                 orientation,
                 len,
                 ts,
+                source_idx: packet_source_idx,
             });
         }
 

@@ -33,6 +33,25 @@ deserialization fallback.
   unchanged; the typed tracker axis stays in `flowscope_kind`.
 - `DetectorKind` is exported at the crate root and in the prelude.
 
+### Breaking — opt-in per-packet capture leg on `Packet` events (#121, epic #123 phase 3)
+
+`FlowEvent::Packet` / `Event::Packet` gain `source_idx: Option<u32>`
+— the physical capture leg of each packet, populated only when
+`FlowTrackerConfig::emit_packet_source_idx` (or
+`DriverBuilder::emit_packet_source_idx(true)`) is set; the `0`
+"unused" sentinel is never surfaced. Default off — the hot path pays
+nothing (the leg is already read for the #120 per-direction binding).
+
+Both `Packet` variants are now **variant-level `#[non_exhaustive]`**:
+future per-packet enrichments are additive; synthetic construction
+goes through `test_helpers::events` (the documented path since 0.20).
+Exhaustive `Packet { … }` patterns need a trailing `..`.
+
+This is the audit/forensic tier of the tap-merge three-axis model —
+per-packet leg sequences reconstruct asymmetric-routing / mis-wired
+taps that the folded per-direction `FlowStats` binding (#120) cannot
+express. Closes the tap-merge epic's last open phase.
+
 ## 0.20.0 (2026-06-29) — NSM primitives + driver/event convergence + 1.0-prep API sweep
 
 Pure, no-async — fits the runtime-free lib rule. The largest pre-1.0

@@ -1009,6 +1009,13 @@ pub enum FlowEvent<K> {
     /// Carries **both** direction axes (issue #118): `side` is the
     /// logical role relative to the flow's initiator, `orientation`
     /// is this packet's deterministic canonical direction.
+    ///
+    /// The variant is `#[non_exhaustive]` (0.21, issue #121) —
+    /// future per-packet enrichments are additive. Construct
+    /// synthetic packets via
+    /// `flowscope::test_helpers::events::packet*`; match with a
+    /// trailing `..`.
+    #[non_exhaustive]
     Packet {
         key: K,
         side: FlowSide,
@@ -1019,6 +1026,23 @@ pub enum FlowEvent<K> {
         orientation: Orientation,
         len: usize,
         ts: Timestamp,
+        /// Physical capture leg this packet arrived on
+        /// ([`crate::RxMetadata::source_idx`]) — per-packet leg
+        /// fidelity for tap/SPAN auditing and forensic provenance
+        /// (issue #121, tap-merge epic #123 phase 3).
+        ///
+        /// **Opt-in**: always `None` unless
+        /// [`crate::FlowTrackerConfig::emit_packet_source_idx`] is
+        /// set (or the typed driver's
+        /// `DriverBuilder::emit_packet_source_idx(true)`). Also
+        /// `None` when the source reported the `0` "unused"
+        /// sentinel (pcap / synthetic sources). The mainstream
+        /// merged-mode answer is the per-direction binding on
+        /// [`FlowStats::source_idx_forward`] /
+        /// [`FlowStats::source_idx_reverse`] (issue #120); this
+        /// field is the audit/forensic tier.
+        #[cfg_attr(feature = "serde", serde(default))]
+        source_idx: Option<u32>,
     },
 
     /// TCP only — 3WHS completed for this flow.
@@ -1141,6 +1165,7 @@ mod tests {
             orientation: Orientation::Forward,
             len: 100,
             ts: Timestamp::default(),
+            source_idx: None,
         };
         assert_eq!(evt.key().copied(), Some(7));
     }

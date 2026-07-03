@@ -367,3 +367,71 @@ fn event_tcp_accessor_populated_when_emit_packet_details_on() {
         "Packet.tcp should be populated when emit_packet_details(true)"
     );
 }
+
+// ── issue #121 — per-packet capture leg passthrough ─────────────────
+
+#[test]
+fn emit_packet_source_idx_builder_passthrough() {
+    let mut builder = Driver::builder(FiveTuple::bidirectional());
+    builder.emit_packet_source_idx(true);
+    let mut driver = builder.build();
+
+    let frame = tcp_packet(33000, 80, b"data");
+    let view = PacketView::new(&frame, Timestamp::new(0, 0)).with_source_idx(7);
+
+    let mut events = Vec::new();
+    driver.track_into(view, &mut events);
+
+    let legs: Vec<Option<u32>> = events
+        .iter()
+        .filter_map(|e| match e {
+            Event::Packet { source_idx, .. } => Some(*source_idx),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(legs, vec![Some(7)]);
+}
+
+#[test]
+fn packet_source_idx_defaults_to_none_on_driver() {
+    let mut driver = Driver::builder(FiveTuple::bidirectional()).build();
+    let frame = tcp_packet(33000, 80, b"data");
+    let view = PacketView::new(&frame, Timestamp::new(0, 0)).with_source_idx(7);
+
+    let mut events = Vec::new();
+    driver.track_into(view, &mut events);
+
+    for e in &events {
+        if let Event::Packet { source_idx, .. } = e {
+            assert_eq!(*source_idx, None, "opt-in knob is off by default");
+        }
+    }
+}
+
+#[test]
+fn packet_source_idx_survives_event_conversion_round_trip() {
+    // Event -> FlowEvent -> Event keeps the leg (lossless).
+    let mut builder = Driver::builder(FiveTuple::bidirectional());
+    builder.emit_packet_source_idx(true);
+    let mut driver = builder.build();
+
+    let frame = tcp_packet(33000, 80, b"data");
+    let view = PacketView::new(&frame, Timestamp::new(0, 0)).with_source_idx(9);
+    let mut events = Vec::new();
+    driver.track_into(view, &mut events);
+
+    let pkt = events
+        .into_iter()
+        .find(|e| matches!(e, Event::Packet { .. }))
+        .expect("packet event");
+    let flow_ev = pkt.into_flow_event().expect("packet converts");
+    let flowscope::FlowEvent::Packet { source_idx, .. } = &flow_ev else {
+        panic!("expected FlowEvent::Packet");
+    };
+    assert_eq!(*source_idx, Some(9));
+    let back = Event::from(flow_ev);
+    let Event::Packet { source_idx, .. } = back else {
+        panic!("expected Event::Packet");
+    };
+    assert_eq!(source_idx, Some(9));
+}

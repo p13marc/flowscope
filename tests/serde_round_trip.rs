@@ -201,13 +201,9 @@ fn flow_event_all_variants_round_trip() {
             ts: ts(1, 0),
             l4: Some(L4Proto::Tcp),
         },
-        FlowEvent::Packet {
-            key,
-            side: FlowSide::Responder,
-            orientation: Orientation::Reverse,
-            len: 100,
-            ts: ts(2, 0),
-        },
+        // Packet is a #[non_exhaustive] variant (0.21, #121) —
+        // synthetic construction goes through test_helpers.
+        flowscope::test_helpers::events::packet_side(key, FlowSide::Responder, 100, ts(2, 0)),
         FlowEvent::Established {
             key,
             ts: ts(3, 0),
