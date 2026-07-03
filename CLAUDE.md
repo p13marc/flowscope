@@ -25,9 +25,9 @@ the core.
 the #140 roadmap's fingerprinting/L7-depth group,
 **release-ready, not yet published** as of 2026-07-03).
 
-Five PRs (#151–#155), one branch/PR per issue, breaking-first so
-`docs/migration-0.21-to-0.22.md` accretes. Closes the last five
-open #140 roadmap items. Themes:
+Six PRs (#151–#155 + #141), one branch/PR per issue,
+breaking-first so `docs/migration-0.21-to-0.22.md` accretes. Closes
+the last six open #140 roadmap items. Themes:
 
 - **Unified JA4+ surface + license audit (`#136`).**
   `flowscope::fingerprint` facade — one import site for the whole
@@ -63,14 +63,23 @@ open #140 roadmap items. Themes:
   bug class); `module_enum!` generates `Module` + `Display`.
   Removed the deprecated `flowscope::parser_kinds` umbrella. Slugs
   byte-identical.
+- **Throughput-by-owner aggregation (`#141`, additive).**
+  `correlate::BandwidthByKey<K>` — per-key tx/rx byte-rate over a
+  sliding window on `RollingRate`, generic over the owner key
+  (pid / cgroup / `Attribution` / FiveTuple / ParserKind).
+  `correlate::ByteSemantics` (Wire/Goodput) tag +
+  `correlate::Attribution(u64)` opaque owner newtype. flowscope
+  stays process-unaware — the consumer supplies the owner key.
 
-Test count after the cycle: **1915 passing** (up from 1890 at
+Test count after the cycle: **1919 passing** (up from 1890 at
 0.21.0). Zero clippy warnings under `--all-features --all-targets
 -D warnings`, zero rustdoc warnings. New modules:
-`src/app_proto.rs`, `src/ip_fragment.rs`, `src/tls/pq.rs`. New
-example `examples/01-l7-logging/encrypted_app_classify.rs`.
-Migration recipes in `docs/migration-0.21-to-0.22.md`. **Not
-published to crates.io** — awaiting release consent.
+`src/app_proto.rs`, `src/ip_fragment.rs`, `src/tls/pq.rs`,
+`src/correlate/bandwidth.rs`. New examples
+`examples/01-l7-logging/encrypted_app_classify.rs` +
+`examples/04-observability/bandwidth_by_owner.rs`. Migration
+recipes in `docs/migration-0.21-to-0.22.md`. **Not published to
+crates.io** — awaiting release consent.
 
 **0.21.0 cycle** (detection architecture — the #140 roadmap
 keystone group, **release-ready, not yet published** as of
