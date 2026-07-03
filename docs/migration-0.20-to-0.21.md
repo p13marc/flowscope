@@ -75,5 +75,33 @@ schema-permissive; omitted for `Other(…)` / `Unknown`. See
 
 ## Breaking change — per-packet capture leg on `Packet` events (#121)
 
-*(lands with the #121 PR; section placeholder maintained in that
-change)*
+`FlowEvent::Packet` and `driver::Event::Packet` gain an **opt-in**
+`source_idx: Option<u32>` field carrying the physical capture leg
+([`RxMetadata::source_idx`]) of each packet — the final phase of the
+tap-merge epic (#123). Both variants are now also marked
+**variant-level `#[non_exhaustive]`**, so future per-packet
+enrichments will be additive (this is the last break of this shape).
+
+**Default off, zero hot-path cost.** The field is `None` unless you
+set `FlowTrackerConfig::emit_packet_source_idx = true` (or
+`DriverBuilder::emit_packet_source_idx(true)` on the typed driver).
+The `0` "unused" sentinel is never surfaced. For merged-tap
+consumers the per-direction `FlowStats::source_idx_forward` /
+`source_idx_reverse` binding (#120) remains the mainstream answer;
+this field is the audit / forensic tier ("did this exact packet
+arrive on the wrong leg?").
+
+Migration:
+
+- **Matching**: exhaustive `Packet { … }` patterns need a trailing
+  `..` (most code already has one). Field-by-field destructuring
+  without `..` no longer compiles.
+- **Constructing**: struct-expression construction of the `Packet`
+  variants outside flowscope no longer compiles (non-exhaustive
+  variant). Use the synthetic-event constructors —
+  `flowscope::test_helpers::events::{packet, packet_side}` and
+  `events::driver::{flow_packet, flow_packet_full}` — which is the
+  documented path since 0.20.
+- **Serde**: the new field is additive JSON (`"source_idx": null` /
+  a number). `FlowEvent` deserialization accepts documents without
+  the field (`serde(default)`).

@@ -4,7 +4,12 @@
 //! `to_flow_event` projection (incl. `ParserClosed -> None`), serde
 //! round-trips, and `emit` `write_lifecycle` parity with `write_event`.
 
-#![cfg(all(feature = "extractors", feature = "reassembler", feature = "session"))]
+#![cfg(all(
+    feature = "extractors",
+    feature = "reassembler",
+    feature = "session",
+    feature = "test-helpers"
+))]
 
 use std::net::SocketAddr;
 
@@ -43,13 +48,7 @@ fn all_flow_events() -> Vec<FlowEvent<FiveTupleKey>> {
             ts,
             l4: Some(L4Proto::Tcp),
         },
-        FlowEvent::Packet {
-            key: key(),
-            side: FlowSide::Responder,
-            orientation: Orientation::Reverse,
-            len: 100,
-            ts,
-        },
+        flowscope::test_helpers::events::packet_side(key(), FlowSide::Responder, 100, ts),
         FlowEvent::Established {
             key: key(),
             ts,
@@ -140,13 +139,11 @@ fn parser_closed_has_no_flow_event_projection() {
 
 #[test]
 fn from_flow_packet_defaults_tcp_to_none() {
-    let ev = Event::from(FlowEvent::Packet {
-        key: key(),
-        side: FlowSide::Initiator,
-        orientation: Orientation::Forward,
-        len: 40,
-        ts: Timestamp::new(1, 0),
-    });
+    let ev = Event::from(flowscope::test_helpers::events::packet(
+        key(),
+        40,
+        Timestamp::new(1, 0),
+    ));
     assert!(ev.tcp().is_none());
 }
 

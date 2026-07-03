@@ -203,6 +203,7 @@ mod tests {
             orientation: crate::extractor::Orientation::Forward,
             len: 100,
             ts: Timestamp::new(50, 0),
+            source_idx: None,
         };
         m.feed(&ev);
         m.sweep(Timestamp::new(70, 0));

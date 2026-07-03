@@ -137,6 +137,12 @@ pub enum Event<K> {
     /// bug. Use the convenience accessor [`Event::tcp`] when you
     /// want "tcp info if available, on any variant" without
     /// destructuring.
+    /// The variant is `#[non_exhaustive]` (0.21, issue #121) —
+    /// future per-packet enrichments are additive. Construct
+    /// synthetic packets via
+    /// `flowscope::test_helpers::events::driver::packet*`; match
+    /// with a trailing `..`.
+    #[non_exhaustive]
     Packet {
         key: K,
         side: FlowSide,
@@ -148,6 +154,13 @@ pub enum Event<K> {
         len: usize,
         ts: Timestamp,
         tcp: Option<TcpInfo>,
+        /// Physical capture leg this packet arrived on (issue #121).
+        /// Opt-in via [`DriverBuilder::emit_packet_source_idx`] —
+        /// always `None` otherwise; `None` also for the `0`
+        /// "unused" sentinel. See
+        /// [`crate::FlowEvent::Packet`]'s field docs for the
+        /// audit-tier vs per-direction-binding distinction.
+        source_idx: Option<u32>,
     },
 
     /// Flow ended (FIN / RST / idle / eviction / parser close).
@@ -278,12 +291,14 @@ impl<K> Event<K> {
                 len,
                 ts,
                 tcp: _,
+                source_idx,
             } => FlowEvent::Packet {
                 key,
                 side,
                 orientation,
                 len,
                 ts,
+                source_idx,
             },
             Event::Ended {
                 key,
@@ -351,6 +366,7 @@ impl<K> From<FlowEvent<K>> for Event<K> {
                 orientation,
                 len,
                 ts,
+                source_idx,
             } => Event::Packet {
                 key,
                 side,
@@ -358,6 +374,7 @@ impl<K> From<FlowEvent<K>> for Event<K> {
                 len,
                 ts,
                 tcp: None,
+                source_idx,
             },
             FlowEvent::Ended {
                 key,
@@ -637,6 +654,16 @@ where
     /// Per-packet `tcp: Option<TcpInfo>` enrichment.
     pub fn emit_packet_details(&mut self, on: bool) -> &mut Self {
         self.emit_packet_details = on;
+        self
+    }
+
+    /// Per-packet physical capture leg on [`Event::Packet`]
+    /// (issue #121). Convenience passthrough for
+    /// [`crate::FlowTrackerConfig::emit_packet_source_idx`] — off
+    /// by default; see that field's docs for the audit-tier vs
+    /// per-direction-binding (issue #120) distinction.
+    pub fn emit_packet_source_idx(&mut self, on: bool) -> &mut Self {
+        self.config.emit_packet_source_idx = on;
         self
     }
 

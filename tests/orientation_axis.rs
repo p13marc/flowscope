@@ -343,3 +343,84 @@ fn orientation_helpers_round_trip() {
     assert_eq!(Orientation::Reverse.as_str(), "reverse");
     assert_eq!(Orientation::default(), Orientation::Forward);
 }
+
+// ── issue #121 — opt-in per-packet capture leg on Packet events ─────
+
+/// Drive `(frame, source_idx)` pairs and collect every `Packet`
+/// event's `source_idx` field.
+fn packet_legs(frames: &[(Vec<u8>, u32)], opt_in: bool) -> (Vec<Option<u32>>, FlowStats) {
+    use flowscope::FlowTrackerConfig;
+    let mut config = FlowTrackerConfig::default();
+    config.emit_packet_source_idx = opt_in;
+    let mut tracker: FlowTracker<_, ()> =
+        FlowTracker::with_config(FiveTuple::bidirectional(), config);
+    let mut legs = Vec::new();
+    for (t, (frame, src)) in frames.iter().enumerate() {
+        let mut view = PacketView::new(frame, Timestamp::new(t as u32, 0));
+        if *src != 0 {
+            view = view.with_source_idx(*src);
+        }
+        for evt in tracker.track(view) {
+            if let FlowEvent::Packet { source_idx, .. } = evt {
+                legs.push(source_idx);
+            }
+        }
+    }
+    let mut stats = None;
+    for (_k, entry) in tracker.flows() {
+        assert!(stats.is_none(), "expected exactly one merged flow");
+        stats = Some(entry.stats.clone());
+    }
+    (legs, stats.expect("flow was created"))
+}
+
+#[test]
+fn per_packet_source_idx_default_off() {
+    // Default config: the field stays `None` even though the frames
+    // carry real leg info.
+    let frames = vec![(a_to_b(b"q1"), 1), (b_to_a(b"r1"), 2), (a_to_b(b"q2"), 1)];
+    let (legs, stats) = packet_legs(&frames, false);
+    assert_eq!(legs, vec![None, None, None]);
+    // The per-direction #120 binding still works — the knob only
+    // gates the per-packet field.
+    assert_eq!(stats.source_idx_forward, Some(1));
+    assert_eq!(stats.source_idx_reverse, Some(2));
+}
+
+#[test]
+fn per_packet_source_idx_reconstructs_exact_leg_sequence() {
+    // Two NICs feeding one merged flow: the per-packet field must
+    // reproduce the exact leg sequence, including a stray Forward
+    // packet that arrived on the "wrong" NIC (asymmetric routing) —
+    // precisely what the per-direction #120 summary cannot express.
+    let frames = vec![
+        (a_to_b(b"q1"), 1),
+        (b_to_a(b"r1"), 2),
+        (a_to_b(b"q2"), 1),
+        (a_to_b(b"q3"), 2), // wrong-leg packet
+        (b_to_a(b"r2"), 2),
+    ];
+    let (legs, stats) = packet_legs(&frames, true);
+    assert_eq!(
+        legs,
+        vec![Some(1), Some(2), Some(1), Some(2), Some(2)],
+        "per-packet legs reconstruct the exact sequence"
+    );
+    // Cross-check against the folded per-direction view: Forward
+    // bound to its FIRST leg (1), the stray leg-2 Forward packet
+    // flips the inconsistency IOC instead of rebinding.
+    assert_eq!(stats.source_idx_forward, Some(1));
+    assert_eq!(stats.source_idx_reverse, Some(2));
+    assert!(stats.capture_leg_inconsistent);
+}
+
+#[test]
+fn per_packet_source_idx_zero_sentinel_yields_none() {
+    // Sources without leg info (pcap / synthetic) report the `0`
+    // sentinel — never surfaced, even with the knob on.
+    let frames = vec![(a_to_b(b"q1"), 0), (b_to_a(b"r1"), 0)];
+    let (legs, stats) = packet_legs(&frames, true);
+    assert_eq!(legs, vec![None, None]);
+    assert_eq!(stats.source_idx_forward, None);
+    assert_eq!(stats.source_idx_reverse, None);
+}
