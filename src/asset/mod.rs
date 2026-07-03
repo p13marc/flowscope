@@ -52,5 +52,5 @@
 mod core;
 mod inventory;
 
-pub use core::{Asset, AssetCapabilities, AssetFingerprints, AssetSourceSet};
+pub use core::{Asset, AssetCapabilities, AssetFingerprints, AssetRole, AssetSourceSet};
 pub use inventory::Inventory;

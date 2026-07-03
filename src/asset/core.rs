@@ -25,9 +25,17 @@ pub struct Asset {
     /// IPv6 addresses ever observed bound to `mac`. Bounded
     /// at 4 entries; oldest-evicted-when-full.
     pub ipv6: Vec<Ipv6Addr>,
-    /// Hostname — sourced from DHCP option 12 ("hostname")
-    /// or LLDP / CDP "system name" TLV.
+    /// Primary hostname — the most-recently observed. Sourced
+    /// from DHCP option 12 ("hostname") or LLDP / CDP "system
+    /// name" TLV. See [`hostnames`](Self::hostnames) for the full
+    /// set a roaming / multi-named device has published.
     pub hostname: Option<String>,
+    /// Every distinct hostname ever bound to `mac` (bounded,
+    /// oldest-evicted). A device may publish several names across
+    /// DHCP / LLDP / mDNS / NBNS; a single `hostname` is lossy for
+    /// the correlation entity model. `hostname` mirrors the most
+    /// recent entry. Issue #137 (0.22).
+    pub hostnames: Vec<String>,
     /// Fully-qualified domain name — sourced from DHCP
     /// option 81 ("client FQDN"). May contain the hostname
     /// as the leftmost label.
@@ -48,8 +56,21 @@ pub struct Asset {
     /// surfaced one. Each is `Option<String>` so a partial
     /// inventory doesn't lie about what it has.
     pub fingerprints: AssetFingerprints,
+    /// X.509 leaf-certificate subject CN presented by this asset
+    /// (when acting as a TLS server). Populated by
+    /// [`from_tls_handshake`](Self::from_tls_handshake) under the
+    /// `ja4plus` feature. Issue #137 (0.22).
+    pub x509_subject: Option<String>,
+    /// X.509 leaf-certificate Subject Alternative Names (DNS
+    /// entries) presented by this asset. A cert-based pivot for
+    /// entity resolution. Populated under `ja4plus`. Bounded,
+    /// oldest-evicted. Issue #137 (0.22).
+    pub x509_sans: Vec<String>,
     /// Which parsers have contributed to this record.
     pub seen_via: AssetSourceSet,
+    /// First observation timestamp — set when the record is
+    /// created and preserved (min) across merges. Issue #137 (0.22).
+    pub first_seen: Timestamp,
     /// Most-recent observation timestamp.
     pub last_seen: Timestamp,
 }
@@ -65,14 +86,28 @@ impl Asset {
             ipv4: Vec::new(),
             ipv6: Vec::new(),
             hostname: None,
+            hostnames: Vec::new(),
             fqdn: None,
             vendor_banner: None,
             platform: None,
             capabilities: AssetCapabilities::empty(),
             fingerprints: AssetFingerprints::default(),
+            x509_subject: None,
+            x509_sans: Vec::new(),
             seen_via: AssetSourceSet::empty(),
+            first_seen: Timestamp::default(),
             last_seen: Timestamp::default(),
         }
+    }
+
+    /// Set the primary hostname and record it in the plural
+    /// [`hostnames`](Self::hostnames) set (deduped, bounded).
+    /// Internal helper used by the parser adapters.
+    fn set_hostname(&mut self, name: String) {
+        if !self.hostnames.contains(&name) {
+            push_bounded(&mut self.hostnames, name.clone(), MAX_HOSTNAMES_PER_ASSET);
+        }
+        self.hostname = Some(name);
     }
 
     /// Merge `other`'s fields into `self`. Non-empty / `Some`
@@ -94,6 +129,11 @@ impl Asset {
                 push_bounded(&mut self.ipv6, *ip, MAX_IPS_PER_ASSET);
             }
         }
+        for name in &other.hostnames {
+            if !self.hostnames.contains(name) {
+                push_bounded(&mut self.hostnames, name.clone(), MAX_HOSTNAMES_PER_ASSET);
+            }
+        }
         if other.hostname.is_some() {
             self.hostname = other.hostname.clone();
         }
@@ -106,19 +146,105 @@ impl Asset {
         if other.platform.is_some() {
             self.platform = other.platform.clone();
         }
+        if other.x509_subject.is_some() {
+            self.x509_subject = other.x509_subject.clone();
+        }
+        for san in &other.x509_sans {
+            if !self.x509_sans.contains(san) {
+                push_bounded(&mut self.x509_sans, san.clone(), MAX_HOSTNAMES_PER_ASSET);
+            }
+        }
         self.capabilities |= other.capabilities;
         self.fingerprints.merge_from(&other.fingerprints);
         self.seen_via |= other.seen_via;
+        // first_seen is the earliest non-default observation.
+        if self.first_seen == Timestamp::default()
+            || (other.first_seen != Timestamp::default() && other.first_seen < self.first_seen)
+        {
+            self.first_seen = other.first_seen;
+        }
         if other.last_seen > self.last_seen {
             self.last_seen = other.last_seen;
+        }
+    }
+
+    /// Number of distinct parser sources that have contributed to
+    /// this record — a coarse confidence signal (a MAC seen via
+    /// ARP + DHCP + LLDP + TLS is far more trustworthy than one
+    /// seen via a single spoofable source). Issue #137 (0.22).
+    pub fn source_count(&self) -> u32 {
+        self.seen_via.bits().count_ones()
+    }
+
+    /// Best-guess device role derived from the capability bitmask.
+    /// Infrastructure roles win over host; see [`AssetRole`].
+    /// Issue #137 (0.22).
+    pub fn role(&self) -> AssetRole {
+        let c = self.capabilities;
+        if c.intersects(AssetCapabilities::ROUTER) {
+            AssetRole::Router
+        } else if c.intersects(AssetCapabilities::SWITCH | AssetCapabilities::BRIDGE) {
+            AssetRole::Switch
+        } else if c.intersects(AssetCapabilities::WLAN_AP) {
+            AssetRole::AccessPoint
+        } else if c.intersects(AssetCapabilities::PHONE) {
+            AssetRole::Phone
+        } else if c.intersects(AssetCapabilities::UPNP) {
+            AssetRole::Iot
+        } else if c.intersects(AssetCapabilities::HOST) {
+            AssetRole::Host
+        } else {
+            AssetRole::Unknown
         }
     }
 }
 
 /// Maximum number of IPs (v4 or v6) we'll remember per asset.
 /// Devices roaming between IPs on the same MAC accumulate
-/// state; bound the growth.
-const MAX_IPS_PER_ASSET: usize = 4;
+/// state; bound the growth. Lifted 4 → 16 in issue #137 —
+/// multi-homed servers and roaming clients routinely exceed 4.
+const MAX_IPS_PER_ASSET: usize = 16;
+
+/// Maximum number of distinct hostnames / x509 SANs per asset.
+const MAX_HOSTNAMES_PER_ASSET: usize = 8;
+
+/// Coarse device role derived from an [`Asset`]'s capability
+/// bitmask. Issue #137 (0.22).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[non_exhaustive]
+pub enum AssetRole {
+    /// Layer 3 router.
+    Router,
+    /// Layer 2 switch / bridge.
+    Switch,
+    /// 802.11 access point.
+    AccessPoint,
+    /// VoIP / IP phone.
+    Phone,
+    /// UPnP / DLNA consumer / IoT device.
+    Iot,
+    /// General host / station.
+    Host,
+    /// No capability signal yet.
+    #[default]
+    Unknown,
+}
+
+impl AssetRole {
+    /// Stable lowercase slug for logs / dashboards.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            AssetRole::Router => "router",
+            AssetRole::Switch => "switch",
+            AssetRole::AccessPoint => "access-point",
+            AssetRole::Phone => "phone",
+            AssetRole::Iot => "iot",
+            AssetRole::Host => "host",
+            AssetRole::Unknown => "unknown",
+        }
+    }
+}
 
 fn push_bounded<T: Clone>(v: &mut Vec<T>, item: T, cap: usize) {
     if v.len() >= cap {
@@ -199,6 +325,12 @@ bitflags! {
         const SSDP  = 1 << 5;
         const MDNS  = 1 << 6;
         const NBNS  = 1 << 7;
+        /// TLS handshake (JA3 / JA4 / x509). Issue #137 (0.22).
+        const TLS   = 1 << 8;
+        /// SSH KEXINIT (HASSH). Issue #137 (0.22).
+        const SSH   = 1 << 9;
+        /// p0f-style passive TCP/IP fingerprint. Issue #137 (0.22).
+        const P0F   = 1 << 10;
         /// Reserved for future parsers — SNMP-asset-discovery, etc.
         const OTHER = 1 << 31;
     }
@@ -250,6 +382,10 @@ pub struct AssetFingerprints {
     pub ja3: Option<String>,
     /// JA4 TLS-client fingerprint.
     pub ja4: Option<String>,
+    /// JA4X x509-certificate fingerprint of the leaf cert this
+    /// asset presented (as a TLS server). Populated under
+    /// `ja4plus`. Issue #137 (0.22).
+    pub ja4x: Option<String>,
 }
 
 impl AssetFingerprints {
@@ -268,6 +404,9 @@ impl AssetFingerprints {
         }
         if other.ja4.is_some() {
             self.ja4 = other.ja4.clone();
+        }
+        if other.ja4x.is_some() {
+            self.ja4x = other.ja4x.clone();
         }
     }
 }
@@ -331,7 +470,9 @@ impl Asset {
         if !dhcp.yiaddr.is_unspecified() && !a.ipv4.contains(&dhcp.yiaddr) {
             a.ipv4.push(dhcp.yiaddr);
         }
-        a.hostname = dhcp.hostname.clone();
+        if let Some(h) = dhcp.hostname.clone() {
+            a.set_hostname(h);
+        }
         a.fqdn = dhcp.client_fqdn.clone();
         a.vendor_banner = dhcp.vendor_class.clone();
         a.fingerprints.dhcp = dhcp.fingerprint();
@@ -359,7 +500,7 @@ impl Asset {
         if let Some(name) = &lldp.system_name
             && let Ok(s) = std::str::from_utf8(name)
         {
-            a.hostname = Some(s.to_string());
+            a.set_hostname(s.to_string());
         }
         if let Some(desc) = &lldp.system_description
             && let Ok(s) = std::str::from_utf8(desc)
@@ -396,7 +537,7 @@ impl Asset {
         if let Some(devid) = &cdp.device_id
             && let Ok(s) = std::str::from_utf8(devid)
         {
-            a.hostname = Some(s.to_string());
+            a.set_hostname(s.to_string());
         }
         if let Some(sw) = &cdp.software_version
             && let Ok(s) = std::str::from_utf8(sw)
@@ -491,7 +632,7 @@ impl Asset {
                         push_bounded(&mut a.ipv4, *v4, MAX_IPS_PER_ASSET);
                     }
                     if a.hostname.is_none() && !leftmost.is_empty() {
-                        a.hostname = Some(leftmost.to_string());
+                        a.set_hostname(leftmost.to_string());
                     }
                     populated = true;
                 }
@@ -500,7 +641,7 @@ impl Asset {
                         push_bounded(&mut a.ipv6, *v6, MAX_IPS_PER_ASSET);
                     }
                     if a.hostname.is_none() && !leftmost.is_empty() {
-                        a.hostname = Some(leftmost.to_string());
+                        a.set_hostname(leftmost.to_string());
                     }
                     populated = true;
                 }
@@ -555,7 +696,7 @@ impl Asset {
         }
         let mut a = Self::new(source_mac);
         if let Some(name) = nb.queried_name.as_deref() {
-            a.hostname = Some(name.to_string());
+            a.set_hostname(name.to_string());
         }
         for v4 in nb.answer_addresses.iter() {
             if !a.ipv4.contains(v4) {
@@ -565,6 +706,94 @@ impl Asset {
         a.capabilities |= AssetCapabilities::HOST;
         a.seen_via |= AssetSourceSet::NBNS;
         Some(a)
+    }
+}
+
+#[cfg(feature = "tls")]
+impl Asset {
+    /// Build an `Asset` from a completed TLS handshake. TLS carries
+    /// no L2, so the caller supplies `source_mac` (the Ethernet
+    /// source of the frame that carried the handshake). Pulls the
+    /// JA3 / JA4 client fingerprints, and — under `ja4plus` — the
+    /// JA4X leaf fingerprint plus the leaf certificate's subject CN
+    /// and DNS SANs for cert-based pivoting. Issue #137 (0.22).
+    pub fn from_tls_handshake(hs: &crate::tls::TlsHandshake, source_mac: MacAddr) -> Self {
+        let mut a = Self::new(source_mac);
+        a.fingerprints.ja3 = hs.ja3.clone();
+        a.fingerprints.ja4 = hs.ja4.clone();
+        #[cfg(feature = "ja4plus")]
+        {
+            a.fingerprints.ja4x = hs.ja4x.clone();
+            if let Some(leaf) = hs.certificate_chain.first() {
+                extract_x509_identity(leaf, &mut a);
+            }
+        }
+        a.capabilities |= AssetCapabilities::HOST;
+        a.seen_via |= AssetSourceSet::TLS;
+        a
+    }
+}
+
+#[cfg(feature = "ssh")]
+impl Asset {
+    /// Build an `Asset` from an SSH KEXINIT. SSH carries no L2, so
+    /// the caller supplies `source_mac`. Records the HASSH
+    /// fingerprint (client HASSH for `from_client`, HASSHServer
+    /// otherwise). Issue #137 (0.22).
+    pub fn from_ssh_kexinit(kex: &crate::ssh::SshKexInit, source_mac: MacAddr) -> Self {
+        let mut a = Self::new(source_mac);
+        if !kex.hassh.is_empty() {
+            a.fingerprints.hassh = Some(kex.hassh.clone());
+        }
+        a.capabilities |= AssetCapabilities::HOST;
+        a.seen_via |= AssetSourceSet::SSH;
+        a
+    }
+}
+
+#[cfg(feature = "tcp_fingerprint")]
+impl Asset {
+    /// Build an `Asset` from a passive p0f-style TCP/IP
+    /// fingerprint. The caller supplies `source_mac` (the Ethernet
+    /// source of the SYN / SYN+ACK). Records the p0f-3 signature
+    /// string. Issue #137 (0.22).
+    pub fn from_tcp_fingerprint(
+        fp: &crate::tcp_fingerprint::TcpFingerprint,
+        source_mac: MacAddr,
+    ) -> Self {
+        let mut a = Self::new(source_mac);
+        a.fingerprints.p0f = Some(fp.to_p0f_signature());
+        a.capabilities |= AssetCapabilities::HOST;
+        a.seen_via |= AssetSourceSet::P0F;
+        a
+    }
+}
+
+/// Pull the leaf certificate's subject CN + DNS SANs into the
+/// asset. Best-effort — a cert that fails to parse contributes
+/// nothing. Issue #137 (0.22).
+#[cfg(all(feature = "tls", feature = "ja4plus"))]
+fn extract_x509_identity(der: &[u8], a: &mut Asset) {
+    use x509_parser::prelude::{FromDer, X509Certificate};
+
+    let Ok((_, cert)) = X509Certificate::from_der(der) else {
+        return;
+    };
+    // Subject common name.
+    if let Some(cn) = cert.subject().iter_common_name().next()
+        && let Ok(s) = cn.as_str()
+    {
+        a.x509_subject = Some(s.to_string());
+    }
+    // DNS SANs.
+    if let Ok(Some(san)) = cert.subject_alternative_name() {
+        for name in &san.value.general_names {
+            if let x509_parser::extensions::GeneralName::DNSName(dns) = name
+                && !a.x509_sans.contains(&dns.to_string())
+            {
+                push_bounded(&mut a.x509_sans, dns.to_string(), MAX_HOSTNAMES_PER_ASSET);
+            }
+        }
     }
 }
 
@@ -666,7 +895,7 @@ mod tests {
     }
 
     #[test]
-    fn merge_dedupes_ips_and_caps_at_bound() {
+    fn merge_dedupes_ips() {
         let mac = MacAddr([0xaa; 6]);
         let mut a = Asset::new(mac);
         a.ipv4 = vec![
@@ -676,18 +905,28 @@ mod tests {
         ];
         let mut b = Asset::new(mac);
         b.ipv4 = vec![
-            Ipv4Addr::new(10, 0, 0, 2), // dup
+            Ipv4Addr::new(10, 0, 0, 2), // dup — dropped
             Ipv4Addr::new(10, 0, 0, 4),
-            Ipv4Addr::new(10, 0, 0, 5), // pushes past MAX
+            Ipv4Addr::new(10, 0, 0, 5),
         ];
         a.merge(&b);
-        // De-duped, bounded at MAX_IPS_PER_ASSET = 4.
-        assert_eq!(a.ipv4.len(), MAX_IPS_PER_ASSET);
-        assert!(
-            !a.ipv4.contains(&Ipv4Addr::new(10, 0, 0, 1)),
-            "oldest should have been evicted to make room"
-        );
+        assert_eq!(a.ipv4.len(), 5, "deduped union of both sets");
         assert!(a.ipv4.contains(&Ipv4Addr::new(10, 0, 0, 5)));
+    }
+
+    #[test]
+    fn ipv4_bounded_at_max() {
+        let mac = MacAddr([0xaa; 6]);
+        let mut a = Asset::new(mac);
+        // Push MAX + 5 distinct IPs; oldest evicted, len capped.
+        let mut b = Asset::new(mac);
+        for i in 0..(MAX_IPS_PER_ASSET as u32 + 5) {
+            b.ipv4.push(Ipv4Addr::from(0x0a00_0000 + i));
+        }
+        a.merge(&b);
+        assert_eq!(a.ipv4.len(), MAX_IPS_PER_ASSET);
+        // The very first pushed IP has been evicted.
+        assert!(!a.ipv4.contains(&Ipv4Addr::from(0x0a00_0000)));
     }
 
     #[test]
@@ -709,5 +948,84 @@ mod tests {
         let b = Asset::new(mac);
         a.merge(&b);
         assert_eq!(a.fingerprints.dhcp.as_deref(), Some("ORIGINAL"));
+    }
+
+    #[test]
+    fn role_derives_from_capabilities() {
+        let mut a = Asset::new(MacAddr([0xaa; 6]));
+        assert_eq!(a.role(), AssetRole::Unknown);
+        a.capabilities |= AssetCapabilities::HOST;
+        assert_eq!(a.role(), AssetRole::Host);
+        // Infrastructure wins over host.
+        a.capabilities |= AssetCapabilities::ROUTER;
+        assert_eq!(a.role(), AssetRole::Router);
+    }
+
+    #[test]
+    fn source_count_is_popcount_of_seen_via() {
+        let mut a = Asset::new(MacAddr([0xaa; 6]));
+        assert_eq!(a.source_count(), 0);
+        a.seen_via |= AssetSourceSet::ARP | AssetSourceSet::DHCP | AssetSourceSet::TLS;
+        assert_eq!(a.source_count(), 3);
+    }
+
+    #[test]
+    fn plural_hostnames_accumulate_and_dedupe() {
+        let mac = MacAddr([0xaa; 6]);
+        let mut a = Asset::new(mac);
+        a.set_hostname("laptop".into());
+        a.set_hostname("laptop".into()); // dup — no growth
+        a.set_hostname("laptop-vpn".into());
+        assert_eq!(a.hostname.as_deref(), Some("laptop-vpn")); // primary = latest
+        assert_eq!(a.hostnames.len(), 2);
+        assert!(a.hostnames.contains(&"laptop".to_string()));
+    }
+
+    #[test]
+    fn merge_keeps_earliest_first_seen() {
+        let mac = MacAddr([0xaa; 6]);
+        let mut a = Asset::new(mac);
+        a.first_seen = Timestamp::new(100, 0);
+        let mut b = Asset::new(mac);
+        b.first_seen = Timestamp::new(50, 0);
+        a.merge(&b);
+        assert_eq!(a.first_seen, Timestamp::new(50, 0));
+    }
+
+    #[cfg(feature = "tls")]
+    #[test]
+    #[allow(clippy::field_reassign_with_default)] // TlsHandshake is #[non_exhaustive]
+    fn tls_handshake_contributes_ja3_ja4_and_tls_source() {
+        let mut hs = crate::tls::TlsHandshake::default();
+        hs.ja3 = Some("deadbeef".into());
+        hs.ja4 = Some("t13d1516h2_deadbeef_cafef00d".into());
+        let a = Asset::from_tls_handshake(&hs, MacAddr([0xbb; 6]));
+        assert_eq!(a.fingerprints.ja3.as_deref(), Some("deadbeef"));
+        assert!(a.fingerprints.ja4.is_some());
+        assert!(a.seen_via.contains(AssetSourceSet::TLS));
+    }
+
+    #[cfg(feature = "tcp_fingerprint")]
+    #[test]
+    fn tcp_fingerprint_contributes_p0f() {
+        use crate::tcp_fingerprint::{Quirks, TcpDirection, TcpFingerprint};
+        let fp = TcpFingerprint {
+            direction: TcpDirection::Syn,
+            ip_version: 4,
+            observed_ttl: 64,
+            guessed_initial_ttl: 64,
+            options_length: 0,
+            df: true,
+            window_size: 65535,
+            mss: Some(1460),
+            window_scale: Some(7),
+            sack_permitted: true,
+            timestamps: true,
+            option_layout: "mss,sok,ts,nop,ws".into(),
+            quirks: Quirks::empty(),
+        };
+        let a = Asset::from_tcp_fingerprint(&fp, MacAddr([0xcc; 6]));
+        assert!(a.fingerprints.p0f.is_some());
+        assert!(a.seen_via.contains(AssetSourceSet::P0F));
     }
 }
