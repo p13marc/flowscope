@@ -21,6 +21,57 @@ the core.
 
 ## Implementation Status
 
+**0.22.0 cycle** (fingerprinting & encrypted-traffic frontier —
+the #140 roadmap's fingerprinting/L7-depth group,
+**release-ready, not yet published** as of 2026-07-03).
+
+Five PRs (#151–#155), one branch/PR per issue, breaking-first so
+`docs/migration-0.21-to-0.22.md` accretes. Closes the last five
+open #140 roadmap items. Themes:
+
+- **Unified JA4+ surface + license audit (`#136`).**
+  `flowscope::fingerprint` facade — one import site for the whole
+  JA4+ family, grouped by license (royalty-free
+  `tls-fingerprints` vs FoxIO-1.1 `ja4plus`). New public
+  `tls::ja3_fingerprint` / `ja3_canonical`. Confirmed JA4S/X/H/
+  SSH/T/L stay out of the `l7`/`full` umbrellas.
+- **Post-quantum ClientHello reassembly (`#135`, small break).**
+  X25519MLKEM768 (Chrome 131+/Firefox default) makes the CH
+  ~1.4 KiB — too big for one segment/Initial. `QuicUdpParser` is
+  now **stateful** (unit→struct; use `::new()`): accumulates
+  CRYPTO frames per-DCID across QUIC Initials. `TlsClientHello`
+  gains `key_share_groups`/`pq_key_share`; `TlsHandshake` mirrors
+  `pq_key_share`; new `tls::is_pq_hybrid_group` /
+  `pq_hybrid_group_name`.
+- **Encrypted-DNS + HTTP/2·3 detection + IP-fragment reassembly
+  (`#138`, additive).** `flowscope::app_proto` (`AppProtocol` +
+  `classify` from ALPN/SNI/port; `is_known_doh_host` curated
+  resolver list). Port 853 in `well_known`.
+  `flowscope::ip_fragment::IpFragmentReassembler` (RFC 791 key,
+  RFC 5722 overlap-drop IOC; `push`/`push_ipv4`).
+- **Asset fingerprint correlation (`#137`, additive).**
+  `Asset::from_tls_handshake` / `from_ssh_kexinit` /
+  `from_tcp_fingerprint` finally wire JA3/JA4/JA4X/HASSH/p0f into
+  the inventory (new `AssetSourceSet` TLS/SSH/P0F bits). x509
+  subject/SAN extraction (`ja4plus`). Lifted IP cap 4→16 + plural
+  `hostnames`; `first_seen` + `source_count()` + `role()` /
+  `AssetRole`. (Typed-newtype fingerprints deliberately skipped —
+  they're canonically hash strings.)
+- **Single-table parser/module registries (`#139`, break).**
+  `slug_enum!` generates `ParserKind` (enum + `as_str` +
+  `from_slug` from one table — kills the as_str/from_slug drift
+  bug class); `module_enum!` generates `Module` + `Display`.
+  Removed the deprecated `flowscope::parser_kinds` umbrella. Slugs
+  byte-identical.
+
+Test count after the cycle: **1915 passing** (up from 1890 at
+0.21.0). Zero clippy warnings under `--all-features --all-targets
+-D warnings`, zero rustdoc warnings. New modules:
+`src/app_proto.rs`, `src/ip_fragment.rs`, `src/tls/pq.rs`. New
+example `examples/01-l7-logging/encrypted_app_classify.rs`.
+Migration recipes in `docs/migration-0.21-to-0.22.md`. **Not
+published to crates.io** — awaiting release consent.
+
 **0.21.0 cycle** (detection architecture — the #140 roadmap
 keystone group, **release-ready, not yet published** as of
 2026-07-03).
