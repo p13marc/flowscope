@@ -179,6 +179,36 @@ emission behind thresholds + cooldowns.
   rustdoc); registered all four in `detector_registry`;
   `tests/ndr_detectors.rs`; docs in `detect-patterns.md`.
 
+### Added — `dns::NameMap` passive-DNS naming (#130)
+
+`flowscope::dns::NameMap` — the Zeek/Corelight "namecache" model,
+alongside the unchanged `DnsResolutionCache`. Where the cache
+stores one name per `(client, target)` on a fixed TTL, `NameMap`
+carries what passive-DNS enrichment needs:
+
+- **plural, provenance-tagged names per IP** — each `NameClaim`
+  carries its `Provenance` (`DnsA` / `DnsAaaa` / `DnsCname` /
+  `DnsPtr` / `Mdns` / `Sni` / `Dhcp` / `Other`) +
+  first/last-seen; distinct sources coexist rather than
+  overwrite.
+- **answer-TTL-driven expiry** (+ configurable grace) instead of
+  a global constant.
+- **global reverse index** (`names`) for the internal-resolver
+  case + **client-scoped** lookup (`names_for_client`, with
+  client-agnostic fallback).
+- **CNAME-chain resolution** (binds the terminal A/AAAA to the
+  *queried* name, chain-min TTL) + **PTR reverse claims**
+  (`in-addr.arpa` / `ip6.arpa`) in `observe_response`;
+  `observe_claim` folds in SNI / DHCP / mDNS.
+- **`drain_new` / `drain_new_into`** delta feed — each new
+  mapping exactly once, bounded by `max_pending` with a
+  `pending_dropped()` back-pressure counter.
+- Bounded three ways via `NameMapConfig` (`max_ips` LRU,
+  `max_claims_per_ip`, `max_pending`).
+- Docs: `recipes.md` gains the naming recipe + a
+  `NameMap` + `BeaconDetector<String>` FQDN-beaconing pairing;
+  `tests/dns_name_map.rs`. Not in the prelude (dns types aren't).
+
 ## 0.20.0 (2026-06-29) — NSM primitives + driver/event convergence + 1.0-prep API sweep
 
 Pure, no-async — fits the runtime-free lib rule. The largest pre-1.0

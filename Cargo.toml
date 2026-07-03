@@ -952,6 +952,10 @@ name = "dns_resolution_cache"
 required-features = ["dns"]
 
 [[test]]
+name = "dns_name_map"
+required-features = ["dns"]
+
+[[test]]
 name = "typed_event_conversion"
 required-features = ["extractors", "reassembler", "session", "test-helpers"]
 
