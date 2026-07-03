@@ -259,6 +259,66 @@ emission via `OwnedAnomaly` (0.13)" for the EVE schema mapping
 and [`docs/recipes.md`](recipes.md) §"0.13 patterns" for the
 end-to-end recipe.
 
+## Unified `Detector` trait + `DetectorRegistry` (0.21, #131)
+
+Registering detectors on a [`DetectorRegistry`] drives a
+heterogeneous set from **one** call per event, instead of
+hand-wiring each detector's feed/drain loop. The registry keeps
+the genuinely-different observe inputs but unifies dispatch:
+
+```rust,ignore
+use flowscope::detect::{DetectorRegistry, DgaDetector, HostPair, SrcHost};
+use flowscope::detect::patterns::{BeaconDetector, PortScanDetector};
+use flowscope::extract::FiveTupleKey;
+
+let mut registry: DetectorRegistry<FiveTupleKey> = DetectorRegistry::new();
+registry
+    .register(BeaconDetector::<HostPair>::new())   // aggregates per (src, dst, port)
+    .register(PortScanDetector::<SrcHost>::new())  // aggregates per source IP
+    .register(DgaDetector::new());                 // feeds off DNS query names
+
+// per flow event (from FlowTracker or the typed Driver):
+registry.observe(&flow_event, &mut anomalies);      // or observe_event(&driver_event, …)
+// per DNS query name (from a DNS slot drain):
+registry.observe_dns(&key, qname, ts, &mut anomalies);
+// periodically:
+registry.evict_expired(now);
+```
+
+Each detector implements the [`Detector`] trait — a set of
+defaulted, no-op **lifecycle hooks** (`on_flow_start`,
+`on_flow_end`, `on_dns_query`, …), so a detector implements only
+the feeds it consumes. Anomalies append to a caller-owned
+`Vec<OwnedAnomaly>` (the `track_into` idiom — zero per-event
+allocation, no unbounded internal queues).
+
+**Derived aggregation keys.** Registry detectors see the *flow*
+key `K`, but beaconing and scanning aggregate *across* flows
+(every beacon ping is its own ephemeral 5-tuple). The shipped
+[`SrcHost`] (source IP) and [`HostPair`] (`src`, `dst`,
+`dst_port`) keys implement `KeyFields + Hash + Eq`, derive from
+any flow key via `from_key`, and replace the `SrcIpKey` newtype
+consumers used to re-declare.
+
+**Actionable-only emission.** The shipped impls gate on
+per-detector thresholds + cooldowns
+(`BeaconDetector::with_anomaly_threshold` / `with_cooldown`;
+port-scan emits only on a `Scanner` verdict;
+`DgaDetector::with_threshold` + per-`(src, domain)` suppression),
+so a registry drain is alert-shaped, not score-shaped. Call the
+detectors' raw `observe` methods directly when you want every
+score.
+
+**Port-scan success signal** is derived statelessly at flow end:
+for TCP, the responder answered the handshake (`'s'` in the
+Zeek-style [`HistoryString`]); for UDP, any responder packet.
+An unanswered SYN or a RST refusal both read as failure.
+
+Every emitted [`OwnedAnomaly`] carries its typed
+[`DetectorKind`] (0.21, #133) — so `kind.attack_technique()`
+gives the MITRE ATT&CK technique ID and `EveJsonWriter` emits
+`anomaly.attack_technique` automatically.
+
 ## Examples
 
 - `examples/03-detection/c2_beacon_finder.rs` — replay a pcap,
@@ -268,6 +328,11 @@ end-to-end recipe.
 - `examples/03-detection/port_scan_detector.rs` (pre-existing
   in 0.10 cycle) — refactor target if you want a
   `PortScanDetector` migration recipe.
+- `examples/03-detection/detector_registry.rs` (0.21, #131) —
+  the unified `DetectorRegistry` over a real typed `Driver`:
+  register beacon / RITA-beacon / port-scan / DGA once, drive
+  them all from one event stream, emit each anomaly (with its
+  ATT&CK technique) as EVE.
 
 ## Why these three
 

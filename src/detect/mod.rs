@@ -42,8 +42,17 @@ pub mod file;
 pub mod fingerprint;
 pub mod ioc;
 pub mod patterns;
+// Issue #131 (0.21): unified Detector trait + registry pipeline.
+// Needs OwnedAnomaly / FlowEvent / lru, all tracker-gated.
+#[cfg(feature = "tracker")]
+pub mod registry;
 pub mod risk;
 pub mod signatures;
+
+// Issue #131: registry surface, re-exported at detect level so
+// `flowscope::detect::{Detector, DetectorRegistry}` resolves.
+#[cfg(feature = "tracker")]
+pub use registry::{Detector, DetectorRegistry, DgaDetector, HostPair, SrcHost};
 
 // Issue #72: typed threat-intel membership set.
 pub use ioc::{IocKind, IocMatch, IocSet};

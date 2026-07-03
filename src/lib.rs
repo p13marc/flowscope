@@ -181,6 +181,10 @@ pub mod community_id;
 pub mod ja4l;
 #[cfg(feature = "tracker")]
 pub use anomaly::{DetectorScore, OwnedAnomaly};
+// Issue #131 (0.21): unified detector trait + registry at the
+// crate root, beside the anomaly types they produce.
+#[cfg(feature = "tracker")]
+pub use detect::registry::{Detector, DetectorRegistry};
 #[cfg(feature = "tracker")]
 pub mod event;
 #[cfg(feature = "tracker")]
