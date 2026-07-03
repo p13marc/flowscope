@@ -68,9 +68,13 @@ mod bloom;
 mod bucketed;
 mod burst;
 mod count_min;
+// Issue #134 (0.21): delete-capable counting-Bloom membership.
+mod counting_bloom;
 mod ewma;
 // Issue #134 (0.21): per-key EWMA mean + variance.
 mod ewma_var;
+// Issue #134 (0.21): bounded TTL first-seen / newly-observed set.
+mod first_seen;
 mod hyperloglog;
 mod mergeable;
 mod neighbor_table;
@@ -92,8 +96,10 @@ pub use bloom::BloomFilter;
 pub use bucketed::TimeBucketedCounter;
 pub use burst::{BurstDetector, BurstHit};
 pub use count_min::CountMinSketch;
+pub use counting_bloom::CountingBloomFilter;
 pub use ewma::Ewma;
 pub use ewma_var::{EwmaVar, EwmaVarValue};
+pub use first_seen::FirstSeen;
 #[cfg(feature = "extractors")]
 pub use flow_state_map::FlowStateMap;
 pub use hyperloglog::{HyperLogLog, InvalidPrecision};
