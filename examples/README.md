@@ -68,11 +68,12 @@ the categories sort logically in `ls`.
 | Example | Features | What it shows |
 |---|---|---|
 | **`port_scan_detector`** | `pcap,extractors,tracker` | SYN-without-ACK rate per `(src, dst)` via `TimeBucketedCounter` + distinct-port set via `TimeBucketedSet` (plan 102 sub-A). |
-| **`dns_tunnel_detector`** | `pcap,dns,extractors` | High Shannon entropy + long-label + high-rate DNS queries = probable DNS tunnel. Uses `flowscope::detect::shannon_entropy`. |
+| **`dns_tunnel_detector`** | `pcap,dns,extractors,tracker,emit-eve` | The `DnsTunnelDetector` distinct-subdomain heuristic (#132) driven through a `DetectorRegistry`, emitting T1071.004 EVE anomalies. |
 | **`failed_auth_burst`** | `pcap,http` | HTTP 401/403 burst followed by 200 — credential-stuffing pattern via `BurstDetector` (plan 102 sub-A). |
 | **`c2_beacon_finder`** | `pcap,extractors,tracker` | RITA-style CV beacon detector via `flowscope::detect::patterns::BeaconDetector` (plan 143). |
 | **`dga_finder`** | `pcap,dns,extractors` | Bigram log-likelihood DGA scoring on DNS query SLDs via `flowscope::detect::patterns::DgaScorer` (plan 143). |
 | **`composite_c2`** | `pcap,extractors,tracker,dns,tls,emit-eve` | Composite AND of `BeaconDetector` ∧ `DgaScorer` ∧ weak-TLS-version per source IP; ≥2-of-3 legs → Suricata EVE anomaly via `write_owned_anomaly`. |
+| **`detector_registry`** | `tracker,dns,pcap,emit-eve` | The unified `DetectorRegistry` (#131): register beacon / RITA-beacon / port-scan / DGA once, drive them all from one `Event` stream over a real `Driver`, emit each anomaly (with its MITRE ATT&CK technique) as EVE. |
 | **`tcp_evasion_detector`** | `pcap,extractors,tracker,reassembler` | Ptacek-Newsham TCP overlap IOC via `AnomalyKind::TcpRexmitInconsistency` surfaced by `FlowDriver::with_emit_anomalies(true)`. |
 | **`flow_analysis`** | `analysis,tls,dns,emit-eve` | The `analysis` composition layer: `FlowAnalyzer` accumulates per-flow `L7Summary`, `finalize` computes `FlowRisk` + screens an `IocSet`, yielding enriched `AnalyzedFlow` records printed as a table and as SIEM-ready EVE JSON (`write_analyzed_flow`). Synthetic flows; no pcap (#83). |
 | **`flow_analysis_driver`** | `analysis,tls,dns,pcap,emit-eve` | The same `FlowAnalyzer` wired to a real typed `Driver<E>` over a pcap: drain `TlsHandshakeParser`/`DnsUdpParser` slots into the analyzer, `finalize` on `Event::Ended` → enriched EVE (#83). |
