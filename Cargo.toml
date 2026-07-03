@@ -659,6 +659,11 @@ path = "examples/03-detection/composite_c2.rs"
 required-features = ["pcap", "extractors", "tracker", "dns", "tls", "emit-eve"]
 
 [[example]]
+name = "detector_registry"
+path = "examples/03-detection/detector_registry.rs"
+required-features = ["tracker", "dns", "pcap", "emit-eve"]
+
+[[example]]
 name = "flow_analysis"
 path = "examples/03-detection/flow_analysis.rs"
 required-features = ["analysis", "tls", "dns", "emit-eve"]
@@ -949,6 +954,10 @@ required-features = ["dns"]
 [[test]]
 name = "typed_event_conversion"
 required-features = ["extractors", "reassembler", "session", "test-helpers"]
+
+[[test]]
+name = "detector_registry"
+required-features = ["tracker", "extractors", "session", "test-helpers"]
 
 [[test]]
 name = "serde_round_trip"

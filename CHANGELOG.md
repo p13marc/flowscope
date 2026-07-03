@@ -89,6 +89,45 @@ existing `tracker` gate, hand-rolled per house convention):
   `Mergeable` as a min(first)/max(last) lattice union. Prereq for
   the #132 `NewlyObservedDomainDetector`.
 
+### Breaking — unified `Detector` trait + `DetectorRegistry` (#131, keystone)
+
+The detection-architecture keystone: register a heterogeneous
+detector set once, drive it from one event stream, instead of
+every consumer hand-wiring a `Vec<detector>` with bespoke
+feed/drain plumbing.
+
+- **`Detector<K>` trait** — defaulted, no-op lifecycle hooks
+  (`on_flow_start` / `on_flow_established` / `on_flow_end` /
+  `on_flow_tick` / `on_dns_query`) + `kind()` / `tracked()` /
+  `evict_expired()`. A detector implements only the feeds it
+  consumes; anomalies append to a caller-owned
+  `Vec<OwnedAnomaly>` (the `track_into` idiom — no unbounded
+  internal queues). DNS names arrive via `on_dns_query(&str)`
+  (pre-extracted, so `detect` stays `dns`-feature-independent).
+- **`DetectorRegistry<K>`** — `register()` a heterogeneous set,
+  then `observe(&FlowEvent)` / `observe_event(&driver::Event)` /
+  `observe_dns(key, qname, ts)` fan each event to the right hook
+  once; `evict_expired` / `tracked` / `kinds` fan-out.
+- **Derived aggregation keys** `SrcHost` (source IP) + `HostPair`
+  (`src`, `dst`, `dst_port`), both `KeyFields`, replacing the
+  `SrcIpKey` newtype consumers re-declared. Beacons key on
+  `HostPair` (each ping is its own ephemeral 5-tuple), scans on
+  `SrcHost`.
+- **Shipped `Detector` impls** for `BeaconDetector<HostPair>` /
+  `RitaBeaconDetector<HostPair>` (new `with_anomaly_threshold`
+  default 0.7 + `with_cooldown` default 300 s emission gate),
+  `PortScanDetector<SrcHost>` (success derived statelessly from
+  the flow's `HistoryString` / responder packets; emits only on
+  a `Scanner` verdict), and a new `DgaDetector` wrapper over the
+  unchanged stateless `DgaScorer` (per-`(src, domain)` LRU
+  suppression).
+- Breaking on `DetectorScore`: `name() -> &'static str` became
+  `kind() -> DetectorKind` (landed with #133).
+- New `examples/03-detection/detector_registry.rs`; docs in
+  `detect-patterns.md`. `composite_c2` stays as the
+  cross-signal ∧-logic showcase (the registry keeps detectors
+  independent by design).
+
 ## 0.20.0 (2026-06-29) — NSM primitives + driver/event convergence + 1.0-prep API sweep
 
 Pure, no-async — fits the runtime-free lib rule. The largest pre-1.0

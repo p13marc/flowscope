@@ -42,6 +42,8 @@ where
     min_interval: Duration,
     max_interval: Duration,
     duration_full_secs: f64,
+    anomaly_threshold: f64,
+    cooldown: Duration,
     keys: HashMap<K, BeaconState>,
 }
 
@@ -49,6 +51,9 @@ where
 struct BeaconState {
     /// Tail-most-recent rolling window of `(ts, bytes)` tuples.
     samples: VecDeque<(Timestamp, u64)>,
+    /// When [`BeaconDetector::observe_gated`] last emitted for
+    /// this key (per-key cooldown; issue #131).
+    last_emitted: Option<Timestamp>,
 }
 
 #[derive(Debug, Clone)]
@@ -80,6 +85,8 @@ where
             min_interval: Duration::from_secs(10),
             max_interval: Duration::from_secs(24 * 60 * 60),
             duration_full_secs: 30.0 * 60.0,
+            anomaly_threshold: 0.7,
+            cooldown: Duration::from_secs(300),
             keys: HashMap::new(),
         }
     }
@@ -97,11 +104,33 @@ where
         self
     }
 
+    /// Composite-score floor for [`Self::observe_gated`] emission
+    /// (default **0.7** — the two-of-three composite tier proven
+    /// in the shipped `composite_c2` example). Issue #131.
+    pub fn with_anomaly_threshold(mut self, threshold: f64) -> Self {
+        assert!(
+            (0.0..=1.0).contains(&threshold),
+            "threshold must be in [0, 1]"
+        );
+        self.anomaly_threshold = threshold;
+        self
+    }
+
+    /// Per-key re-emission cooldown for [`Self::observe_gated`]
+    /// (default **300 s**). A beacon that stays above threshold
+    /// re-alerts at most once per cooldown instead of on every
+    /// observation. Issue #131.
+    pub fn with_cooldown(mut self, cooldown: Duration) -> Self {
+        self.cooldown = cooldown;
+        self
+    }
+
     /// Record one observation for `key`. Returns `Some` once
     /// the window is full and the mean interval is in range.
     pub fn observe(&mut self, key: K, ts: Timestamp, bytes: u64) -> Option<BeaconScore<K>> {
         let entry = self.keys.entry(key.clone()).or_insert(BeaconState {
             samples: VecDeque::with_capacity(self.window),
+            last_emitted: None,
         });
         if entry.samples.len() == self.window {
             entry.samples.pop_front();
@@ -158,6 +187,31 @@ where
         })
     }
 
+    /// [`Self::observe`] plus the emission policy: returns `Some`
+    /// only when the score clears
+    /// [`with_anomaly_threshold`](Self::with_anomaly_threshold)
+    /// **and** the per-key
+    /// [`with_cooldown`](Self::with_cooldown) has elapsed since
+    /// this key last emitted. The gate the
+    /// [`Detector`](crate::detect::Detector) registry impl uses
+    /// so a registry emits only actionable anomalies (issue
+    /// #131); call the raw [`Self::observe`] when you want every
+    /// score.
+    pub fn observe_gated(&mut self, key: K, ts: Timestamp, bytes: u64) -> Option<BeaconScore<K>> {
+        let score = self.observe(key.clone(), ts, bytes)?;
+        if score.score < self.anomaly_threshold {
+            return None;
+        }
+        let state = self.keys.get_mut(&key)?;
+        if let Some(last) = state.last_emitted
+            && ts.saturating_sub(last) < self.cooldown
+        {
+            return None;
+        }
+        state.last_emitted = Some(ts);
+        Some(score)
+    }
+
     /// Drop per-key state (call on flow end).
     pub fn forget(&mut self, key: &K) {
         self.keys.remove(key);
@@ -166,6 +220,17 @@ where
     /// Number of keys currently tracked.
     pub fn tracked(&self) -> usize {
         self.keys.len()
+    }
+
+    /// Drop keys whose newest sample is older than `ttl` before
+    /// `now` — bounds memory across key churn (issue #131).
+    pub fn evict_stale(&mut self, now: Timestamp, ttl: Duration) {
+        self.keys.retain(|_, state| {
+            state
+                .samples
+                .back()
+                .is_some_and(|(ts, _)| now.saturating_sub(*ts) <= ttl)
+        });
     }
 }
 

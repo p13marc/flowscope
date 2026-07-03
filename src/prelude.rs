@@ -202,6 +202,10 @@ pub use crate::parser_kind::ParserKind;
 // `attack_technique()` maps to MITRE ATT&CK Txxxx IDs.
 #[cfg(feature = "tracker")]
 pub use crate::detector_kind::DetectorKind;
+// Issue #131 (0.21): unified detector trait + registry pipeline
+// and the derived aggregation keys detectors pivot on.
+#[cfg(feature = "tracker")]
+pub use crate::detect::registry::{Detector, DetectorRegistry, DgaDetector, HostPair, SrcHost};
 // Issue #8 (0.18): ECH GREASE-vs-real classification — surface
 // next to the rest of the TLS handshake vocabulary.
 #[cfg(feature = "session")]
