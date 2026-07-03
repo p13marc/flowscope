@@ -67,9 +67,14 @@
 mod bloom;
 mod bucketed;
 mod burst;
+// Issue #134 (0.21): sequential change-point detectors (CUSUM /
+// Page-Hinkley).
+mod change_point;
 mod count_min;
 // Issue #134 (0.21): delete-capable counting-Bloom membership.
 mod counting_bloom;
+// Issue #134 (0.21): DdSketch relative-error quantiles + windowed.
+mod ddsketch;
 mod ewma;
 // Issue #134 (0.21): per-key EWMA mean + variance.
 mod ewma_var;
@@ -95,8 +100,10 @@ mod xbits;
 pub use bloom::BloomFilter;
 pub use bucketed::TimeBucketedCounter;
 pub use burst::{BurstDetector, BurstHit};
+pub use change_point::{ChangeDirection, ChangePoint, Cusum, InterArrivalPageHinkley, PageHinkley};
 pub use count_min::CountMinSketch;
 pub use counting_bloom::CountingBloomFilter;
+pub use ddsketch::{DdSketch, WindowedQuantiles};
 pub use ewma::Ewma;
 pub use ewma_var::{EwmaVar, EwmaVarValue};
 pub use first_seen::FirstSeen;

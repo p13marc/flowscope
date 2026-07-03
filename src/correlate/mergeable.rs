@@ -38,8 +38,21 @@
 //! - **`TopK` (Misra-Gries / Space-Saving) merge** is from
 //!   Metwally et al. PODS '05 — pairwise minimum of counters,
 //!   then re-truncate to capacity. Documented in the impl.
+//! - **`DdSketch` / `WindowedQuantiles` (issue #134) ARE
+//!   `Mergeable`** — log-spaced bins union by re-adding each bin
+//!   at its representative value through the same grow/collapse
+//!   path, so the result honours the receiver's bin budget.
+//!   Panic on `alpha` / `max_bins` (and window / bucket_width for
+//!   the windowed form) mismatch.
+//! - **`Cusum` / `PageHinkley` (issue #134) are deliberately NOT
+//!   `Mergeable`.** Both maintain a cumulative sum over the
+//!   *ordered* sample sequence — their state is **path-dependent**,
+//!   so no order-independent union exists and the commutative +
+//!   associative contract cannot hold. Shard the input stream
+//!   (one detector per key per shard) instead of merging detector
+//!   state.
 //!
-//! Issue #19 (Release A).
+//! Issue #19 (Release A); extended in issue #134 (0.21).
 
 /// Combine sharded per-RSS-queue state off the hot path.
 ///
