@@ -57,6 +57,8 @@ the categories sort logically in `ls`.
 | **`kerberoast_hunter`** *(0.18)* | `pcap,kerberos` | Detect TGS-REQ for RC4-HMAC service tickets (T1558.003) via `KerberosMessage::kerberoast_suspect`. |
 | **`ldap_recon_hunter`** *(0.18)* | `pcap,ldap` | BloodHound / GetUserSPNs enumeration (T1087.002) — flags LDAP searches for `servicePrincipalName` + Simple binds with cleartext credentials. |
 | **`asset_inventory`** *(0.18)* | `pcap,asset,arp` | Build a MAC-keyed `flowscope::asset::Inventory` from ARP traffic. |
+| **`asset_fingerprint_correlation`** *(0.22)* | `asset,tls,tls-fingerprints` | Correlate a TLS JA3/JA4 fingerprint + a hostname into one MAC-keyed `Asset` record via `Asset::from_tls_handshake`, with derived `role()` (#137). |
+| **`ip_fragment_reassembly`** *(0.22)* | *(none)* | Reassemble a fragmented IP datagram and flag overlap-based evasion (teardrop) via `IpFragmentReassembler` (#138). |
 | **`client_fingerprint_catalog`** *(0.18)* | `pcap,tls,tls-fingerprints,http,ssh,extractors,tracker` | Per-source-IP join of JA3 / JA4 / JA4H (gated on `ja4plus`) / HASSH / HTTP User-Agent — the cross-protocol client identity catalog. |
 | **`arp_spoof_detector`** *(0.18)* | `arp,pcap` | Flag ARP-cache-poisoning patterns via IP→MAC binding changes (`NeighborTable`). |
 | **`smb_lateral_movement`** *(0.18)* | `smb,pcap` | SMB2/3 lateral-movement signals — tree connects, NTLM identity tuples, DCE-RPC binds. |

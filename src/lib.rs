@@ -94,7 +94,7 @@
 //! | `asset` | [`asset`] | `Asset` + LRU `Inventory`; self-sufficient (pulls its discovery parsers) |
 //! | `analysis` | [`analysis`] | `FlowAnalyzer` → risk / IOC enriched flow records |
 //! | `tcp_fingerprint` | [`tcp_fingerprint`] | p0f-style passive TCP/IP OS fingerprint |
-//! | `fingerprint` | [`detect::fingerprint`] | encrypted-flow behavioural fingerprint |
+//! | `fingerprint` | [`detect::fingerprint`] | encrypted-flow **behavioural** fingerprint (not the JA4+ facade — see below) |
 //! | `tls-fingerprints` | [`tls`] | JA3 + JA4 TLS *client* fingerprints (royalty-free) |
 //! | `ja4plus` | [`tls`] | JA4S/JA4X server fingerprints (**FoxIO License 1.1**, off by default) |
 //! | `ml-features` / `ml-features-nprint` | [`ml_features`] / [`nprint`] | CICFlowMeter vector / nPrint bit matrix |
@@ -106,6 +106,14 @@
 //! | `chrono` | [`Timestamp`] | `chrono::DateTime<Utc>` interop |
 //! | `pcap` | [`pcap`] | pcap file source for offline replay |
 //! | `serde` | — | `Serialize`/`Deserialize` on every public type (locks wire vocabulary) |
+//!
+//! **Always-on modules** (no feature gate):
+//!
+//! | Module | What you get |
+//! |--------|--------------|
+//! | [`fingerprint`] | unified JA4+ facade — one import site for the whole family, grouped by license (distinct from the `fingerprint`-feature behavioural detector above) |
+//! | [`app_proto`] | identify h2 / h3 + DoT / DoQ / DoH over an encrypted transport from ALPN / SNI / port (no decryption) |
+//! | [`ip_fragment`] | IP fragment reassembly (RFC 791 key, RFC 5722 overlap-drop) — defeats fragmentation-based L4/L7 evasion |
 //!
 //! **Observability** (zero-cost when off):
 //!

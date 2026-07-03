@@ -7,6 +7,20 @@
 //! the motivating case for ClientHello reassembly. Recognising the
 //! group codepoint turns "the CH is suspiciously large" into a
 //! first-class, named signal.
+//!
+//! # Example
+//!
+//! ```
+//! use flowscope::tls::{is_pq_hybrid_group, pq_hybrid_group_name};
+//!
+//! // X25519MLKEM768 — the Chrome 131+ / Firefox default.
+//! assert!(is_pq_hybrid_group(0x11ec));
+//! assert_eq!(pq_hybrid_group_name(0x11ec), Some("X25519MLKEM768"));
+//!
+//! // Classical X25519 is not a PQ hybrid.
+//! assert!(!is_pq_hybrid_group(0x001d));
+//! assert_eq!(pq_hybrid_group_name(0x001d), None);
+//! ```
 
 /// `true` if `group` is a known post-quantum **hybrid**
 /// key-exchange named group (IANA TLS Supported Groups).

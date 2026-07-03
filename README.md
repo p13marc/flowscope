@@ -115,7 +115,14 @@ Highlights:
   [JA3 / JA4](https://github.com/FoxIO-LLC/ja4) client
   fingerprints. **QUIC Initial** passive decrypt → ClientHello
   SNI / ALPN — the only L7 visibility you have on HTTP/3 +
-  DoQ.
+  DoQ. **Post-quantum ClientHello reassembly** (X25519MLKEM768
+  splits the CH across segments / Initials) so SNI + fingerprints
+  survive. **Encrypted-DNS + HTTP/2·3 identification** from
+  ALPN / SNI / port (`app_proto` — DoH / DoT / DoQ, h2 / h3),
+  no decryption.
+- **Evasion-hardening.** IP-fragment reassembly
+  (`ip_fragment` — RFC 5722 overlap-drop) so a fragmented
+  payload can't slip past an L4/L7 parser.
 - **AD recon & lateral movement.** Kerberos
   (Kerberoast / RC4 downgrade signal), LDAP
   (`servicePrincipalName` queries =
@@ -127,10 +134,17 @@ Highlights:
   WireGuard.
 - **Asset discovery.** ARP / NDP / DHCP (with Fingerbank-style
   fingerprint) / LLDP / CDP / mDNS / NetBIOS-NS / SSDP, unified
-  in a MAC-keyed `Inventory` via the `asset` feature.
+  in a MAC-keyed `Inventory` via the `asset` feature — now
+  **correlating TLS / SSH / p0f fingerprints** (JA3 / JA4 / JA4X
+  / HASSH / p0f) and x509 subject / SAN into the same record, with
+  a derived device `role()`.
 - **Anomaly detectors.** Beaconing (RITA-style CV), port-scan
   (TRW / Jung 2004), DGA (bigram log-likelihood with embedded
   English baseline), entropy + n-gram primitives.
+- **Traffic accounting.** Throughput grouped by an opaque owner
+  key — PID / cgroup / security identity — via `BandwidthByKey`,
+  so you get bandwidth-by-process without flowscope ever learning
+  what a process is.
 - **Structured output.** Suricata-compatible EVE JSON, Zeek
   `conn.log`, NDJSON, CSV, binary IPFIX (RFC 7011/7012),
   CICFlowMeter ML feature vectors, nPrint per-packet bit
@@ -202,7 +216,7 @@ AF_XDP) which consumes flowscope's traits.
 
 ```toml
 [dependencies]
-flowscope = { version = "0.20", features = ["full"] }
+flowscope = { version = "0.22", features = ["full"] }
 ```
 
 MSRV is Rust 1.88. The `full` feature pulls in everything; for production
@@ -226,9 +240,11 @@ Per-feature dependency tree is documented inline in
 | [`docs/discoverability.md`](docs/discoverability.md) | one-page prelude tour grouped by use case |
 | [`docs/performance.md`](docs/performance.md) | criterion bench methodology + numbers |
 | [`docs/design.md`](docs/design.md) | why flowscope is shaped the way it is |
+| [`docs/migration-0.21-to-0.22.md`](docs/migration-0.21-to-0.22.md) | the 0.22 breaks — stateful `QuicUdpParser::new()` (PQ ClientHello reassembly) + `parser_kinds` removal — plus the additive 0.22 surface |
+| [`docs/migration-0.20-to-0.21.md`](docs/migration-0.20-to-0.21.md) | the 0.21 detection-architecture breaks — typed `DetectorKind`, `DetectorScore::kind()`, opt-in per-packet `source_idx` |
 | [`docs/migration-0.19-to-0.20.md`](docs/migration-0.19-to-0.20.md) | the 0.20 driver/event convergence — one typed `Driver<E>`, removal of `Flow{Session,Datagram}Driver` + `SessionEvent`, with migration recipes |
 | [`docs/migration-0.17-to-0.18.md`](docs/migration-0.17-to-0.18.md) | the two BREAKING 0.18 changes (`parse() → Result<T, ParseError>` across new parsers + primitive→enum lifts for LDAP / Kerberos / nPrint / DNP3) with migration recipes |
-| [`examples/`](examples/) | 60+ runnable examples grouped by use case (l7 logging, forensics, detection, observability, export, custom protocols, multi-protocol, performance, low-level) |
+| [`examples/`](examples/) | 70+ runnable examples grouped by use case (l7 logging, forensics, detection, observability, export, custom protocols, multi-protocol, performance, low-level) |
 | [`CHANGELOG.md`](CHANGELOG.md) | release history + migration recipes |
 
 ## License

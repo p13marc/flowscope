@@ -76,10 +76,13 @@ Test count after the cycle: **1919 passing** (up from 1890 at
 -D warnings`, zero rustdoc warnings. New modules:
 `src/app_proto.rs`, `src/ip_fragment.rs`, `src/tls/pq.rs`,
 `src/correlate/bandwidth.rs`. New examples
-`examples/01-l7-logging/encrypted_app_classify.rs` +
-`examples/04-observability/bandwidth_by_owner.rs`. Migration
-recipes in `docs/migration-0.21-to-0.22.md`. **Not published to
-crates.io** — awaiting release consent.
+`examples/01-l7-logging/encrypted_app_classify.rs`,
+`examples/04-observability/bandwidth_by_owner.rs`,
+`examples/02-forensics/ip_fragment_reassembly.rs` +
+`asset_fingerprint_correlation.rs`. The five new public modules
+each ship a rustdoc doctest. Migration recipes in
+`docs/migration-0.21-to-0.22.md`. **Not published to crates.io** —
+awaiting release consent.
 
 **0.21.0 cycle** (detection architecture — the #140 roadmap
 keystone group, **release-ready, not yet published** as of

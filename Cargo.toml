@@ -579,6 +579,15 @@ path = "examples/02-forensics/tls_inventory.rs"
 required-features = ["tls", "tls-fingerprints", "pcap"]
 
 [[example]]
+name = "ip_fragment_reassembly"
+path = "examples/02-forensics/ip_fragment_reassembly.rs"
+
+[[example]]
+name = "asset_fingerprint_correlation"
+path = "examples/02-forensics/asset_fingerprint_correlation.rs"
+required-features = ["asset", "tls", "tls-fingerprints"]
+
+[[example]]
 name = "client_fingerprint_catalog"
 path = "examples/02-forensics/client_fingerprint_catalog.rs"
 required-features = [

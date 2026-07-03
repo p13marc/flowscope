@@ -54,6 +54,24 @@
 //! key a lookup by the `String` a `*_fingerprint` function returns
 //! — a natural feed for the [`detect::IocSet`](crate::detect) /
 //! asset layers.
+//!
+//! # Example
+//!
+//! One import site for JA3 + JA4 (both royalty-free), computed from
+//! a parsed `TlsClientHello`:
+//!
+//! ```
+//! # #[cfg(all(feature = "tls", feature = "tls-fingerprints"))]
+//! # {
+//! use flowscope::fingerprint::{ja3_fingerprint, ja4_fingerprint};
+//! use flowscope::tls::TlsClientHello;
+//!
+//! let ch = TlsClientHello::default();
+//! let ja3: String = ja3_fingerprint(&ch);
+//! let ja4: String = ja4_fingerprint(&ch);
+//! assert!(!ja3.is_empty() && !ja4.is_empty());
+//! # }
+//! ```
 
 // ─── Royalty-free: JA3 + JA4 client (tls-fingerprints) ───────────
 
