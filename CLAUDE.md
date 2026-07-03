@@ -23,7 +23,7 @@ the core.
 
 **0.22.0 cycle** (fingerprinting & encrypted-traffic frontier —
 the #140 roadmap's fingerprinting/L7-depth group,
-**release-ready, not yet published** as of 2026-07-03).
+**published to crates.io as 0.22.0 on 2026-07-03**).
 
 Six PRs (#151–#155 + #141), one branch/PR per issue,
 breaking-first so `docs/migration-0.21-to-0.22.md` accretes. Closes
@@ -81,12 +81,12 @@ Test count after the cycle: **1919 passing** (up from 1890 at
 `examples/02-forensics/ip_fragment_reassembly.rs` +
 `asset_fingerprint_correlation.rs`. The five new public modules
 each ship a rustdoc doctest. Migration recipes in
-`docs/migration-0.21-to-0.22.md`. **Not published to crates.io** —
-awaiting release consent.
+`docs/migration-0.21-to-0.22.md`. Published to crates.io as
+`0.22.0` on 2026-07-03 (carrying the 0.21.0 cycle with it).
 
 **0.21.0 cycle** (detection architecture — the #140 roadmap
-keystone group, **release-ready, not yet published** as of
-2026-07-03).
+keystone group, **never published separately — shipped inside
+0.22.0 on 2026-07-03**).
 
 Eight PRs (#146–#149 + earlier branches), one branch/PR per
 issue, sequenced breaking-first so the migration doc
@@ -139,8 +139,9 @@ Test count after the cycle: **1890 passing** (up from 1763 at
 `src/detect/patterns/{dns_tunnel,nod,conn_flood,data_exfil}.rs`,
 `src/correlate/{ewma_var,first_seen,counting_bloom,change_point,ddsketch}.rs`,
 `src/dns/name_map.rs`. Migration recipes in
-`docs/migration-0.20-to-0.21.md`. **Not published to crates.io** —
-awaiting release consent.
+`docs/migration-0.20-to-0.21.md`. Never published as a standalone
+crates.io release — its changes shipped inside `0.22.0` on
+2026-07-03.
 
 **0.20.0 cycle** (driver/event convergence + 1.0-prep
 strong-typing sweep, shipped 2026-06-29).
