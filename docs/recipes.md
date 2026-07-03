@@ -526,13 +526,13 @@ flushes and recovers the sink.
 
 ```toml
 # CSV + Zeek conn.log writers — no extra deps.
-flowscope = { version = "0.18", features = ["emit"] }
+flowscope = { version = "0.22", features = ["emit"] }
 
 # NDJSON writer — adds serde_json.
-flowscope = { version = "0.18", features = ["emit-ndjson"] }
+flowscope = { version = "0.22", features = ["emit-ndjson"] }
 
 # Suricata 7.x EVE JSON — adds serde_json (0.12).
-flowscope = { version = "0.18", features = ["emit-eve"] }
+flowscope = { version = "0.22", features = ["emit-eve"] }
 ```
 
 ```rust,ignore
@@ -775,8 +775,8 @@ when their features are compiled in.
 
 ## Cross-flow correlation — `flowscope::correlate`
 
-The 0.9 `correlate` module ships three primitives for
-cross-flow patterns:
+The `correlate` module ships a growing family of cross-flow
+primitives. The originals:
 
 - `TimeBucketedCounter<K>` — windowed per-key event counter for
   rate-limit / threshold detection.
@@ -784,6 +784,13 @@ cross-flow patterns:
   matching.
 - `SequencePattern` trait — generic FSM for event-stream
   detectors.
+
+Since then it has grown per-key rate (`RollingRate<K, V>`,
+`BandwidthByKey<K>`), running statistics + change-point
+(`WelfordStats`, `EwmaVar`, `Cusum` / `PageHinkley`), quantiles
+(`DdSketch` / `WindowedQuantiles`), membership sketches, and
+top-N (`TopK`). See [`docs/discoverability.md`](discoverability.md)
+for the by-use-case tour.
 
 ### Rate-limit detection
 
@@ -876,7 +883,7 @@ feature — `Histogram` for explicit-bucket distributions
 reads on unbounded streams.
 
 ```toml
-flowscope = { version = "0.18", features = ["aggregate"] }
+flowscope = { version = "0.22", features = ["aggregate"] }
 ```
 
 ```rust,ignore
@@ -1117,6 +1124,13 @@ The operationally-most-common monitor pattern: per-app
 bytes/sec over a sliding window, ranked top-N. `RollingRate`
 is the new primitive; `app_label` is the always-Some label
 key.
+
+> **When the key is an owner, not an app:** if you want
+> bytes-per-*owner* (PID / cgroup / security identity) with
+> separate tx/rx rates and a wire-vs-goodput tag, reach for
+> [`correlate::BandwidthByKey<K>`](discoverability.md) (0.22,
+> #141) instead — it wraps two `RollingRate`s and does the
+> tx/rx split for you.
 
 ```rust,ignore
 use std::time::Duration;

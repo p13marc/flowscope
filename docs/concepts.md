@@ -404,7 +404,9 @@ lookups:
 
 - `HttpRequest::host()`, `user_agent()`, `cookie()`, `header(name)`
 - `HttpResponse::content_type()`, `content_length()`, `set_cookie()`
-- `TlsClientHello::sni()`
+- `TlsClientHello::sni()`; `pq_key_share` / `key_share_groups`
+  (0.22) — post-quantum hybrid key-exchange signal (the reason a
+  modern ClientHello spans several segments)
 - `IcmpType::is_error()`, `error_inner()` — extract the embedded
   `(src, dst, proto, src_port, dst_port)` from ICMP error
   messages for cross-protocol correlation

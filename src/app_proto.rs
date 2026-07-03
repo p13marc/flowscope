@@ -17,6 +17,28 @@
 //! This closes the "encrypted DNS is invisible" and "no HTTP/2·3
 //! visibility" NDR gaps without a full H2/H3 parser — detection,
 //! not decode.
+//!
+//! # Example
+//!
+//! ```
+//! use flowscope::app_proto::{classify, AppProtocol, Transport};
+//!
+//! // h2 to a normal host is HTTP/2…
+//! let p = classify(&["h2"], Some("example.com"), Transport::Tls, 443);
+//! assert_eq!(p, AppProtocol::Http2);
+//!
+//! // …but h2 to a known DoH resolver is DNS-over-HTTPS.
+//! let p = classify(&["h2"], Some("cloudflare-dns.com"), Transport::Tls, 443);
+//! assert_eq!(p, AppProtocol::DnsOverHttps);
+//! assert!(p.is_encrypted_dns());
+//!
+//! // Port 853 with no ALPN still resolves to DoT / DoQ.
+//! let none: &[&str] = &[];
+//! assert_eq!(
+//!     classify(none, None, Transport::Quic, 853),
+//!     AppProtocol::DnsOverQuic,
+//! );
+//! ```
 
 /// Transport an application protocol is riding.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

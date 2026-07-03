@@ -29,6 +29,28 @@
 //! for any address family with no feature required; an IPv6
 //! convenience awaits Fragment-header (next-header 44) body decode
 //! in `layers`.
+//!
+//! # Example
+//!
+//! ```
+//! use flowscope::ip_fragment::{FragmentKey, IpFragmentReassembler};
+//! use flowscope::Timestamp;
+//!
+//! let mut r = IpFragmentReassembler::new();
+//! let key = FragmentKey {
+//!     src: "10.0.0.1".parse().unwrap(),
+//!     dst: "10.0.0.2".parse().unwrap(),
+//!     protocol: 17, // UDP
+//!     id: 42,
+//! };
+//! let now = Timestamp::new(0, 0);
+//!
+//! // Fragment 1 (offset 0, More-Fragments set) — incomplete.
+//! assert!(r.push(key, 0, true, b"AAAAAAAA", now).is_none());
+//! // Fragment 2 (offset 8, last) — completes the datagram.
+//! let datagram = r.push(key, 8, false, b"BBBB", now).unwrap();
+//! assert_eq!(datagram, b"AAAAAAAABBBB");
+//! ```
 
 use std::collections::{BTreeMap, HashMap};
 use std::net::IpAddr;

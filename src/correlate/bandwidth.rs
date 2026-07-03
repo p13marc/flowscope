@@ -22,6 +22,30 @@
 //! something different. Every aggregate is tagged with its
 //! [`ByteSemantics`] so a downstream never silently compares wire
 //! bytes against application goodput.
+//!
+//! # Example
+//!
+//! ```
+//! use std::time::Duration;
+//! use flowscope::Timestamp;
+//! use flowscope::correlate::{BandwidthByKey, Attribution};
+//!
+//! // Owner key = a PID the consumer joined externally.
+//! let mut bw = BandwidthByKey::<Attribution>::new_unbounded(
+//!     Duration::from_secs(10),
+//!     Duration::from_secs(1),
+//! );
+//! for s in 0..10 {
+//!     let now = Timestamp::new(s, 0);
+//!     bw.record_tx(Attribution(1234), 1_000, now);
+//!     bw.record_rx(Attribution(1234), 500, now);
+//! }
+//! let now = Timestamp::new(9, 0);
+//! assert!((bw.tx_bps(&Attribution(1234), now) - 1_000.0).abs() < 50.0);
+//! // Rank owners by combined tx+rx rate.
+//! let top = bw.top_k(5, now);
+//! assert_eq!(top[0].0, Attribution(1234));
+//! ```
 
 use std::hash::Hash;
 use std::time::Duration;

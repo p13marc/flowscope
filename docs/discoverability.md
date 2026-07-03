@@ -19,6 +19,7 @@ For the conceptual layer-by-layer reference, see
 |---|---|
 | [`TimeBucketedCounter<K>`](https://docs.rs/flowscope/latest/flowscope/correlate/struct.TimeBucketedCounter.html) | Bumps `+= 1` per call; window + bucket-width split. Pre-built for rate-based anomaly thresholds. |
 | [`RollingRate<K, V>`](https://docs.rs/flowscope/latest/flowscope/correlate/struct.RollingRate.html) | Generic `V` increments (bytes/sec, custom units); `rate()` returns `f64` per-second. Bucket-reuse zero-alloc. **0.14, plan 164.** |
+| [`BandwidthByKey<K>`](https://docs.rs/flowscope/latest/flowscope/correlate/struct.BandwidthByKey.html) | Per-owner **tx/rx** byte-rate over a window — bandwidth grouped by an opaque owner key (PID / cgroup / `Attribution`). `tx_bps` / `rx_bps` / `top_k`, `ByteSemantics` (wire vs goodput) tag. **0.22, #141.** |
 | [`Ewma<K>`](https://docs.rs/flowscope/latest/flowscope/correlate/struct.Ewma.html) | Exponential moving average — smoothed view for latency / throughput dashboards. |
 
 ## "I want to track unique things per key over time"
@@ -125,14 +126,46 @@ agree (Community ID, biflow keys, dedup); reach for `side` for
 | `EveJsonWriter::write_owned_anomaly` | One-call Suricata EVE emission. |
 | `FlowEventNdjsonWriter::write_owned_anomaly` | NDJSON variant for ES / Loki / ClickHouse. |
 
-## Prelude manifest (0.14)
+## "I want to identify the app over an encrypted transport"
+
+| Primitive | Pitch |
+|---|---|
+| [`app_proto::classify`](https://docs.rs/flowscope/latest/flowscope/app_proto/fn.classify.html) | ALPN + SNI + port → [`AppProtocol`](https://docs.rs/flowscope/latest/flowscope/app_proto/enum.AppProtocol.html) — h2 / h3 / DoT / DoQ / DoH, no decryption. **0.22, #138.** |
+| [`app_proto::is_known_doh_host`](https://docs.rs/flowscope/latest/flowscope/app_proto/fn.is_known_doh_host.html) | Curated public-resolver SNI list — the only passive tell that HTTPS is actually DoH. **0.22, #138.** |
+| `AppProtocol::from_tls_handshake` / `from_quic_initial` | Classify straight from a parsed `TlsHandshake` / `QuicInitial`. **0.22, #138.** |
+| [`tls::is_pq_hybrid_group`](https://docs.rs/flowscope/latest/flowscope/tls/fn.is_pq_hybrid_group.html) / `pq_hybrid_group_name` | Recognise post-quantum hybrid key-exchange groups (X25519MLKEM768…). `TlsClientHello.pq_key_share` / `key_share_groups` carry the signal. **0.22, #135.** |
+
+## "I want to defeat fragmentation evasion"
+
+| Primitive | Pitch |
+|---|---|
+| [`ip_fragment::IpFragmentReassembler`](https://docs.rs/flowscope/latest/flowscope/ip_fragment/struct.IpFragmentReassembler.html) | Reassemble a fragmented IP datagram (RFC 791 key) so a split payload can't slip past an L4/L7 parser. `push` / `push_ipv4`; **overlapping fragments drop the datagram** (RFC 5722) + `overlaps()` IOC. **0.22, #138.** |
+
+## "I want an asset inventory keyed by MAC"
+
+| Primitive | Pitch |
+|---|---|
+| [`Inventory`](https://docs.rs/flowscope/latest/flowscope/struct.Inventory.html) / [`Asset`](https://docs.rs/flowscope/latest/flowscope/struct.Asset.html) | LRU `Asset` records keyed by MAC (behind `asset`). Fed by `from_arp` / `from_dhcp` / `from_lldp` / `from_mdns` / … |
+| `Asset::from_tls_handshake` / `from_ssh_kexinit` / `from_tcp_fingerprint` | Correlate JA3 / JA4 / JA4X / HASSH / p0f — and x509 subject / SAN — into the same MAC record. **0.22, #137.** |
+| `Asset::role()` / `source_count()` / `first_seen` | Derived device [`AssetRole`](https://docs.rs/flowscope/latest/flowscope/enum.AssetRole.html), confidence, and age. **0.22, #137.** |
+
+## "I want TLS / HTTP / SSH fingerprints"
+
+| Primitive | Pitch |
+|---|---|
+| [`flowscope::fingerprint`](https://docs.rs/flowscope/latest/flowscope/fingerprint/index.html) | One import site for the whole JA4+ family, grouped by license (royalty-free `tls-fingerprints` vs FoxIO `ja4plus`). **0.22, #136.** |
+| `tls::ja3_fingerprint` / `ja3_canonical` | Standalone JA3 from a parsed `TlsClientHello`. **0.22, #136.** |
+
+## Prelude manifest
 
 `use flowscope::prelude::*;` brings the following into scope
 (behind their respective feature gates):
 
 **Always available:**
 `AnomalyFields`, `AsPacketView`, `Error`, `ErrorCode`, `ErrorKind`,
-`KeyFields`, `Module`, `PacketView`, `Result`, `Timestamp`.
+`KeyFields`, `Module`, `PacketView`, `Result`, `Timestamp`,
+`AppProtocol` *(0.22)*, `AppTransport` *(0.22)*, `FragmentKey`
+*(0.22)*, `IpFragmentReassembler` *(0.22)*.
 
 **`extractors`:** `FiveTuple`, `Extracted`, `FlowExtractor`, `L4Proto`,
 `Orientation`, `TcpFlags`, `TcpInfo`, `Layer`, `LayerKind`,
@@ -141,7 +174,9 @@ agree (Community ID, biflow keys, dedup); reach for `side` for
 **`tracker`:** `AnomalyKind`, `EndReason`, `FlowEvent`, `FlowSide`,
 `FlowStats`, `FlowTracker`, `FlowTrackerConfig`,
 `TimeBucketedCounter`, `TimeBucketedSet`, `KeyIndexed`,
-`BurstDetector`, `Ewma`, `TopK`, `RollingRate` *(0.14)*.
+`BurstDetector`, `Ewma`, `TopK`, `RollingRate` *(0.14)*,
+`BandwidthByKey` *(0.22)*, `ByteSemantics` *(0.22)*, `Attribution`
+*(0.22)*.
 
 **`tracker` + `extractors`:** `FlowStateMap`.
 

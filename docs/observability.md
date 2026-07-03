@@ -15,7 +15,7 @@ Both are **zero-cost when off**. Every entry point is an
 no runtime branches, no string formatting, no allocations.
 
 ```toml
-flowscope = { version = "0.9", features = ["metrics", "tracing"] }
+flowscope = { version = "0.22", features = ["metrics", "tracing"] }
 ```
 
 Pick one or both. Both depend on the `tracker` feature (already
