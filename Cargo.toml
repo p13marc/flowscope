@@ -626,7 +626,7 @@ required-features = ["pcap", "extractors", "tracker"]
 [[example]]
 name = "dns_tunnel_detector"
 path = "examples/03-detection/dns_tunnel_detector.rs"
-required-features = ["pcap", "dns", "extractors"]
+required-features = ["pcap", "dns", "extractors", "tracker", "emit-eve"]
 
 [[example]]
 name = "c2_beacon_finder"
@@ -958,6 +958,10 @@ required-features = ["extractors", "reassembler", "session", "test-helpers"]
 [[test]]
 name = "detector_registry"
 required-features = ["tracker", "extractors", "session", "test-helpers"]
+
+[[test]]
+name = "ndr_detectors"
+required-features = ["tracker", "extractors", "test-helpers"]
 
 [[test]]
 name = "serde_round_trip"
