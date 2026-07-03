@@ -156,6 +156,7 @@ pub(crate) fn build_client_hello(
     let mut alpn: Vec<String> = Vec::new();
     let mut supported_versions: Vec<TlsVersion> = Vec::new();
     let mut supported_groups: Vec<u16> = Vec::new();
+    let mut key_share_groups: Vec<u16> = Vec::new();
     let mut extension_types: Vec<u16> = Vec::new();
     let mut ech_present = false;
     let mut ech_config_id: Option<u8> = None;
@@ -192,6 +193,12 @@ pub(crate) fn build_client_hello(
                         supported_groups.push(g.0);
                     }
                 }
+                // key_share (51) and its pre-draft-23 codepoint (40)
+                // carry the actual public shares; a post-quantum
+                // hybrid share is what bloats the ClientHello.
+                TlsExtension::KeyShare(body) | TlsExtension::KeyShareOld(body) => {
+                    parse_key_share_groups(body, &mut key_share_groups);
+                }
                 TlsExtension::Unknown(_, body) if id == 0xfe0d => {
                     // ECH ClientHello outer (RFC draft §5.1):
                     //   1B  ECHClientHelloType    (0=outer, 1=inner)
@@ -212,6 +219,15 @@ pub(crate) fn build_client_hello(
         }
     }
 
+    // A PQ hybrid in the actual key_share is the definitive signal;
+    // fall back to the offered supported_groups (a client that
+    // key-shares a PQ group always lists it there too, but a client
+    // may advertise PQ capability without sharing yet).
+    let pq_key_share = key_share_groups
+        .iter()
+        .chain(supported_groups.iter())
+        .any(|g| crate::tls::is_pq_hybrid_group(*g));
+
     TlsClientHello {
         record_version,
         legacy_version,
@@ -227,6 +243,32 @@ pub(crate) fn build_client_hello(
         ech_present,
         ech_config_id,
         sni_is_outer: ech_present,
+        key_share_groups,
+        pq_key_share,
+    }
+}
+
+/// Parse the `key_share` extension body (ClientHello form,
+/// RFC 8446 §4.2.8) and push each entry's named group into `out`.
+///
+/// Body layout: `2B client_shares_len` then repeated
+/// `2B group | 2B key_exchange_len | key_exchange`. Malformed /
+/// truncated input stops the walk without erroring — the caller
+/// treats a partial parse as "what we could read".
+fn parse_key_share_groups(body: &[u8], out: &mut Vec<u16>) {
+    // Skip the 2-byte client_shares vector length prefix.
+    let Some(mut rest) = body.get(2..) else {
+        return;
+    };
+    while rest.len() >= 4 {
+        let group = u16::from_be_bytes([rest[0], rest[1]]);
+        let ke_len = u16::from_be_bytes([rest[2], rest[3]]) as usize;
+        out.push(group);
+        let advance = 4 + ke_len;
+        if rest.len() < advance {
+            break;
+        }
+        rest = &rest[advance..];
     }
 }
 

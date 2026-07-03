@@ -29,7 +29,7 @@ pub fn initials_from_pcap<P: AsRef<Path>>(
 ) -> Result<impl Iterator<Item = (FiveTupleKey, QuicInitial)>> {
     let source = PcapFlowSource::open(path)?;
     Ok(source
-        .datagrams(FiveTuple::bidirectional(), QuicUdpParser)
+        .datagrams(FiveTuple::bidirectional(), QuicUdpParser::new())
         .filter_map(|evt| evt.ok())
         .filter_map(|evt| match evt {
             SessionEvent::Application { key, message, .. } => Some((key, message)),

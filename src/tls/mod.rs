@@ -91,6 +91,8 @@ pub mod ja4x;
 mod parser;
 #[cfg(feature = "pcap")]
 mod pcap_iter;
+// Issue #135: post-quantum hybrid key-group recognition.
+mod pq;
 mod session;
 mod types;
 
@@ -112,6 +114,7 @@ pub use ja4x::{ja4x_for_chain, ja4x_for_der};
 pub(crate) use parser::build_client_hello;
 #[cfg(feature = "pcap")]
 pub use pcap_iter::{client_hellos_from_pcap, handshakes_from_pcap};
+pub use pq::{is_pq_hybrid_group, pq_hybrid_group_name};
 pub use session::{TlsMessage, TlsParser};
 pub use types::*;
 
