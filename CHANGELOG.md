@@ -54,6 +54,35 @@ every fingerprint for a growing share of modern clients.
   ~1.3 KiB PQ ClientHello split across TCP segments; the new PQ
   fields populate correctly through that path.
 
+### Added — encrypted-DNS + HTTP/2·3 detection, IP-fragment reassembly (#138)
+
+Modern L7 depth for a passive collector: name the application over
+an encrypted transport, and defeat fragmentation-based evasion.
+
+- **`flowscope::app_proto`** — identify HTTP/1.1 · HTTP/2 · HTTP/3
+  and DNS-over-{TLS,QUIC,HTTPS} from ALPN + SNI + port, no
+  decryption. `AppProtocol` enum + `classify(alpn, sni, transport,
+  port)` + `classify_alpn_token`, with `AppProtocol::from_tls_handshake`
+  (gated `tls`) / `from_quic_initial` (gated `quic`) adapters. DoH
+  is wire-identical to HTTPS, so `is_known_doh_host` carries a
+  curated public-resolver SNI list to reclassify `h2`/`h3` to a
+  known resolver as DoH. `is_encrypted_dns()` / `is_http()`
+  predicates + `as_str()` slugs. In the prelude as `AppProtocol` /
+  `AppTransport`.
+- **Port 853** added to `well_known` — `dns-over-tls` (TCP) /
+  `dns-over-quic` (UDP).
+- **`flowscope::ip_fragment::IpFragmentReassembler`** — reassembles
+  a fragmented IP datagram from its fragments (RFC 791 key
+  `(src, dst, protocol, id)`), so the reassembled payload can be
+  re-fed to the L4/L7 path and a fragmentation-split attack can't
+  slip past a first-fragment-only parser. Offset-ordered buffer,
+  reassembly timeout (default 30 s), per-datagram + concurrent-
+  datagram caps. **Overlapping fragments drop the whole datagram**
+  (RFC 5722) and increment `overlaps()` — a teardrop / evasion IOC.
+  Transport-agnostic `push` (no feature) + `push_ipv4` (gated
+  `extractors`). In the prelude. IPv6 Fragment-header decode is a
+  documented follow-up.
+
 ## 0.21.0 (unreleased) — detection architecture: typed DetectorKind, Detector trait + registry, NDR detectors
 
 The 2026 roadmap's (#140) keystone detection-architecture group,

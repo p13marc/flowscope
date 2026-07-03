@@ -183,6 +183,12 @@ pub mod ja4l;
 // the whole family, grouped by license. Empty in a build with no
 // fingerprint features enabled.
 pub mod fingerprint;
+// Issue #138: application-protocol identification over encrypted
+// transports (h2/h3, DoT/DoQ/DoH) from ALPN / SNI / port.
+pub mod app_proto;
+// Issue #138: IP fragment reassembly — defeats fragmentation-based
+// L4/L7 evasion by reassembling the original datagram.
+pub mod ip_fragment;
 #[cfg(feature = "tracker")]
 pub use anomaly::{DetectorScore, OwnedAnomaly};
 // Issue #131 (0.21): unified detector trait + registry at the
