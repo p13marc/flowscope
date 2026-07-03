@@ -42,6 +42,7 @@ the categories sort logically in `ls`.
 | **`http_exchanges`** | `http,pcap` | One log line per request/response PAIR via `HttpExchangeParser` (plan 107). Access-log-shaped rows with RTT and outcome. |
 | **`tls_observer`** | `tls,pcap` | SNI / ALPN / cipher list for every TLS ClientHello + ServerHello. |
 | **`quic_initial_observer`** *(0.18)* | `quic,pcap` | SNI / ALPN for every QUIC Initial packet (passive Initial decrypt). |
+| **`encrypted_app_classify`** *(0.22)* | *(none)* | Identify h2/h3 + DoT/DoQ/DoH over an encrypted transport from ALPN / SNI / port via `app_proto::classify` (#138). |
 | **`pcap_pulses`** | `tls,pcap` | Unified `session_pulses::<P>` stream — flow lifecycle **and** typed L7 messages from one loop, in wire order (#111). |
 | **`dns_log`** | `dns,pcap` | Query / response pairs with RTT correlation via `Correlator`. |
 
