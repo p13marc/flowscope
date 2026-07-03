@@ -7,7 +7,8 @@ use std::time::Duration;
 
 use flowscope::Timestamp;
 use flowscope::correlate::{
-    Ewma, EwmaVar, Mergeable, RollingRate, TimeBucketedCounter, TimeBucketedSet, TopK, WelfordStats,
+    Ewma, EwmaVar, FirstSeen, Mergeable, RollingRate, TimeBucketedCounter, TimeBucketedSet, TopK,
+    WelfordStats,
 };
 
 fn ts(secs: u32) -> Timestamp {
@@ -306,4 +307,63 @@ fn welford_trait_merge_is_commutative() {
     assert!((ab.mean() - ba.mean()).abs() < 1e-9);
     assert!((ab.variance_sample() - ba.variance_sample()).abs() < 1e-9);
     assert_eq!(ab.count(), ba.count());
+}
+
+// ─── FirstSeen (issue #134) ──────────────────────────────
+
+#[test]
+fn first_seen_merge_unions_with_min_first_max_last() {
+    let mut a: FirstSeen<u32> = FirstSeen::new(Duration::from_secs(100), 64);
+    let mut b: FirstSeen<u32> = FirstSeen::new(Duration::from_secs(100), 64);
+    a.observe(1, ts(5));
+    b.observe(1, ts(2)); // earlier first sighting on shard B
+    b.observe(1, ts(9)); // later last sighting on shard B
+    b.observe(2, ts(3));
+    a.merge(b);
+    // Earliest first_seen (2) survives the union.
+    assert_eq!(a.first_seen(&1, ts(10)), Some(ts(2)));
+    // Lone key from B retained.
+    assert!(a.seen(&2, ts(10)));
+    // Latest last_seen (9) drives expiry: alive at t=105 (within
+    // 100s of 9), dead at t=110.
+    assert!(a.seen(&1, ts(105)));
+    assert!(!a.seen(&1, ts(110)));
+}
+
+#[test]
+fn first_seen_merge_is_commutative() {
+    let mk = |obs: &[(u32, u32)]| {
+        let mut f: FirstSeen<u32> = FirstSeen::new(Duration::from_secs(100), 64);
+        for (k, t) in obs {
+            f.observe(*k, ts(*t));
+        }
+        f
+    };
+    let mut ab = mk(&[(1, 5), (2, 1)]);
+    ab.merge(mk(&[(1, 2), (3, 7)]));
+    let mut ba = mk(&[(1, 2), (3, 7)]);
+    ba.merge(mk(&[(1, 5), (2, 1)]));
+    for k in [1u32, 2, 3] {
+        assert_eq!(
+            ab.first_seen(&k, ts(8)),
+            ba.first_seen(&k, ts(8)),
+            "key {k}"
+        );
+    }
+}
+
+#[test]
+#[should_panic(expected = "matching ttl")]
+fn first_seen_merge_panics_on_ttl_mismatch() {
+    let mut a: FirstSeen<u32> = FirstSeen::new(Duration::from_secs(1), 64);
+    let b: FirstSeen<u32> = FirstSeen::new(Duration::from_secs(2), 64);
+    a.merge(b);
+}
+
+#[test]
+#[should_panic(expected = "matching capacity")]
+fn first_seen_merge_panics_on_capacity_mismatch() {
+    let mut a: FirstSeen<u32> = FirstSeen::new(Duration::from_secs(1), 64);
+    let b: FirstSeen<u32> = FirstSeen::new(Duration::from_secs(1), 128);
+    a.merge(b);
 }

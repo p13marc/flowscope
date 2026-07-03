@@ -150,9 +150,10 @@ pub use crate::correlate::BitStore;
 #[cfg(feature = "tracker")]
 pub use crate::correlate::{NeighborBinding, NeighborEvent, NeighborTable};
 // Issue #134 (0.21): streaming detector primitives — per-key
-// EWMA mean+variance (N-sigma baselines).
+// EWMA mean+variance (N-sigma baselines), delete-capable
+// counting-Bloom membership, first-seen/newly-observed TTL set.
 #[cfg(feature = "tracker")]
-pub use crate::correlate::{EwmaVar, EwmaVarValue};
+pub use crate::correlate::{CountingBloomFilter, EwmaVar, EwmaVarValue, FirstSeen};
 // Issue #4 (0.17): behavioural-fingerprint primitives.
 #[cfg(feature = "fingerprint")]
 pub use crate::detect::fingerprint::{FingerprintBuilder, FlowFingerprint};

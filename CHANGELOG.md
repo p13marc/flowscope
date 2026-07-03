@@ -71,6 +71,23 @@ existing `tracker` gate, hand-rolled per house convention):
   parallel-merge), and `correlate`'s module docs gained a
   "Hashing" section documenting the std-`RandomState` default and
   the seeded-`ahash` sharding recipe.
+- **`CountingBloomFilter<S>`** — delete-capable probabilistic
+  membership for churn-heavy seen-sets: the `BloomFilter` sibling
+  with 4-bit saturating counters (16 per word). Same sizing math
+  and Kirsch–Mitzenmacher double hashing; sticky saturation at 15
+  so deletes never create false negatives; `remove` checks
+  all-cells-nonzero before decrementing so absent-item removal
+  can't corrupt neighbours. `Mergeable` via cellwise saturating
+  add (associative).
+- **`FirstSeen<K, S>`** — bounded TTL'd first-seen/newly-observed
+  set: `observe(key, now) -> bool /* is_new */` with TTL running
+  from the **last** sighting (a continuously-seen key never
+  re-reports new; a key silent past the TTL does — the NOD
+  semantic, contrasted with `KeyIndexed`'s insertion-TTL).
+  LRU-bounded with the safe one-sided error (eviction ⇒ false
+  "new", never false "seen"); `seen`/`first_seen` are peek-based.
+  `Mergeable` as a min(first)/max(last) lattice union. Prereq for
+  the #132 `NewlyObservedDomainDetector`.
 
 ## 0.20.0 (2026-06-29) — NSM primitives + driver/event convergence + 1.0-prep API sweep
 
