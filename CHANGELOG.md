@@ -9,6 +9,29 @@ fingerprint correlation, a single-source parser registry, and
 throughput-by-owner aggregation — closing the last six open #140
 roadmap items.
 
+### Fixed — ICMPv6 error messages misdetected as ICMPv4
+
+The auto-detecting `IcmpParser` (`DatagramParser`) tried ICMPv4
+first and only fell back to ICMPv6 when the type byte was ≥ 128.
+ICMPv6 **error** types are 1–4, which collide with ICMPv4 type
+numbers, so every ICMPv6 error was silently misparsed:
+
+- ICMPv6 **Destination Unreachable** (type 1, incl. code 3
+  *Address Unreachable* — the v6 "host unreachable") decoded as
+  `Icmpv4Type::Other`, with `is_error() == false` and
+  `dest_unreachable_kind() == None` — so a consumer filtering for
+  host/dest-unreachable received **nothing** on IPv6.
+- ICMPv6 **Time Exceeded** (type 3) decoded as ICMPv4
+  *Destination Unreachable* — a traceroute reply mislabeled as a
+  network-unreachable error.
+
+Family detection now uses the ICMPv6-only high type range plus,
+for the ambiguous error types, the **version nibble of the
+embedded inner IP header**. `v4_only()` / `v6_only()` become true
+filters (a payload detected as the other family is skipped), so a
+per-family `datagram_broadcast` slot stays clean. ICMPv4 parsing
+was already correct and is unchanged.
+
 ### Added — unified `flowscope::fingerprint` surface + JA4+ gating audit (#136)
 
 - **`flowscope::fingerprint`** — one import site for the whole
