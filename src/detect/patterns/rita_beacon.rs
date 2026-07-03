@@ -208,15 +208,19 @@ where
     /// pattern). Metrics: `score`, `ts_score`, `ds_score`,
     /// `dur_score`, `ts_skew`, `mean_interval_secs`, `n`.
     pub fn into_anomaly(self, ts: crate::Timestamp) -> crate::OwnedAnomaly {
-        crate::OwnedAnomaly::new("BeaconRita", crate::event::Severity::Warning, ts)
-            .with_key(&self.key)
-            .with_metric("score", self.score)
-            .with_metric("ts_score", self.ts_score)
-            .with_metric("ds_score", self.ds_score)
-            .with_metric("dur_score", self.dur_score)
-            .with_metric("ts_skew", self.ts_skew)
-            .with_metric("mean_interval_secs", self.mean_interval.as_secs_f64())
-            .with_metric("n", self.n as f64)
+        crate::OwnedAnomaly::new(
+            crate::DetectorKind::BeaconRita,
+            crate::event::Severity::Warning,
+            ts,
+        )
+        .with_key(&self.key)
+        .with_metric("score", self.score)
+        .with_metric("ts_score", self.ts_score)
+        .with_metric("ds_score", self.ds_score)
+        .with_metric("dur_score", self.dur_score)
+        .with_metric("ts_skew", self.ts_skew)
+        .with_metric("mean_interval_secs", self.mean_interval.as_secs_f64())
+        .with_metric("n", self.n as f64)
     }
 }
 
@@ -225,8 +229,8 @@ impl<K> crate::DetectorScore for RitaBeaconScore<K>
 where
     K: crate::KeyFields + Clone,
 {
-    fn name(&self) -> &'static str {
-        "BeaconRita"
+    fn kind(&self) -> crate::DetectorKind {
+        crate::DetectorKind::BeaconRita
     }
 
     fn into_anomaly(self, ts: crate::Timestamp) -> crate::OwnedAnomaly {

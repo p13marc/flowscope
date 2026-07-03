@@ -1,5 +1,38 @@
 # Changelog
 
+## 0.21.0 (unreleased) — detection architecture: typed DetectorKind, Detector trait + registry, NDR detectors
+
+The 2026 roadmap's (#140) keystone detection-architecture group,
+plus the pDNS name map and the final tap-merge phase. Migration
+recipes in `docs/migration-0.20-to-0.21.md`.
+
+### Breaking — `OwnedAnomaly::kind` is typed `DetectorKind` (#133)
+
+Detector identity graduates from a string slug
+(`Cow<'static, str>`) to the typed `flowscope::DetectorKind` enum
+(`ParserKind` precedent, 0.20 #109): `BeaconCv`, `BeaconRita`,
+`PortScanTrw`, `Dga`, the four #132 detector kinds,
+`Other(&'static str)` for downstream detectors, and an `Unknown`
+deserialization fallback.
+
+- **The wire is byte-identical** — each variant serializes to the
+  exact slug 0.20 emitted (`"PortScanTRW"`, `"DgaScorer"`, …), as
+  a plain JSON string. EVE `anomaly.event` and NDJSON `kind`
+  consumers need no changes.
+- `OwnedAnomaly::new` takes `DetectorKind`;
+  `DetectorScore::name()` is now `kind() -> DetectorKind` (old
+  string = `kind().as_str()`).
+- `DetectorKind::attack_technique()` maps built-in kinds to
+  stable MITRE ATT&CK technique IDs (`PortScanTrw` → `"T1046"`,
+  beacons → `"T1071"`, `Dga` → `"T1568.002"`, …) — deletes the
+  slug→technique tables downstream consumers maintained.
+- `EveJsonWriter::write_owned_anomaly` emits an additive
+  `anomaly.attack_technique` field when the mapping exists.
+- `OwnedAnomaly::from_flow_anomaly` bridges via
+  `DetectorKind::Other(short_kind())` — emitted strings
+  unchanged; the typed tracker axis stays in `flowscope_kind`.
+- `DetectorKind` is exported at the crate root and in the prelude.
+
 ## 0.20.0 (2026-06-29) — NSM primitives + driver/event convergence + 1.0-prep API sweep
 
 Pure, no-async — fits the runtime-free lib rule. The largest pre-1.0

@@ -180,14 +180,17 @@ Every shipped detector's score implements
 `into_anomaly(ts: Timestamp) -> OwnedAnomaly` method that
 converts it to the canonical [`flowscope::OwnedAnomaly`] shape:
 
-- **`ScanScore<K>`** → `"PortScanTRW"` slug; verdict
+- **`ScanScore<K>`** → `DetectorKind::PortScanTrw`
+  (slug `"PortScanTRW"`); verdict
   observation + `log_likelihood` + `n_observed` metrics;
   severity follows verdict (`Scanner` → `Warning`,
   `Benign`/`Inconclusive` → `Info`).
-- **`BeaconScore<K>`** → `"BeaconCv"` slug; `score` + `cv_dt`
+- **`BeaconScore<K>`** → `DetectorKind::BeaconCv`
+  (slug `"BeaconCv"`); `score` + `cv_dt`
   + `cv_bytes` + `mean_interval_secs` + `n` metrics; severity
   `Warning` (beacon only emits when it has a hit).
-- **`DgaScore`** → `"DgaScorer"` slug; six feature metrics
+- **`DgaScore`** → `DetectorKind::Dga` (slug
+  `"DgaScorer"`); six feature metrics
   (`log_likelihood`, `length`, `vowel_ratio`, `digit_ratio`,
   `max_consonant_run`, `char_entropy`); severity `Info`
   (consumer thresholds on `log_likelihood` to escalate).
@@ -236,15 +239,15 @@ For custom detectors, implement `DetectorScore` on your score
 type and you get the same uniform emit path:
 
 ```rust,ignore
-use flowscope::{DetectorScore, OwnedAnomaly, Timestamp};
+use flowscope::{DetectorKind, DetectorScore, OwnedAnomaly, Timestamp};
 use flowscope::event::Severity;
 
 struct MyScore { hits: u32, max_burst: u32 }
 
 impl DetectorScore for MyScore {
-    fn name(&self) -> &'static str { "MyCustomDetector" }
+    fn kind(&self) -> DetectorKind { DetectorKind::Other("MyCustomDetector") }
     fn into_anomaly(self, ts: Timestamp) -> OwnedAnomaly {
-        OwnedAnomaly::new("MyCustomDetector", Severity::Warning, ts)
+        OwnedAnomaly::new(DetectorKind::Other("MyCustomDetector"), Severity::Warning, ts)
             .with_metric("hits", self.hits as f64)
             .with_metric("max_burst", self.max_burst as f64)
     }

@@ -44,7 +44,9 @@ use flowscope::emit::{EveJsonWriter, EveOptions};
 use flowscope::extract::FiveTuple;
 use flowscope::pcap::PcapFlowSource;
 use flowscope::reassembler::BufferedReassemblerFactory;
-use flowscope::{FlowDriver, KeyFields, OwnedAnomaly, PacketView, Timestamp, event::Severity};
+use flowscope::{
+    DetectorKind, FlowDriver, KeyFields, OwnedAnomaly, PacketView, Timestamp, event::Severity,
+};
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
 struct SrcIpKey(IpAddr);
@@ -98,12 +100,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 && score.score >= 0.7
                 && detector_emitted.insert(src)
             {
-                let anomaly = OwnedAnomaly::new("BeaconCv", Severity::Warning, view.timestamp)
-                    .with_key(&SrcIpKey(src))
-                    .with_metric("score", score.score)
-                    .with_metric("cv_dt", score.cv_dt)
-                    .with_metric("cv_bytes", score.cv_bytes)
-                    .with_metric("mean_interval_secs", score.mean_interval.as_secs_f64());
+                let anomaly =
+                    OwnedAnomaly::new(DetectorKind::BeaconCv, Severity::Warning, view.timestamp)
+                        .with_key(&SrcIpKey(src))
+                        .with_metric("score", score.score)
+                        .with_metric("cv_dt", score.cv_dt)
+                        .with_metric("cv_bytes", score.cv_bytes)
+                        .with_metric("mean_interval_secs", score.mean_interval.as_secs_f64());
                 eve.write_owned_anomaly(&anomaly)?;
             }
         }

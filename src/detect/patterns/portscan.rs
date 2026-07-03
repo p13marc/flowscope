@@ -177,7 +177,7 @@ where
             ScanVerdict::Benign => "benign",
             ScanVerdict::Inconclusive => "inconclusive",
         };
-        crate::OwnedAnomaly::new("PortScanTRW", severity, ts)
+        crate::OwnedAnomaly::new(crate::DetectorKind::PortScanTrw, severity, ts)
             .with_key(&self.key)
             .with_observation("verdict", verdict_slug)
             .with_metric("log_likelihood", self.log_likelihood)
@@ -190,8 +190,8 @@ impl<K> crate::DetectorScore for ScanScore<K>
 where
     K: crate::KeyFields + Clone,
 {
-    fn name(&self) -> &'static str {
-        "PortScanTRW"
+    fn kind(&self) -> crate::DetectorKind {
+        crate::DetectorKind::PortScanTrw
     }
 
     fn into_anomaly(self, ts: crate::Timestamp) -> crate::OwnedAnomaly {

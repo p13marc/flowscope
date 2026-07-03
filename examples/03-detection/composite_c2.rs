@@ -58,7 +58,7 @@ use flowscope::emit::EveJsonWriter;
 use flowscope::event::Severity;
 use flowscope::pcap::PcapFlowSource;
 use flowscope::tls::{TlsParser, TlsVersion};
-use flowscope::{KeyFields, OwnedAnomaly, PacketView, SessionParser, Timestamp};
+use flowscope::{DetectorKind, KeyFields, OwnedAnomaly, PacketView, SessionParser, Timestamp};
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
 struct SrcIpKey(IpAddr);
@@ -162,12 +162,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     for (src, profile) in &profiles {
         if profile.legs() >= 2 {
             composites += 1;
-            let anomaly = OwnedAnomaly::new("composite-c2", Severity::Critical, last_ts)
-                .with_key(&SrcIpKey(*src))
-                .with_metric("beacon_score", profile.beacon_score)
-                .with_metric("dga_hits", profile.dga_hits as f64)
-                .with_metric("weak_tls", profile.weak_tls as u8 as f64)
-                .with_metric("legs_tripped", profile.legs() as f64);
+            let anomaly = OwnedAnomaly::new(
+                DetectorKind::Other("composite-c2"),
+                Severity::Critical,
+                last_ts,
+            )
+            .with_key(&SrcIpKey(*src))
+            .with_metric("beacon_score", profile.beacon_score)
+            .with_metric("dga_hits", profile.dga_hits as f64)
+            .with_metric("weak_tls", profile.weak_tls as u8 as f64)
+            .with_metric("legs_tripped", profile.legs() as f64);
             eve.write_owned_anomaly(&anomaly)?;
         }
     }

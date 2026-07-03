@@ -5,8 +5,9 @@
 //! beacon, DGA, …) and consumed by emit sinks (EVE JSON, NDJSON).
 //! Use it when:
 //!
-//! - A detector's `kind` is a slug (not a flowscope [`AnomalyKind`]
-//!   variant) — typical for downstream-defined detectors.
+//! - A detector's identity is a [`DetectorKind`] (not a flowscope
+//!   [`AnomalyKind`] variant) — typical for pattern detectors and
+//!   downstream-defined detectors.
 //! - You need a serialisable value to retain past the event-loop
 //!   frame (channels, batch writers, cross-process pipelines).
 //! - You want a uniform emit path across multiple sinks.
@@ -38,7 +39,7 @@ use std::{borrow::Cow, net::IpAddr};
 use smallvec::SmallVec;
 
 use crate::{
-    Timestamp,
+    DetectorKind, Timestamp,
     anomaly_fields::KeyFields,
     event::{AnomalyKind, Severity},
 };
@@ -53,13 +54,14 @@ use crate::{
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]
 pub struct OwnedAnomaly {
-    /// Detector / classification slug.
+    /// Typed detector / classification identity (issue #133).
     ///
-    /// `&'static str` literals stay zero-alloc;
-    /// runtime-built slugs land in the owned variant. Typical
-    /// values: `"PortScanTRW"`, `"BeaconCv"`, `"DgaScorer"`,
-    /// downstream-defined detector names.
-    pub kind: Cow<'static, str>,
+    /// Serializes as its [`DetectorKind::as_str`] slug — the same
+    /// plain string (`"PortScanTRW"`, `"BeaconCv"`, `"DgaScorer"`,
+    /// …) the pre-0.21 `Cow<'static, str>` field carried, so the
+    /// wire shape is unchanged. Downstream-defined detectors use
+    /// [`DetectorKind::Other`].
+    pub kind: DetectorKind,
 
     /// Severity tier. Drives downstream log / metric / alert
     /// routing.
@@ -98,11 +100,17 @@ pub struct OwnedAnomaly {
 }
 
 impl OwnedAnomaly {
-    /// Construct with the given slug, severity, and timestamp.
-    /// All other fields default to empty / `None`.
-    pub fn new(kind: impl Into<Cow<'static, str>>, severity: Severity, ts: Timestamp) -> Self {
+    /// Construct with the given detector kind, severity, and
+    /// timestamp. All other fields default to empty / `None`.
+    ///
+    /// Custom detectors pass [`DetectorKind::Other`] with a stable
+    /// `&'static str` slug. There is deliberately no
+    /// `impl From<&str>` sugar: `Other("BeaconCv")` and
+    /// [`DetectorKind::BeaconCv`] would compare unequal while
+    /// emitting the same slug — a footgun the explicit enum avoids.
+    pub fn new(kind: DetectorKind, severity: Severity, ts: Timestamp) -> Self {
         Self {
-            kind: kind.into(),
+            kind,
             severity,
             ts,
             src_ip: None,
@@ -153,15 +161,17 @@ impl OwnedAnomaly {
     /// typed `AnomalyKind` in `flowscope_kind` for downstream
     /// typed-bridge consumers.
     ///
-    /// The owned anomaly's `kind` slug comes from the typed
-    /// kind's `short_kind()` (e.g. `"buffer_overflow"`,
-    /// `"ooo_segment"`); `severity` comes from
-    /// `AnomalyKind::severity`.
+    /// The owned anomaly's `kind` becomes
+    /// [`DetectorKind::Other`] wrapping the typed kind's
+    /// `short_kind()` slug (e.g. `"buffer_overflow"`,
+    /// `"ooo_segment"`) — the emitted string is unchanged from
+    /// pre-0.21; the typed axis lives in `flowscope_kind`.
+    /// `severity` comes from `AnomalyKind::severity`.
     pub fn from_flow_anomaly<K: KeyFields>(key: &K, kind: AnomalyKind, ts: Timestamp) -> Self {
         let slug = kind.short_kind();
         let severity = kind.severity();
         Self {
-            kind: Cow::Borrowed(slug),
+            kind: DetectorKind::Other(slug),
             severity,
             ts,
             src_ip: key.src_ip(),
@@ -180,11 +190,11 @@ impl OwnedAnomaly {
 ///
 /// Implemented by each shipped detector's score type:
 /// - [`crate::detect::patterns::ScanScore<K>`] →
-///   `"PortScanTRW"`
+///   [`DetectorKind::PortScanTrw`]
 /// - [`crate::detect::patterns::BeaconScore<K>`] →
-///   `"BeaconCv"`
+///   [`DetectorKind::BeaconCv`]
 /// - [`crate::detect::patterns::DgaScore`] →
-///   `"DgaScorer"`
+///   [`DetectorKind::Dga`]
 ///
 /// Provides a uniform `score → anomaly → sink` routing path
 /// without trying to unify the heterogeneous detector input
@@ -194,11 +204,14 @@ impl OwnedAnomaly {
 /// here on the output side.
 ///
 /// Custom detectors implement this on their own score types
-/// for the same uniform routing.
+/// for the same uniform routing, returning
+/// [`DetectorKind::Other`] from [`kind`](Self::kind).
 pub trait DetectorScore {
-    /// Stable detector name slug. Used as `OwnedAnomaly::kind`
-    /// (which maps to EVE `anomaly.event`) and as a metric label.
-    fn name(&self) -> &'static str;
+    /// Typed detector identity (issue #133; was `name() ->
+    /// &'static str` through 0.20 — the old slug is
+    /// `kind().as_str()`). Lands on `OwnedAnomaly::kind` (which
+    /// maps to EVE `anomaly.event`) and drives metric labels.
+    fn kind(&self) -> DetectorKind;
 
     /// Convert into the canonical owned anomaly with the given
     /// timestamp.
@@ -217,8 +230,13 @@ mod tests {
 
     #[test]
     fn new_default_fields_are_empty() {
-        let a = OwnedAnomaly::new("Test", Severity::Info, Timestamp::new(100, 0));
-        assert_eq!(a.kind, "Test");
+        let a = OwnedAnomaly::new(
+            DetectorKind::Other("Test"),
+            Severity::Info,
+            Timestamp::new(100, 0),
+        );
+        assert_eq!(a.kind, DetectorKind::Other("Test"));
+        assert_eq!(a.kind.as_str(), "Test");
         assert_eq!(a.severity, Severity::Info);
         assert!(a.src_ip.is_none());
         assert!(a.observations.is_empty());
@@ -228,18 +246,26 @@ mod tests {
 
     #[test]
     fn smallvec_observations_stay_inline_under_4() {
-        let a = OwnedAnomaly::new("Test", Severity::Info, Timestamp::new(0, 0))
-            .with_observation("a", "1")
-            .with_observation("b", "2")
-            .with_observation("c", "3")
-            .with_observation("d", "4");
+        let a = OwnedAnomaly::new(
+            DetectorKind::Other("Test"),
+            Severity::Info,
+            Timestamp::new(0, 0),
+        )
+        .with_observation("a", "1")
+        .with_observation("b", "2")
+        .with_observation("c", "3")
+        .with_observation("d", "4");
         assert_eq!(a.observations.len(), 4);
         assert!(!a.observations.spilled(), "4 observations stay inline");
     }
 
     #[test]
     fn smallvec_observations_spill_above_4() {
-        let mut a = OwnedAnomaly::new("Test", Severity::Info, Timestamp::new(0, 0));
+        let mut a = OwnedAnomaly::new(
+            DetectorKind::Other("Test"),
+            Severity::Info,
+            Timestamp::new(0, 0),
+        );
         for i in 0..6 {
             // Use a known-static label; the spillage matters, not the label content.
             a.observations
@@ -251,9 +277,13 @@ mod tests {
 
     #[test]
     fn with_metric_appends() {
-        let a = OwnedAnomaly::new("Test", Severity::Info, Timestamp::new(0, 0))
-            .with_metric("score", 0.87)
-            .with_metric("n_observed", 42.0);
+        let a = OwnedAnomaly::new(
+            DetectorKind::Other("Test"),
+            Severity::Info,
+            Timestamp::new(0, 0),
+        )
+        .with_metric("score", 0.87)
+        .with_metric("n_observed", 42.0);
         assert_eq!(a.metrics.len(), 2);
         assert_eq!(a.metrics[0], ("score", 0.87));
         assert_eq!(a.metrics[1], ("n_observed", 42.0));
@@ -270,7 +300,12 @@ mod tests {
             a: SocketAddr::from((Ipv4Addr::new(10, 0, 0, 1), 33000)),
             b: SocketAddr::from((Ipv4Addr::new(10, 0, 0, 2), 80)),
         };
-        let a = OwnedAnomaly::new("Test", Severity::Info, Timestamp::new(0, 0)).with_key(&key);
+        let a = OwnedAnomaly::new(
+            DetectorKind::Other("Test"),
+            Severity::Info,
+            Timestamp::new(0, 0),
+        )
+        .with_key(&key);
         assert_eq!(a.src_ip, Some(IpAddr::from(Ipv4Addr::new(10, 0, 0, 1))));
         assert_eq!(a.src_port, Some(33000));
         assert_eq!(a.dest_ip, Some(IpAddr::from(Ipv4Addr::new(10, 0, 0, 2))));
@@ -298,7 +333,7 @@ mod tests {
             count: 3,
         };
         let a = OwnedAnomaly::from_flow_anomaly(&key, kind.clone(), Timestamp::new(0, 0));
-        assert_eq!(a.kind, "ooo_segment");
+        assert_eq!(a.kind.as_str(), "ooo_segment");
         assert!(matches!(
             a.flowscope_kind,
             Some(AnomalyKind::OutOfOrderSegment { count: 3, .. })

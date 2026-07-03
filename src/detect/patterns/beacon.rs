@@ -185,13 +185,17 @@ where
     /// Gated on the `tracker` feature — `OwnedAnomaly` lives
     /// there.
     pub fn into_anomaly(self, ts: crate::Timestamp) -> crate::OwnedAnomaly {
-        crate::OwnedAnomaly::new("BeaconCv", crate::event::Severity::Warning, ts)
-            .with_key(&self.key)
-            .with_metric("score", self.score)
-            .with_metric("cv_dt", self.cv_dt)
-            .with_metric("cv_bytes", self.cv_bytes)
-            .with_metric("mean_interval_secs", self.mean_interval.as_secs_f64())
-            .with_metric("n", self.n as f64)
+        crate::OwnedAnomaly::new(
+            crate::DetectorKind::BeaconCv,
+            crate::event::Severity::Warning,
+            ts,
+        )
+        .with_key(&self.key)
+        .with_metric("score", self.score)
+        .with_metric("cv_dt", self.cv_dt)
+        .with_metric("cv_bytes", self.cv_bytes)
+        .with_metric("mean_interval_secs", self.mean_interval.as_secs_f64())
+        .with_metric("n", self.n as f64)
     }
 }
 
@@ -200,8 +204,8 @@ impl<K> crate::DetectorScore for BeaconScore<K>
 where
     K: crate::KeyFields + Clone,
 {
-    fn name(&self) -> &'static str {
-        "BeaconCv"
+    fn kind(&self) -> crate::DetectorKind {
+        crate::DetectorKind::BeaconCv
     }
 
     fn into_anomaly(self, ts: crate::Timestamp) -> crate::OwnedAnomaly {
