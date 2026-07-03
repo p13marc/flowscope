@@ -83,6 +83,39 @@ an encrypted transport, and defeat fragmentation-based evasion.
   `extractors`). In the prelude. IPv6 Fragment-header decode is a
   documented follow-up.
 
+### Added — asset fingerprint correlation + role/first-seen + lifted bounds (#137)
+
+The asset inventory could hold TLS/SSH/p0f fingerprint slots but
+nothing populated them — L7 fingerprints never reached the
+inventory, so consumers couldn't pivot asset ↔ fingerprint.
+
+- **L7 fingerprint adapters** — `Asset::from_tls_handshake`
+  (gated `tls`), `from_ssh_kexinit` (gated `ssh`),
+  `from_tcp_fingerprint` (gated `tcp_fingerprint`). Each takes a
+  caller-supplied `source_mac` (L7 has no L2) and records the
+  fingerprint: JA3 / JA4 (+ JA4X under `ja4plus`) / HASSH / p0f-3
+  signature. New `AssetSourceSet` bits `TLS` / `SSH` / `P0F`.
+- **x509 identity extraction** (under `ja4plus`) — the leaf
+  certificate's subject CN → `Asset::x509_subject` and DNS SANs →
+  `Asset::x509_sans`, for cert-based entity pivoting.
+- **`AssetFingerprints.ja4x`** — the JA4X field that existed on
+  `TlsHandshake` now lands in the inventory too.
+- **Lifted bounds** — per-asset IP cap raised 4 → 16 (multi-homed
+  / roaming); new plural `Asset::hostnames` (bounded 8, deduped)
+  alongside the primary `hostname`, populated by every hostname
+  source (DHCP / LLDP / CDP / mDNS / NBNS).
+- **Confidence + role** — `Asset::first_seen` (min-preserved
+  across merges, stamped by `Inventory::absorb_at`),
+  `Asset::source_count()` (distinct contributing parsers), and
+  `Asset::role() -> AssetRole` (Router / Switch / AccessPoint /
+  Phone / Iot / Host / Unknown) derived from the capability set.
+
+Additive except the IP-cap constant change (was an internal
+`const`, not a public API). The stringly-typed→typed-newtype
+fingerprint change from the issue was deliberately **not** taken:
+the fingerprints are canonically hash/signature strings, so typed
+newtypes would be churn without safety gain.
+
 ## 0.21.0 (unreleased) — detection architecture: typed DetectorKind, Detector trait + registry, NDR detectors
 
 The 2026 roadmap's (#140) keystone detection-architecture group,

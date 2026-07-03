@@ -66,6 +66,11 @@ impl Inventory {
     /// `absorb`.
     pub fn absorb_at(&mut self, mut update: Asset, ts: Timestamp) -> &Asset {
         update.last_seen = ts;
+        // Stamp first_seen so the record carries a meaningful
+        // creation time; merge keeps the earliest across updates.
+        if update.first_seen == Timestamp::default() {
+            update.first_seen = ts;
+        }
         self.absorb(update)
     }
 

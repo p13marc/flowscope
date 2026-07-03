@@ -390,7 +390,9 @@ pub use dnp3::{
 #[cfg(feature = "asset")]
 pub mod asset;
 #[cfg(feature = "asset")]
-pub use asset::{Asset, AssetCapabilities, AssetFingerprints, AssetSourceSet, Inventory};
+pub use asset::{
+    Asset, AssetCapabilities, AssetFingerprints, AssetRole, AssetSourceSet, Inventory,
+};
 // Issue #83: analysis composition layer — wires detect/risk/IOC
 // to the flow lifecycle, producing enriched `AnalyzedFlow` records.
 #[cfg(feature = "analysis")]
