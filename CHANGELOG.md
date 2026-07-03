@@ -25,6 +25,35 @@ fingerprint correlation, and a single-source parser registry.
   `ja4plus` and out of the `l7`/`full` umbrellas; README license
   section rewritten to name the full FoxIO-licensed set.
 
+### Added — ClientHello reassembly for the post-quantum era (#135)
+
+Post-quantum hybrid key exchange (X25519MLKEM768, the Chrome 131+
+/ Firefox default since late 2024) makes the ClientHello ~1.4 KiB,
+so it no longer fits one TCP segment or QUIC Initial. A parser
+that reads only the first fragment silently loses SNI / ALPN /
+every fingerprint for a growing share of modern clients.
+
+- **QUIC cross-datagram CRYPTO reassembly** — `QuicUdpParser` is
+  now stateful: it accumulates each connection's CRYPTO frames
+  (keyed by DCID) across multiple Initial packets and emits a
+  `QuicInitial` carrying the full ClientHello once the stream
+  reassembles. A single-Initial ClientHello still emits
+  immediately. State is bounded (1024 connections, 5 s TTL swept
+  on `on_tick` + inline on overflow). `QuicUdpParser` changed from
+  a unit struct to a stateful one (still `Default` + `Clone`);
+  construct with `QuicUdpParser::new()` rather than the bare name.
+- **Post-quantum key-share signal** — `TlsClientHello` gains
+  `key_share_groups: Vec<u16>` (named groups the client sent an
+  actual key share for) and `pq_key_share: bool`; `TlsHandshake`
+  mirrors `pq_key_share`. New `tls::is_pq_hybrid_group` /
+  `tls::pq_hybrid_group_name` recognise the deployed ML-KEM /
+  Kyber hybrid codepoints. Flows through to `QuicInitial`'s
+  ClientHello for JA4-over-QUIC.
+- **TLS multi-segment ClientHello** — confirmed (regression test)
+  that the existing session-buffer accumulation already stitches a
+  ~1.3 KiB PQ ClientHello split across TCP segments; the new PQ
+  fields populate correctly through that path.
+
 ## 0.21.0 (unreleased) — detection architecture: typed DetectorKind, Detector trait + registry, NDR detectors
 
 The 2026 roadmap's (#140) keystone detection-architecture group,

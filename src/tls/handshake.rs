@@ -80,6 +80,12 @@ pub struct TlsHandshake {
     /// HPKE `config_id` from the client's outer ECHClientHello,
     /// when ECH was offered.
     pub ech_config_id: Option<u8>,
+    /// `true` if the client offered a post-quantum hybrid
+    /// key-exchange group (X25519MLKEM768 family). Mirrors
+    /// [`TlsClientHello::pq_key_share`](super::TlsClientHello::pq_key_share);
+    /// the dominant reason a modern ClientHello spans multiple
+    /// segments. Issue #135 (0.22.0).
+    pub pq_key_share: bool,
     /// Server's certificate chain from a TLS 1.2 `Certificate`
     /// handshake record (leaf first per RFC 5246 §7.4.2). Each
     /// entry is an X.509 DER blob. Empty for TLS 1.3
@@ -162,6 +168,7 @@ impl Default for TlsHandshake {
             outcome: HandshakeOutcome::Truncated,
             ech_outcome: EchOutcome::NotOffered,
             ech_config_id: None,
+            pq_key_share: false,
             certificate_chain: Vec::new(),
             #[cfg(feature = "ja4plus")]
             ja4x: None,
@@ -222,6 +229,7 @@ impl TlsHandshakeParser {
                     // event for the next handshake.
                     self.accumulator.sni = ch.sni.clone();
                     self.accumulator.client_alpn = ch.alpn.clone();
+                    self.accumulator.pq_key_share = ch.pq_key_share;
                     // 41 = pre_shared_key, 35 = session_ticket
                     self.accumulator.resumption_attempted =
                         ch.extension_types.iter().any(|&e| e == 41 || e == 35);

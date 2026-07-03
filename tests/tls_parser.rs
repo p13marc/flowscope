@@ -97,6 +97,53 @@ fn client_hello_with_sni(host: &str) -> Vec<u8> {
     record(22, 0x0303, &hs)
 }
 
+/// A ClientHello carrying SNI + a post-quantum `key_share`
+/// (X25519MLKEM768, group 0x11ec) with a ~1.2 KiB dummy key — the
+/// shape that pushes a real Chrome/Firefox ClientHello past one
+/// TCP segment. Total record lands around 1.3 KiB.
+fn client_hello_with_pq_keyshare(host: &str) -> Vec<u8> {
+    let mut body = Vec::new();
+    body.extend_from_slice(&0x0303u16.to_be_bytes());
+    body.extend_from_slice(&[0u8; 32]);
+    body.push(0);
+    body.extend_from_slice(&2u16.to_be_bytes());
+    body.extend_from_slice(&0x1301u16.to_be_bytes());
+    body.push(1);
+    body.push(0);
+
+    let mut exts = Vec::new();
+    // SNI.
+    let host_bytes = host.as_bytes();
+    let mut sni_data = Vec::new();
+    sni_data.extend_from_slice(&((3 + host_bytes.len()) as u16).to_be_bytes());
+    sni_data.push(0);
+    sni_data.extend_from_slice(&(host_bytes.len() as u16).to_be_bytes());
+    sni_data.extend_from_slice(host_bytes);
+    exts.extend_from_slice(&0u16.to_be_bytes());
+    exts.extend_from_slice(&(sni_data.len() as u16).to_be_bytes());
+    exts.extend_from_slice(&sni_data);
+
+    // key_share (51): one entry, group X25519MLKEM768 (0x11ec),
+    // ~1216-byte key exchange value.
+    let ke = vec![0xABu8; 1216];
+    let mut entry = Vec::new();
+    entry.extend_from_slice(&0x11ecu16.to_be_bytes());
+    entry.extend_from_slice(&(ke.len() as u16).to_be_bytes());
+    entry.extend_from_slice(&ke);
+    let mut ks_data = Vec::new();
+    ks_data.extend_from_slice(&(entry.len() as u16).to_be_bytes()); // client_shares len
+    ks_data.extend_from_slice(&entry);
+    exts.extend_from_slice(&51u16.to_be_bytes());
+    exts.extend_from_slice(&(ks_data.len() as u16).to_be_bytes());
+    exts.extend_from_slice(&ks_data);
+
+    body.extend_from_slice(&(exts.len() as u16).to_be_bytes());
+    body.extend_from_slice(&exts);
+
+    let hs = handshake(1, &body);
+    record(22, 0x0303, &hs)
+}
+
 fn client_hello_with_ech(host: &str, config_id: u8) -> Vec<u8> {
     let mut body = Vec::new();
     body.extend_from_slice(&0x0303u16.to_be_bytes());
@@ -260,6 +307,40 @@ fn record_split_across_segments() {
         captured.client_hellos[0].sni.as_deref(),
         Some("example.com")
     );
+}
+
+#[test]
+fn large_pq_client_hello_reassembles_across_tcp_segments() {
+    // Issue #135: a post-quantum ClientHello (~1.3 KiB) split across
+    // several small TCP segments must still yield SNI + the PQ signal.
+    let mut parser = TlsParser::default();
+    let mut captured = Captured::default();
+    let bytes = client_hello_with_pq_keyshare("pq.example.com");
+    assert!(bytes.len() > 1200, "fixture should exceed one segment");
+
+    // Feed in 400-byte TCP segments — none complete the record alone.
+    for chunk in bytes.chunks(400) {
+        feed_init(&mut parser, &mut captured, chunk);
+    }
+    assert_eq!(captured.client_hellos.len(), 1, "reassembled one CH");
+    let ch = &captured.client_hellos[0];
+    assert_eq!(ch.sni.as_deref(), Some("pq.example.com"));
+    assert!(ch.pq_key_share, "X25519MLKEM768 key share detected");
+    assert!(ch.key_share_groups.contains(&0x11ec));
+    assert!(flowscope::tls::is_pq_hybrid_group(0x11ec));
+}
+
+#[test]
+fn classical_client_hello_is_not_flagged_pq() {
+    let mut parser = TlsParser::default();
+    let mut captured = Captured::default();
+    feed_init(
+        &mut parser,
+        &mut captured,
+        &client_hello_with_sni("classic.example"),
+    );
+    assert_eq!(captured.client_hellos.len(), 1);
+    assert!(!captured.client_hellos[0].pq_key_share);
 }
 
 #[test]

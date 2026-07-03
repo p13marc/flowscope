@@ -49,6 +49,23 @@ pub struct TlsClientHello {
     /// ciphertext and cannot be extracted without the ECH
     /// private key. Default `false`.
     pub sni_is_outer: bool,
+
+    // ── Post-quantum key exchange — issue #135, 0.22.0 ────
+    /// Named groups the client sent an **actual key share** for
+    /// (the `key_share` extension, RFC 8446 §4.2.8), in offer
+    /// order. Distinct from [`Self::supported_groups`] (the
+    /// *offered* set): a key share is the concrete public value,
+    /// and a post-quantum hybrid share (~1.1 KiB) is what pushes a
+    /// modern ClientHello past one packet.
+    pub key_share_groups: Vec<u16>,
+    /// `true` if the client offered a post-quantum hybrid
+    /// key-exchange group — in the `key_share` extension, or
+    /// failing that in `supported_groups`. Currently the
+    /// X25519MLKEM768 / SecP256r1MLKEM768 / X25519Kyber768 family
+    /// (see [`super::is_pq_hybrid_group`]). X25519MLKEM768 is the
+    /// Chrome 131+ / Firefox default since late 2024 and is the
+    /// dominant reason a ClientHello now spans multiple segments.
+    pub pq_key_share: bool,
 }
 
 impl TlsClientHello {

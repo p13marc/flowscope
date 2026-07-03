@@ -1,11 +1,23 @@
 //! QUIC Initial decoder + ClientHello extraction pipeline.
 
+pub(super) use quic_parser::CryptoFrame;
 use quic_parser::{decrypt_initial, parse_crypto_frames, parse_initial, reassemble_crypto_stream};
 #[cfg(not(feature = "tls"))]
 use tls_parser::{TlsClientHelloContents, TlsExtension};
 use tls_parser::{TlsMessage, TlsMessageHandshake};
 
 use super::types::{QuicInitial, QuicVersion};
+
+/// Long-header metadata from a QUIC Initial, owned so it can
+/// outlive the borrowed datagram (needed for cross-datagram
+/// ClientHello reassembly).
+#[derive(Debug, Clone)]
+pub(super) struct InitialMeta {
+    pub version: QuicVersion,
+    pub dcid: Vec<u8>,
+    pub scid: Vec<u8>,
+    pub token_present: bool,
+}
 
 pub const PARSER_KIND_STR: &str = "quic";
 
@@ -64,36 +76,64 @@ impl From<ParseError> for crate::Error {
 /// Decode one QUIC Initial datagram. Returns the parsed
 /// [`QuicInitial`] on success, or a [`ParseError`] indicating
 /// which stage of the pipeline failed.
+///
+/// This is the **single-datagram** path: it reassembles CRYPTO
+/// frames *within* one Initial only. A ClientHello split across
+/// multiple Initial packets (common with post-quantum key shares)
+/// needs the stateful [`QuicUdpParser`](super::QuicUdpParser),
+/// which accumulates frames across datagrams.
 pub fn parse(datagram: &[u8]) -> Result<QuicInitial, ParseError> {
+    let (meta, frames) = decode_frames(datagram)?;
+    let crypto_stream = reassemble_crypto_stream(&frames);
+    Ok(build_from_stream(meta, &crypto_stream))
+}
+
+/// Decrypt one Initial datagram and return its long-header
+/// metadata plus the CRYPTO frames it carried (offset-tagged, not
+/// yet stream-ordered). The building block the stateful parser
+/// uses to accumulate a ClientHello across datagrams.
+pub(super) fn decode_frames(
+    datagram: &[u8],
+) -> Result<(InitialMeta, Vec<CryptoFrame>), ParseError> {
     let header = parse_initial(datagram).map_err(|_| ParseError::NotInitial)?;
     let decrypted = decrypt_initial(&header).map_err(|_| ParseError::AeadDecryptFailed)?;
     let frames = parse_crypto_frames(&decrypted).map_err(|_| ParseError::CryptoFrameDecode)?;
-    let crypto_stream = reassemble_crypto_stream(&frames);
+    let meta = InitialMeta {
+        version: QuicVersion::from_raw(header.version),
+        dcid: header.dcid.to_vec(),
+        scid: header.scid.to_vec(),
+        token_present: !header.token.is_empty(),
+    };
+    Ok((meta, frames))
+}
 
+/// Build a [`QuicInitial`] from decoded metadata + a reassembled
+/// CRYPTO stream (which may be empty, or a complete ClientHello).
+pub(super) fn build_from_stream(meta: InitialMeta, crypto_stream: &[u8]) -> QuicInitial {
     // With `tls` on, build the full `TlsClientHello` once (it carries
     // sni + alpn already) so JA4-over-QUIC has the cipher / extension
     // lists. Without `tls`, fall back to the lightweight sni/alpn-only
     // walk.
     #[cfg(feature = "tls")]
-    let client_hello = extract_client_hello(&crypto_stream);
+    let client_hello = extract_client_hello(crypto_stream);
     #[cfg(feature = "tls")]
     let (sni, alpn) = client_hello
         .as_ref()
         .map(|ch| (ch.sni.clone(), ch.alpn.clone()))
         .unwrap_or((None, Vec::new()));
     #[cfg(not(feature = "tls"))]
-    let (sni, alpn) = extract_tls_metadata(&crypto_stream).unwrap_or((None, Vec::new()));
+    let (sni, alpn) = extract_tls_metadata(crypto_stream).unwrap_or((None, Vec::new()));
 
-    Ok(QuicInitial {
-        version: QuicVersion::from_raw(header.version),
-        dcid: header.dcid.to_vec(),
-        scid: header.scid.to_vec(),
-        token_present: !header.token.is_empty(),
+    QuicInitial {
+        version: meta.version,
+        dcid: meta.dcid,
+        scid: meta.scid,
+        token_present: meta.token_present,
         sni,
         alpn,
         #[cfg(feature = "tls")]
         client_hello,
-    })
+    }
 }
 
 /// Build the full [`crate::tls::TlsClientHello`] from the CRYPTO

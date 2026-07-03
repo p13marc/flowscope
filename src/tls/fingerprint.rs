@@ -137,6 +137,8 @@ mod tests {
             ech_present: false,
             ech_config_id: None,
             sni_is_outer: false,
+            key_share_groups: vec![],
+            pq_key_share: false,
         };
         let (canonical, _hash) = ja3(&ch);
         assert!(canonical.starts_with("771,4865-4866,"), "got {canonical:?}");
