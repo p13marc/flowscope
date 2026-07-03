@@ -113,6 +113,11 @@ pub use crate::smb::{
 // ALPN extraction for HTTP/3 + DoQ visibility.
 #[cfg(feature = "quic")]
 pub use crate::quic::{QuicInitial, QuicUdpParser, QuicVersion};
+// Issue #138 (0.22): encrypted-transport app-protocol
+// identification (h2/h3, DoT/DoQ/DoH) from ALPN / SNI / port.
+pub use crate::app_proto::{AppProtocol, Transport as AppTransport};
+// Issue #138 (0.22): IP fragment reassembly — anti-evasion.
+pub use crate::ip_fragment::{FragmentKey, IpFragmentReassembler};
 // Issue #16 / #28 (0.18): IPFIX canonical record + binary
 // wire encoder.
 #[cfg(feature = "ipfix")]

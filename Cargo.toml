@@ -546,6 +546,10 @@ path = "examples/01-l7-logging/quic_initial_observer.rs"
 required-features = ["quic", "pcap"]
 
 [[example]]
+name = "encrypted_app_classify"
+path = "examples/01-l7-logging/encrypted_app_classify.rs"
+
+[[example]]
 name = "dns_log"
 path = "examples/01-l7-logging/dns_log.rs"
 required-features = ["dns", "pcap"]
