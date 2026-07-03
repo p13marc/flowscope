@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.22.0 (unreleased) — fingerprinting & encrypted-traffic frontier
+
+The #140 roadmap's fingerprinting/encrypted-traffic group: a
+unified JA4+ surface, TLS/QUIC ClientHello reassembly for the
+post-quantum era, encrypted-DNS + HTTP/2·3 detection, asset
+fingerprint correlation, and a single-source parser registry.
+
+### Added — unified `flowscope::fingerprint` surface + JA4+ gating audit (#136)
+
+- **`flowscope::fingerprint`** — one import site for the whole
+  JA4+ family (JA3 / JA4 / JA4-over-QUIC / JA4S / JA4X / JA4H /
+  JA4SSH / JA4T / JA4L), re-exported from their protocol modules
+  under one namespace, with the **license split documented in one
+  place**: royalty-free (`tls-fingerprints`: JA3 + JA4 client +
+  JA4-QUIC) vs FoxIO 1.1 (`ja4plus`: everything else, off by
+  default, excluded from `l7`/`full`).
+- **Public standalone JA3 fns** — `tls::ja3_fingerprint` (hex hash)
+  and `tls::ja3_canonical` (pre-hash string), the symmetric
+  companions to `tls::ja4_fingerprint` / `ja4_parts` that were
+  missing (JA3 was only surfaced as a `TlsMessage` / `TlsHandshake`
+  field; the computation was `pub(crate)`).
+- License-gating audit: confirmed JA4S/X/H/SSH/T/L stay behind
+  `ja4plus` and out of the `l7`/`full` umbrellas; README license
+  section rewritten to name the full FoxIO-licensed set.
+
 ## 0.21.0 (unreleased) — detection architecture: typed DetectorKind, Detector trait + registry, NDR detectors
 
 The 2026 roadmap's (#140) keystone detection-architecture group,

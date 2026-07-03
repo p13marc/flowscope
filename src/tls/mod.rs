@@ -95,6 +95,8 @@ mod session;
 mod types;
 
 pub use ech::EchState;
+#[cfg(feature = "tls-fingerprints")]
+pub use fingerprint::{ja3_canonical, ja3_fingerprint};
 pub use handshake::{EchOutcome, HandshakeOutcome, TlsHandshake, TlsHandshakeParser};
 #[cfg(feature = "tls-fingerprints")]
 pub use ja4::{Ja4Parts, ja4 as ja4_fingerprint, ja4_parts, ja4_quic, ja4_quic_parts};

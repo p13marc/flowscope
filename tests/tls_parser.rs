@@ -321,3 +321,33 @@ fn ja4_fires_when_enabled() {
     assert_eq!(captured.borrow().len(), 1);
     assert!(captured.borrow()[0].starts_with('t'));
 }
+
+#[cfg(feature = "tls-fingerprints")]
+#[test]
+fn standalone_ja3_matches_message_hash_and_facade_reexports() {
+    use flowscope::tls::TlsConfig;
+    // Capture both the ClientHello and the parser-emitted JA3 so we
+    // can prove the standalone fn (issue #136) yields the same hash.
+    let mut cfg = TlsConfig::default();
+    cfg.ja3 = true;
+    let mut parser = TlsParser::with_config(cfg);
+    let mut captured = Captured::default();
+    feed_init(
+        &mut parser,
+        &mut captured,
+        &client_hello_with_sni("example.com"),
+    );
+    let ch = captured.client_hellos.first().expect("client hello");
+    let (msg_hash, _canonical) = captured.ja3s.first().cloned().expect("ja3 message");
+
+    // Standalone fns (both the `tls::` home and the `fingerprint::`
+    // facade re-export) agree with the message-emitted hash.
+    assert_eq!(flowscope::tls::ja3_fingerprint(ch), msg_hash);
+    assert_eq!(flowscope::fingerprint::ja3_fingerprint(ch), msg_hash);
+    assert!(!flowscope::tls::ja3_canonical(ch).is_empty());
+
+    // JA4 facade re-export matches the `tls::` fn and is transport 't'.
+    let ja4_home = flowscope::tls::ja4_fingerprint(ch);
+    assert_eq!(flowscope::fingerprint::ja4_fingerprint(ch), ja4_home);
+    assert!(ja4_home.starts_with('t'));
+}
