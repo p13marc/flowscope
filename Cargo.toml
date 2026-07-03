@@ -710,6 +710,11 @@ path = "examples/04-observability/bandwidth_by_app.rs"
 required-features = ["pcap", "extractors", "tracker"]
 
 [[example]]
+name = "bandwidth_by_owner"
+path = "examples/04-observability/bandwidth_by_owner.rs"
+required-features = ["tracker"]
+
+[[example]]
 name = "icmp_explained_drops"
 path = "examples/04-observability/icmp_explained_drops.rs"
 required-features = ["pcap", "icmp", "extractors", "tracker"]

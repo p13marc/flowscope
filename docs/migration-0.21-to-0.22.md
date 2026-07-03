@@ -70,3 +70,5 @@ only the `parser_kinds` re-export umbrella was removed.
   `from_ssh_kexinit` / `from_tcp_fingerprint`, `x509_subject` /
   `x509_sans` / `hostnames` / `first_seen` fields, `role()` /
   `source_count()`, `AssetRole`, new `AssetSourceSet` bits.
+- **Throughput-by-owner** — `correlate::BandwidthByKey<K>` +
+  `ByteSemantics` + `Attribution`.

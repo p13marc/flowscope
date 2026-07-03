@@ -91,6 +91,7 @@ the categories sort logically in `ls`.
 | **`flow_duration_histogram`** | `pcap,aggregate` | Distribution of flow durations with p50 / p99 / max via `Histogram` (plan 102 sub-B). |
 | **`conversation_timeline`** | `pcap,extractors,reassembler` | Timeline of a single TCP conversation — every state transition, every direction-marked packet. |
 | **`bandwidth_by_app`** *(0.14)* | `pcap,extractors,tracker` | Per-app bytes/sec via `RollingRate` + `top_k` (plan 171), keyed by `FiveTupleKey::app_label_with(&LabelTable)` (plan 165). |
+| **`bandwidth_by_owner`** *(0.22)* | `tracker` | Per-owner (PID/cgroup) tx/rx byte-rate via `BandwidthByKey<Attribution>` + `ByteSemantics` (#141) — bandwidth grouped by an opaque consumer-supplied owner key. |
 | **`icmp_explained_drops`** *(0.14)* | `pcap,icmp,extractors,tracker` | Join every ICMP error back to a live flow via `FlowTracker::lookup_inner` (plan 161); classify v4/v6 unreachable + MTU events via `DestUnreachableKind` (plan 162) + `MtuSignalKind` (plan 170). |
 | **`direction_skew_anomaly`** *(0.14)* | `pcap,extractors,tracker` | One-sided-flow detection via `FlowStats::direction_skew` (plan 168) + per-side `bytes_for` / `throughput_bps_for` (plans 168 + 173). |
 | **`tap_merge_orientation`** *(0.20)* | `extractors,tracker,test-helpers` | The three direction axes (#118–#122): deterministic `Orientation` vs arrival-order `FlowSide` under a tap-merge race, per-direction capture-leg binding (`source_idx_for`), and SYN-based initiator inference (`infer_tcp_initiator` + `direction_flipped`). Synthetic frames; no pcap. |

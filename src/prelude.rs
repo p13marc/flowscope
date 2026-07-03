@@ -143,6 +143,9 @@ pub use crate::correlate::FlowStateMap;
 pub use crate::correlate::{
     BurstDetector, Ewma, KeyIndexed, RollingRate, TimeBucketedCounter, TimeBucketedSet, TopK,
 };
+// Issue #141 (0.22): throughput grouped by an opaque owner key.
+#[cfg(feature = "tracker")]
+pub use crate::correlate::{Attribution, BandwidthByKey, ByteSemantics};
 // Issue #75: mergeable streaming sketches — siblings of
 // `HyperLogLog`. The whole `correlate` module is `tracker`-gated,
 // so these re-exports must be too.

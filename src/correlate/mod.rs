@@ -64,6 +64,8 @@
 //! assert!(q.get(&0x1234, Timestamp::new(10, 0)).is_none());
 //! ```
 
+// Issue #141 (0.22): throughput grouped by an opaque owner key.
+mod bandwidth;
 mod bloom;
 mod bucketed;
 mod burst;
@@ -97,6 +99,7 @@ mod topk;
 mod welford;
 mod xbits;
 
+pub use bandwidth::{Attribution, BandwidthByKey, ByteSemantics};
 pub use bloom::BloomFilter;
 pub use bucketed::TimeBucketedCounter;
 pub use burst::{BurstDetector, BurstHit};

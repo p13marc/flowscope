@@ -5,7 +5,9 @@
 The #140 roadmap's fingerprinting/encrypted-traffic group: a
 unified JA4+ surface, TLS/QUIC ClientHello reassembly for the
 post-quantum era, encrypted-DNS + HTTP/2·3 detection, asset
-fingerprint correlation, and a single-source parser registry.
+fingerprint correlation, a single-source parser registry, and
+throughput-by-owner aggregation — closing the last six open #140
+roadmap items.
 
 ### Added — unified `flowscope::fingerprint` surface + JA4+ gating audit (#136)
 
@@ -115,6 +117,26 @@ Additive except the IP-cap constant change (was an internal
 fingerprint change from the issue was deliberately **not** taken:
 the fingerprints are canonically hash/signature strings, so typed
 newtypes would be churn without safety gain.
+
+### Added — throughput-by-owner aggregation (#141)
+
+flowscope is process-unaware by design, but consumers increasingly
+have an *external* attribution for a flow (owning PID from a
+socket-table / eBPF join, a cgroup id) and want bandwidth grouped
+by that owner. Every consumer was bolting its own
+`HashMap<owner, RollingRate>` on the side.
+
+- **`correlate::BandwidthByKey<K>`** — per-key tx / rx byte-rate
+  over a sliding window, built on `RollingRate`. Generic over the
+  owner key, so one implementation serves `K = pid` / `cgroup_id`
+  / `Attribution` / `FiveTupleKey` / `ParserKind`. `record_tx` /
+  `record_rx`, `tx_bps` / `rx_bps` / `total_bps`, `top_k`,
+  `evict_expired`. In the prelude (under `tracker`).
+- **`correlate::ByteSemantics`** (`Wire` / `Goodput`) — every
+  aggregate is tagged so a downstream never silently compares
+  on-the-wire bytes against application goodput.
+- **`correlate::Attribution(u64)`** — opaque owner-tag newtype for
+  when the owner is a bare integer.
 
 ### Changed — single-table parser/module registries; `parser_kinds` removed (#139)
 
