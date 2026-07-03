@@ -197,8 +197,12 @@ The 0.13 path emits the same `event_type: "anomaly"` shape from
 a [`flowscope::OwnedAnomaly`] — a canonical owned detector-
 output value that carries:
 
-- `kind: Cow<'static, str>` — detector slug, becomes
-  `anomaly.event`.
+- `kind: DetectorKind` — typed detector identity (0.21, issue
+  #133; was `Cow<'static, str>` through 0.20). Its `as_str()`
+  slug becomes `anomaly.event` — byte-identical to the pre-0.21
+  string values. When `kind.attack_technique()` is `Some`, the
+  MITRE ATT&CK technique ID is emitted as
+  **`anomaly.attack_technique`**.
 - `severity: Severity` — same severity tier as the typed path.
 - `ts: Timestamp` — event time, becomes `timestamp`.
 - 5-tuple flattened fields (`src_ip` / `src_port` /
@@ -237,6 +241,7 @@ output value that carries:
     "type": "applayer",
     "event": "PortScanTRW",
     "code": 0,
+    "attack_technique": "T1046",
     "labels":  { "verdict": "scanner" },
     "metrics": { "log_likelihood": 4.158, "n_observed": 4 }
   },
@@ -250,7 +255,10 @@ output value that carries:
   When `flowscope_kind.is_some()`, the typed kind's
   classification takes precedence (so bridged tracker
   anomalies get `"stream"` etc. as before).
-- `anomaly.event` ← `OwnedAnomaly::kind` slug.
+- `anomaly.event` ← `OwnedAnomaly::kind.as_str()` slug.
+- `anomaly.attack_technique` ← `DetectorKind::attack_technique()`
+  (0.21) — omitted when the kind has no ATT&CK mapping
+  (`Other(…)` / `Unknown`).
 - `anomaly.labels` / `anomaly.metrics` — both omitted when
   the corresponding SmallVec is empty.
 
@@ -278,15 +286,15 @@ Implement `DetectorScore` on your score type to route through
 the same EVE path uniformly:
 
 ```rust,ignore
-use flowscope::{DetectorScore, OwnedAnomaly, Timestamp};
+use flowscope::{DetectorKind, DetectorScore, OwnedAnomaly, Timestamp};
 use flowscope::event::Severity;
 
 struct MyScore { hits: u32 }
 
 impl DetectorScore for MyScore {
-    fn name(&self) -> &'static str { "MyCustomDetector" }
+    fn kind(&self) -> DetectorKind { DetectorKind::Other("MyCustomDetector") }
     fn into_anomaly(self, ts: Timestamp) -> OwnedAnomaly {
-        OwnedAnomaly::new("MyCustomDetector", Severity::Warning, ts)
+        OwnedAnomaly::new(DetectorKind::Other("MyCustomDetector"), Severity::Warning, ts)
             .with_metric("hits", self.hits as f64)
     }
 }

@@ -15,7 +15,7 @@
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
 use flowscope::{
-    DetectorScore, OwnedAnomaly, Timestamp,
+    DetectorKind, DetectorScore, OwnedAnomaly, Timestamp,
     detect::patterns::{BeaconDetector, DgaScorer, PortScanDetector},
     emit::{EveJsonWriter, FlowEventNdjsonWriter},
     event::Severity,
@@ -36,10 +36,15 @@ fn portscan_score_into_anomaly_carries_5tuple_and_metrics() {
     let mut d: PortScanDetector<FiveTupleKey> = PortScanDetector::new();
     let key = sample_key();
     let score = d.observe(key, false);
-    assert_eq!(<_ as DetectorScore>::name(&score), "PortScanTRW");
+    assert_eq!(
+        <_ as DetectorScore>::kind(&score),
+        DetectorKind::PortScanTrw
+    );
+    assert_eq!(<_ as DetectorScore>::kind(&score).as_str(), "PortScanTRW");
 
     let anomaly = score.into_anomaly(Timestamp::new(1_700_000_000, 0));
-    assert_eq!(anomaly.kind, "PortScanTRW");
+    assert_eq!(anomaly.kind, DetectorKind::PortScanTrw);
+    assert_eq!(anomaly.kind.as_str(), "PortScanTRW");
     assert_eq!(
         anomaly.src_ip,
         Some(IpAddr::from(Ipv4Addr::new(10, 0, 0, 1)))
@@ -82,10 +87,11 @@ fn beacon_score_into_anomaly_carries_window_metrics() {
         }
     }
     let score = score_opt.expect("beacon should emit after window fills");
-    assert_eq!(<_ as DetectorScore>::name(&score), "BeaconCv");
+    assert_eq!(<_ as DetectorScore>::kind(&score), DetectorKind::BeaconCv);
 
     let anomaly = score.into_anomaly(Timestamp::new(1_700_000_100, 0));
-    assert_eq!(anomaly.kind, "BeaconCv");
+    assert_eq!(anomaly.kind, DetectorKind::BeaconCv);
+    assert_eq!(anomaly.kind.as_str(), "BeaconCv");
     assert_eq!(anomaly.severity, Severity::Warning);
     assert!(anomaly.metrics.iter().any(|(l, _)| *l == "score"));
     assert!(anomaly.metrics.iter().any(|(l, _)| *l == "cv_dt"));
@@ -103,7 +109,8 @@ fn dga_score_into_anomaly_keyed_inherent_path() {
     let score = d.score("xkflpqzvbmqwerty");
     let key = sample_key();
     let anomaly = score.into_anomaly(Timestamp::new(1_700_000_000, 0), Some(&key));
-    assert_eq!(anomaly.kind, "DgaScorer");
+    assert_eq!(anomaly.kind, DetectorKind::Dga);
+    assert_eq!(anomaly.kind.as_str(), "DgaScorer");
     assert_eq!(
         anomaly.src_ip,
         Some(IpAddr::from(Ipv4Addr::new(10, 0, 0, 1)))
@@ -117,14 +124,15 @@ fn dga_score_via_detectorscore_trait_keyless() {
     let d = DgaScorer::new();
     let score = d.score("github.com");
     let anomaly = <_ as DetectorScore>::into_anomaly(score, Timestamp::new(1_700_000_000, 0));
-    assert_eq!(anomaly.kind, "DgaScorer");
+    assert_eq!(anomaly.kind, DetectorKind::Dga);
+    assert_eq!(anomaly.kind.as_str(), "DgaScorer");
     assert!(anomaly.src_ip.is_none(), "DetectorScore impl is keyless");
 }
 
 #[test]
 fn eve_writer_writes_owned_anomaly_round_trip() {
     let a = OwnedAnomaly::new(
-        "PortScanTRW",
+        DetectorKind::PortScanTrw,
         Severity::Warning,
         Timestamp::new(1_700_000_000, 0),
     )
@@ -148,6 +156,8 @@ fn eve_writer_writes_owned_anomaly_round_trip() {
     assert_eq!(json["proto"], "TCP");
     assert_eq!(json["anomaly"]["event"], "PortScanTRW");
     assert_eq!(json["anomaly"]["type"], "applayer");
+    // ATT&CK technique tag travels with the anomaly (issue #133).
+    assert_eq!(json["anomaly"]["attack_technique"], "T1046");
     assert_eq!(json["anomaly"]["labels"]["verdict"], "scanner");
     assert_eq!(json["anomaly"]["metrics"]["log_likelihood"], 3.7);
     assert_eq!(json["severity"], 3);
@@ -155,7 +165,11 @@ fn eve_writer_writes_owned_anomaly_round_trip() {
 
 #[test]
 fn eve_writer_observations_omitted_when_empty() {
-    let a = OwnedAnomaly::new("BareKind", Severity::Info, Timestamp::new(0, 0));
+    let a = OwnedAnomaly::new(
+        DetectorKind::Other("BareKind"),
+        Severity::Info,
+        Timestamp::new(0, 0),
+    );
     let mut out: Vec<u8> = Vec::new();
     let mut w = EveJsonWriter::new(&mut out);
     w.write_owned_anomaly(&a).unwrap();
@@ -163,6 +177,8 @@ fn eve_writer_observations_omitted_when_empty() {
         serde_json::from_str(std::str::from_utf8(&out).unwrap().trim()).unwrap();
     assert!(json["anomaly"]["labels"].is_null());
     assert!(json["anomaly"]["metrics"].is_null());
+    // Other(...) kinds carry no ATT&CK technique — field omitted.
+    assert!(json["anomaly"]["attack_technique"].is_null());
 }
 
 #[test]
@@ -172,7 +188,11 @@ fn eve_writer_custom_anomaly_type_option_overrides_default() {
     options.custom_anomaly_type = "custom-detector";
     let mut out: Vec<u8> = Vec::new();
     let mut w = EveJsonWriter::with_options(&mut out, options);
-    let a = OwnedAnomaly::new("Test", Severity::Info, Timestamp::new(0, 0));
+    let a = OwnedAnomaly::new(
+        DetectorKind::Other("Test"),
+        Severity::Info,
+        Timestamp::new(0, 0),
+    );
     w.write_owned_anomaly(&a).unwrap();
     let json: serde_json::Value =
         serde_json::from_str(std::str::from_utf8(&out).unwrap().trim()).unwrap();
@@ -201,7 +221,7 @@ fn eve_writer_flowscope_kind_overrides_custom_anomaly_type() {
 #[test]
 fn ndjson_writer_writes_owned_anomaly_emits_valid_json() {
     let a = OwnedAnomaly::new(
-        "PortScanTRW",
+        DetectorKind::PortScanTrw,
         Severity::Warning,
         Timestamp::new(1_700_000_000, 0),
     )

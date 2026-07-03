@@ -135,6 +135,8 @@
 
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
+// Typed detector identity + ATT&CK technique mapping (issue #133).
+pub mod detector_kind;
 mod error;
 // Compile-time guards on the `l7` / `full` feature umbrellas (issue #87).
 mod feature_umbrellas;
@@ -144,6 +146,7 @@ pub mod rx_metadata;
 mod timestamp;
 mod view;
 
+pub use detector_kind::DetectorKind;
 pub use error::{Error, ErrorCode, ErrorKind, Module, Result};
 pub use mac_addr::MacAddr;
 pub use parser_kind::ParserKind;

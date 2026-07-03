@@ -183,7 +183,8 @@ impl DgaScore {
         ts: crate::Timestamp,
         flow_key: Option<&dyn crate::KeyFields>,
     ) -> crate::OwnedAnomaly {
-        let mut a = crate::OwnedAnomaly::new("DgaScorer", crate::event::Severity::Info, ts);
+        let mut a =
+            crate::OwnedAnomaly::new(crate::DetectorKind::Dga, crate::event::Severity::Info, ts);
         if let Some(key) = flow_key {
             a = a.with_key(key);
         }
@@ -198,8 +199,8 @@ impl DgaScore {
 
 #[cfg(feature = "tracker")]
 impl crate::DetectorScore for DgaScore {
-    fn name(&self) -> &'static str {
-        "DgaScorer"
+    fn kind(&self) -> crate::DetectorKind {
+        crate::DetectorKind::Dga
     }
 
     fn into_anomaly(self, ts: crate::Timestamp) -> crate::OwnedAnomaly {

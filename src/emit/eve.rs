@@ -295,10 +295,15 @@ where
             obj.insert("proto".into(), json!(p));
         }
 
-        let mut anomaly_obj = serde_json::Map::with_capacity(4);
+        let mut anomaly_obj = serde_json::Map::with_capacity(5);
         anomaly_obj.insert("type".into(), json!(anomaly_type));
-        anomaly_obj.insert("event".into(), json!(a.kind.as_ref()));
+        anomaly_obj.insert("event".into(), json!(a.kind.as_str()));
         anomaly_obj.insert("code".into(), json!(0u32));
+        // MITRE ATT&CK technique tag (issue #133) — additive field;
+        // schema-permissive for EVE consumers.
+        if let Some(technique) = a.kind.attack_technique() {
+            anomaly_obj.insert("attack_technique".into(), json!(technique));
+        }
 
         if !a.observations.is_empty() {
             let mut labels = serde_json::Map::with_capacity(a.observations.len());

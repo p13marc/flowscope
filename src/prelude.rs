@@ -192,6 +192,11 @@ pub use crate::pcap::{Pulse, datagram_pulses, session_pulses};
 // `Event::ParserClosed` / `SlotHandle::parser_kind`.
 #[cfg(feature = "session")]
 pub use crate::parser_kind::ParserKind;
+// Issue #133 (0.21): typed detector identity — carried on
+// `OwnedAnomaly::kind` and returned by `DetectorScore::kind`;
+// `attack_technique()` maps to MITRE ATT&CK Txxxx IDs.
+#[cfg(feature = "tracker")]
+pub use crate::detector_kind::DetectorKind;
 // Issue #8 (0.18): ECH GREASE-vs-real classification — surface
 // next to the rest of the TLS handshake vocabulary.
 #[cfg(feature = "session")]
