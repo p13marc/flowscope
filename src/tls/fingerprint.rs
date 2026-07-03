@@ -27,6 +27,28 @@ pub(crate) fn ja3(ch: &TlsClientHello) -> (String, String) {
     (canonical, hex_md5)
 }
 
+/// JA3 client fingerprint hash (hex MD5) for a [`TlsClientHello`].
+///
+/// The standalone companion to [`ja4_fingerprint`](crate::tls::ja4_fingerprint)
+/// — same shape (`&TlsClientHello -> String`), so callers holding a
+/// raw ClientHello can compute JA3 without going through
+/// [`TlsHandshake`](crate::tls::TlsHandshake). License-clean
+/// (Salesforce JA3, royalty-free); gated on `tls-fingerprints`,
+/// **not** `ja4plus`.
+///
+/// See [`ja3_canonical`] for the pre-hash canonical string.
+pub fn ja3_fingerprint(ch: &TlsClientHello) -> String {
+    ja3(ch).1
+}
+
+/// JA3 canonical string (the pre-hash
+/// `Version,Ciphers,Extensions,Curves,PointFormats` form) for a
+/// [`TlsClientHello`]. Useful for debugging a fingerprint or
+/// feeding an alternate hash. See [`ja3_fingerprint`] for the hash.
+pub fn ja3_canonical(ch: &TlsClientHello) -> String {
+    ja3(ch).0
+}
+
 fn canonical_string(ch: &TlsClientHello) -> String {
     // Field 1 — TLS version (record-layer; per JA3 spec).
     let version = ch.legacy_version.to_raw();

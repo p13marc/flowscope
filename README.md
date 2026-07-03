@@ -235,13 +235,21 @@ Per-feature dependency tree is documented inline in
 
 MIT **OR** Apache-2.0 at your option — with **one** opt-in exception.
 
-The off-by-default `ja4plus` feature compiles JA4S
-(`src/tls/ja4s.rs`), which is part of the JA4+ suite and is
-licensed under the [**FoxIO License
-1.1**](LICENSE-FoxIO-1.1) (source-available, non-commercial;
-**patent pending**). Commercial use of `ja4plus` needs a FoxIO
-OEM license. The default build and the `tls-fingerprints`
-feature (JA3 + JA4 *client*) are royalty-free.
+The off-by-default `ja4plus` feature compiles the FoxIO-licensed
+half of the JA4+ suite — **JA4S, JA4X, JA4H, JA4SSH, JA4T,
+JA4L/LS** — under the [**FoxIO License 1.1**](LICENSE-FoxIO-1.1)
+(source-available, non-commercial; **patent pending**). Commercial
+use of `ja4plus` needs a FoxIO OEM license. It is deliberately
+excluded from the `l7` and `full` umbrellas, so those builds stay
+license-clean.
+
+The `tls-fingerprints` feature (**JA3 + JA4 *client* +
+JA4-over-QUIC**) is royalty-free — BSD-3 (JA3) plus FoxIO's
+patent-free grant for plain JA4 — and *is* in `l7` / `full`.
+
+The whole family is surfaced under one namespace,
+[`flowscope::fingerprint`](https://docs.rs/flowscope/latest/flowscope/fingerprint/index.html),
+with the license split documented in one place.
 
 JA4+ methods are patent pending. "JA4+" is a trademark of FoxIO,
 LLC. See [NOTICE](NOTICE) for the third-party-crate license map.

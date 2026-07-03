@@ -179,6 +179,10 @@ pub mod community_id;
 // Issue #77: JA4L / JA4LS latency fingerprint (FoxIO-licensed JA4+).
 #[cfg(feature = "ja4plus")]
 pub mod ja4l;
+// Issue #136: unified JA4+ fingerprint facade — one import site for
+// the whole family, grouped by license. Empty in a build with no
+// fingerprint features enabled.
+pub mod fingerprint;
 #[cfg(feature = "tracker")]
 pub use anomaly::{DetectorScore, OwnedAnomaly};
 // Issue #131 (0.21): unified detector trait + registry at the
