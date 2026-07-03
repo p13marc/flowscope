@@ -339,6 +339,100 @@ fn datagram_parser_v6_only_skips_v4() {
     assert!(msgs.is_empty() || matches!(msgs[0].family, IcmpFamily::V6));
 }
 
+/// Build an ICMP error message: 8-byte header (type/code/cksum +
+/// 4 unused) followed by a minimal inner IP header whose version
+/// nibble is `inner_version` (4 or 6), padded so v6 has a full
+/// 40-byte header to decode.
+fn icmp_error(ty: u8, code: u8, inner_version: u8) -> Vec<u8> {
+    let mut v = vec![ty, code, 0, 0, 0, 0, 0, 0];
+    if inner_version == 6 {
+        // IPv6 header: first byte high nibble = 6; next_header=59
+        // (no-next-header) at byte 6; 40 bytes total.
+        v.extend_from_slice(&[0x60, 0, 0, 0, 0, 0, 59, 64]);
+        v.extend_from_slice(&[0u8; 32]);
+    } else {
+        // IPv4 header: 0x45 = v4, IHL 5; proto=6 (TCP) + a 5-tuple.
+        v.extend_from_slice(&[
+            0x45, 0, 0, 0x1c, 0, 0, 0, 0, 64, 6, 0, 0, 10, 0, 0, 1, 10, 0, 0, 2,
+        ]);
+        v.extend_from_slice(&[0x30, 0x39, 0, 0x50]); // ports 12345 -> 80
+    }
+    v
+}
+
+/// Regression (was untested end-to-end): an ICMPv4 **Host
+/// Unreachable** (type 3, code 1) through the auto-detecting
+/// `IcmpParser` classifies as `DestUnreachableKind::Host`.
+#[test]
+fn datagram_parser_v4_host_unreachable() {
+    use flowscope::{DatagramParser, FlowSide, Timestamp};
+    let mut p = IcmpParser::new();
+    let mut msgs = Vec::new();
+    p.parse(
+        &icmp_error(3, 1, 4),
+        FlowSide::Initiator,
+        Timestamp::default(),
+        &mut msgs,
+    );
+    assert_eq!(msgs.len(), 1);
+    assert!(matches!(msgs[0].family, IcmpFamily::V4));
+    assert_eq!(
+        msgs[0].ty.dest_unreachable_kind(),
+        Some(DestUnreachableKind::Host),
+    );
+}
+
+/// Regression for the family-detection bug: an ICMPv6 **Address
+/// Unreachable** (type 1, code 3 — the v6 "host unreachable") must
+/// decode as ICMPv6, not be swallowed as a v4 `Other`. Before the
+/// fix the auto-detecting parser tried v4 first and produced
+/// `V4(Other{raw_type:1})` with `is_error() == false`, so the
+/// error was lost entirely.
+#[test]
+fn datagram_parser_v6_address_unreachable_not_misread_as_v4() {
+    use flowscope::{DatagramParser, FlowSide, Timestamp};
+    let mut p = IcmpParser::new();
+    let mut msgs = Vec::new();
+    p.parse(
+        &icmp_error(1, 3, 6),
+        FlowSide::Initiator,
+        Timestamp::default(),
+        &mut msgs,
+    );
+    assert_eq!(msgs.len(), 1);
+    assert!(matches!(msgs[0].family, IcmpFamily::V6), "must be v6");
+    assert!(msgs[0].ty.is_error());
+    assert_eq!(
+        msgs[0].ty.dest_unreachable_kind(),
+        Some(DestUnreachableKind::Host),
+    );
+}
+
+/// Regression: ICMPv6 **Time Exceeded** (type 3) must not be
+/// misread as ICMPv4 Destination Unreachable (type 3 in the v4
+/// number space). Before the fix a v6 traceroute reply was
+/// reported as a network-unreachable error.
+#[test]
+fn datagram_parser_v6_time_exceeded_not_misread_as_v4_dest_unreach() {
+    use flowscope::{DatagramParser, FlowSide, Timestamp};
+    let mut p = IcmpParser::new();
+    let mut msgs = Vec::new();
+    p.parse(
+        &icmp_error(3, 0, 6),
+        FlowSide::Initiator,
+        Timestamp::default(),
+        &mut msgs,
+    );
+    assert_eq!(msgs.len(), 1);
+    assert!(matches!(msgs[0].family, IcmpFamily::V6));
+    assert!(matches!(
+        msgs[0].ty,
+        IcmpType::V6(Icmpv6Type::TimeExceeded { .. })
+    ));
+    // It is NOT a destination-unreachable of any kind.
+    assert_eq!(msgs[0].ty.dest_unreachable_kind(), None);
+}
+
 // ── Malformed payloads ────────────────────────────────────────────
 
 #[test]
