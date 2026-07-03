@@ -382,9 +382,11 @@ Each behind its own Cargo feature:
 | `dns` | `DnsUdpParser` | datagram | `flowscope::dns::PARSER_KIND_UDP` (`"dns-udp"`) |
 | `icmp` | `IcmpParser` | datagram | `flowscope::icmp::PARSER_KIND` (`"icmp"`) |
 
-`l7` umbrella feature enables all four. Use the constants — or
-the `flowscope::parser_kinds::*` umbrella module — at match sites
-instead of string literals.
+`l7` umbrella feature enables all four. Match on the typed
+[`flowscope::ParserKind`] enum (`.as_str()` yields the slug) or the
+per-module `PARSER_KIND` constants at match sites instead of string
+literals. (The old `flowscope::parser_kinds::*` umbrella module was
+removed in 0.22 — issue #139.)
 
 ### Lifecycle signals
 

@@ -1,17 +1,14 @@
-//! Plan 86 — `PARSER_KIND_*` constants per parser module + the
-//! `flowscope::parser_kinds` umbrella re-export. Verify that
-//! each parser's `parser_kind()` returns the module constant
-//! and that the umbrella re-exports match.
+//! Plan 86 — `PARSER_KIND_*` constants per parser module. Verify
+//! that each parser's `parser_kind().as_str()` returns its module
+//! constant and that the slug vocabulary is byte-stable.
 //!
-//! Issue #21 (0.18): the `flowscope::parser_kinds` umbrella is
-//! deprecated in favour of the typed [`flowscope::ParserKind`]
-//! enum. The tests below test backward-compat of the deprecated
-//! umbrella one last time before its 0.19 removal — we
-//! `#![allow(deprecated)]` the file scope so the deprecation
-//! lint doesn't fail CI.
+//! Issue #139 (0.22): the deprecated `flowscope::parser_kinds`
+//! umbrella re-export was removed — the typed
+//! [`flowscope::ParserKind`] enum (`.as_str()`) is the single
+//! source of the slug vocabulary. These tests pin the module
+//! constants against it.
 
 #![cfg(any(feature = "http", feature = "tls", feature = "dns", feature = "icmp"))]
-#![allow(deprecated)]
 
 #[cfg(feature = "http")]
 #[test]
@@ -73,40 +70,10 @@ fn icmp_constant_matches_parser_kind() {
     assert_eq!(PARSER_KIND, "icmp");
 }
 
-#[cfg(feature = "http")]
-#[test]
-fn parser_kinds_umbrella_http() {
-    use flowscope::{http, parser_kinds};
-    assert_eq!(parser_kinds::HTTP, http::PARSER_KIND);
-}
-
-#[cfg(feature = "dns")]
-#[test]
-fn parser_kinds_umbrella_dns() {
-    use flowscope::{dns, parser_kinds};
-    assert_eq!(parser_kinds::DNS_UDP, dns::PARSER_KIND_UDP);
-    assert_eq!(parser_kinds::DNS_TCP, dns::PARSER_KIND_TCP);
-}
-
-#[cfg(feature = "tls")]
-#[test]
-fn parser_kinds_umbrella_tls() {
-    use flowscope::{parser_kinds, tls};
-    assert_eq!(parser_kinds::TLS, tls::PARSER_KIND);
-}
-
-#[cfg(feature = "icmp")]
-#[test]
-fn parser_kinds_umbrella_icmp() {
-    use flowscope::{icmp, parser_kinds};
-    assert_eq!(parser_kinds::ICMP, icmp::PARSER_KIND);
-}
-
 /// Sanity check that constants work in `&'static str` contexts —
 /// e.g. as `metrics::counter!` labels with zero allocation.
 #[cfg(feature = "http")]
 #[test]
 fn constants_are_static_str() {
     let _s: &'static str = flowscope::http::PARSER_KIND;
-    let _u: &'static str = flowscope::parser_kinds::HTTP;
 }

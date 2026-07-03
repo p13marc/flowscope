@@ -116,6 +116,25 @@ fingerprint change from the issue was deliberately **not** taken:
 the fingerprints are canonically hash/signature strings, so typed
 newtypes would be churn without safety gain.
 
+### Changed — single-table parser/module registries; `parser_kinds` removed (#139)
+
+Design-debt cleanup for 1.0: "the set of parsers" was spread across
+parallel hand-written `match` blocks that could silently drift.
+
+- **`ParserKind` is now generated from one table** via a
+  `slug_enum!` macro — the enum variants, `as_str`, and `from_slug`
+  all come from a single `Variant => "slug"` list, so the forward
+  and inverse slug mappings **can no longer disagree** (they were
+  independent matches before). Adding a parser is a one-line edit.
+  Slugs are byte-identical — the wire is unchanged.
+- **`Module` is likewise generated** from one table (`module_enum!`
+  → enum + `Display`).
+- **Removed the deprecated `flowscope::parser_kinds`** `&str`
+  constant umbrella (soft-deprecated since 0.18). Use the typed
+  `ParserKind` enum (`.as_str()` yields the same slugs) or the
+  per-module `PARSER_KIND` constants, which are unchanged. See
+  `docs/migration-0.21-to-0.22.md`.
+
 ## 0.21.0 (unreleased) — detection architecture: typed DetectorKind, Detector trait + registry, NDR detectors
 
 The 2026 roadmap's (#140) keystone detection-architecture group,

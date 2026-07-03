@@ -16,10 +16,9 @@ use super::{
 };
 use crate::{Timestamp, session::SessionParser};
 
-/// Stable identifier for the handshake aggregator. Plan 118 §4 —
-/// makes the slug available via
-/// [`crate::parser_kinds::TLS_HANDSHAKE`] so consumers don't
-/// have to write the magic string.
+/// Stable identifier for the handshake aggregator — the
+/// [`ParserKind::TlsHandshake`](crate::ParserKind::TlsHandshake)
+/// slug, so consumers don't have to write the magic string.
 pub const PARSER_KIND: &str = "tls-handshake";
 
 /// Outcome of an observed handshake.

@@ -82,8 +82,8 @@ pub use datagram::IcmpParser;
 pub use parser::{parse_v4, parse_v6};
 pub use types::*;
 
-/// Slug returned by [`IcmpParser`]'s `parser_kind()`. See
-/// `flowscope::parser_kinds::ICMP`.
+/// Slug returned by [`IcmpParser`]'s `parser_kind()` —
+/// the [`ParserKind::Icmp`](crate::ParserKind::Icmp) slug.
 ///
 /// Stability: locked from 0.8 forward.
 pub const PARSER_KIND: &str = "icmp";
