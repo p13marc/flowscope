@@ -21,6 +21,64 @@ the core.
 
 ## Implementation Status
 
+**0.21.0 cycle** (detection architecture — the #140 roadmap
+keystone group, **release-ready, not yet published** as of
+2026-07-03).
+
+Eight PRs (#146–#149 + earlier branches), one branch/PR per
+issue, sequenced breaking-first so the migration doc
+(`docs/migration-0.20-to-0.21.md`) accretes. Themes:
+
+- **Typed detector identity (`#133`, breaking).** `OwnedAnomaly.kind`
+  graduates from a `Cow<'static, str>` slug to the typed
+  `flowscope::DetectorKind` enum (ParserKind precedent, #109) —
+  compile-time break, **byte-identical wire** (slugs preserved:
+  `Dga`→`"DgaScorer"`, `PortScanTrw`→`"PortScanTRW"`). Adds
+  `attack_technique() -> Option<&'static str>` MITRE ATT&CK
+  mapping; `EveJsonWriter` emits `anomaly.attack_technique`
+  additively. `DetectorScore::name()` → `kind()`.
+- **Unified `Detector` trait + `DetectorRegistry` (`#131`,
+  keystone).** Register a heterogeneous detector set once, drive
+  it from one event stream (`observe` / `observe_event` /
+  `observe_dns`) via defaulted no-op lifecycle hooks + caller-buffer
+  output (`track_into` idiom). Derived aggregation keys `SrcHost` /
+  `HostPair` replace the per-consumer `SrcIpKey` newtype. Shipped
+  `Detector` impls for beacon / RITA-beacon (threshold+cooldown
+  emission gate) / port-scan (success derived from `HistoryString`)
+  + a `DgaDetector` wrapper.
+- **Four upstreamed NDR detectors (`#132`).** `DnsTunnelDetector`
+  (T1071.004), `NewlyObservedDomainDetector` (T1568),
+  `ConnectionFloodDetector` (T1498), `DataExfilDetector` (T1048) —
+  all native `Detector` impls on the new `correlate` primitives,
+  threshold+cooldown gated.
+- **New `correlate` streaming primitives (`#134`, additive).**
+  `EwmaVar` (EWMA mean+variance → N-sigma), `FirstSeen` (TTL
+  first-seen set), `CountingBloomFilter` (delete-capable),
+  `Cusum` + `PageHinkley` (sequential change-point — NOT
+  Mergeable, path-dependent), `DdSketch` + `WindowedQuantiles`
+  (relative-error quantiles, Mergeable). Plus `Mergeable` for
+  `WelfordStats`.
+- **`dns::NameMap` (`#130`, additive).** Zeek/Corelight namecache:
+  plural provenance-tagged names per IP, answer-TTL expiry, CNAME
+  chain + PTR reverse, global + client-scoped lookup, `drain_new`
+  delta feed. Alongside the unchanged `DnsResolutionCache`.
+- **Opt-in per-packet `source_idx` (`#121`, small break).**
+  `FlowEvent::Packet` / `Event::Packet` become variant-level
+  `#[non_exhaustive]` and carry `source_idx: Option<u32>`, gated by
+  `FlowTrackerConfig::emit_packet_source_idx` /
+  `DriverBuilder::emit_packet_source_idx` (default off). Closes the
+  last per-packet phase of tap-merge epic #123.
+
+Test count after the cycle: **1890 passing** (up from 1763 at
+0.20.0). Zero clippy warnings under `--all-features --all-targets
+-D warnings`, zero rustdoc warnings. New modules:
+`src/detector_kind.rs`, `src/detect/registry.rs`,
+`src/detect/patterns/{dns_tunnel,nod,conn_flood,data_exfil}.rs`,
+`src/correlate/{ewma_var,first_seen,counting_bloom,change_point,ddsketch}.rs`,
+`src/dns/name_map.rs`. Migration recipes in
+`docs/migration-0.20-to-0.21.md`. **Not published to crates.io** —
+awaiting release consent.
+
 **0.20.0 cycle** (driver/event convergence + 1.0-prep
 strong-typing sweep, shipped 2026-06-29).
 

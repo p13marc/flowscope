@@ -6,6 +6,13 @@ The 2026 roadmap's (#140) keystone detection-architecture group,
 plus the pDNS name map and the final tap-merge phase. Migration
 recipes in `docs/migration-0.20-to-0.21.md`.
 
+Three breaking changes (typed `DetectorKind` #133, `DetectorScore`
+trait #131, per-packet `source_idx` #121 — all compile-time,
+`#133`'s wire is byte-identical), the rest additive. Test count
+**1890 passing** (up from 1763 at 0.20.0); zero clippy warnings
+under `--all-features --all-targets -D warnings`, zero rustdoc
+warnings.
+
 ### Breaking — `OwnedAnomaly::kind` is typed `DetectorKind` (#133)
 
 Detector identity graduates from a string slug
