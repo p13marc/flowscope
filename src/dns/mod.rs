@@ -65,6 +65,7 @@
 mod correlator;
 mod datagram;
 mod exchange;
+mod name_map;
 mod parser;
 #[cfg(feature = "pcap")]
 mod pcap_iter;
@@ -75,6 +76,7 @@ mod types;
 pub use correlator::Correlator;
 pub use datagram::{DnsMessage, DnsUdpParser};
 pub use exchange::{DnsExchange, DnsExchangeParser, DnsOutcome};
+pub use name_map::{NameClaim, NameMap, NameMapConfig, Provenance};
 pub use parser::{DnsParseResult, parse_message, parse_message_at};
 #[cfg(feature = "pcap")]
 pub use pcap_iter::{exchanges_from_pcap, messages_from_pcap};

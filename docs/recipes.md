@@ -220,6 +220,69 @@ canonicalised to lowercase ASCII (RFC 1035 §2.3.1).
 `was_resolved` and `lookup_name` mutate LRU order; use
 `peek_resolved` / `peek_name` for read-only contexts.
 
+### Passive-DNS naming — `NameMap` (0.21, #130)
+
+When you need to *name* a talker rather than just confirm a
+resolution — "what names does this IP have, from which source,
+seen when?" — reach for `NameMap`. It is the Zeek/Corelight
+"namecache" model: **plural** provenance-tagged names per IP,
+expiry driven by the **answer's own TTL** (+ grace), a global
+(client-agnostic) reverse index for the internal-resolver case,
+CNAME-chain and PTR handling, and a `drain_new` delta feed that
+yields each genuinely-new mapping exactly once (rate-limit
+friendly — the Corelight lesson).
+
+```rust,ignore
+use flowscope::dns::{NameMap, NameClaim, Provenance};
+
+let mut names = NameMap::new();
+
+// On every DNS response — walks the CNAME chain, binds the
+// terminal A/AAAA to the *queried* name, adds PTR reverse claims:
+names.observe_response(client_ip, &response, now);
+
+// Fold in non-DNS naming sources (TLS SNI, DHCP, mDNS):
+names.observe_claim(server_ip, NameClaim::new(sni, Provenance::Sni, now));
+
+// Name a flow/talker — global fallback (any client):
+for claim in names.names(target_ip, now) {
+    println!("{target_ip} = {} (via {}, seen {:?})",
+        claim.name, claim.provenance.as_str(), claim.last_seen);
+}
+
+// Propagate only new mappings to a fleet index, rate-limited:
+for (ip, claim) in names.drain_new() {
+    publish(ip, claim); // check `names.pending_dropped()` for back-pressure
+}
+```
+
+`NameMap` bounds memory three ways (`max_ips` LRU, `max_claims_per_ip`,
+`max_pending`); tune via `NameMapConfig`. Prefer `names_for_client`
+(client-scoped, falls back to client-agnostic claims) when the
+resolving host is known; it returns an iterator rather than a
+slice because client filtering can't be a contiguous borrow.
+
+#### FQDN-pivoted beaconing — `NameMap` + `BeaconDetector<String>`
+
+`BeaconDetector<K>` is generic over its key, so pivoting beacon
+detection onto resolved names (RITA `show-beacons-fqdn` style) is
+just keying it with the name `NameMap` hands you:
+
+```rust,ignore
+use flowscope::detect::patterns::BeaconDetector;
+
+let mut beacons: BeaconDetector<String> = BeaconDetector::new();
+
+// Per connection to `target_ip`, attribute it to the FQDN and
+// score periodicity by name rather than by IP (survives a C2
+// rotating through a CDN's address pool):
+if let Some(claim) = names.names(target_ip, now).first() {
+    if let Some(score) = beacons.observe(claim.name.clone(), now, bytes) {
+        if score.score >= 0.9 { /* FQDN beacon candidate */ }
+    }
+}
+```
+
 ## ICMP error correlation
 
 When you see an ICMP error message, link it back to the original
