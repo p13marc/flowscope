@@ -18,6 +18,20 @@
 //! timestamp, not wall clock, so live and offline pipelines
 //! produce identical detector output for identical inputs.
 //!
+//! # Hashing
+//!
+//! Hash-consuming primitives default to the std
+//! [`RandomState`](std::hash::RandomState) (SipHash-1-3,
+//! HashDoS-resistant, randomly seeded per instance). The
+//! hasher-generic types ([`BloomFilter`], [`CountMinSketch`],
+//! [`HyperLogLog`], [`EwmaVar`]) accept an alternative
+//! `BuildHasher` via their `with_hasher` /
+//! `with_*_and_hasher` constructors: pass `ahash::RandomState`
+//! (already a `tracker`-feature dependency) for throughput on
+//! trusted keys, or a **fixed-seed** builder when
+//! [`Mergeable`] shards must agree on hash positions
+//! (issue #134).
+//!
 //! # Quick start: bucketed counter
 //!
 //! ```
@@ -55,6 +69,8 @@ mod bucketed;
 mod burst;
 mod count_min;
 mod ewma;
+// Issue #134 (0.21): per-key EWMA mean + variance.
+mod ewma_var;
 mod hyperloglog;
 mod mergeable;
 mod neighbor_table;
@@ -77,6 +93,7 @@ pub use bucketed::TimeBucketedCounter;
 pub use burst::{BurstDetector, BurstHit};
 pub use count_min::CountMinSketch;
 pub use ewma::Ewma;
+pub use ewma_var::{EwmaVar, EwmaVarValue};
 #[cfg(feature = "extractors")]
 pub use flow_state_map::FlowStateMap;
 pub use hyperloglog::{HyperLogLog, InvalidPrecision};

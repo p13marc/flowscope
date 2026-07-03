@@ -149,6 +149,10 @@ pub use crate::correlate::BitStore;
 // Issue #1 (0.17): NeighborTable IP→link-layer binding tracker.
 #[cfg(feature = "tracker")]
 pub use crate::correlate::{NeighborBinding, NeighborEvent, NeighborTable};
+// Issue #134 (0.21): streaming detector primitives — per-key
+// EWMA mean+variance (N-sigma baselines).
+#[cfg(feature = "tracker")]
+pub use crate::correlate::{EwmaVar, EwmaVarValue};
 // Issue #4 (0.17): behavioural-fingerprint primitives.
 #[cfg(feature = "fingerprint")]
 pub use crate::detect::fingerprint::{FingerprintBuilder, FlowFingerprint};
