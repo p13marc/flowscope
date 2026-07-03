@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.22.0 (unreleased) — fingerprinting & encrypted-traffic frontier
+## 0.22.0 (2026-07-03) — fingerprinting & encrypted-traffic frontier
 
 The #140 roadmap's fingerprinting/encrypted-traffic group: a
 unified JA4+ surface, TLS/QUIC ClientHello reassembly for the
@@ -180,7 +180,7 @@ parallel hand-written `match` blocks that could silently drift.
   per-module `PARSER_KIND` constants, which are unchanged. See
   `docs/migration-0.21-to-0.22.md`.
 
-## 0.21.0 (unreleased) — detection architecture: typed DetectorKind, Detector trait + registry, NDR detectors
+## 0.21.0 (2026-07-03, never published separately — released as part of 0.22.0) — detection architecture: typed DetectorKind, Detector trait + registry, NDR detectors
 
 The 2026 roadmap's (#140) keystone detection-architecture group,
 plus the pDNS name map and the final tap-merge phase. Migration
