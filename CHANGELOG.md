@@ -52,6 +52,26 @@ per-packet leg sequences reconstruct asymmetric-routing / mis-wired
 taps that the folded per-direction `FlowStats` binding (#120) cannot
 express. Closes the tap-merge epic's last open phase.
 
+### Added — `correlate` streaming primitives (#134)
+
+New detector-grade streaming primitives (all additive, under the
+existing `tracker` gate, hand-rolled per house convention):
+
+- **`EwmaVar<K, S>`** — per-key exponentially weighted mean **and
+  variance** (West's incremental form), the axis the mean-only
+  `Ewma` lacks. `record_at` returns an `EwmaVarValue { mean,
+  variance }` snapshot (+ `std()`); `zscore(&key, sample)` answers
+  the N-sigma outlier question directly (returns `0.0` during
+  zero-variance warmup so a fresh baseline never alarms).
+  Hasher-generic like the sketch family; `Mergeable` with a pooled
+  variance fold (cross-term included). Prereq for the #132
+  `DataExfilDetector`.
+- **`Mergeable` conformance audit** — `WelfordStats` now implements
+  the `Mergeable` trait (delegating to its inherent exact
+  parallel-merge), and `correlate`'s module docs gained a
+  "Hashing" section documenting the std-`RandomState` default and
+  the seeded-`ahash` sharding recipe.
+
 ## 0.20.0 (2026-06-29) — NSM primitives + driver/event convergence + 1.0-prep API sweep
 
 Pure, no-async — fits the runtime-free lib rule. The largest pre-1.0

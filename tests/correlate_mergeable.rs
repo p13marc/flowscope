@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use flowscope::Timestamp;
 use flowscope::correlate::{
-    Ewma, Mergeable, RollingRate, TimeBucketedCounter, TimeBucketedSet, TopK,
+    Ewma, EwmaVar, Mergeable, RollingRate, TimeBucketedCounter, TimeBucketedSet, TopK, WelfordStats,
 };
 
 fn ts(secs: u32) -> Timestamp {
@@ -201,4 +201,109 @@ fn merge_all_default_combines_n_shards() {
     assert_eq!(acc.estimate(&"alice"), 4); // 1 + 3
     assert_eq!(acc.estimate(&"bob"), 2);
     assert_eq!(acc.estimate(&"carol"), 4);
+}
+
+// ─── EwmaVar (issue #134) ────────────────────────────────
+
+#[test]
+fn ewma_var_merge_pools_mean_and_variance() {
+    let mut a: EwmaVar<u32> = EwmaVar::new(0.5);
+    let mut b: EwmaVar<u32> = EwmaVar::new(0.5);
+    // Shard A settles near 10, shard B near 20 (both zero variance
+    // after constant streams).
+    for _ in 0..50 {
+        a.record(1, 10.0);
+        b.record(1, 20.0);
+    }
+    a.merge(b);
+    let v = a.get(&1).unwrap();
+    assert!((v.mean - 15.0).abs() < 1e-9, "pooled mean");
+    // Cross-term: 0.25 * (10-20)^2 = 25 — merged spread reflects the
+    // level difference between the shards.
+    assert!((v.variance - 25.0).abs() < 1e-6, "pooled variance");
+}
+
+#[test]
+fn ewma_var_merge_retains_lone_keys() {
+    let mut a: EwmaVar<u32> = EwmaVar::new(0.5);
+    let mut b: EwmaVar<u32> = EwmaVar::new(0.5);
+    a.record(1, 10.0);
+    b.record(2, 20.0);
+    a.merge(b);
+    assert_eq!(a.get(&1).unwrap().mean, 10.0);
+    assert_eq!(a.get(&2).unwrap().mean, 20.0);
+}
+
+#[test]
+fn ewma_var_merge_is_commutative() {
+    let mk = |samples: &[(u32, f64)]| {
+        let mut e: EwmaVar<u32> = EwmaVar::new(0.3);
+        for (k, v) in samples {
+            e.record(*k, *v);
+        }
+        e
+    };
+    let mut ab = mk(&[(1, 10.0), (2, 5.0)]);
+    ab.merge(mk(&[(1, 30.0), (3, 7.0)]));
+    let mut ba = mk(&[(1, 30.0), (3, 7.0)]);
+    ba.merge(mk(&[(1, 10.0), (2, 5.0)]));
+    for k in [1u32, 2, 3] {
+        let x = ab.get(&k).unwrap();
+        let y = ba.get(&k).unwrap();
+        assert!((x.mean - y.mean).abs() < 1e-9, "key {k} mean");
+        assert!((x.variance - y.variance).abs() < 1e-9, "key {k} var");
+    }
+}
+
+#[test]
+#[should_panic(expected = "matching alpha")]
+fn ewma_var_merge_panics_on_alpha_mismatch() {
+    let mut a: EwmaVar<u32> = EwmaVar::new(0.5);
+    let b: EwmaVar<u32> = EwmaVar::new(0.9);
+    a.merge(b);
+}
+
+// ─── WelfordStats (issue #134) ───────────────────────────
+
+#[test]
+fn welford_trait_merge_equals_serial_stream() {
+    // Merging two shards through the Mergeable trait must equal
+    // one stream that saw all samples (exact parallel merge).
+    let all: Vec<f64> = (1..=20).map(|i| i as f64 * 1.5).collect();
+    let mut serial = WelfordStats::new();
+    for v in &all {
+        serial.observe(*v);
+    }
+    let mut shard_a = WelfordStats::new();
+    let mut shard_b = WelfordStats::new();
+    for v in &all[..8] {
+        shard_a.observe(*v);
+    }
+    for v in &all[8..] {
+        shard_b.observe(*v);
+    }
+    Mergeable::merge(&mut shard_a, shard_b);
+    assert_eq!(shard_a.count(), serial.count());
+    assert!((shard_a.mean() - serial.mean()).abs() < 1e-9);
+    assert!((shard_a.variance_sample() - serial.variance_sample()).abs() < 1e-9);
+    assert_eq!(shard_a.min(), serial.min());
+    assert_eq!(shard_a.max(), serial.max());
+}
+
+#[test]
+fn welford_trait_merge_is_commutative() {
+    let mk = |vals: &[f64]| {
+        let mut s = WelfordStats::new();
+        for v in vals {
+            s.observe(*v);
+        }
+        s
+    };
+    let mut ab = mk(&[1.0, 2.0, 3.0]);
+    Mergeable::merge(&mut ab, mk(&[10.0, 20.0]));
+    let mut ba = mk(&[10.0, 20.0]);
+    Mergeable::merge(&mut ba, mk(&[1.0, 2.0, 3.0]));
+    assert!((ab.mean() - ba.mean()).abs() < 1e-9);
+    assert!((ab.variance_sample() - ba.variance_sample()).abs() < 1e-9);
+    assert_eq!(ab.count(), ba.count());
 }

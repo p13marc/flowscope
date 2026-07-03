@@ -114,6 +114,10 @@ impl WelfordStats {
     /// useful when aggregating per-shard stats into a global
     /// view. Uses the parallel-merge form of Welford's
     /// algorithm (Chan, Golub, LeVeque 1979).
+    ///
+    /// The [`Mergeable`](crate::correlate::Mergeable) trait impl
+    /// delegates here (issue #134); in generic sharded-reducer
+    /// contexts prefer the trait bound.
     pub fn merge(&mut self, other: &WelfordStats) {
         if other.count == 0 {
             return;
@@ -141,6 +145,15 @@ impl WelfordStats {
             (None, Some(b)) => self.max = Some(b),
             _ => {}
         }
+    }
+}
+
+impl crate::correlate::Mergeable for WelfordStats {
+    /// Delegates to the inherent by-ref [`WelfordStats::merge`]
+    /// (Chan–Golub–LeVeque parallel form) — exact, commutative,
+    /// associative. Issue #134.
+    fn merge(&mut self, other: Self) {
+        WelfordStats::merge(self, &other);
     }
 }
 
