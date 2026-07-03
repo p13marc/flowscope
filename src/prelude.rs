@@ -151,9 +151,14 @@ pub use crate::correlate::BitStore;
 pub use crate::correlate::{NeighborBinding, NeighborEvent, NeighborTable};
 // Issue #134 (0.21): streaming detector primitives — per-key
 // EWMA mean+variance (N-sigma baselines), delete-capable
-// counting-Bloom membership, first-seen/newly-observed TTL set.
+// counting-Bloom membership, first-seen/newly-observed TTL set,
+// sequential change-point (CUSUM / Page-Hinkley), and DdSketch
+// relative-error quantiles (windowed + whole-stream).
 #[cfg(feature = "tracker")]
-pub use crate::correlate::{CountingBloomFilter, EwmaVar, EwmaVarValue, FirstSeen};
+pub use crate::correlate::{
+    ChangeDirection, ChangePoint, CountingBloomFilter, Cusum, DdSketch, EwmaVar, EwmaVarValue,
+    FirstSeen, InterArrivalPageHinkley, PageHinkley, WindowedQuantiles,
+};
 // Issue #4 (0.17): behavioural-fingerprint primitives.
 #[cfg(feature = "fingerprint")]
 pub use crate::detect::fingerprint::{FingerprintBuilder, FlowFingerprint};

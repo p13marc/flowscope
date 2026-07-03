@@ -88,6 +88,25 @@ existing `tracker` gate, hand-rolled per house convention):
   "new", never false "seen"); `seen`/`first_seen` are peek-based.
   `Mergeable` as a min(first)/max(last) lattice union. Prereq for
   the #132 `NewlyObservedDomainDetector`.
+- **`Cusum` + `PageHinkley`** — sequential change-point detectors:
+  spot a shift in the *mean* of a scalar stream (flow rate,
+  throughput, inter-arrival) online, signalling when a shift
+  becomes persistent rather than a single spike (the regime-shift
+  axis an EWMA z-score can't see). Both `Copy` scalars (one per
+  stream), two-sided, reset-on-alarm; `Cusum` takes a target mean
+  + slack + threshold, `PageHinkley` estimates the mean online.
+  Plus `InterArrivalPageHinkley` (feeds timestamp gaps) and
+  `ChangePoint`/`ChangeDirection`. Deliberately **not** `Mergeable`
+  — their statistic is path-dependent (documented in
+  `mergeable.rs`).
+- **`DdSketch` + `WindowedQuantiles`** — relative-error quantile
+  sketch (Masson/Rim/Lee VLDB '19): p50/p95/p99 over a
+  positive-valued stream with a guaranteed relative error and
+  bounded (log-spaced, collapse-lowest) memory, `Mergeable` for
+  RSS-sharded union, no new deps — the `correlate`, windowed,
+  shardable counterpart to the whole-stream `aggregate::Percentile`
+  t-digest. `WindowedQuantiles` rotates sketches through time
+  buckets for sliding-window quantiles.
 
 ### Breaking — unified `Detector` trait + `DetectorRegistry` (#131, keystone)
 

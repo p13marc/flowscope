@@ -38,6 +38,16 @@ For the conceptual layer-by-layer reference, see
 | [`detect::patterns::BeaconDetector<K>`](https://docs.rs/flowscope/latest/flowscope/detect/patterns/struct.BeaconDetector.html) | CV-composite RITA-style beacon score. |
 | [`detect::patterns::DgaScorer`](https://docs.rs/flowscope/latest/flowscope/detect/patterns/struct.DgaScorer.html) | Bigram log-likelihood with embedded English baseline. |
 | [`detect::signatures::*`](https://docs.rs/flowscope/latest/flowscope/detect/signatures/index.html) | 10 magic-byte recognizers + registry. |
+| [`EwmaVar<K>`](https://docs.rs/flowscope/latest/flowscope/correlate/struct.EwmaVar.html) | Per-key EWMA mean **and** variance → `zscore` N-sigma outlier baselines. Zero-variance warmup never alarms. **0.21, #134.** |
+| [`Cusum`](https://docs.rs/flowscope/latest/flowscope/correlate/struct.Cusum.html) / [`PageHinkley`](https://docs.rs/flowscope/latest/flowscope/correlate/struct.PageHinkley.html) | Sequential change-point — "has the *mean* shifted", not "is this sample far out". Two-sided, reset-on-alarm. Page-Hinkley needs no target mean. **0.21, #134.** |
+
+## "I want percentiles / quantiles"
+
+| Primitive | Pitch |
+|---|---|
+| [`DdSketch`](https://docs.rs/flowscope/latest/flowscope/correlate/struct.DdSketch.html) | Relative-error quantiles (p50/p95/p99) over a positive-valued stream; log-spaced bins, bounded memory, `Mergeable` for RSS-sharded union. No extra deps. **0.21, #134.** |
+| [`WindowedQuantiles`](https://docs.rs/flowscope/latest/flowscope/correlate/struct.WindowedQuantiles.html) | Sliding-window quantiles ("p99 latency over the last 60 s") — rotates `DdSketch`es through time buckets. **0.21, #134.** |
+| [`aggregate::Percentile`](https://docs.rs/flowscope/latest/flowscope/aggregate/struct.Percentile.html) | Whole-stream t-digest (behind the `aggregate` feature) — use when you want one lifetime distribution, not windowed/sharded. |
 
 ## "I want top-N reports"
 

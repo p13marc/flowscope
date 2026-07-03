@@ -7,8 +7,8 @@ use std::time::Duration;
 
 use flowscope::Timestamp;
 use flowscope::correlate::{
-    Ewma, EwmaVar, FirstSeen, Mergeable, RollingRate, TimeBucketedCounter, TimeBucketedSet, TopK,
-    WelfordStats,
+    DdSketch, Ewma, EwmaVar, FirstSeen, Mergeable, RollingRate, TimeBucketedCounter,
+    TimeBucketedSet, TopK, WelfordStats, WindowedQuantiles,
 };
 
 fn ts(secs: u32) -> Timestamp {
@@ -365,5 +365,88 @@ fn first_seen_merge_panics_on_ttl_mismatch() {
 fn first_seen_merge_panics_on_capacity_mismatch() {
     let mut a: FirstSeen<u32> = FirstSeen::new(Duration::from_secs(1), 64);
     let b: FirstSeen<u32> = FirstSeen::new(Duration::from_secs(1), 128);
+    a.merge(b);
+}
+
+// ─── DdSketch / WindowedQuantiles (issue #134) ───────────
+
+#[test]
+fn ddsketch_merge_equals_serial_stream() {
+    let mut serial = DdSketch::new(0.01, 2048);
+    let mut a = DdSketch::new(0.01, 2048);
+    let mut b = DdSketch::new(0.01, 2048);
+    for i in 1..=400 {
+        serial.insert(i as f64);
+        a.insert(i as f64);
+    }
+    for i in 401..=800 {
+        serial.insert(i as f64);
+        b.insert(i as f64);
+    }
+    a.merge(b);
+    assert_eq!(a.count(), serial.count());
+    for q in [0.5, 0.9, 0.99] {
+        let m = a.quantile(q).unwrap();
+        let s = serial.quantile(q).unwrap();
+        assert!((m - s).abs() / s <= 0.05, "q={q} merged={m} serial={s}");
+    }
+}
+
+#[test]
+fn ddsketch_merge_is_commutative() {
+    let mk = |lo: u32, hi: u32| {
+        let mut s = DdSketch::new(0.01, 1024);
+        for i in lo..=hi {
+            s.insert(i as f64);
+        }
+        s
+    };
+    let mut ab = mk(1, 250);
+    ab.merge(mk(251, 500));
+    let mut ba = mk(251, 500);
+    ba.merge(mk(1, 250));
+    for q in [0.25, 0.5, 0.95] {
+        assert_eq!(ab.quantile(q).unwrap(), ba.quantile(q).unwrap(), "q={q}");
+    }
+}
+
+#[test]
+#[should_panic(expected = "alpha mismatch")]
+fn ddsketch_merge_panics_on_alpha_mismatch() {
+    let mut a = DdSketch::new(0.01, 1024);
+    let b = DdSketch::new(0.05, 1024);
+    a.merge(b);
+}
+
+#[test]
+#[should_panic(expected = "max_bins mismatch")]
+fn ddsketch_merge_panics_on_max_bins_mismatch() {
+    let mut a = DdSketch::new(0.01, 1024);
+    let b = DdSketch::new(0.01, 512);
+    a.merge(b);
+}
+
+#[test]
+fn windowed_quantiles_merge_unions_aligned_buckets() {
+    let mk = || WindowedQuantiles::new(Duration::from_secs(60), Duration::from_secs(1), 0.01, 512);
+    let mut a = mk();
+    let mut b = mk();
+    for _ in 0..20 {
+        a.record(100.0, ts(5));
+        b.record(100.0, ts(5));
+        b.record(100.0, ts(7));
+    }
+    a.merge(b);
+    // ts=5 merged in place, ts=7 inserted → 2 live buckets.
+    assert_eq!(a.len(), 2);
+    let p50 = a.quantile(0.5, ts(7)).unwrap();
+    assert!((p50 - 100.0).abs() / 100.0 < 0.05, "p50={p50}");
+}
+
+#[test]
+#[should_panic(expected = "bucket_width mismatch")]
+fn windowed_quantiles_merge_panics_on_bucket_mismatch() {
+    let mut a = WindowedQuantiles::new(Duration::from_secs(60), Duration::from_secs(1), 0.01, 512);
+    let b = WindowedQuantiles::new(Duration::from_secs(60), Duration::from_secs(2), 0.01, 512);
     a.merge(b);
 }
