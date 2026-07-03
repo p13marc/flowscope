@@ -315,9 +315,9 @@ pub fn postgres_startup(bytes: &[u8]) -> SignatureMatch {
 
 /// Curated `(parser_kind, signature)` table.
 ///
-/// `parser_kind` strings align with the existing
-/// `flowscope::parser_kinds::*` constants where applicable so
-/// signature matches dispatch back to the existing parsers.
+/// `parser_kind` strings align with the [`ParserKind`](crate::ParserKind)
+/// slug vocabulary where applicable so signature matches dispatch
+/// back to the existing parsers.
 pub fn registry() -> impl Iterator<Item = (&'static str, SignatureFn)> {
     [
         ("http", http_request as SignatureFn),

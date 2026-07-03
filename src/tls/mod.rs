@@ -118,8 +118,8 @@ pub use pq::{is_pq_hybrid_group, pq_hybrid_group_name};
 pub use session::{TlsMessage, TlsParser};
 pub use types::*;
 
-/// Slug returned by [`TlsParser`]'s `parser_kind()`. See
-/// `flowscope::parser_kinds::TLS`.
+/// Slug returned by [`TlsParser`]'s `parser_kind()` —
+/// the [`ParserKind::Tls`](crate::ParserKind::Tls) slug.
 ///
 /// Stability: locked from 0.8 forward.
 pub const PARSER_KIND: &str = "tls";

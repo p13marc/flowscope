@@ -14,173 +14,151 @@
 //! `Other(&'static str)` variant so downstream crates can register
 //! their own parser kinds without flowscope code changes.
 
-/// Which parser produced a session / datagram message.
+/// Declares a `#[non_exhaustive]` **slug enum**: a flat set of
+/// built-in variants each paired with its stable string slug in one
+/// table, plus the invariant `Other(&'static str)` / `#[default]
+/// Unspecified` tail. `as_str` and `from_slug` are both generated
+/// from that single table, so the forward and inverse mappings can
+/// never drift apart — the class of bug the old hand-written parallel
+/// `match` blocks invited (issue #139).
 ///
-/// Built-in variants cover every parser shipped under a flowscope
-/// feature gate. Downstream crates register their own kinds via
-/// [`Self::Other`].
-///
-/// `#[non_exhaustive]` — future protocol features will add
-/// variants; matching on this enum should always include a
-/// wildcard arm.
-/// Serializes as its [`as_str`](Self::as_str) slug — a plain JSON
-/// string (e.g. `"http/1"`), not a tagged object — so the
-/// `parser_kind` field in emitted events matches the pre-0.20
-/// `&'static str` wire shape. Deserializes a slug back via
-/// [`from_slug`](Self::from_slug): built-in slugs round-trip to
-/// their variant; an unrecognised slug (including a downstream
-/// [`Other`](Self::Other) label) deserializes to
-/// [`Unspecified`](Self::Unspecified) — it cannot rebuild the
-/// `&'static str` an `Other` needs.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
-#[non_exhaustive]
-pub enum ParserKind {
-    /// HTTP/1.x ([`crate::http`]).
-    Http1,
-    /// TLS ClientHello / ServerHello / Alert / ApplicationData
-    /// ([`crate::tls`]).
-    Tls,
-    /// TLS handshake aggregator
-    /// ([`crate::tls::TlsHandshakeParser`]).
-    TlsHandshake,
-    /// DNS-over-UDP ([`crate::dns::DnsUdpParser`]).
-    DnsUdp,
-    /// DNS-over-TCP ([`crate::dns::DnsTcpParser`]).
-    DnsTcp,
-    /// ICMP v4 / v6 ([`crate::icmp::IcmpParser`]).
-    Icmp,
-    /// SSH banner + KEXINIT + HASSH ([`crate::ssh`]).
-    Ssh,
-    /// NTP ([`crate::ntp`]).
-    Ntp,
-    /// SSDP / UPnP ([`crate::ssdp`]).
-    Ssdp,
-    /// TFTP ([`crate::tftp`]).
-    Tftp,
-    /// mDNS ([`crate::mdns`]).
-    Mdns,
-    /// NetBIOS Name Service ([`crate::netbios_ns`]).
-    NetbiosNs,
-    /// FTP control channel ([`crate::ftp`]).
-    Ftp,
-    /// SMTP control channel ([`crate::smtp`]).
-    Smtp,
-    /// WireGuard handshake ([`crate::wireguard`]).
-    WireGuard,
-    /// Modbus/TCP ([`crate::modbus`]).
-    Modbus,
-    /// STUN ([`crate::stun`]).
-    Stun,
-    /// RDP X.224 negotiation ([`crate::rdp`]).
-    Rdp,
-    /// SNMP v1/v2c ([`crate::snmp`]).
-    Snmp,
-    /// RADIUS ([`crate::radius`]).
-    Radius,
-    /// DHCP ([`crate::dhcp`]).
-    Dhcp,
-    /// QUIC Initial ([`crate::quic`]).
-    Quic,
-    /// SMB2/3 ([`crate::smb`]).
-    Smb,
-    /// LDAP ([`crate::ldap`]).
-    Ldap,
-    /// Kerberos AS/TGS (UDP or TCP) ([`crate::kerberos`]).
-    Kerberos,
-    /// DNP3 ([`crate::dnp3`]).
-    Dnp3,
-    /// Downstream-registered parser kind. The `&'static str`
-    /// label should be a unique stable slug — typical convention
-    /// is `"crate-name/protocol"` (e.g. `"netring/syslog"`).
-    Other(&'static str),
-    /// Parser didn't identify itself (e.g. a test stub). The
-    /// default returned by the [`crate::SessionParser`] /
-    /// [`crate::DatagramParser`] traits when not overridden.
-    #[default]
-    Unspecified,
+/// Adding a parser is now a one-line edit inside the table.
+macro_rules! slug_enum {
+    (
+        $(#[$enum_meta:meta])*
+        pub enum $name:ident {
+            $( $(#[$vmeta:meta])* $variant:ident => $slug:literal ),+ $(,)?
+        }
+    ) => {
+        $(#[$enum_meta])*
+        pub enum $name {
+            $( $(#[$vmeta])* $variant, )+
+            /// Downstream-registered parser kind. The `&'static str`
+            /// label should be a unique stable slug — typical
+            /// convention is `"crate-name/protocol"`
+            /// (e.g. `"netring/syslog"`).
+            Other(&'static str),
+            /// Parser didn't identify itself (e.g. a test stub). The
+            /// default returned by the [`crate::SessionParser`] /
+            /// [`crate::DatagramParser`] traits when not overridden.
+            #[default]
+            Unspecified,
+        }
+
+        impl $name {
+            /// Stable slug — same vocabulary the 0.17-and-earlier
+            /// `parser_kind() -> &'static str` returned. Use for metric
+            /// labels and JSON `parser_kind` field emission.
+            ///
+            /// Each built-in variant maps to the slug its parser
+            /// historically returned (`Http1` → `"http/1"`, `DnsUdp`
+            /// → `"dns-udp"`, …); the full mapping is regression-pinned
+            /// by `slug_vocabulary_locked`. [`Self::Other`] yields its
+            /// wrapped caller-supplied slug; [`Self::Unspecified`]
+            /// yields `""`. [`from_slug`](Self::from_slug) is the inverse.
+            pub fn as_str(&self) -> &'static str {
+                match self {
+                    $( $name::$variant => $slug, )+
+                    $name::Other(s) => s,
+                    $name::Unspecified => "",
+                }
+            }
+
+            /// Inverse of [`as_str`](Self::as_str) for the built-in
+            /// slugs.
+            ///
+            /// A recognised built-in slug maps to its variant; `""`
+            /// maps to [`Unspecified`](Self::Unspecified); any other
+            /// string maps to [`Unspecified`](Self::Unspecified) too
+            /// (it can't become an [`Other`](Self::Other) — that
+            /// variant needs a `&'static str`, which a runtime string
+            /// isn't). Used by the `Deserialize` impl.
+            pub fn from_slug(s: &str) -> $name {
+                match s {
+                    $( $slug => $name::$variant, )+
+                    _ => $name::Unspecified,
+                }
+            }
+        }
+    };
 }
 
-impl ParserKind {
-    /// Stable slug — same vocabulary the 0.17-and-earlier
-    /// `parser_kind() -> &'static str` returned. Use for metric
-    /// labels and JSON `parser_kind` field emission.
+slug_enum! {
+    /// Which parser produced a session / datagram message.
     ///
-    /// Each built-in variant maps to the slug its parser historically
-    /// returned (`Http1` → `"http/1"`, `DnsUdp` → `"dns-udp"`,
-    /// `NetbiosNs` → `"netbios-ns"`, …); the full mapping is
-    /// regression-pinned by `slug_vocabulary_locked`. [`Self::Other`]
-    /// yields its wrapped caller-supplied slug; [`Self::Unspecified`]
-    /// yields `""`. [`from_slug`](Self::from_slug) is the inverse.
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            ParserKind::Http1 => "http/1",
-            ParserKind::Tls => "tls",
-            ParserKind::TlsHandshake => "tls-handshake",
-            ParserKind::DnsUdp => "dns-udp",
-            ParserKind::DnsTcp => "dns-tcp",
-            ParserKind::Icmp => "icmp",
-            ParserKind::Ssh => "ssh",
-            ParserKind::Ntp => "ntp",
-            ParserKind::Ssdp => "ssdp",
-            ParserKind::Tftp => "tftp",
-            ParserKind::Mdns => "mdns",
-            ParserKind::NetbiosNs => "netbios-ns",
-            ParserKind::Ftp => "ftp",
-            ParserKind::Smtp => "smtp",
-            ParserKind::WireGuard => "wireguard",
-            ParserKind::Modbus => "modbus",
-            ParserKind::Stun => "stun",
-            ParserKind::Rdp => "rdp",
-            ParserKind::Snmp => "snmp",
-            ParserKind::Radius => "radius",
-            ParserKind::Dhcp => "dhcp",
-            ParserKind::Quic => "quic",
-            ParserKind::Smb => "smb",
-            ParserKind::Ldap => "ldap",
-            ParserKind::Kerberos => "kerberos",
-            ParserKind::Dnp3 => "dnp3",
-            ParserKind::Other(s) => s,
-            ParserKind::Unspecified => "",
-        }
-    }
-
-    /// Inverse of [`as_str`](Self::as_str) for the built-in slugs.
+    /// Built-in variants cover every parser shipped under a flowscope
+    /// feature gate. Downstream crates register their own kinds via
+    /// [`Self::Other`].
     ///
-    /// A recognised built-in slug maps to its variant; `""` maps to
-    /// [`Unspecified`](Self::Unspecified); any other string maps to
-    /// [`Unspecified`](Self::Unspecified) too (it can't become an
-    /// [`Other`](Self::Other) — that variant needs a `&'static str`,
-    /// which a runtime string isn't). Used by the `Deserialize` impl.
-    pub fn from_slug(s: &str) -> ParserKind {
-        match s {
-            "http/1" => ParserKind::Http1,
-            "tls" => ParserKind::Tls,
-            "tls-handshake" => ParserKind::TlsHandshake,
-            "dns-udp" => ParserKind::DnsUdp,
-            "dns-tcp" => ParserKind::DnsTcp,
-            "icmp" => ParserKind::Icmp,
-            "ssh" => ParserKind::Ssh,
-            "ntp" => ParserKind::Ntp,
-            "ssdp" => ParserKind::Ssdp,
-            "tftp" => ParserKind::Tftp,
-            "mdns" => ParserKind::Mdns,
-            "netbios-ns" => ParserKind::NetbiosNs,
-            "ftp" => ParserKind::Ftp,
-            "smtp" => ParserKind::Smtp,
-            "wireguard" => ParserKind::WireGuard,
-            "modbus" => ParserKind::Modbus,
-            "stun" => ParserKind::Stun,
-            "rdp" => ParserKind::Rdp,
-            "snmp" => ParserKind::Snmp,
-            "radius" => ParserKind::Radius,
-            "dhcp" => ParserKind::Dhcp,
-            "quic" => ParserKind::Quic,
-            "smb" => ParserKind::Smb,
-            "ldap" => ParserKind::Ldap,
-            "kerberos" => ParserKind::Kerberos,
-            "dnp3" => ParserKind::Dnp3,
-            _ => ParserKind::Unspecified,
-        }
+    /// `#[non_exhaustive]` — future protocol features will add
+    /// variants; matching on this enum should always include a
+    /// wildcard arm.
+    /// Serializes as its [`as_str`](Self::as_str) slug — a plain JSON
+    /// string (e.g. `"http/1"`), not a tagged object — so the
+    /// `parser_kind` field in emitted events matches the pre-0.20
+    /// `&'static str` wire shape. Deserializes a slug back via
+    /// [`from_slug`](Self::from_slug): built-in slugs round-trip to
+    /// their variant; an unrecognised slug (including a downstream
+    /// [`Other`](Self::Other) label) deserializes to
+    /// [`Unspecified`](Self::Unspecified) — it cannot rebuild the
+    /// `&'static str` an `Other` needs.
+    #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+    #[non_exhaustive]
+    pub enum ParserKind {
+        /// HTTP/1.x ([`crate::http`]).
+        Http1 => "http/1",
+        /// TLS ClientHello / ServerHello / Alert / ApplicationData
+        /// ([`crate::tls`]).
+        Tls => "tls",
+        /// TLS handshake aggregator
+        /// ([`crate::tls::TlsHandshakeParser`]).
+        TlsHandshake => "tls-handshake",
+        /// DNS-over-UDP ([`crate::dns::DnsUdpParser`]).
+        DnsUdp => "dns-udp",
+        /// DNS-over-TCP ([`crate::dns::DnsTcpParser`]).
+        DnsTcp => "dns-tcp",
+        /// ICMP v4 / v6 ([`crate::icmp::IcmpParser`]).
+        Icmp => "icmp",
+        /// SSH banner + KEXINIT + HASSH ([`crate::ssh`]).
+        Ssh => "ssh",
+        /// NTP ([`crate::ntp`]).
+        Ntp => "ntp",
+        /// SSDP / UPnP ([`crate::ssdp`]).
+        Ssdp => "ssdp",
+        /// TFTP ([`crate::tftp`]).
+        Tftp => "tftp",
+        /// mDNS ([`crate::mdns`]).
+        Mdns => "mdns",
+        /// NetBIOS Name Service ([`crate::netbios_ns`]).
+        NetbiosNs => "netbios-ns",
+        /// FTP control channel ([`crate::ftp`]).
+        Ftp => "ftp",
+        /// SMTP control channel ([`crate::smtp`]).
+        Smtp => "smtp",
+        /// WireGuard handshake ([`crate::wireguard`]).
+        WireGuard => "wireguard",
+        /// Modbus/TCP ([`crate::modbus`]).
+        Modbus => "modbus",
+        /// STUN ([`crate::stun`]).
+        Stun => "stun",
+        /// RDP X.224 negotiation ([`crate::rdp`]).
+        Rdp => "rdp",
+        /// SNMP v1/v2c ([`crate::snmp`]).
+        Snmp => "snmp",
+        /// RADIUS ([`crate::radius`]).
+        Radius => "radius",
+        /// DHCP ([`crate::dhcp`]).
+        Dhcp => "dhcp",
+        /// QUIC Initial ([`crate::quic`]).
+        Quic => "quic",
+        /// SMB2/3 ([`crate::smb`]).
+        Smb => "smb",
+        /// LDAP ([`crate::ldap`]).
+        Ldap => "ldap",
+        /// Kerberos AS/TGS (UDP or TCP) ([`crate::kerberos`]).
+        Kerberos => "kerberos",
+        /// DNP3 ([`crate::dnp3`]).
+        Dnp3 => "dnp3",
     }
 }
 

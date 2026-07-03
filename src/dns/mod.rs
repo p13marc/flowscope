@@ -84,14 +84,14 @@ pub use resolution_cache::DnsResolutionCache;
 pub use session::DnsTcpParser;
 pub use types::*;
 
-/// Slug returned by [`DnsUdpParser`]'s `parser_kind()`. See
-/// `flowscope::parser_kinds::DNS_UDP`.
+/// Slug returned by [`DnsUdpParser`]'s `parser_kind()` —
+/// the [`ParserKind::DnsUdp`](crate::ParserKind::DnsUdp) slug.
 ///
 /// Stability: locked from 0.8 forward.
 pub const PARSER_KIND_UDP: &str = "dns-udp";
 
-/// Slug returned by [`DnsTcpParser`]'s `parser_kind()`. See
-/// `flowscope::parser_kinds::DNS_TCP`.
+/// Slug returned by [`DnsTcpParser`]'s `parser_kind()` —
+/// the [`ParserKind::DnsTcp`](crate::ParserKind::DnsTcp) slug.
 ///
 /// Stability: locked from 0.8 forward.
 pub const PARSER_KIND_TCP: &str = "dns-tcp";

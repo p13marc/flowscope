@@ -54,128 +54,110 @@
 
 use std::{error::Error as StdError, fmt};
 
-/// Subsystem identifier for [`Error`].
-///
-/// Used in `match (e.module(), e.code()) { … }` patterns.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[non_exhaustive]
-pub enum Module {
-    /// HTTP parser (`flowscope::http`).
-    Http,
-    /// TLS parser (`flowscope::tls`).
-    Tls,
-    /// DNS parser (`flowscope::dns`).
-    Dns,
-    /// ICMP parser (`flowscope::icmp`).
-    Icmp,
-    /// pcap source (`flowscope::pcap`).
-    Pcap,
-    /// TCP reassembler.
-    Reassembler,
-    /// Flow tracker.
-    Tracker,
-    /// `flowscope::layers` per-packet introspection.
-    Layers,
-    /// Typed driver / slot-handle path (`flowscope::driver`).
-    /// New in 0.12.0 (plan 131).
-    Driver,
-    /// Emit writers (`flowscope::emit`). New in 0.12.0.
-    Emit,
-    /// Detection primitives (`flowscope::detect`). New in 0.12.0.
-    Detect,
-    /// Aggregation primitives (`flowscope::aggregate`).
-    /// New in 0.12.0.
-    Aggregate,
-    /// Cross-flow correlation primitives (`flowscope::correlate`).
-    /// New in 0.12.0.
-    Correlate,
+/// Declares the [`Module`] enum and its `Display` slug from ONE
+/// table, so the variant list and its display string can't drift
+/// apart and adding a subsystem is a one-line edit (issue #139).
+macro_rules! module_enum {
+    (
+        $(#[$enum_meta:meta])*
+        pub enum $name:ident {
+            $( $(#[$vmeta:meta])* $variant:ident => $slug:literal ),+ $(,)?
+        }
+    ) => {
+        $(#[$enum_meta])*
+        pub enum $name {
+            $( $(#[$vmeta])* $variant, )+
+        }
 
-    // ── Per-protocol parser modules (issue #85, 0.20). Each pairs
-    // with a per-module `ParseError` that converts here via
-    // `From<ParseError> for crate::Error`. ─────────────────────────
-    /// ARP parser (`flowscope::arp`).
-    Arp,
-    /// IPv6 Neighbor Discovery parser (`flowscope::ndp`).
-    Ndp,
-    /// LLDP parser (`flowscope::lldp`).
-    Lldp,
-    /// CDP parser (`flowscope::cdp`).
-    Cdp,
-    /// DHCP parser (`flowscope::dhcp`).
-    Dhcp,
-    /// SSDP parser (`flowscope::ssdp`).
-    Ssdp,
-    /// NetBIOS-NS parser (`flowscope::netbios_ns`).
-    NetbiosNs,
-    /// STUN parser (`flowscope::stun`).
-    Stun,
-    /// SSH parser (`flowscope::ssh`).
-    Ssh,
-    /// NTP parser (`flowscope::ntp`).
-    Ntp,
-    /// TFTP parser (`flowscope::tftp`).
-    Tftp,
-    /// WireGuard parser (`flowscope::wireguard`).
-    Wireguard,
-    /// Modbus parser (`flowscope::modbus`).
-    Modbus,
-    /// RDP parser (`flowscope::rdp`).
-    Rdp,
-    /// SNMP parser (`flowscope::snmp`).
-    Snmp,
-    /// RADIUS parser (`flowscope::radius`).
-    Radius,
-    /// DNP3 parser (`flowscope::dnp3`).
-    Dnp3,
-    /// SMB parser (`flowscope::smb`).
-    Smb,
-    /// LDAP parser (`flowscope::ldap`).
-    Ldap,
-    /// Kerberos parser (`flowscope::kerberos`).
-    Kerberos,
-    /// QUIC parser (`flowscope::quic`).
-    Quic,
+        impl fmt::Display for $name {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                let s = match self {
+                    $( $name::$variant => $slug, )+
+                };
+                f.write_str(s)
+            }
+        }
+    };
 }
 
-impl fmt::Display for Module {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let s = match self {
-            Module::Http => "http",
-            Module::Tls => "tls",
-            Module::Dns => "dns",
-            Module::Icmp => "icmp",
-            Module::Pcap => "pcap",
-            Module::Reassembler => "reassembler",
-            Module::Tracker => "tracker",
-            Module::Layers => "layers",
-            Module::Driver => "driver",
-            Module::Emit => "emit",
-            Module::Detect => "detect",
-            Module::Aggregate => "aggregate",
-            Module::Correlate => "correlate",
-            Module::Arp => "arp",
-            Module::Ndp => "ndp",
-            Module::Lldp => "lldp",
-            Module::Cdp => "cdp",
-            Module::Dhcp => "dhcp",
-            Module::Ssdp => "ssdp",
-            Module::NetbiosNs => "netbios-ns",
-            Module::Stun => "stun",
-            Module::Ssh => "ssh",
-            Module::Ntp => "ntp",
-            Module::Tftp => "tftp",
-            Module::Wireguard => "wireguard",
-            Module::Modbus => "modbus",
-            Module::Rdp => "rdp",
-            Module::Snmp => "snmp",
-            Module::Radius => "radius",
-            Module::Dnp3 => "dnp3",
-            Module::Smb => "smb",
-            Module::Ldap => "ldap",
-            Module::Kerberos => "kerberos",
-            Module::Quic => "quic",
-        };
-        f.write_str(s)
+module_enum! {
+    /// Subsystem identifier for [`Error`].
+    ///
+    /// Used in `match (e.module(), e.code()) { … }` patterns.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+    #[non_exhaustive]
+    pub enum Module {
+        /// HTTP parser (`flowscope::http`).
+        Http => "http",
+        /// TLS parser (`flowscope::tls`).
+        Tls => "tls",
+        /// DNS parser (`flowscope::dns`).
+        Dns => "dns",
+        /// ICMP parser (`flowscope::icmp`).
+        Icmp => "icmp",
+        /// pcap source (`flowscope::pcap`).
+        Pcap => "pcap",
+        /// TCP reassembler.
+        Reassembler => "reassembler",
+        /// Flow tracker.
+        Tracker => "tracker",
+        /// `flowscope::layers` per-packet introspection.
+        Layers => "layers",
+        /// Typed driver / slot-handle path (`flowscope::driver`).
+        /// New in 0.12.0 (plan 131).
+        Driver => "driver",
+        /// Emit writers (`flowscope::emit`). New in 0.12.0.
+        Emit => "emit",
+        /// Detection primitives (`flowscope::detect`). New in 0.12.0.
+        Detect => "detect",
+        /// Aggregation primitives (`flowscope::aggregate`).
+        /// New in 0.12.0.
+        Aggregate => "aggregate",
+        /// Cross-flow correlation primitives (`flowscope::correlate`).
+        /// New in 0.12.0.
+        Correlate => "correlate",
+        /// ARP parser (`flowscope::arp`).
+        Arp => "arp",
+        /// IPv6 Neighbor Discovery parser (`flowscope::ndp`).
+        Ndp => "ndp",
+        /// LLDP parser (`flowscope::lldp`).
+        Lldp => "lldp",
+        /// CDP parser (`flowscope::cdp`).
+        Cdp => "cdp",
+        /// DHCP parser (`flowscope::dhcp`).
+        Dhcp => "dhcp",
+        /// SSDP parser (`flowscope::ssdp`).
+        Ssdp => "ssdp",
+        /// NetBIOS-NS parser (`flowscope::netbios_ns`).
+        NetbiosNs => "netbios-ns",
+        /// STUN parser (`flowscope::stun`).
+        Stun => "stun",
+        /// SSH parser (`flowscope::ssh`).
+        Ssh => "ssh",
+        /// NTP parser (`flowscope::ntp`).
+        Ntp => "ntp",
+        /// TFTP parser (`flowscope::tftp`).
+        Tftp => "tftp",
+        /// WireGuard parser (`flowscope::wireguard`).
+        Wireguard => "wireguard",
+        /// Modbus parser (`flowscope::modbus`).
+        Modbus => "modbus",
+        /// RDP parser (`flowscope::rdp`).
+        Rdp => "rdp",
+        /// SNMP parser (`flowscope::snmp`).
+        Snmp => "snmp",
+        /// RADIUS parser (`flowscope::radius`).
+        Radius => "radius",
+        /// DNP3 parser (`flowscope::dnp3`).
+        Dnp3 => "dnp3",
+        /// SMB parser (`flowscope::smb`).
+        Smb => "smb",
+        /// LDAP parser (`flowscope::ldap`).
+        Ldap => "ldap",
+        /// Kerberos parser (`flowscope::kerberos`).
+        Kerberos => "kerberos",
+        /// QUIC parser (`flowscope::quic`).
+        Quic => "quic",
     }
 }
 

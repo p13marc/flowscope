@@ -120,8 +120,8 @@ pub use types::{HttpConfig, HttpRequest, HttpResponse, HttpVersion};
 
 /// Slug returned by [`HttpParser`]'s `parser_kind()`. Use at
 /// match sites in place of a string literal so typos fail to
-/// resolve instead of silently miss. Available also as
-/// `flowscope::parser_kinds::HTTP`.
+/// resolve instead of silently miss. Prefer the typed
+/// [`ParserKind::Http1`](crate::ParserKind::Http1).
 ///
 /// Stability: locked from 0.8 forward.
 pub const PARSER_KIND: &str = "http/1";

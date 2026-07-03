@@ -474,46 +474,10 @@ pub mod test_helpers;
 pub use timestamp::Timestamp;
 pub use view::{AsPacketView, OwnedPacketView, PacketView};
 
-/// Re-export of every shipped parser-kind constant under one path.
-///
-/// Use these constants at match sites instead of string literals so
-/// typos fail to resolve (compile error) rather than silently miss
-/// at runtime. Each constant is cfg-gated by its parser's feature.
-///
-/// ```ignore
-/// use flowscope::parser_kinds;
-/// match parser_kind {
-///     k if k == parser_kinds::DNS_UDP => /* DNS lookup */,
-///     k if k == parser_kinds::HTTP => /* HTTP request */,
-///     _ => {}
-/// }
-/// ```
-/// **Deprecated — soft-deprecation window**.
-///
-/// Use the typed [`ParserKind`] enum (added in 0.18 — issue #21)
-/// for new code. The string constants here resolve to the same
-/// slugs `ParserKind::as_str()` returns and will stay shipped
-/// for one minor cycle to give downstream consumers time to
-/// migrate match arms. Removed in 0.19.
-#[deprecated(
-    since = "0.18.0",
-    note = "use the typed `flowscope::ParserKind` enum instead — same slug vocabulary via `.as_str()`"
-)]
-pub mod parser_kinds {
-    #![allow(deprecated)]
-    #[cfg(feature = "dns")]
-    pub use crate::dns::PARSER_KIND_TCP as DNS_TCP;
-    #[cfg(feature = "dns")]
-    pub use crate::dns::PARSER_KIND_UDP as DNS_UDP;
-    #[cfg(feature = "http")]
-    pub use crate::http::PARSER_KIND as HTTP;
-    #[cfg(feature = "icmp")]
-    pub use crate::icmp::PARSER_KIND as ICMP;
-    #[cfg(feature = "tls")]
-    pub use crate::tls::PARSER_KIND as TLS;
-    #[cfg(feature = "tls")]
-    pub use crate::tls::handshake::PARSER_KIND as TLS_HANDSHAKE;
-}
+// The deprecated `parser_kinds` string-constant module (soft-
+// deprecated in 0.18, slated for removal) was removed in 0.22
+// (issue #139) — use the typed [`ParserKind`] enum instead; its
+// `.as_str()` yields the same slug vocabulary.
 
 pub use anomaly_fields::{AnomalyFields, KeyFields};
 #[cfg(feature = "tracker")]
