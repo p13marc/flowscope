@@ -144,10 +144,7 @@ where
     {
         match ev {
             FlowEvent::Ended {
-                key,
-                reason,
-                stats,
-                ..
+                key, reason, stats, ..
             } if self.options.include_flow => self.write_flow_ended(key, *reason, stats),
             FlowEvent::FlowAnomaly { key, kind, ts } if self.options.include_anomalies => {
                 self.write_anomaly(Some(key), kind, *ts)
