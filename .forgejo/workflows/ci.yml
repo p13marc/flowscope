@@ -1,0 +1,100 @@
+name: CI
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  fmt:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: https://data.forgejo.org/actions/checkout@v6
+      - uses: https://github.com/dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - run: cargo fmt --all --check
+
+  clippy:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: https://data.forgejo.org/actions/checkout@v6
+      - uses: https://github.com/dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: https://github.com/Swatinem/rust-cache@v2
+      - run: cargo clippy --all-features --all-targets --locked -- -D warnings
+
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: https://data.forgejo.org/actions/checkout@v6
+      - uses: https://github.com/dtolnay/rust-toolchain@stable
+      - uses: https://github.com/Swatinem/rust-cache@v2
+      - run: cargo build --all-features --all-targets --locked
+      - run: cargo test --all-features --locked
+
+  msrv:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: https://data.forgejo.org/actions/checkout@v6
+      - uses: https://github.com/dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.88"
+      - uses: https://github.com/Swatinem/rust-cache@v2
+      - run: cargo check --all-features --all-targets --locked
+
+  # Replaces the old 78-entry hand-written feature matrix.
+  features:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: https://data.forgejo.org/actions/checkout@v6
+      - uses: https://github.com/dtolnay/rust-toolchain@stable
+      - uses: https://github.com/Swatinem/rust-cache@v2
+      - uses: https://github.com/taiki-e/install-action@v2
+        with:
+          tool: cargo-hack
+      - run: cargo hack check --each-feature --no-dev-deps --locked
+
+  docs:
+    runs-on: ubuntu-24.04
+    env:
+      RUSTDOCFLAGS: -D warnings
+    steps:
+      - uses: https://data.forgejo.org/actions/checkout@v6
+      - uses: https://github.com/dtolnay/rust-toolchain@stable
+      - uses: https://github.com/Swatinem/rust-cache@v2
+      - run: cargo doc --all-features --no-deps --locked
+
+  semver:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: https://data.forgejo.org/actions/checkout@v6
+      - uses: https://github.com/obi1kenobi/cargo-semver-checks-action@v2
+        with:
+          feature-group: all-features
+
+  # Smoke fuzz: 4 curated targets, 20s each. Full 16-target sweep stays local.
+  fuzz-smoke:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: https://data.forgejo.org/actions/checkout@v6
+      - uses: https://github.com/dtolnay/rust-toolchain@nightly
+      - uses: https://github.com/Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            . -> target
+            fuzz -> fuzz/target
+      - run: cargo install cargo-fuzz --locked --version 0.13.1
+      - name: Fuzz smoke
+        run: |
+          for t in dns_udp http tls layers; do
+            cargo +nightly fuzz run "$t" -- -max_total_time=20 -timeout=10 -rss_limit_mb=2048
+          done
