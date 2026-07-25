@@ -234,10 +234,7 @@ impl IocSet {
             if let Some(entry) = self.domains.get(suffix) {
                 return Some(self.to_match(IocKind::Domain, suffix.to_owned(), entry));
             }
-            match norm[start..].find('.') {
-                Some(rel) => start += rel + 1,
-                None => return None,
-            }
+            start += norm[start..].find('.')? + 1;
         }
     }
 

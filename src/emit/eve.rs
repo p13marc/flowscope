@@ -147,7 +147,6 @@ where
                 key,
                 reason,
                 stats,
-                l4: _,
                 ..
             } if self.options.include_flow => self.write_flow_ended(key, *reason, stats),
             FlowEvent::FlowAnomaly { key, kind, ts } if self.options.include_anomalies => {

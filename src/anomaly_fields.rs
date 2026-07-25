@@ -121,11 +121,10 @@ pub trait KeyFields {
         let mut id_buf = [0u8; 1];
         let proto: &[u8] = if let Some(s) = self.proto_str() {
             s.as_bytes()
-        } else if let Some(id) = self.protocol_identifier() {
+        } else {
+            let id = self.protocol_identifier()?;
             id_buf[0] = id;
             &id_buf
-        } else {
-            return None;
         };
         Some(fnv1a_five_tuple(
             proto, src_ip, src_port, dest_ip, dest_port,
