@@ -3,7 +3,7 @@
 [![crates.io](https://img.shields.io/crates/v/flowscope.svg)](https://crates.io/crates/flowscope)
 [![docs.rs](https://img.shields.io/docsrs/flowscope)](https://docs.rs/flowscope)
 [![CI](https://github.com/p13marc/flowscope/actions/workflows/rust.yml/badge.svg)](https://github.com/p13marc/flowscope/actions)
-[![MSRV 1.88](https://img.shields.io/badge/MSRV-1.88-blue.svg)](https://blog.rust-lang.org/2025/03/05/Rust-1.88.0/)
+[![MSRV 1.97](https://img.shields.io/badge/MSRV-1.97-blue.svg)](https://github.com/rust-lang/rust/blob/master/RELEASES.md)
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
 
 **Passive network telemetry as a library.** A runtime-free Rust
@@ -219,7 +219,7 @@ AF_XDP) which consumes flowscope's traits.
 flowscope = { version = "0.22", features = ["full"] }
 ```
 
-MSRV is Rust 1.88. The `full` feature pulls in everything; for production
+MSRV is Rust 1.97. The `full` feature pulls in everything; for production
 builds, name the parsers you actually use to minimise compile time and binary
 size. Coarse umbrellas sit between "one parser" and `full`: `l7` (all
 license-clean wire parsers), the `parsers-core` / `parsers-l2l3` /
