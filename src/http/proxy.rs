@@ -229,11 +229,22 @@ impl HttpProxyParser {
         // request's method is known.
         for dir in [Dir::Request, Dir::Response] {
             match self.engine.poll(dir) {
-                Ok(Some(ev)) => return Some(convert(dir, ev)),
+                Ok(Some(ev)) => {
+                    if matches!(ev, EngineEvent::Head(_)) {
+                        crate::obs::record_http_message(dir == Dir::Request);
+                    }
+                    return Some(convert(dir, ev));
+                }
                 Ok(None) => continue,
-                // The direction is now poisoned; is_poisoned() and
-                // poison() report why.
-                Err(_) => continue,
+                Err(_) => {
+                    // The direction just poisoned; count it once, on
+                    // the transition, and report why through
+                    // is_poisoned() / poison().
+                    if let Some(reason) = self.engine.poison(dir) {
+                        crate::obs::record_http_poisoned(reason);
+                    }
+                    continue;
+                }
             }
         }
         None
