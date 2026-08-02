@@ -65,6 +65,10 @@ impl HttpParser {
         let limits = EngineLimits {
             max_head_bytes: config.max_buffer,
             max_headers: config.max_headers,
+            // An observer must not drop a flow because a client sent
+            // something ambiguous — and it is not in a position to be
+            // exploited by the ambiguity either.
+            policy: crate::http::SmugglingPolicy::Observe,
             ..EngineLimits::default()
         };
         Self {

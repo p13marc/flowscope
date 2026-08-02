@@ -139,8 +139,8 @@ pub use poison::HttpPoison;
 pub use proxy::{HttpEvent, HttpProxyConfig, HttpProxyParser};
 pub use session::{HttpMessage, HttpParser};
 pub use types::{
-    BodyFraming, HttpConfig, HttpRequest, HttpResponse, HttpVersion, RequestHead, ResponseHead,
-    SwitchKind,
+    Authority, BodyFraming, HttpConfig, HttpRequest, HttpResponse, HttpVersion, Normalization,
+    RequestHead, ResponseHead, SmugglingPolicy, SwitchKind,
 };
 
 /// Slug returned by [`HttpParser`]'s `parser_kind()`. Use at

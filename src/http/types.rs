@@ -1,5 +1,7 @@
 use bytes::Bytes;
 
+use super::poison::HttpPoison;
+
 /// Parsed HTTP/1.x request — start line + headers + body.
 ///
 /// All `Bytes` fields slice into one shared backing store per
@@ -264,6 +266,72 @@ impl HttpResponse {
     }
 }
 
+/// How strictly the parser treats an ambiguously framed message.
+///
+/// RFC 9112 §6.3 leaves several situations where two recipients can
+/// legitimately disagree about where a message ends — and a
+/// disagreement between a proxy and its backend *is* request
+/// smuggling. This selects what to do about them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
+#[non_exhaustive]
+pub enum SmugglingPolicy {
+    /// Any ambiguity poisons the connection. The default for an
+    /// inline proxy: refusing to forward is the only response that
+    /// cannot be exploited.
+    Strict,
+    /// Apply the normalizations RFC 9112 §6.3.3 mandates — dropping
+    /// `Content-Length` when `Transfer-Encoding` is present,
+    /// collapsing a repeated but identical length — and record them
+    /// on the head. Anything that cannot be made unambiguous still
+    /// poisons.
+    ///
+    /// A message with a recorded normalization **must not be
+    /// forwarded from its `raw` bytes**: `raw` is what arrived, and
+    /// forwarding it would hand the backend the same ambiguity.
+    /// Re-serialize from the parsed headers instead.
+    Normalize,
+    /// Never poison: frame on a best-effort basis and keep observing.
+    /// This is what passive telemetry uses — an observer that drops
+    /// a flow because a client sent something odd is a worse
+    /// observer, and it is not in a position to be exploited.
+    Observe,
+}
+
+/// A change the parser made to an ambiguously framed message under
+/// [`SmugglingPolicy::Normalize`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
+#[non_exhaustive]
+pub enum Normalization {
+    /// `Content-Length` was dropped because `Transfer-Encoding` was
+    /// also present; the body is chunk-framed (RFC 9112 §6.3.3).
+    StrippedContentLength,
+    /// Several `Content-Length` values agreed and were collapsed to
+    /// one.
+    CollapsedContentLength,
+}
+
+/// The authority a request should be routed to.
+///
+/// [`host`](Self::host) is lowercased **with ASCII rules only**.
+/// Unicode case folding is not safe here: U+212A KELVIN SIGN folds to
+/// `k`, so `EXAMPLE.COM` spelled with a Kelvin sign would route as
+/// `example.com` on one hop and not another.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[non_exhaustive]
+pub struct Authority {
+    /// Exactly as it appeared on the wire.
+    pub raw: Bytes,
+    /// ASCII-lowercased host, without the port.
+    pub host: String,
+    /// Explicit port, if the authority carried one.
+    pub port: Option<u16>,
+}
+
 /// What a protocol switch handed the connection over to. After one of
 /// these the parser stops: the caller splices the remaining bytes
 /// through untouched.
@@ -309,6 +377,11 @@ pub struct RequestHead {
     /// Header fields in wire order, original case, raw values.
     pub headers: Vec<(Bytes, Bytes)>,
     pub framing: BodyFraming,
+    /// Normalizations the parser applied to resolve a framing
+    /// ambiguity. Empty unless the policy is
+    /// [`SmugglingPolicy::Normalize`] and the message needed fixing —
+    /// in which case `raw` must **not** be forwarded verbatim.
+    pub applied: Vec<Normalization>,
     /// The exact on-wire head: start line through the blank line.
     pub raw: Bytes,
 }
@@ -331,6 +404,9 @@ pub struct ResponseHead {
     /// the final one and never carry a body; a proxy forwards them
     /// and keeps waiting.
     pub interim: bool,
+    /// Normalizations the parser applied; see
+    /// [`RequestHead::applied`].
+    pub applied: Vec<Normalization>,
     /// The exact on-wire head: status line through the blank line.
     pub raw: Bytes,
 }
@@ -371,9 +447,114 @@ impl RequestHead {
         header_lookup(&self.headers, name)
     }
 
+    /// The authority this request should be routed to.
+    ///
+    /// RFC 9112 §3.2: a request-target in absolute form
+    /// (`GET http://host/path`) carries its own authority, and that
+    /// authority wins over the `Host` header — a proxy that routes on
+    /// `Host` while its backend routes on the absolute form can be
+    /// made to disagree.
+    ///
+    /// The host is lowercased with **ASCII rules only**, and a
+    /// non-ASCII authority is refused rather than folded: U+212A
+    /// KELVIN SIGN lowercases to `k` under Unicode rules, which turns
+    /// case folding into a routing-desync primitive. A duplicated
+    /// `Host` is refused for the same reason.
+    ///
+    /// Site policy (which authorities are acceptable at all) belongs
+    /// to the caller — this returns the raw and the normalized form
+    /// and imposes nothing else.
+    ///
+    /// ```
+    /// # use bytes::Bytes;
+    /// # use flowscope::FlowSide;
+    /// # use flowscope::http::{HttpEvent, HttpProxyParser};
+    /// let mut p = HttpProxyParser::new();
+    /// let wire = Bytes::from_static(
+    ///     b"GET http://Example.COM:8080/a HTTP/1.1\r\nHost: other.example\r\n\r\n",
+    /// );
+    /// p.push(FlowSide::Initiator, &wire);
+    /// let Some(HttpEvent::RequestHead(head)) = p.next_event() else { panic!() };
+    ///
+    /// // The absolute-form target wins over the Host header.
+    /// let authority = head.authority().unwrap();
+    /// assert_eq!(authority.host, "example.com");
+    /// assert_eq!(authority.port, Some(8080));
+    /// ```
+    pub fn authority(&self) -> Result<Authority, HttpPoison> {
+        let mut hosts = header_lookup(&self.headers, "host");
+        let host_header = hosts.next();
+        if hosts.next().is_some() {
+            return Err(HttpPoison::DuplicateHost);
+        }
+        // Absolute-form request-target: scheme "://" authority path.
+        let raw: Bytes = match absolute_form_authority(&self.path) {
+            Some(range) => self.path.slice(range),
+            None => match host_header {
+                Some(_) => {
+                    let idx = self
+                        .headers
+                        .iter()
+                        .position(|(k, _)| k.as_ref().eq_ignore_ascii_case(b"host"))
+                        .expect("host header was just found");
+                    self.headers[idx].1.clone()
+                }
+                None => Bytes::new(),
+            },
+        };
+        parse_authority(raw)
+    }
+
     fn header_str(&self, name: &str) -> Option<&str> {
         self.header(name).and_then(|v| std::str::from_utf8(v).ok())
     }
+}
+
+/// Byte range of the authority inside an absolute-form target, if the
+/// target is in absolute form at all.
+fn absolute_form_authority(target: &[u8]) -> Option<std::ops::Range<usize>> {
+    let sep = target.windows(3).position(|w| w == b"://")?;
+    // The scheme must be a token, not part of a path.
+    if sep == 0 || target[..sep].iter().any(|b| !b.is_ascii_alphanumeric()) {
+        return None;
+    }
+    let start = sep + 3;
+    let end = target[start..]
+        .iter()
+        .position(|b| matches!(b, b'/' | b'?' | b'#'))
+        .map_or(target.len(), |p| p + start);
+    Some(start..end)
+}
+
+/// Split an authority into an ASCII-lowercased host and a port.
+fn parse_authority(raw: Bytes) -> Result<Authority, HttpPoison> {
+    if !raw.is_ascii() {
+        return Err(HttpPoison::NonAsciiAuthority);
+    }
+    let s = std::str::from_utf8(&raw).map_err(|_| HttpPoison::NonAsciiAuthority)?;
+    // Strip userinfo, which is not part of the routing key.
+    let s = s.rsplit_once('@').map_or(s, |(_, after)| after);
+
+    let (host, port) = if let Some(rest) = s.strip_prefix('[') {
+        // IPv6 literal: [::1]:8080
+        let (inside, after) = rest.split_once(']').ok_or(HttpPoison::NonAsciiAuthority)?;
+        let port = match after.strip_prefix(':') {
+            Some(p) if !p.is_empty() => Some(p.parse().map_err(|_| HttpPoison::NonAsciiAuthority)?),
+            Some(_) => return Err(HttpPoison::NonAsciiAuthority),
+            None => None,
+        };
+        (inside.to_ascii_lowercase(), port)
+    } else {
+        match s.rsplit_once(':') {
+            Some((h, p)) if !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()) => (
+                h.to_ascii_lowercase(),
+                Some(p.parse().map_err(|_| HttpPoison::NonAsciiAuthority)?),
+            ),
+            Some((_, p)) if !p.is_empty() => return Err(HttpPoison::NonAsciiAuthority),
+            _ => (s.to_ascii_lowercase(), None),
+        }
+    };
+    Ok(Authority { raw, host, port })
 }
 
 impl ResponseHead {

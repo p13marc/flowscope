@@ -45,6 +45,27 @@ not only a passive observer. Migration recipes accrue in
     of stream or because a message said the connection closes when it
     completes (`Connection: close`, or HTTP/1.0 without
     `keep-alive`).
+- **Proxy-grade request-smuggling defense** (#163). The RFC 9112
+  §6.3 rules now live inside the state machine, where the ambiguity
+  actually is, rather than being left to the caller:
+  - `SmugglingPolicy::{Strict, Normalize, Observe}` selects what
+    happens on an ambiguity. `Strict` (the proxy default) poisons;
+    `Normalize` applies the §6.3.3 normalizations and records them in
+    `head.applied`; `Observe` (what the passive parser uses) never
+    poisons.
+  - Refused under `Strict`: `Content-Length` together with
+    `Transfer-Encoding` (CL.TE / TE.CL), contradictory duplicate
+    lengths, a length that is not plain decimal, `chunked` that is
+    not the final coding, an unknown transfer coding, duplicated
+    `Transfer-Encoding` (TE.TE), obs-fold, a bare CR in the head,
+    duplicated `Host`, and a response with no request outstanding.
+  - `RequestHead::authority()` resolves the routing key the way RFC
+    9112 §3.2 requires: an absolute-form request-target beats the
+    `Host` header, a duplicate `Host` is refused, and the host is
+    lowercased with **ASCII rules only** — Unicode folding would make
+    U+212A KELVIN SIGN a routing-desync primitive.
+  - `Normalization` records what was changed, because a normalized
+    message's `raw` bytes must not be forwarded verbatim.
 - **`http::HttpPoison`** — typed reasons the streaming parser stops,
   with a stable `as_str()` slug, so a proxy can map a framing failure
   to `400` versus `502` without parsing message strings.

@@ -7,7 +7,7 @@ use bytes::Bytes;
 use super::{
     engine::{Dir, Engine, EngineEvent, EngineLimits},
     poison::HttpPoison,
-    types::{RequestHead, ResponseHead, SwitchKind},
+    types::{RequestHead, ResponseHead, SmugglingPolicy, SwitchKind},
 };
 use crate::FlowSide;
 
@@ -68,6 +68,10 @@ pub struct HttpProxyConfig {
     pub max_trailer_bytes: usize,
     /// Requests that may be outstanding at once. Default 64.
     pub max_pipelined: usize,
+    /// What to do about an ambiguously framed message. Defaults to
+    /// [`SmugglingPolicy::Strict`] — for a proxy, refusing to forward
+    /// is the only response to an ambiguity that cannot be exploited.
+    pub smuggling: SmugglingPolicy,
     /// How much unparsed data one direction may hold before
     /// [`push`](HttpProxyParser::push) starts refusing bytes. This is
     /// the backpressure valve, not a failure: it must be at least
@@ -84,6 +88,7 @@ impl Default for HttpProxyConfig {
             max_chunk_line_bytes: 256,
             max_trailer_bytes: 8 * 1024,
             max_pipelined: 64,
+            smuggling: SmugglingPolicy::Strict,
             max_buffered_bytes: 256 * 1024,
         }
     }
@@ -174,6 +179,7 @@ impl HttpProxyParser {
             max_chunk_line_bytes: config.max_chunk_line_bytes,
             max_trailer_bytes: config.max_trailer_bytes,
             max_pipelined: config.max_pipelined,
+            policy: config.smuggling,
         };
         Self {
             engine: Engine::new(limits),
@@ -302,6 +308,7 @@ fn convert(dir: Dir, ev: EngineEvent) -> HttpEvent {
                 version: h.version,
                 headers: h.headers,
                 framing: h.framing,
+                applied: h.applied,
                 raw: h.raw,
             }),
             Dir::Response => HttpEvent::ResponseHead(ResponseHead {
@@ -311,6 +318,7 @@ fn convert(dir: Dir, ev: EngineEvent) -> HttpEvent {
                 headers: h.headers,
                 framing: h.framing,
                 interim: h.interim,
+                applied: h.applied,
                 raw: h.raw,
             }),
         },
