@@ -21,6 +21,86 @@ the core.
 
 ## Implementation Status
 
+**0.23.0 cycle** (inline-proxy / sans-IO L7 core — milestone
+"Inline-grade: sans-IO L7 core for inline proxies", **in progress,
+not yet published**).
+
+Twelve PRs across three epics (#172 / #173 / #174), one branch/PR
+per issue, breaking-first so `docs/migration-0.22-to-0.23.md`
+accretes. Turns flowscope from a passive-telemetry library into one
+that can also sit inline in the data path.
+
+- **One streaming HTTP engine, two front-ends (`#160`, breaking).**
+  `src/http/parser.rs` became `src/http/engine.rs`: a single
+  `pub(crate)` state machine that emits a head, then body spans it
+  never retains, then trailers, then an end marker. `HttpParser` is
+  now an aggregating front-end over it (public shape unchanged);
+  `HttpProxyParser` forwards the events. Because framing lives in one
+  place, the telemetry path inherited every fix: chunked bodies are
+  decoded (they were never framed at all before), a clean FIN no
+  longer looks like a parse error, HEAD/1xx/204/304 responses are
+  framed correctly, and `HttpOutcome::Reset` became reachable.
+  `BodyFraming::UntilEof` → `UntilClose`.
+- **`HttpProxyParser` — sans-IO streaming (`#161`).**
+  `push(dir, &Bytes) -> usize` + `next_event()`. Two contracts make
+  it a forwarding core: every event carries the exact wire bytes it
+  consumed (concatenating `raw` reproduces the message byte for
+  byte), and the parser never accumulates a body — a short `push`
+  return is the backpressure signal.
+- **Method-aware framing, interims, tunnels (`#162`).** 1xx
+  interims reported without completing the exchange (the
+  100-continue deadlock is structurally impossible: directions
+  advance independently and the request context is queued at
+  *head* time); CONNECT-2xx and 101 emit `SwitchProtocols`; the h2
+  preface at request position is recognised rather than reported as
+  malformed.
+- **RFC 9112 §6.3 smuggling defense (`#163`).** `SmugglingPolicy`
+  (Strict / Normalize / Observe) with the full violation table in the
+  engine, typed `HttpPoison` reasons, and `RequestHead::authority()`
+  resolving the routing key ASCII-only (Unicode folding makes U+212A
+  a desync primitive). 22-case regression suite + committed fuzz
+  seeds.
+- **`HttpProxySession` adapter (`#164`)** so the streaming events can
+  ride the typed `Driver`, plus the runnable
+  `examples/01-l7-logging/http_streaming_proxy.rs`.
+- **`flowscope::classify` (`#165`).** `classify_first_bytes` — the
+  cleartext counterpart to `app_proto`: `Tls` / `Http1` /
+  `Http2Preface` / `Ssh` / `Raw`, with prefix safety as the
+  load-bearing property (a short peek never decides wrongly). No
+  deps, no feature gate.
+- **Heuristic-probe fixes (`#166`).** Probe-consumed frames are now
+  replayed into the pinned parser (they were silently dropped — the
+  bytes that identified the protocol were the ones the parser never
+  saw); a definitive `NoMatch` fast-fails; probe state is bounded.
+- **TLS routing contract (`#167`).** `docs/tls-routing.md`: the
+  degradation ladder, `ech_present` as advisory-only (GREASE ECH is
+  byte-indistinguishable), post-quantum ClientHello sizing, ALPACA
+  binding. `TlsHandshake::routing_alpn()` / `routing_sni()`.
+  Citations corrected: ECH is **RFC 9849**, DNS carriage **RFC 9848**
+  with SVCB `ech` key **5**, ML-KEM hybrids still a draft.
+- **Inline-path observability (`#168`).** `HttpAccessLog` →
+  `HttpAccessRecord` (head-only, never bodies) →
+  `EveJsonWriter::write_http_access`; `flowscope_http_messages_total`
+  and `flowscope_http_poisoned_total{reason}`.
+- **Bounded-memory contract (`#169`).** `docs/bounded-memory.md` from
+  a crate-wide audit. Found two leaks in this cycle's own code (a
+  desynced HTTP direction that kept accumulating — a regression from
+  #160; heuristic probe state #166 had only partly bounded) and five
+  pre-existing gaps now tracked as #184–#188.
+- **HTTP/2 + HPACK + gRPC (`#170`, `#171`).** New `http2` feature:
+  frame layer, a hand-rolled RFC 7541 HPACK decoder (validated
+  against the Appendix C vectors), HEADERS+CONTINUATION reassembly,
+  per-stream events reusing the HTTP/1 vocabulary, and the gRPC
+  routing surface (`GrpcCall`, `GrpcStatus` incl. Trailers-Only).
+  All buffers bounded by `Http2Config`. New fuzz target.
+
+Test count after the cycle: **2118 passing** (up from 1919 at
+0.22.0). Zero clippy warnings under `--all-features --all-targets
+-D warnings`, zero rustdoc warnings. New modules: `src/classify.rs`,
+`src/http/{engine,proxy,poison,access}.rs`, `src/http2/`. New docs:
+`docs/tls-routing.md`, `docs/bounded-memory.md`,
+`docs/migration-0.22-to-0.23.md`. **Not yet published to crates.io.**
+
 **0.22.0 cycle** (fingerprinting & encrypted-traffic frontier —
 the #140 roadmap's fingerprinting/L7-depth group,
 **published to crates.io as 0.22.0 on 2026-07-03**).

@@ -41,6 +41,14 @@
 //! assert_eq!(head.method(), Some("GET"));
 //! ```
 //!
+//! # gRPC
+//!
+//! gRPC rides on this directly: the call is named by the h2
+//! pseudo-headers and its outcome arrives in trailers. See
+//! [`grpc_call`] and [`grpc_status`]. Note a gRPC call that *failed*
+//! still carries HTTP `200` — the status is in the trailers, which is
+//! what makes reading them necessary rather than optional.
+//!
 //! # Scope
 //!
 //! This is an observer and a router, not an endpoint. It reads frames
@@ -50,12 +58,16 @@
 
 mod error;
 mod frame;
+mod grpc;
 mod hpack;
 mod huffman;
 mod stream;
 
 pub use error::Http2Error;
 pub use frame::{FrameKind, PREFACE};
+pub use grpc::{
+    GrpcCall, GrpcStatus, grpc_call, grpc_status, grpc_status_of, is_grpc_content_type,
+};
 pub use stream::{Http2Config, Http2Event, Http2Parser, StreamHead};
 
 /// Slug returned by [`Http2Parser`]'s `parser_kind()`.

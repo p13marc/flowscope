@@ -65,9 +65,9 @@ the prior reasoning instead of re-litigating.
 - **HTTP/2 passive parser** + Akamai fingerprint — caveats:
   `httlib-hpack` maintenance risk, per-direction dynamic-table
   cost, significant LoC. ~~Defer until a consumer asks.~~
-  **Activated 2026-08-02**: terminated-gRPC routing is the
-  consumer ask — tracked as #170 under epic #174 (0.23 cycle).
-  The Akamai fingerprint half stays deferred.
+  **Shipped 2026-08-02** as the `http2` feature (#170 frame layer +
+  HPACK + per-stream events, #171 gRPC routing). The Akamai
+  fingerprint half stays deferred.
 - **Passive QUIC parser** + JA4-QUIC — no Rust passive QUIC
   parser exists today (every QUIC crate is an active endpoint
   implementation). Greenfield opportunity; caveats:
