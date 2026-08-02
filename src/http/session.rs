@@ -134,6 +134,14 @@ impl HttpParser {
                     out.push(finish(p));
                 }
             }
+            EngineEvent::Switch(_) => {
+                // The connection left HTTP/1.x (CONNECT tunnel,
+                // Upgrade, or a prior-knowledge h2 client). There is
+                // no further HTTP to observe on it; whatever was
+                // being accumulated is not a complete message.
+                self.request = None;
+                self.response = None;
+            }
         }
     }
 
@@ -401,6 +409,50 @@ mod tests {
         let mut p = HttpParser::default();
         let m = feed_init(&mut p, b"POST /a HTTP/1.1\r\n\r\nGET /b HTTP/1.1\r\n\r\n");
         assert_eq!(m.len(), 2);
+    }
+
+    #[test]
+    fn interim_responses_are_not_reported_as_messages() {
+        // A 1xx precedes the final response; telemetry reports the
+        // final one, and the interim must not mis-frame it.
+        let mut p = HttpParser::default();
+        let _ = feed_init(&mut p, b"POST /u HTTP/1.1\r\nContent-Length: 0\r\n\r\n");
+        let m = feed_resp(
+            &mut p,
+            b"HTTP/1.1 100 Continue\r\n\r\nHTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok",
+        );
+        assert_eq!(m.len(), 1);
+        match &m[0] {
+            HttpMessage::Response(r) => {
+                assert_eq!(r.status, 200);
+                assert_eq!(r.body.as_ref(), b"ok");
+            }
+            other => panic!("expected the final response, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn connect_tunnel_stops_http_observation() {
+        let mut p = HttpParser::default();
+        let _ = feed_init(&mut p, b"CONNECT example.com:443 HTTP/1.1\r\n\r\n");
+        let m = feed_resp(&mut p, b"HTTP/1.1 200 Connection Established\r\n\r\n");
+        // The tunnel's bytes are not HTTP, and are not reported as
+        // malformed HTTP either.
+        let m2 = feed_init(&mut p, b"\x16\x03\x01\x02\x00\x01\x00\x01\xfc");
+        assert!(m2.is_empty());
+        assert!(!p.is_poisoned());
+        let _ = m;
+    }
+
+    #[test]
+    fn http2_preface_does_not_look_like_a_malformed_request() {
+        let mut p = HttpParser::default();
+        let m = feed_init(
+            &mut p,
+            b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n\x00\x00\x00\x04\x00",
+        );
+        assert!(m.is_empty());
+        assert!(!p.is_poisoned());
     }
 
     #[test]

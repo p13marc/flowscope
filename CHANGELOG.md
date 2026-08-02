@@ -23,6 +23,28 @@ not only a passive observer. Migration recipes accrue in
     with `data.slice(accepted..)`, which is a refcount bump.
   - New public types: `HttpEvent`, `SwitchKind`, `HttpProxyConfig`,
     `RequestHead`, `ResponseHead`, `HttpPoison`.
+- **Interim responses, tunnels, and deterministic completion**
+  (#162). `HttpProxyParser` now implements the rest of RFC 9112
+  §6.3's response rules:
+  - Every `1xx` interim (`100 Continue`, `103 Early Hints`) is
+    reported as a `ResponseHead` with `interim: true`. It does not
+    consume the pending request and does not complete the exchange,
+    so a proxy forwards it and keeps reading. Because request and
+    response directions advance independently, the response reader is
+    live the moment request *headers* are seen — the `Expect:
+    100-continue` deadlock cannot occur.
+  - A `2xx` to `CONNECT` and a `101 Switching Protocols` both emit
+    `HttpEvent::SwitchProtocols`; the parser then stops and the caller
+    splices the remaining bytes. The `101` head itself is still
+    reported so it can be forwarded.
+  - The HTTP/2 connection preface at request position is recognised
+    as `SwitchKind::Http2PriorKnowledge` instead of being reported as
+    a malformed request. A prefix of it waits rather than guessing.
+  - `is_done()` is true once no further HTTP message can arrive:
+    after a protocol switch, or once both directions finish — by end
+    of stream or because a message said the connection closes when it
+    completes (`Connection: close`, or HTTP/1.0 without
+    `keep-alive`).
 - **`http::HttpPoison`** — typed reasons the streaming parser stops,
   with a stable `as_str()` slug, so a proxy can map a framing failure
   to `400` versus `502` without parsing message strings.
