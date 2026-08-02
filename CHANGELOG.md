@@ -93,6 +93,23 @@ not only a passive observer. Migration recipes accrue in
   prelude. Complements `app_proto::classify`, which answers the same
   question from ALPN/SNI once a handshake exists.
 
+- **Access logging and metrics for the inline path** (#168). An
+  operator switching a deployment from observing to proxying should
+  not lose visibility.
+  - `http::HttpAccessLog` turns the `HttpEvent` stream into
+    `HttpAccessRecord`s — method, target, authority, status, wire
+    byte counts, and how the exchange ended — **without retaining a
+    single body byte**. Requests pair with responses in wire order;
+    `1xx` interims never become their own record.
+  - `HttpAccessOutcome` distinguishes `Completed` / `NoResponse` /
+    `Switched` / `Refused { reason }`, so a connection the proxy
+    refused for a framing violation appears in the log with its
+    typed reason instead of going quiet.
+  - `EveJsonWriter::write_http_access` emits it as a Suricata-shaped
+    `event_type: "http"` line, with the outcome and refusal reason
+    under the `flowscope` extension object.
+  - New metrics: `flowscope_http_messages_total{direction}` and
+    `flowscope_http_poisoned_total{reason}`.
 - **`docs/tls-routing.md`** (#167) — the contract for routing TLS by
   SNI / ALPN: the degradation ladder (inner SNI → outer SNI + ALPN →
   JA4 / first-byte class → raw passthrough), why `ech_present` is
@@ -1447,6 +1464,23 @@ surface.
   prelude. Complements `app_proto::classify`, which answers the same
   question from ALPN/SNI once a handshake exists.
 
+- **Access logging and metrics for the inline path** (#168). An
+  operator switching a deployment from observing to proxying should
+  not lose visibility.
+  - `http::HttpAccessLog` turns the `HttpEvent` stream into
+    `HttpAccessRecord`s — method, target, authority, status, wire
+    byte counts, and how the exchange ended — **without retaining a
+    single body byte**. Requests pair with responses in wire order;
+    `1xx` interims never become their own record.
+  - `HttpAccessOutcome` distinguishes `Completed` / `NoResponse` /
+    `Switched` / `Refused { reason }`, so a connection the proxy
+    refused for a framing violation appears in the log with its
+    typed reason instead of going quiet.
+  - `EveJsonWriter::write_http_access` emits it as a Suricata-shaped
+    `event_type: "http"` line, with the outcome and refusal reason
+    under the `flowscope` extension object.
+  - New metrics: `flowscope_http_messages_total{direction}` and
+    `flowscope_http_poisoned_total{reason}`.
 - **`docs/tls-routing.md`** (#167) — the contract for routing TLS by
   SNI / ALPN: the degradation ladder (inner SNI → outer SNI + ALPN →
   JA4 / first-byte class → raw passthrough), why `ech_present` is

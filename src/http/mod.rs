@@ -173,6 +173,7 @@
 //! | [`header`](HttpResponse::header) | `Option<&[u8]>` | first matching header |
 //! | [`headers_all`](HttpResponse::headers_all) | `impl Iterator<Item = &[u8]>` | every matching header |
 
+mod access;
 mod engine;
 mod exchange;
 // JA4H is FoxIO License 1.1 (patent pending) — opt-in via the
@@ -187,6 +188,7 @@ mod proxy;
 mod session;
 mod types;
 
+pub use access::{HttpAccessLog, HttpAccessOutcome, HttpAccessRecord};
 pub use exchange::{HttpExchange, HttpExchangeParser, HttpOutcome};
 #[cfg(feature = "ja4plus")]
 pub use ja4h::{Ja4hParts, ja4h as ja4h_fingerprint, ja4h_parts};

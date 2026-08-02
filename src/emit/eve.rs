@@ -450,6 +450,85 @@ where
         self.write_line(&obj)
     }
 
+    /// Emit an [`HttpAccessRecord`](crate::http::HttpAccessRecord) as
+    /// a Suricata-shaped `event_type: "http"` line.
+    ///
+    /// This is what puts an inline proxy's access log in the same
+    /// pipeline as passive telemetry: the record comes from the
+    /// streaming parser, which never retained a body, but the JSON is
+    /// the same shape a SIEM already ingests. Byte counts are wire
+    /// bytes as framed.
+    ///
+    /// `Refused` and `Switched` outcomes are reported too — a
+    /// connection refused for a framing violation is exactly the
+    /// event an operator wants to see, and dropping it would make the
+    /// log say nothing happened.
+    ///
+    /// Issue #168. Available with the `http` feature.
+    #[cfg(feature = "http")]
+    pub fn write_http_access(
+        &mut self,
+        rec: &crate::http::HttpAccessRecord,
+        ts: crate::Timestamp,
+    ) -> io::Result<()> {
+        use crate::http::HttpAccessOutcome;
+
+        self.ts_buf.clear();
+        let _ = ts.write_iso8601(&mut self.ts_buf);
+        let flow_id = self.next_flow_id();
+
+        let mut http = serde_json::Map::with_capacity(8);
+        if let Some(host) = rec.authority.as_deref() {
+            http.insert("hostname".into(), json!(host));
+        }
+        if let Some(m) = rec.method_str() {
+            http.insert("http_method".into(), json!(m));
+        }
+        if let Some(p) = rec.path_str() {
+            http.insert("url".into(), json!(p));
+        }
+        if let Some(s) = rec.status {
+            http.insert("status".into(), json!(s));
+        }
+        http.insert("request_body_len".into(), json!(rec.request_body_bytes));
+        http.insert("response_body_len".into(), json!(rec.response_body_bytes));
+        http.insert(
+            "protocol".into(),
+            json!(match rec.version {
+                crate::http::HttpVersion::Http1_0 => "HTTP/1.0",
+                crate::http::HttpVersion::Http1_1 => "HTTP/1.1",
+            }),
+        );
+
+        // Why the exchange ended the way it did — the part a plain
+        // access log leaves out and an operator needs most.
+        let (outcome, refused): (&str, Option<&str>) = match &rec.outcome {
+            HttpAccessOutcome::Completed => ("completed", None),
+            HttpAccessOutcome::NoResponse => ("no_response", None),
+            HttpAccessOutcome::Switched => ("switched", None),
+            HttpAccessOutcome::Refused { reason } => ("refused", Some(reason.as_str())),
+        };
+
+        let mut obj = serde_json::Map::with_capacity(8);
+        obj.insert("timestamp".into(), json!(self.ts_buf));
+        obj.insert("flow_id".into(), json!(flow_id));
+        obj.insert("event_type".into(), json!("http"));
+        if !self.options.in_iface.is_empty() {
+            obj.insert("in_iface".into(), json!(self.options.in_iface));
+        }
+        obj.insert("app_proto".into(), json!("http"));
+        obj.insert("http".into(), serde_json::Value::Object(http));
+
+        let mut fs = serde_json::Map::with_capacity(2);
+        fs.insert("outcome".into(), json!(outcome));
+        if let Some(reason) = refused {
+            fs.insert("refused_reason".into(), json!(reason));
+        }
+        obj.insert("flowscope".into(), serde_json::Value::Object(fs));
+
+        self.write_line(&obj)
+    }
+
     // ── Per-variant emit ────────────────────────────────────
 
     fn write_anomaly<K>(

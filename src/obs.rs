@@ -80,6 +80,16 @@ pub const METRIC_RETRANSMITS: &str = "flowscope_retransmits_total";
 /// `Some`.
 pub const METRIC_FLOW_TICKS: &str = "flowscope_flow_ticks_total";
 
+/// HTTP messages framed by the streaming parser, labelled
+/// `direction` = `request` | `response`. Issue #168.
+pub const METRIC_HTTP_MESSAGES: &str = "flowscope_http_messages_total";
+
+/// Connections the streaming HTTP parser refused, labelled `reason`
+/// with the [`HttpPoison`](crate::http::HttpPoison) slug. A rising
+/// count here is either an attack or a broken client — both worth an
+/// alert. Issue #168.
+pub const METRIC_HTTP_POISONED: &str = "flowscope_http_poisoned_total";
+
 // These label functions are hoisted out of the `metrics` cfg gate
 // so the `Display` impls on `L4Proto`, `EndReason`, `AnomalyKind`
 // (plan 77) can call them under any feature set. They're pure data;
@@ -324,3 +334,28 @@ pub(crate) fn trace_session_message<M: std::fmt::Debug>(side: crate::event::Flow
 ))]
 #[inline(always)]
 pub(crate) fn trace_session_message<M>(_side: crate::event::FlowSide, _msg: &M) {}
+
+// ── Streaming HTTP path (issue #168) ──────────────────────────────
+//
+// The inline path gets the same counters as the telemetry path, so
+// switching a deployment from observing to proxying does not create
+// a monitoring gap.
+
+/// Count one framed HTTP message.
+#[cfg(all(feature = "metrics", feature = "http"))]
+pub(crate) fn record_http_message(is_request: bool) {
+    let direction = if is_request { "request" } else { "response" };
+    metrics::counter!(METRIC_HTTP_MESSAGES, "direction" => direction).increment(1);
+}
+
+#[cfg(all(not(feature = "metrics"), feature = "http"))]
+pub(crate) fn record_http_message(_is_request: bool) {}
+
+/// Count one refused connection, by reason.
+#[cfg(all(feature = "metrics", feature = "http"))]
+pub(crate) fn record_http_poisoned(reason: crate::http::HttpPoison) {
+    metrics::counter!(METRIC_HTTP_POISONED, "reason" => reason.as_str()).increment(1);
+}
+
+#[cfg(all(not(feature = "metrics"), feature = "http"))]
+pub(crate) fn record_http_poisoned(_reason: crate::http::HttpPoison) {}
