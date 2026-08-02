@@ -1,9 +1,17 @@
 # ECH (Encrypted Client Hello) — passive observation
 
-flowscope 0.12 surfaces the ECH wire signal on `TlsClientHello`
-and `TlsHandshake` events. Pinned to `draft-ietf-tls-esni-22`
-(the working IETF draft at Jan 2026; semver-major bumps if the
-RFC publishes with breaking format changes).
+flowscope surfaces the ECH wire signal on `TlsClientHello` and
+`TlsHandshake` events. ECH is now [RFC 9849][rfc9849] (published
+March 2026; formerly `draft-ietf-tls-esni`), with DNS carriage in
+[RFC 9848][rfc9848] — the SVCB `ech` SvcParamKey is **5**. The wire
+format flowscope parses is unchanged from the late drafts.
+
+For how ECH fits into a *routing* decision — and why `ech_present`
+must never be load-bearing in one — see
+[tls-routing.md](tls-routing.md).
+
+[rfc9849]: https://www.rfc-editor.org/rfc/rfc9849
+[rfc9848]: https://www.rfc-editor.org/rfc/rfc9848
 
 ## What's extractable passively
 
@@ -89,7 +97,7 @@ config-version analysis, not identity.
 
 ## Wire format reference
 
-ECH ClientHello outer struct (draft-ietf-tls-esni-22 §5.1):
+ECH ClientHello outer struct (RFC 9849 §5.1):
 
 ```text
 ECHClientHello (outer form):
@@ -108,7 +116,8 @@ exposed. Consumers wanting deeper analysis fork
 
 ## References
 
-- [IETF draft-ietf-tls-esni-22](https://datatracker.ietf.org/doc/draft-ietf-tls-esni/22/)
+- [RFC 9849 — TLS Encrypted Client Hello](https://www.rfc-editor.org/rfc/rfc9849)
+- [RFC 9848 — Bootstrapping ECH with DNS Service Bindings](https://www.rfc-editor.org/rfc/rfc9848) (SVCB `ech` key = 5)
 - [Cloudflare ECH announcement](https://blog.cloudflare.com/announcing-encrypted-client-hello)
 - [BoringSSL ECH support](https://boringssl.googlesource.com/boringssl/+/refs/heads/master/include/openssl/ssl.h)
 - [rustls 0.23+ ECH implementation](https://github.com/rustls/rustls)
