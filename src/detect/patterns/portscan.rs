@@ -30,7 +30,20 @@
 
 use std::{collections::HashMap, hash::Hash};
 
+/// Sources tracked before the least-recently-touched is evicted.
+/// Matches every sibling detector's default.
+const DEFAULT_MAX_SOURCES: usize = 10_000;
+
 /// Per-source scanner-likelihood detector.
+///
+/// State is bounded: a source is normally dropped the moment its
+/// λ crosses either threshold, but a source that stays
+/// `Inconclusive` — one SYN from each of a million spoofed
+/// addresses, say — would otherwise persist forever. At
+/// `max_sources` the least-recently-touched entry is evicted.
+/// Evicting an `Inconclusive` source is harmless by the
+/// detector's own semantics: it restarts at λ = 0, exactly as it
+/// would after a verdict.
 pub struct PortScanDetector<K>
 where
     K: Hash + Eq + Clone,
@@ -40,12 +53,19 @@ where
     failure_step: f64,
     threshold_scanner: f64,
     threshold_benign: f64,
+    max_sources: usize,
+    /// Monotonic counter stamped into each touched entry. Cheaper
+    /// than a `Timestamp` and, unlike one, it does not force a
+    /// clock into `observe`'s signature.
+    clock: u64,
+    evicted: u64,
 }
 
 #[derive(Debug, Clone, Copy)]
 struct ScannerState {
     log_likelihood: f64,
     n_observed: u32,
+    last_touch: u64,
 }
 
 /// Verdict from a single observation.
@@ -104,6 +124,46 @@ where
             failure_step: ((1.0 - theta1) / (1.0 - theta0)).ln(),
             threshold_scanner: ((1.0 - beta) / alpha).ln(),
             threshold_benign: (beta / (1.0 - alpha)).ln(),
+            max_sources: DEFAULT_MAX_SOURCES,
+            clock: 0,
+            evicted: 0,
+        }
+    }
+
+    /// Cap on concurrently tracked sources (default 10 000).
+    ///
+    /// Only sources still awaiting a verdict occupy a slot — one
+    /// that crosses either threshold is released immediately. Size
+    /// this to the number of *distinct hosts mid-evaluation* you
+    /// expect, not to your host count.
+    #[must_use]
+    pub fn with_capacity(mut self, max_sources: usize) -> Self {
+        self.max_sources = max_sources;
+        self
+    }
+
+    /// Sources dropped by the capacity bound rather than by a
+    /// verdict. A climbing count means scan-like traffic from more
+    /// distinct sources than the detector can hold — itself worth
+    /// alerting on.
+    pub fn evicted(&self) -> u64 {
+        self.evicted
+    }
+
+    /// Make room for one more source. O(n), and only on overflow —
+    /// the same trade the DNS correlator makes.
+    fn evict_lru(&mut self) {
+        if self.sources.len() < self.max_sources {
+            return;
+        }
+        if let Some(victim) = self
+            .sources
+            .iter()
+            .min_by_key(|(_, s)| s.last_touch)
+            .map(|(k, _)| k.clone())
+        {
+            self.sources.remove(&victim);
+            self.evicted += 1;
         }
     }
 
@@ -113,10 +173,17 @@ where
     /// other "connection succeeded" signal the consumer
     /// supplies); `false` for SYN-only / RST / timeout.
     pub fn observe(&mut self, key: K, success: bool) -> ScanScore<K> {
+        if !self.sources.contains_key(&key) {
+            self.evict_lru();
+        }
+        self.clock += 1;
+        let clock = self.clock;
         let entry = self.sources.entry(key.clone()).or_insert(ScannerState {
             log_likelihood: 0.0,
             n_observed: 0,
+            last_touch: clock,
         });
+        entry.last_touch = clock;
         entry.log_likelihood += if success {
             self.success_step
         } else {
@@ -314,5 +381,57 @@ mod tests {
         assert_eq!(d.tracked(), 1);
         d.forget(&1);
         assert_eq!(d.tracked(), 0);
+    }
+
+    /// Issue #187: a spoofed-source flood must not grow the map.
+    ///
+    /// Sources are normally released the moment a verdict crosses a
+    /// threshold, but one SYN each from a million addresses leaves
+    /// every entry `Inconclusive` — and therefore resident forever.
+    #[test]
+    fn inconclusive_sources_are_bounded() {
+        let mut d: PortScanDetector<u32> = PortScanDetector::new().with_capacity(64);
+        // One observation each: never enough to reach a verdict.
+        for src in 0..100_000u32 {
+            assert_eq!(d.observe(src, false).verdict, ScanVerdict::Inconclusive);
+            assert!(d.tracked() <= 64, "cap held at every step");
+        }
+        assert_eq!(d.tracked(), 64);
+        assert_eq!(d.evicted(), 100_000 - 64);
+    }
+
+    /// Eviction takes the source that has gone longest without being
+    /// observed, so a scan in progress is not displaced by
+    /// background noise.
+    #[test]
+    fn eviction_takes_the_least_recently_touched_source() {
+        let mut d: PortScanDetector<u32> = PortScanDetector::new().with_capacity(4);
+        for src in 0..4u32 {
+            d.observe(src, false);
+        }
+        // Keep source 0 warm, let 1..4 go cold.
+        d.observe(0, false);
+        // A fifth source evicts source 1, the coldest — not 0.
+        d.observe(99, false);
+        assert_eq!(d.tracked(), 4);
+
+        // Source 0 kept its accumulated λ across the eviction — it
+        // is at two failures, so two more reach the threshold, where
+        // a source that had been evicted and restarted would need
+        // four.
+        assert_eq!(d.observe(0, false).verdict, ScanVerdict::Inconclusive);
+        assert_eq!(d.observe(0, false).verdict, ScanVerdict::Scanner);
+    }
+
+    /// An evicted source is not mis-scored — it simply restarts,
+    /// which is what a verdict does too.
+    #[test]
+    fn an_evicted_source_restarts_cleanly() {
+        let mut d: PortScanDetector<u32> = PortScanDetector::new().with_capacity(1);
+        d.observe(1, false);
+        d.observe(2, false); // evicts source 1
+        let s = d.observe(1, false);
+        assert_eq!(s.n_observed, 1, "source 1 starts over");
+        assert_eq!(s.verdict, ScanVerdict::Inconclusive);
     }
 }

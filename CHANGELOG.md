@@ -208,6 +208,37 @@ not only a passive observer. Migration recipes accrue in
   leaving the buffer above the limit. It now keeps the newest `cap`
   bytes and counts the rest in `bytes_dropped_oversize`, matching
   `BufferedReassembler`.
+- **QUIC CRYPTO reassembly is bounded on every axis a peer
+  controls** (#184). Accumulation had no per-connection byte or frame
+  cap, and `last_seen` was refreshed on *arrival* — so `evict_stale`
+  could never reach a DCID that was being actively fed, which is
+  exactly the traffic the TTL existed to bound. A peer replaying
+  Initials on one connection ID grew a buffer without limit, and
+  because reassembly re-sorts the frame list on every datagram, the
+  work was quadratic in the frames sent.
+  - New `quic::QuicConfig` (`max_pending_connections`,
+    `pending_ttl`, `max_crypto_bytes`, `max_crypto_frames`) with
+    `with_*` builders and `QuicUdpParser::with_config`, following
+    `DnsConfig` / `TlsConfig`. Defaults 1024 / 5 s / 64 KiB / 64,
+    against a ~1.6 KiB post-quantum ClientHello.
+  - The TTL now advances only when the contiguous reassembled prefix
+    *grows*, so replay cannot hold an entry open.
+  - The frame cap is not redundant with the byte cap: 65 536 one-byte
+    frames stay under 64 KiB while making the sort quadratic. The
+    frame cap is what bounds the CPU.
+  - New `QuicUdpParser::pending_dropped()` and `tracked()` make the
+    bounds observable, mirroring `NameMap::pending_dropped`.
+- **`PortScanDetector` state is capacity-bounded** (#187). Entries
+  were released when λ crossed a threshold, but a source that stayed
+  `Inconclusive` — one SYN from each of a million spoofed addresses —
+  persisted for the life of the detector. New
+  `with_capacity(max_sources)` (default 10 000, matching every
+  sibling) evicts the least-recently-touched source on overflow, plus
+  `evicted()` to observe it. `observe` keeps its `(key, success)`
+  signature: a `Timestamp` parameter would have broken every call
+  site for a TTL the capacity cap already covers, and evicting an
+  `Inconclusive` source is harmless by the detector's own semantics —
+  it restarts at λ = 0, exactly as it does after a verdict.
 - **A duplicated copy of this cycle's entries had landed inside the
   0.16.0 section** of this file. Removed; the 0.16.0 history is
   unchanged.
