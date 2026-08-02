@@ -29,6 +29,7 @@ use std::collections::VecDeque;
 
 use bytes::{Bytes, BytesMut};
 
+use super::poison::HttpPoison;
 use super::types::{BodyFraming, HttpVersion};
 use crate::error::{Error, Module};
 
@@ -193,6 +194,8 @@ struct ReqCtx {
 struct DirMachine {
     buf: BytesMut,
     state: DirState,
+    /// Why this direction desynced, if it did.
+    poison: Option<HttpPoison>,
     /// How far [`scan_blank_line`] / [`scan_crlf`] has already looked,
     /// so a slowly-fed line is scanned once overall instead of once
     /// per feed.
@@ -204,6 +207,7 @@ impl DirMachine {
         Self {
             buf: BytesMut::new(),
             state: DirState::Head,
+            poison: None,
             scanned: 0,
         }
     }
@@ -211,6 +215,7 @@ impl DirMachine {
     fn reset(&mut self) {
         self.buf.clear();
         self.state = DirState::Head;
+        self.poison = None;
         self.scanned = 0;
     }
 
@@ -263,7 +268,6 @@ impl Engine {
         self.dir_mut(dir).buf.extend_from_slice(bytes);
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn is_desynced(&self, dir: Dir) -> bool {
         matches!(self.dir(dir).state, DirState::Desynced)
     }
@@ -331,7 +335,6 @@ impl Engine {
     }
 
     /// `true` once a direction has seen end of stream.
-    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn is_closed(&self, dir: Dir) -> bool {
         matches!(self.dir(dir).state, DirState::Closed)
     }
@@ -344,18 +347,12 @@ impl Engine {
 
         let Some(hlen) = scan_blank_line(&m.buf, &mut m.scanned) else {
             if m.buf.len() > limits.max_head_bytes {
-                return Err(Self::desync(
-                    m,
-                    Error::buffer_overflow(Module::Http, limits.max_head_bytes),
-                ));
+                return Err(Self::desync(m, HttpPoison::HeadOverflow));
             }
             return Ok(None);
         };
         if hlen > limits.max_head_bytes {
-            return Err(Self::desync(
-                m,
-                Error::buffer_overflow(Module::Http, limits.max_head_bytes),
-            ));
+            return Err(Self::desync(m, HttpPoison::HeadOverflow));
         }
 
         // Parse offsets while the borrow is live, then take the head
@@ -363,7 +360,7 @@ impl Engine {
         // zero-copy view into it.
         let parts = match parse_head_offsets(&m.buf[..hlen], dir, limits.max_headers) {
             Ok(p) => p,
-            Err(e) => return Err(Self::desync(m, e)),
+            Err(_) => return Err(Self::desync(m, HttpPoison::MalformedHead)),
         };
         let raw = m.take(hlen);
         let head = parts.into_head(dir, &raw, raw.clone());
@@ -379,10 +376,7 @@ impl Engine {
         if dir == Dir::Request {
             if self.pending.len() >= self.limits.max_pipelined {
                 let m = self.dir_mut(dir);
-                return Err(Self::desync(
-                    m,
-                    Error::parse(Module::Http, "too many pipelined requests"),
-                ));
+                return Err(Self::desync(m, HttpPoison::PipelineOverflow));
             }
             self.pending.push_back(ReqCtx {
                 is_head: head.method.as_ref().eq_ignore_ascii_case(b"HEAD"),
@@ -446,26 +440,17 @@ impl Engine {
             ChunkState::Size => {
                 let Some(eol) = scan_crlf(&m.buf, &mut m.scanned) else {
                     if m.buf.len() > limits.max_chunk_line_bytes {
-                        return Err(Self::desync(
-                            m,
-                            Error::buffer_overflow(Module::Http, limits.max_chunk_line_bytes),
-                        ));
+                        return Err(Self::desync(m, HttpPoison::ChunkLineOverflow));
                     }
                     return Ok(Progress::NeedMore);
                 };
                 if eol > limits.max_chunk_line_bytes {
-                    return Err(Self::desync(
-                        m,
-                        Error::buffer_overflow(Module::Http, limits.max_chunk_line_bytes),
-                    ));
+                    return Err(Self::desync(m, HttpPoison::ChunkLineOverflow));
                 }
                 let line = &m.buf[..eol];
                 let hex_end = line.iter().position(|&b| b == b';').unwrap_or(line.len());
                 let Some(size) = parse_hex(line[..hex_end].trim_ascii()) else {
-                    return Err(Self::desync(
-                        m,
-                        Error::parse(Module::Http, "invalid chunk size"),
-                    ));
+                    return Err(Self::desync(m, HttpPoison::InvalidChunkSize));
                 };
                 if size == 0 {
                     // Leave the zero-size line in the buffer so the
@@ -502,10 +487,7 @@ impl Engine {
                     return Ok(Progress::NeedMore);
                 }
                 if &m.buf[..2] != b"\r\n" {
-                    return Err(Self::desync(
-                        m,
-                        Error::parse(Module::Http, "malformed chunk terminator"),
-                    ));
+                    return Err(Self::desync(m, HttpPoison::MalformedChunkTerminator));
                 }
                 let raw = m.take(2);
                 m.state = DirState::Body(BodyState::Chunked(ChunkState::Size));
@@ -519,18 +501,12 @@ impl Engine {
                 // section ends at the first blank line after it.
                 let Some(end) = scan_trailer_end(&m.buf, &mut m.scanned) else {
                     if m.buf.len() > limits.max_trailer_bytes {
-                        return Err(Self::desync(
-                            m,
-                            Error::buffer_overflow(Module::Http, limits.max_trailer_bytes),
-                        ));
+                        return Err(Self::desync(m, HttpPoison::TrailerOverflow));
                     }
                     return Ok(Progress::NeedMore);
                 };
                 if end > limits.max_trailer_bytes {
-                    return Err(Self::desync(
-                        m,
-                        Error::buffer_overflow(Module::Http, limits.max_trailer_bytes),
-                    ));
+                    return Err(Self::desync(m, HttpPoison::TrailerOverflow));
                 }
                 let raw = m.take(end);
                 let fields = parse_trailer_fields(&raw);
@@ -542,12 +518,30 @@ impl Engine {
         }
     }
 
-    /// Mark a direction desynced and hand back the error that caused it.
-    fn desync(m: &mut DirMachine, e: Error) -> Error {
+    /// Mark a direction desynced, recording why, and build the error
+    /// the front-end sees.
+    fn desync(m: &mut DirMachine, reason: HttpPoison) -> Error {
         m.state = DirState::Desynced;
+        m.poison = Some(reason);
         m.buf.clear();
         m.scanned = 0;
-        e
+        match reason {
+            HttpPoison::HeadOverflow
+            | HttpPoison::ChunkLineOverflow
+            | HttpPoison::TrailerOverflow => Error::buffer_overflow(Module::Http, 0),
+            other => Error::parse(Module::Http, other.as_str()),
+        }
+    }
+
+    /// Why a direction gave up, if it did.
+    pub(crate) fn poison(&self, dir: Dir) -> Option<HttpPoison> {
+        self.dir(dir).poison
+    }
+
+    /// Bytes buffered but not yet consumed on a direction. The
+    /// streaming front-end uses this to bound how much it accepts.
+    pub(crate) fn buffered(&self, dir: Dir) -> usize {
+        self.dir(dir).buf.len()
     }
 }
 
