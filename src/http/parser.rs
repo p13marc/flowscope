@@ -1,6 +1,6 @@
 use bytes::Bytes;
 
-use super::types::{HttpConfig, HttpRequest, HttpResponse, HttpVersion};
+use super::types::{BodyFraming, HttpConfig, HttpRequest, HttpResponse, HttpVersion, RequestHead};
 use crate::error::{Error, Module};
 
 /// Per-direction parser state.
@@ -19,11 +19,40 @@ pub(crate) enum DirState {
     /// the body buffer until the per-direction buffer hits
     /// `max_buffer`.
     UntilEof { started: BodyStart },
+    /// Inline-streaming mode: the `RequestHead` was already emitted;
+    /// now drain (and discard) exactly `remaining` Content-Length
+    /// body bytes so the next request boundary is found without ever
+    /// buffering the body.
+    SkipBody { remaining: usize },
+    /// Inline-streaming mode: drain (and discard) a chunk-framed
+    /// body, tracking only enough state to find the terminating
+    /// zero-size chunk. The proxy owns the raw bytes.
+    SkipChunked(ChunkSkip),
+    /// Inline-streaming mode: the request declared no length and no
+    /// chunked framing — the body runs to FIN. Discard until `eof()`.
+    SkipUntilEof,
     /// Desync — a previous parse error or buffer overflow forced
     /// us to give up on this direction. Bytes accumulate in vain
     /// until the next clean point (currently never automatically;
     /// users would need to drop the reassembler).
     Desynced,
+}
+
+/// Boundary-tracking state for discarding a chunk-framed body in
+/// inline-streaming mode. We do **not** decode the payload — only
+/// enough to locate the end of the body so the next request parses
+/// cleanly.
+#[derive(Debug, Clone)]
+pub(crate) enum ChunkSkip {
+    /// Reading a `<hex-size>[;ext]\r\n` chunk-size line.
+    Size,
+    /// Discarding `remaining` bytes of chunk data.
+    Data { remaining: usize },
+    /// Consuming the `\r\n` that terminates a chunk's data.
+    DataCrlf,
+    /// After the zero-size chunk: consuming trailer lines up to the
+    /// terminating blank line.
+    Trailer,
 }
 
 /// Snapshot taken when we transition from Headers → body, so we
@@ -60,6 +89,18 @@ impl BodyStart {
             body,
         }
     }
+
+    /// Build the inline-streaming [`RequestHead`] from this snapshot.
+    /// Consumes the header vec — no body is ever attached.
+    fn into_request_head(self, framing: BodyFraming) -> RequestHead {
+        RequestHead {
+            method: self.method,
+            path: self.path,
+            version: self.version,
+            headers: self.headers,
+            framing,
+        }
+    }
 }
 
 /// Output of a parse step.
@@ -67,6 +108,8 @@ impl BodyStart {
 pub(crate) enum ParseOutput {
     Request(HttpRequest),
     Response(HttpResponse),
+    /// Inline-streaming mode: request headers, emitted before the body.
+    RequestHead(RequestHead),
 }
 
 /// Try to advance the parser, possibly emitting one parsed message.
@@ -103,8 +146,20 @@ pub(crate) fn step(
                             // zero-copy Bytes::slice over this.
                             let header_bytes = Bytes::copy_from_slice(&buffer[..hlen]);
                             let snapshot = snapshot_request(&req, buf_start, &header_bytes)?;
-                            let body_len = body_len_from_headers(&snapshot.headers);
                             advance_to_body(buffer, hlen);
+                            if config.inline_streaming {
+                                // Inline proxy: emit the routing head now,
+                                // then drain-and-discard the body so the
+                                // next request boundary is found without
+                                // ever buffering the body.
+                                let framing =
+                                    body_framing(&snapshot.headers, true, &snapshot.method);
+                                transition_to_skip(state, framing);
+                                return Ok(Some(ParseOutput::RequestHead(
+                                    snapshot.into_request_head(framing),
+                                )));
+                            }
+                            let body_len = body_len_from_headers(&snapshot.headers);
                             transition_to_body(state, snapshot, body_len, true);
                             // Loop: maybe the body is already in the buffer
                             continue;
@@ -168,6 +223,46 @@ pub(crate) fn step(
                 // Wait for `eof()`.
                 return Ok(None);
             }
+
+            // ── Inline-streaming body skip states ─────────────────
+            // The RequestHead was already emitted; here we only
+            // consume body bytes to locate the next request. Nothing
+            // is buffered or emitted.
+            DirState::SkipBody { remaining } if *remaining == 0 => {
+                *state = DirState::Headers;
+                continue;
+            }
+
+            DirState::SkipBody { remaining } => {
+                let take = (*remaining).min(buffer.len());
+                advance_to_body(buffer, take);
+                *remaining -= take;
+                if *remaining == 0 {
+                    *state = DirState::Headers;
+                    continue;
+                }
+                return Ok(None);
+            }
+
+            DirState::SkipChunked(cs) => match advance_chunk_skip(cs, buffer) {
+                Ok(ChunkProgress::Done) => {
+                    *state = DirState::Headers;
+                    continue;
+                }
+                Ok(ChunkProgress::NeedMore) => return Ok(None),
+                Err(e) => {
+                    *state = DirState::Desynced;
+                    buffer.clear();
+                    return Err(e);
+                }
+            },
+
+            DirState::SkipUntilEof => {
+                // Body runs to FIN — discard whatever is buffered so
+                // far and wait for `eof()`.
+                buffer.clear();
+                return Ok(None);
+            }
         }
     }
 }
@@ -181,8 +276,142 @@ pub(crate) fn eof(state: &mut DirState, buffer: &mut Vec<u8>) -> Option<ParseOut
             buffer.clear();
             Some(emit(started, body))
         }
+        // Inline mode: an until-EOF body ends cleanly at FIN. No
+        // message (the head was already emitted); reset so a
+        // subsequent connection reuse (rare) starts clean.
+        DirState::SkipUntilEof => {
+            buffer.clear();
+            *state = DirState::Headers;
+            None
+        }
         _ => None,
     }
+}
+
+/// Progress signal from [`advance_chunk_skip`].
+enum ChunkProgress {
+    /// The zero-size chunk + trailers were consumed — body complete.
+    Done,
+    /// More bytes are needed to finish the current chunk-framing step.
+    NeedMore,
+}
+
+/// Consume (discard) a chunk-framed body from `buffer`, advancing
+/// `cs` across chunk-size lines, data, and trailers. Used only in
+/// inline-streaming mode — the payload is not decoded, only skipped,
+/// so the next request boundary is found. Returns `Done` once the
+/// terminating zero-size chunk and its trailer block are consumed.
+fn advance_chunk_skip(cs: &mut ChunkSkip, buffer: &mut Vec<u8>) -> crate::Result<ChunkProgress> {
+    loop {
+        match cs {
+            ChunkSkip::Size => {
+                let Some(pos) = find_crlf(buffer) else {
+                    return Ok(ChunkProgress::NeedMore);
+                };
+                let line = &buffer[..pos];
+                let hex_end = line.iter().position(|&b| b == b';').unwrap_or(line.len());
+                let size = parse_hex(line[..hex_end].trim_ascii())
+                    .ok_or_else(|| Error::parse(Module::Http, "invalid chunk size"))?;
+                advance_to_body(buffer, pos + 2);
+                *cs = if size == 0 {
+                    ChunkSkip::Trailer
+                } else {
+                    ChunkSkip::Data { remaining: size }
+                };
+            }
+            ChunkSkip::Data { remaining } => {
+                let take = (*remaining).min(buffer.len());
+                advance_to_body(buffer, take);
+                *remaining -= take;
+                if *remaining > 0 {
+                    return Ok(ChunkProgress::NeedMore);
+                }
+                *cs = ChunkSkip::DataCrlf;
+            }
+            ChunkSkip::DataCrlf => {
+                if buffer.len() < 2 {
+                    return Ok(ChunkProgress::NeedMore);
+                }
+                if &buffer[..2] != b"\r\n" {
+                    return Err(Error::parse(Module::Http, "malformed chunk terminator"));
+                }
+                advance_to_body(buffer, 2);
+                *cs = ChunkSkip::Size;
+            }
+            ChunkSkip::Trailer => {
+                let Some(pos) = find_crlf(buffer) else {
+                    return Ok(ChunkProgress::NeedMore);
+                };
+                advance_to_body(buffer, pos + 2);
+                // A blank line (`\r\n` with nothing before it) ends
+                // the trailer block and thus the whole chunked body.
+                if pos == 0 {
+                    return Ok(ChunkProgress::Done);
+                }
+                // Otherwise it was a trailer header line; keep going.
+            }
+        }
+    }
+}
+
+/// Index of the first `\r\n` in `buf`, or `None`.
+fn find_crlf(buf: &[u8]) -> Option<usize> {
+    buf.windows(2).position(|w| w == b"\r\n")
+}
+
+/// Parse an ASCII-hex byte string (chunk size). `None` if empty or
+/// not valid hex.
+fn parse_hex(bytes: &[u8]) -> Option<usize> {
+    if bytes.is_empty() {
+        return None;
+    }
+    let s = std::str::from_utf8(bytes).ok()?;
+    usize::from_str_radix(s, 16).ok()
+}
+
+/// Set `state` to the inline body-skip state matching `framing`.
+fn transition_to_skip(state: &mut DirState, framing: BodyFraming) {
+    *state = match framing {
+        BodyFraming::None | BodyFraming::ContentLength(0) => DirState::Headers,
+        BodyFraming::ContentLength(n) => DirState::SkipBody {
+            remaining: n as usize,
+        },
+        BodyFraming::Chunked => DirState::SkipChunked(ChunkSkip::Size),
+        BodyFraming::UntilEof => DirState::SkipUntilEof,
+    };
+}
+
+/// Determine body framing from headers at header-completion time.
+/// `Transfer-Encoding: chunked` wins over Content-Length (and, per
+/// RFC 7230 §3.3.3, a message with both is a smuggling risk the
+/// caller can reject). Absent both, requests with a bodyless method
+/// have no body; anything else runs to EOF.
+fn body_framing(headers: &[(Bytes, Bytes)], is_request: bool, method: &[u8]) -> BodyFraming {
+    if has_chunked_encoding(headers) {
+        return BodyFraming::Chunked;
+    }
+    if let Some(n) = body_len_from_headers(headers) {
+        return if n == 0 {
+            BodyFraming::None
+        } else {
+            BodyFraming::ContentLength(n as u64)
+        };
+    }
+    if is_request && matches!(method, b"GET" | b"HEAD" | b"DELETE" | b"OPTIONS") {
+        BodyFraming::None
+    } else {
+        BodyFraming::UntilEof
+    }
+}
+
+/// `true` if any `Transfer-Encoding` header lists `chunked`.
+fn has_chunked_encoding(headers: &[(Bytes, Bytes)]) -> bool {
+    headers.iter().any(|(name, value)| {
+        name.as_ref().eq_ignore_ascii_case(b"transfer-encoding")
+            && value
+                .split(|&b| b == b',')
+                .any(|tok| tok.trim_ascii().eq_ignore_ascii_case(b"chunked"))
+    })
 }
 
 fn emit(started: BodyStart, body: Bytes) -> ParseOutput {

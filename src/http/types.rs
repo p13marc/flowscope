@@ -45,6 +45,93 @@ pub enum HttpVersion {
     Http1_1,
 }
 
+/// How a message body is framed on the wire — determined from the
+/// headers at header-completion time, before any body bytes are
+/// read. Surfaced on [`RequestHead`] so an inline proxy knows how
+/// to stream (and where the next message starts) without flowscope
+/// having to buffer the body.
+///
+/// New in the inline-streaming mode (see [`HttpConfig::inline_streaming`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
+#[non_exhaustive]
+pub enum BodyFraming {
+    /// No body (either an explicit `Content-Length: 0`, or a method
+    /// that carries no body and declares no length).
+    None,
+    /// `Content-Length: n` — exactly `n` body bytes follow.
+    ContentLength(u64),
+    /// `Transfer-Encoding: chunked` — chunk-framed body follows,
+    /// terminated by a zero-size chunk.
+    Chunked,
+    /// No length and no chunked framing — the body extends to the
+    /// connection close (FIN). Rare on requests; typical of some
+    /// HTTP/1.0 responses.
+    UntilEof,
+}
+
+/// Request start line + headers, emitted at header-completion time
+/// in inline-streaming mode — *before* the body is read.
+///
+/// This is the routing-time view an inline proxy needs: it carries
+/// everything required to pick a backend ([`method`](Self::method),
+/// [`path`](Self::path), [`host`](Self::host), all headers) plus the
+/// [`framing`](Self::framing) telling the caller how the body is
+/// delimited, so the proxy can stream the raw body itself and know
+/// where the next request begins. flowscope never buffers the body
+/// in this mode.
+///
+/// Contrast [`HttpRequest`], which is only emitted once the entire
+/// body has been buffered — the passive-telemetry shape.
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[non_exhaustive]
+pub struct RequestHead {
+    pub method: Bytes,
+    pub path: Bytes,
+    pub version: HttpVersion,
+    pub headers: Vec<(Bytes, Bytes)>,
+    pub framing: BodyFraming,
+}
+
+impl RequestHead {
+    /// Method as a UTF-8 `&str` (e.g. `"GET"`). `None` if non-UTF-8.
+    pub fn method_str(&self) -> Option<&str> {
+        std::str::from_utf8(&self.method).ok()
+    }
+
+    /// Path as a UTF-8 `&str`.
+    pub fn path_str(&self) -> Option<&str> {
+        std::str::from_utf8(&self.path).ok()
+    }
+
+    /// `Host:` header value as UTF-8 — the modal routing key.
+    pub fn host(&self) -> Option<&str> {
+        self.header_str("host")
+    }
+
+    /// `Content-Length:` header value parsed as `u64`.
+    pub fn content_length(&self) -> Option<u64> {
+        self.header_str("content-length")
+            .and_then(|v| v.trim().parse().ok())
+    }
+
+    /// First match (case-insensitive) for an arbitrary header.
+    pub fn header(&self, name: &str) -> Option<&[u8]> {
+        header_lookup(&self.headers, name).next()
+    }
+
+    /// All matches (case-insensitive) for an arbitrary header.
+    pub fn headers_all<'a>(&'a self, name: &'a str) -> impl Iterator<Item = &'a [u8]> + 'a {
+        header_lookup(&self.headers, name)
+    }
+
+    fn header_str(&self, name: &str) -> Option<&str> {
+        self.header(name).and_then(|v| std::str::from_utf8(v).ok())
+    }
+}
+
 // ── Plan 78: convenience header accessors ─────────────────────────
 //
 // Every HTTP monitor against 0.6 ended up writing
@@ -266,6 +353,22 @@ pub struct HttpConfig {
     pub max_buffer: usize,
     /// Cap on number of headers per message. Default: 64.
     pub max_headers: usize,
+    /// Inline-streaming mode for inline proxies (default: `false`).
+    ///
+    /// When `false` the parser behaves exactly as a passive-telemetry
+    /// observer: it buffers each full message body and emits one
+    /// [`HttpMessage::Request`](super::HttpMessage::Request) /
+    /// [`Response`](super::HttpMessage::Response).
+    ///
+    /// When `true` the request side instead emits a
+    /// [`HttpMessage::RequestHead`](super::HttpMessage::RequestHead) at
+    /// header-completion time (carrying the [`BodyFraming`]) and then
+    /// *drains and discards* the body per that framing — never
+    /// buffering it — so an inline proxy can route on the headers
+    /// immediately and stream the raw bytes itself while flowscope
+    /// tracks message boundaries (Content-Length, chunked, EOF) and
+    /// desync. The response side is unaffected in this spike.
+    pub inline_streaming: bool,
 }
 
 impl Default for HttpConfig {
@@ -273,6 +376,7 @@ impl Default for HttpConfig {
         Self {
             max_buffer: 1024 * 1024, // 1 MiB
             max_headers: 64,
+            inline_streaming: false,
         }
     }
 }

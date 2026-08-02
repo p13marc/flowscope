@@ -17,11 +17,20 @@ umbrellas are deleted too once the cycle releases.
 
 ## Active
 
-No cycle currently in flight. The 0.14.0 cycle shipped to
-crates.io on 2026-06-13 (tag `0.14.0`). Durable record in
-`CHANGELOG.md` and `git log 0.13.0..0.14.0`.
+**0.23 inline-proxy cycle** (started 2026-08-02) — flowscope
+becomes the shared sans-IO L7 core for inline proxies (first
+consumer: zenoh-bridge-tcp). Plan of record:
+[`176-cycle-0-23-inline-proxy.md`](176-cycle-0-23-inline-proxy.md);
+inputs: [`requirements-inline-proxy.md`](requirements-inline-proxy.md)
+(R1–R10 spec) + [`spike-inline-streaming.md`](spike-inline-streaming.md)
+(feasibility spike, GO). GitHub plan of record:
+[milestone 3 "Inline-grade: sans-IO L7 core for inline proxies"](https://github.com/p13marc/flowscope/milestone/3)
+— epics #172 (streaming HTTP/1.1 exchange, P0) · #173
+(wire-protocol classification & TLS routing, P1) · #174
+(HTTP/2 + HPACK + gRPC, P2) with child issues #160–#171.
 
-Next cycle will accrue here as plans land.
+(Cycles 0.18–0.22 shipped without passing through this file —
+see `CHANGELOG.md`; 0.22.0 published to crates.io 2026-07-03.)
 
 ### RFCs (design drafts awaiting a go/no-go)
 
@@ -55,7 +64,10 @@ the prior reasoning instead of re-litigating.
   verification.
 - **HTTP/2 passive parser** + Akamai fingerprint — caveats:
   `httlib-hpack` maintenance risk, per-direction dynamic-table
-  cost, significant LoC. Defer until a consumer asks.
+  cost, significant LoC. ~~Defer until a consumer asks.~~
+  **Activated 2026-08-02**: terminated-gRPC routing is the
+  consumer ask — tracked as #170 under epic #174 (0.23 cycle).
+  The Akamai fingerprint half stays deferred.
 - **Passive QUIC parser** + JA4-QUIC — no Rust passive QUIC
   parser exists today (every QUIC crate is an active endpoint
   implementation). Greenfield opportunity; caveats:
@@ -67,7 +79,10 @@ the prior reasoning instead of re-litigating.
   `docs/concepts.md` consumer-loop pattern instead.
 - **Lazy iterator return type on parser `feed_*` / `parse`** —
   declined twice; reconsider only with a third consumer +
-  reproducer.
+  reproducer. **Superseded 2026-08-02**: the third consumer
+  (inline proxy) materialized, but what it actually needed is
+  the sans-IO `push() -> consumed` + `next_event()` shape
+  (`HttpProxyParser`, #161) — do not revive the iterator ask.
 - **Built-in RTP / RTCP / RTPS parsers** — accept consumer-led
   upstream PRs after their parsers stabilise; don't ship
   without an out-of-tree maintainer commitment.
@@ -139,9 +154,10 @@ the prior reasoning instead of re-litigating.
 | 122–146 | 0.12.0 cross-thread + structured-output cycle |
 | 147–156 | 0.13.0 Send+Sync driver + canonical anomaly cycle |
 | 160–174 | 0.14.0 operations-layer ergonomics cycle |
-| 175+ | post-0.14 / 1.0-prep |
+| 175 | post-0.14 / 1.0-prep |
+| 176 | 0.23 inline-proxy cycle (sans-IO streaming L7 core) |
 
-The next free number for a new plan is **176**.
+The next free number for a new plan is **177**.
 
 Per the convention, plan files are deleted in the same PR
 series that ships them. Cycle wishlists and umbrellas are

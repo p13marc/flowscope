@@ -24,10 +24,22 @@ use proptest::prelude::*;
 mod http_props {
     use flowscope::{
         SessionParser, Timestamp,
-        http::{HttpMessage, HttpParser},
+        http::{HttpConfig, HttpMessage, HttpParser},
     };
 
     use super::*;
+
+    fn inline_parser() -> HttpParser {
+        let mut cfg = HttpConfig::default();
+        cfg.inline_streaming = true;
+        HttpParser::with_config(cfg)
+    }
+
+    fn count_heads(msgs: &[HttpMessage]) -> usize {
+        msgs.iter()
+            .filter(|m| matches!(m, HttpMessage::RequestHead(_)))
+            .count()
+    }
 
     fn build_request(method: &str, path: &str, body: &[u8]) -> Vec<u8> {
         let mut v = Vec::new();
@@ -96,6 +108,59 @@ mod http_props {
             p.feed_responder(&bytes, Timestamp::default(), &mut sink);
             p.rst_initiator();
             p.rst_responder();
+        }
+
+        /// Inline mode: whatever the split, exactly one RequestHead is
+        /// emitted per bodied POST and the body is never surfaced —
+        /// the head appears regardless of how the body is chunked
+        /// across feeds.
+        #[test]
+        fn inline_split_invariance_head(
+            body_len in 0usize..200,
+            split_at in 1usize..300,
+        ) {
+            let body = vec![b'x'; body_len];
+            let bytes = build_request("POST", "/test", &body);
+            let split = split_at.min(bytes.len().saturating_sub(1)).max(1);
+
+            let mut p1 = inline_parser();
+            let mut m1 = Vec::new();
+            p1.feed_initiator(&bytes, Timestamp::default(), &mut m1);
+
+            let mut p2 = inline_parser();
+            let mut m2 = Vec::new();
+            p2.feed_initiator(&bytes[..split], Timestamp::default(), &mut m2);
+            p2.feed_initiator(&bytes[split..], Timestamp::default(), &mut m2);
+
+            prop_assert_eq!(count_heads(&m1), 1);
+            prop_assert_eq!(count_heads(&m2), 1);
+            // No full Request is ever emitted in inline mode.
+            prop_assert_eq!(count_requests(&m1), 0);
+            prop_assert_eq!(count_requests(&m2), 0);
+        }
+
+        /// Inline mode over pipelined bodied requests: one head per
+        /// request, no matter the count — proves the body-skip finds
+        /// every boundary.
+        #[test]
+        fn inline_pipelined_head_count(n in 1usize..6) {
+            let mut bytes = Vec::new();
+            for i in 0..n {
+                bytes.extend_from_slice(&build_request("POST", &format!("/p{i}"), b"abc"));
+            }
+            let mut p = inline_parser();
+            let mut msgs = Vec::new();
+            p.feed_initiator(&bytes, Timestamp::default(), &mut msgs);
+            prop_assert_eq!(count_heads(&msgs), n);
+        }
+
+        #[test]
+        fn inline_no_panic_on_random_bytes(bytes in prop::collection::vec(any::<u8>(), 0..512)) {
+            let mut p = inline_parser();
+            let mut sink = Vec::new();
+            p.feed_initiator(&bytes, Timestamp::default(), &mut sink);
+            sink.clear();
+            p.feed_responder(&bytes, Timestamp::default(), &mut sink);
         }
     }
 }
