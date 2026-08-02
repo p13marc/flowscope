@@ -52,8 +52,9 @@ pub enum HttpEvent {
 /// ```
 /// use flowscope::http::HttpProxyConfig;
 ///
-/// let mut cfg = HttpProxyConfig::default();
-/// cfg.max_head_bytes = 16 * 1024;
+/// let cfg = HttpProxyConfig::default()
+///     .with_max_head_bytes(16 * 1024)
+///     .with_max_pipelined(16);
 /// ```
 #[derive(Debug, Clone)]
 #[non_exhaustive]
@@ -78,6 +79,57 @@ pub struct HttpProxyConfig {
     /// `max_head_bytes` for the parser to make progress. Default
     /// 256 KiB.
     pub max_buffered_bytes: usize,
+}
+
+impl HttpProxyConfig {
+    /// Cap the start line + header block.
+    #[must_use]
+    pub fn with_max_head_bytes(mut self, n: usize) -> Self {
+        self.max_head_bytes = n;
+        self
+    }
+
+    /// Cap the header-field count per message.
+    #[must_use]
+    pub fn with_max_headers(mut self, n: usize) -> Self {
+        self.max_headers = n;
+        self
+    }
+
+    /// Cap one chunk-size line.
+    #[must_use]
+    pub fn with_max_chunk_line_bytes(mut self, n: usize) -> Self {
+        self.max_chunk_line_bytes = n;
+        self
+    }
+
+    /// Cap the trailer section.
+    #[must_use]
+    pub fn with_max_trailer_bytes(mut self, n: usize) -> Self {
+        self.max_trailer_bytes = n;
+        self
+    }
+
+    /// Cap how many requests may be outstanding at once.
+    #[must_use]
+    pub fn with_max_pipelined(mut self, n: usize) -> Self {
+        self.max_pipelined = n;
+        self
+    }
+
+    /// Set the ambiguous-framing policy.
+    #[must_use]
+    pub fn with_smuggling_policy(mut self, policy: SmugglingPolicy) -> Self {
+        self.smuggling = policy;
+        self
+    }
+
+    /// Cap unparsed data per direction — the backpressure threshold.
+    #[must_use]
+    pub fn with_max_buffered_bytes(mut self, n: usize) -> Self {
+        self.max_buffered_bytes = n;
+        self
+    }
 }
 
 impl Default for HttpProxyConfig {

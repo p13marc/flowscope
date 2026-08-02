@@ -290,11 +290,22 @@ impl Engine {
     }
 
     /// Append bytes to a direction's buffer.
+    ///
+    /// Bytes are dropped rather than stored once a direction can no
+    /// longer parse them — after a desync, a protocol switch, or end
+    /// of stream. Holding them would be a slow leak for the rest of
+    /// the connection's life: nothing will ever consume them, and on
+    /// a poisoned flow the peer may keep sending indefinitely.
     pub(crate) fn push(&mut self, dir: Dir, bytes: &[u8]) {
-        if bytes.is_empty() {
+        if bytes.is_empty() || !self.can_consume(dir) {
             return;
         }
         self.dir_mut(dir).buf.extend_from_slice(bytes);
+    }
+
+    /// Whether a direction will still parse what it is given.
+    fn can_consume(&self, dir: Dir) -> bool {
+        matches!(self.dir(dir).state, DirState::Head | DirState::Body(_))
     }
 
     pub(crate) fn is_desynced(&self, dir: Dir) -> bool {

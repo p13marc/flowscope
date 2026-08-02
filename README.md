@@ -236,6 +236,7 @@ Per-feature dependency tree is documented inline in
 | [`docs/recipes.md`](docs/recipes.md) | picking an API, custom parsers, multi-protocol monitoring, cross-protocol correlation, structured output |
 | [`docs/observability.md`](docs/observability.md) | `metrics` + `tracing` vocabulary, cardinality budget, severity routing |
 | [`docs/eve-format.md`](docs/eve-format.md) | Suricata EVE JSON schema mapping |
+| [`docs/bounded-memory.md`](docs/bounded-memory.md) | which buffers are capped, which caps are opt-in, and what happens on overflow — the "flowscope is not your unbounded buffer" contract |
 | [`docs/tls-routing.md`](docs/tls-routing.md) | routing TLS by SNI / ALPN: the degradation ladder, why ECH is advisory-only, post-quantum ClientHello sizes, ALPACA binding |
 | [`docs/sharded.md`](docs/sharded.md) | per-CPU sharded capture pattern |
 | [`docs/discoverability.md`](docs/discoverability.md) | one-page prelude tour grouped by use case |

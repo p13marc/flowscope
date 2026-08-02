@@ -44,6 +44,18 @@ pub const DEFAULT_PROBE_PACKETS: u8 = 4;
 /// starts from the pinning packet (the pre-0.23 behaviour).
 const PROBE_REPLAY_BYTE_CAP: usize = 16 * 1024;
 
+/// Cap on per-flow detection entries held by one slot.
+///
+/// Most entries are released when their flow ends, but a flow the
+/// signature ruled out is never registered with the inner driver, so
+/// it never produces an `Ended` event to release it. Without a cap a
+/// scan against a heuristic slot would leak one entry per source.
+/// When the cap is reached, decided entries are dropped first; if
+/// that is not enough the map is cleared and the flows still probing
+/// simply start over, which costs a few packets of detection and no
+/// correctness.
+const MAX_PROBE_STATES: usize = 65_536;
+
 /// Per-flow detection state inside a heuristic slot.
 pub(super) enum FlowDetection {
     Probing {
@@ -175,6 +187,19 @@ where
             }
         }
     }
+
+    /// Keep the detection map bounded. See [`MAX_PROBE_STATES`].
+    fn bound_states(&mut self) {
+        if self.states.len() < MAX_PROBE_STATES {
+            return;
+        }
+        // Flows already decided against are pure residue.
+        self.states
+            .retain(|_, v| !matches!(v, FlowDetection::GaveUp));
+        if self.states.len() >= MAX_PROBE_STATES {
+            self.states.clear();
+        }
+    }
 }
 
 impl<E, P> ErasedSlot<E::Key> for TypedHeuristicSessionSlot<E, P>
@@ -200,6 +225,9 @@ where
             return;
         };
 
+        if !self.states.contains_key(&key) {
+            self.bound_states();
+        }
         let state = self.states.entry(key.clone()).or_default();
         // Frames buffered before the pin, to be replayed in order so
         // the parser sees the connection from its first byte.
@@ -406,6 +434,19 @@ where
             }
         }
     }
+
+    /// Keep the detection map bounded. See [`MAX_PROBE_STATES`].
+    fn bound_states(&mut self) {
+        if self.states.len() < MAX_PROBE_STATES {
+            return;
+        }
+        // Flows already decided against are pure residue.
+        self.states
+            .retain(|_, v| !matches!(v, FlowDetection::GaveUp));
+        if self.states.len() >= MAX_PROBE_STATES {
+            self.states.clear();
+        }
+    }
 }
 
 impl<E, D> ErasedSlot<E::Key> for TypedHeuristicDatagramSlot<E, D>
@@ -427,6 +468,9 @@ where
         let Some(payload) = udp_payload(view.frame) else {
             return;
         };
+        if !self.states.contains_key(&key) {
+            self.bound_states();
+        }
         let state = self.states.entry(key.clone()).or_default();
         let should_dispatch = match state {
             FlowDetection::Pinned => true,
