@@ -233,6 +233,22 @@ where
         }
         out.extend(self.translate_events(&flow_events));
         self.driver.finalize(flow_events.as_mut_slice());
+        // Anything still held for a flow the tracker no longer has.
+        //
+        // Parsers are normally torn down when their flow's `Ended`
+        // event arrives, but that event is gated on
+        // `EventMask::ENDED` while the tracker reaps the flow either
+        // way — so a consumer shedding `Ended` under load would hold
+        // every parser for the life of the driver (issue #185).
+        //
+        // This runs *after* the normal teardown above so a flow that
+        // ended this sweep still gets its final tick, `fin_*`, and
+        // `Closed`. Only genuinely stranded parsers are dropped, and
+        // they get no `fin_*`: there is no `Ended` to attach the
+        // resulting messages to, and a consumer suppressing `Ended`
+        // has said it does not want them.
+        let tracker = self.driver.tracker();
+        self.parsers.retain(|key, _| tracker.get(key).is_some());
         out
     }
 
@@ -630,6 +646,108 @@ mod tests {
         assert_eq!(count(d.finish()), 1);
         // No flows remain → no further ticks.
         assert_eq!(count(d.sweep(Timestamp::new(99, 0))), 0);
+    }
+
+    /// Issue #185: parsers are torn down even when the consumer
+    /// sheds `Ended`.
+    ///
+    /// Teardown normally rides on the `Ended` event, but the tracker
+    /// reaps the flow whether or not that event is emitted — so
+    /// before the sweep-time reconciliation, a consumer shedding
+    /// `Ended` under load kept one parser per flow forever.
+    #[test]
+    fn parsers_are_released_when_ended_is_suppressed() {
+        use crate::event::EventMask;
+
+        let cfg = FlowTrackerConfig::default().with_event_filter(EventMask::ENDED);
+        let mut d =
+            FlowSessionDriver::with_config(FiveTuple::bidirectional(), LineParser::default(), cfg);
+
+        let mac = [0u8; 6];
+        for port in 0..64u16 {
+            let sport = 30000 + port;
+            // One line of payload, then a RST so the tracker reaps
+            // the flow immediately.
+            d.track(view(
+                &ipv4_tcp(
+                    mac,
+                    mac,
+                    [10, 0, 0, 1],
+                    [10, 0, 0, 2],
+                    sport,
+                    80,
+                    1000,
+                    0,
+                    0x18,
+                    b"hello\n",
+                ),
+                0,
+            ));
+            d.track(view(
+                &ipv4_tcp(
+                    mac,
+                    mac,
+                    [10, 0, 0, 2],
+                    [10, 0, 0, 1],
+                    80,
+                    sport,
+                    1,
+                    0,
+                    0x04,
+                    b"",
+                ),
+                0,
+            ));
+        }
+
+        assert_eq!(
+            d.driver.tracker().flow_count(),
+            0,
+            "the tracker reaps flows regardless of the event filter"
+        );
+        assert!(
+            d.parsers.len() > 1,
+            "precondition: parsers accumulated while Ended was shed"
+        );
+
+        d.sweep(Timestamp::new(1, 0));
+        assert_eq!(
+            d.parsers.len(),
+            0,
+            "a sweep must reconcile away parsers whose flow is gone"
+        );
+    }
+
+    /// The reconciliation must not pre-empt ordinary teardown: it
+    /// runs at the end of the sweep so a flow closing *during* that
+    /// sweep still gets its final tick and `Closed`.
+    #[test]
+    fn reconciliation_does_not_pre_empt_normal_teardown() {
+        #[derive(Default, Clone)]
+        struct FinParser;
+        impl SessionParser for FinParser {
+            type Message = u8;
+            fn feed_initiator(&mut self, _b: &[u8], _ts: Timestamp, _o: &mut Vec<u8>) {}
+            fn feed_responder(&mut self, _b: &[u8], _ts: Timestamp, _o: &mut Vec<u8>) {}
+            fn fin_initiator(&mut self, out: &mut Vec<u8>) {
+                out.push(7);
+            }
+        }
+        let mut d = FlowSessionDriver::new(FiveTuple::bidirectional(), FinParser);
+        for f in &build_3whs() {
+            d.track(view(f, 0));
+        }
+        let evs = d.finish();
+        assert!(
+            evs.iter()
+                .any(|e| matches!(e, SessionEvent::Application { message: 7, .. })),
+            "fin_initiator must still fire on ordinary teardown"
+        );
+        assert!(
+            evs.iter().any(|e| matches!(e, SessionEvent::Closed { .. })),
+            "and the flow must still be reported Closed"
+        );
+        assert_eq!(d.parsers.len(), 0, "then the parser is gone either way");
     }
 
     #[test]

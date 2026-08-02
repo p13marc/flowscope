@@ -225,6 +225,17 @@ impl SegmentBufferReassembler {
                     let drop_n = drop_n.min(self.ready.len());
                     self.ready.drain(..drop_n);
                     self.bytes_dropped_oversize += drop_n as u64;
+                    // Dropping everything buffered is not enough when
+                    // the payload alone exceeds the cap — appending it
+                    // whole would leave the buffer above the limit.
+                    // Keep the newest `cap` bytes, matching
+                    // `BufferedReassembler` (issue #188).
+                    if bytes.len() > cap {
+                        let extra = bytes.len() - cap;
+                        self.bytes_dropped_oversize += extra as u64;
+                        self.ready.extend_from_slice(&bytes[extra..]);
+                        return;
+                    }
                 }
                 OverflowPolicy::DropFlow => {
                     self.poisoned = true;
@@ -581,6 +592,26 @@ mod tests {
         let out = r.take();
         assert_eq!(out, b"helloworld flowscope");
         assert!(r.holes_filled() >= 1);
+    }
+
+    /// Issue #188: a single segment larger than the whole cap must
+    /// not be appended whole. Dropping every buffered byte is not
+    /// enough — the payload itself has to be trimmed, or the cap is
+    /// a suggestion rather than a bound.
+    #[test]
+    fn a_segment_larger_than_the_cap_is_trimmed() {
+        let mut r = SegmentBufferReassembler::new().with_max_buffer(8);
+        r.segment(1000, b"abcd", ts(0));
+        r.segment(1004, &[b'x'; 64], ts(0));
+
+        let out = r.take();
+        assert_eq!(out.len(), 8, "the buffer must respect its cap");
+        assert_eq!(out, vec![b'x'; 8], "and keep the newest bytes");
+        assert_eq!(
+            r.bytes_dropped_oversize(),
+            60,
+            "every discarded byte is accounted for: 4 buffered + 56 trimmed"
+        );
     }
 
     #[test]

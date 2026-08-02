@@ -164,14 +164,31 @@ rather than quietly left in the code:
 | Gap | Impact | Issue |
 |---|---|---|
 | QUIC CRYPTO reassembly has no per-connection byte cap, and its TTL refreshes on every packet | a peer replaying Initials on one DCID with never-completing CRYPTO frames grows one buffer without limit | [#184](https://github.com/p13marc/flowscope/issues/184) |
-| Reassembler and parser cleanup keys off `Ended` events | suppressing `EventMask::ENDED` (load shedding) leaves per-flow reassemblers and parsers resident — precisely during overload | [#185](https://github.com/p13marc/flowscope/issues/185) |
 | `PortScanDetector.sources` has no capacity or TTL | a spoofed-source SYN flood adds one entry per source, forever | [#187](https://github.com/p13marc/flowscope/issues/187) |
-| `max_reassembler_buffer` defaults to `None` | the default configuration has no per-flow reassembly bound | [#188](https://github.com/p13marc/flowscope/issues/188) |
 
-Until they are closed, the mitigations are: cap
-`max_reassembler_buffer`, avoid `EventMask::ENDED` suppression, drive
-`PortScanDetector::forget`, and treat the QUIC parser as
+Until they are closed, the mitigations are to drive
+`PortScanDetector::forget` and to treat the QUIC parser as
 trusted-traffic-only.
+
+Two gaps from that audit are now closed and worth knowing about
+because they change behaviour:
+
+- **Cleanup no longer keys off `Ended`** ([#185]). Per-flow
+  reassemblers and parsers used to be torn down only when the flow's
+  `Ended` event was seen — but that event is gated on
+  `EventMask::ENDED` while the tracker reaps the flow either way, so
+  a consumer shedding events under load leaked one set per flow.
+  Every sweep now reconciles against the tracker and releases
+  whatever belongs to a flow that is gone, refunding its memcap
+  bytes. Suppressing `Ended` is safe.
+- **`max_reassembler_buffer` now defaults to 1 MiB** ([#188]), with
+  the existing `SlidingWindow` policy. The default configuration is
+  bounded. See
+  [the migration guide](migration-0.22-to-0.23.md#reassembly-is-bounded-by-default)
+  if you were relying on unbounded reassembly.
+
+[#185]: https://github.com/p13marc/flowscope/issues/185
+[#188]: https://github.com/p13marc/flowscope/issues/188
 
 ## Choosing a `MemcapPolicy`
 

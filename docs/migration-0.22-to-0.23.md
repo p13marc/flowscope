@@ -119,6 +119,47 @@ Under `Normalize`, check `head.applied`: a non-empty list means the
 head's `raw` bytes are **not** safe to forward verbatim, because they
 still carry the ambiguity. Re-serialize from the parsed headers.
 
+## 5. Reassembly is bounded by default (#188)
+
+`FlowTrackerConfig::max_reassembler_buffer` changed from `None` to
+`Some(1 MiB)` per side. The default configuration now has a per-flow
+reassembly bound; previously a single flow whose parser never consumed
+could grow one buffer per direction without limit.
+
+The existing `OverflowPolicy::SlidingWindow` default applies, so a
+flow that exceeds the cap **survives**: the oldest bytes are dropped
+and counted in `FlowStats::reassembly_bytes_dropped_oversize_initiator`
+/ `_responder`. Truncation is visible, not silent — check those
+counters if a parser starts seeing gaps it did not see in 0.22.
+
+If you legitimately need more (large file transfers reassembled whole,
+say), raise it rather than removing it:
+
+```rust
+let mut cfg = FlowTrackerConfig::default();
+cfg.max_reassembler_buffer = Some(16 * 1024 * 1024);
+```
+
+`None` still means unbounded and is still supported — it is only safe
+when you control the traffic.
+
+## 6. Cleanup no longer depends on `Ended` being emitted (#185)
+
+If you shed events with `EventMask::ENDED`, per-flow reassemblers and
+parsers used to stay resident for the life of the driver, because
+teardown keyed off the `Ended` event while the tracker reaped the flow
+regardless. Every sweep now reconciles against the tracker and
+releases what belongs to flows that are gone, refunding their memcap
+bytes.
+
+No API change and nothing to migrate — but if you avoided
+`EventMask::ENDED` because of this, you no longer need to. A parser
+reclaimed this way gets no `fin_initiator` / `fin_responder` call:
+there is no `Ended` event to attach the resulting messages to, and a
+consumer suppressing `Ended` has said it does not want them. Flows
+that end normally are unaffected and still get their final tick, fin,
+and `Closed`.
+
 ## Additive — no migration needed
 
 - The internal streaming engine (`src/http/engine.rs`) is
