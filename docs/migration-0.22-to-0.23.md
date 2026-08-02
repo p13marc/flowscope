@@ -99,6 +99,26 @@ inline front-end delivered by issue #161, with a proper streaming
 API (`Head` → `Body` → `Trailers` → `End`) rather than a mode flag
 on the telemetry parser.
 
+## 4. Smuggling defense is on by default for the streaming parser
+
+`HttpProxyParser` defaults to `SmugglingPolicy::Strict`, so a message
+whose framing is ambiguous poisons the connection instead of being
+forwarded. If you were relying on best-effort framing, choose the
+policy explicitly:
+
+```rust
+let mut cfg = HttpProxyConfig::default();
+cfg.smuggling = SmugglingPolicy::Normalize;   // fix what §6.3.3 allows
+// or SmugglingPolicy::Observe                // never poison
+```
+
+The passive `HttpParser` is hard-wired to `Observe` and cannot poison
+a monitored flow — telemetry behaviour is unchanged.
+
+Under `Normalize`, check `head.applied`: a non-empty list means the
+head's `raw` bytes are **not** safe to forward verbatim, because they
+still carry the ambiguity. Re-serialize from the parsed headers.
+
 ## Additive — no migration needed
 
 - The internal streaming engine (`src/http/engine.rs`) is

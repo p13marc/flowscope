@@ -30,7 +30,7 @@ use std::collections::VecDeque;
 use bytes::{Bytes, BytesMut};
 
 use super::poison::HttpPoison;
-use super::types::{BodyFraming, HttpVersion, SwitchKind};
+use super::types::{BodyFraming, HttpVersion, Normalization, SmugglingPolicy, SwitchKind};
 use crate::error::{Error, Module};
 
 /// Number of header slots parsed without touching the heap. Requests
@@ -63,6 +63,8 @@ pub(crate) struct EngineLimits {
     pub max_trailer_bytes: usize,
     /// Cap on outstanding request contexts awaiting a response.
     pub max_pipelined: usize,
+    /// What to do about an ambiguously framed message.
+    pub policy: SmugglingPolicy,
 }
 
 impl Default for EngineLimits {
@@ -73,6 +75,7 @@ impl Default for EngineLimits {
             max_chunk_line_bytes: 1024,
             max_trailer_bytes: 8 * 1024,
             max_pipelined: 64,
+            policy: SmugglingPolicy::Strict,
         }
     }
 }
@@ -106,6 +109,10 @@ pub(crate) struct Head {
     /// response, never carries a body, and does not complete the
     /// exchange.
     pub interim: bool,
+    /// Normalizations applied to resolve a framing ambiguity. Empty
+    /// unless the policy is [`SmugglingPolicy::Normalize`] and the
+    /// message needed fixing.
+    pub applied: Vec<Normalization>,
     /// The exact on-wire head, start line through the blank line.
     pub raw: Bytes,
 }
@@ -398,6 +405,15 @@ impl Engine {
             return Err(Self::desync(m, HttpPoison::HeadOverflow));
         }
 
+        // Bytes an implementation could read two ways are refused
+        // before parsing, so the reason names the actual problem
+        // rather than a generic parse failure.
+        if limits.policy != SmugglingPolicy::Observe
+            && let Err(reason) = check_head_bytes(&m.buf[..hlen])
+        {
+            return Err(Self::desync(m, reason));
+        }
+
         // Parse offsets while the borrow is live, then take the head
         // region as one refcounted slice and rebuild every field as a
         // zero-copy view into it.
@@ -411,6 +427,19 @@ impl Engine {
 
         match dir {
             Dir::Request => {
+                if self.limits.policy != SmugglingPolicy::Observe
+                    && let Err(reason) = check_single_host(&head.headers)
+                {
+                    let m = self.dir_mut(dir);
+                    return Err(Self::desync(m, reason));
+                }
+                let (framing, applied) = match request_framing(&head.headers, self.limits.policy) {
+                    Ok(v) => v,
+                    Err(reason) => {
+                        let m = self.dir_mut(dir);
+                        return Err(Self::desync(m, reason));
+                    }
+                };
                 if self.pending.len() >= self.limits.max_pipelined {
                     let m = self.dir_mut(dir);
                     return Err(Self::desync(m, HttpPoison::PipelineOverflow));
@@ -419,8 +448,11 @@ impl Engine {
                     is_head: head.method.as_ref().eq_ignore_ascii_case(b"HEAD"),
                     is_connect: head.method.as_ref().eq_ignore_ascii_case(b"CONNECT"),
                 });
-                let framing = request_framing(&head.headers);
-                let head = Head { framing, ..head };
+                let head = Head {
+                    framing,
+                    applied,
+                    ..head
+                };
                 let m = self.dir_mut(dir);
                 m.close_after_message = wants_close;
                 m.state = body_state(framing);
@@ -474,6 +506,10 @@ impl Engine {
         }
 
         let ctx = self.pending.pop_front();
+        if ctx.is_none() && self.limits.policy != SmugglingPolicy::Observe {
+            let m = self.dir_mut(Dir::Response);
+            return Err(Self::desync(m, HttpPoison::UnexpectedResponse));
+        }
         let is_head_request = ctx.is_some_and(|c| c.is_head);
 
         // A successful CONNECT turns the rest into a tunnel
@@ -489,10 +525,18 @@ impl Engine {
             return Ok(Some(EngineEvent::Head(head)));
         }
 
-        let framing = response_framing(status, is_head_request, &head.headers);
+        let (framing, applied) =
+            match response_framing(status, is_head_request, &head.headers, self.limits.policy) {
+                Ok(v) => v,
+                Err(reason) => {
+                    let m = self.dir_mut(Dir::Response);
+                    return Err(Self::desync(m, reason));
+                }
+            };
         let head = Head {
             framing,
             interim: false,
+            applied,
             ..head
         };
         self.response.close_after_message = wants_close;
@@ -690,14 +734,195 @@ enum Progress {
 /// nor `Content-Length` has **no body** — regardless of method. (The
 /// pre-0.23 parser ran bodied methods to EOF here, which mis-framed a
 /// `POST` with no length on a keep-alive connection.)
-fn request_framing(headers: &[(Bytes, Bytes)]) -> BodyFraming {
-    if has_chunked_encoding(headers) {
-        return BodyFraming::Chunked;
+fn request_framing(
+    headers: &[(Bytes, Bytes)],
+    policy: SmugglingPolicy,
+) -> Result<(BodyFraming, Vec<Normalization>), HttpPoison> {
+    let (te, cl, applied) = framing_headers(headers, policy)?;
+    if te {
+        return Ok((BodyFraming::Chunked, applied));
     }
-    match content_length(headers) {
-        Some(0) | None => BodyFraming::None,
-        Some(n) => BodyFraming::ContentLength(n),
+    // §6.3 rule 6: a request with neither is bodyless.
+    Ok(match cl {
+        Some(0) | None => (BodyFraming::None, applied),
+        Some(n) => (BodyFraming::ContentLength(n), applied),
+    })
+}
+
+/// Resolve `Transfer-Encoding` and `Content-Length` into a single
+/// unambiguous framing decision — the RFC 9112 §6.3 rules that every
+/// smuggling technique attacks.
+///
+/// Returns `(chunked, content_length, normalizations)`.
+///
+/// | Situation | `Strict` | `Normalize` | `Observe` |
+/// |---|---|---|---|
+/// | `CL` + `TE` | poison | drop `CL`, use chunked | chunked wins |
+/// | repeated `CL`, all equal | collapse | collapse | collapse |
+/// | repeated `CL`, differing | poison | poison | first wins |
+/// | `CL` not a plain number | poison | poison | ignored |
+/// | `TE` not ending in `chunked` | poison | poison | ignored |
+/// | unknown transfer coding | poison | poison | ignored |
+/// | repeated `TE` (TE.TE) | poison | poison | chunked if any |
+fn framing_headers(
+    headers: &[(Bytes, Bytes)],
+    policy: SmugglingPolicy,
+) -> Result<(bool, Option<u64>, Vec<Normalization>), HttpPoison> {
+    let observe = policy == SmugglingPolicy::Observe;
+    let mut applied = Vec::new();
+
+    // ── Transfer-Encoding ──
+    let te_values: Vec<&Bytes> = headers
+        .iter()
+        .filter(|(k, _)| k.as_ref().eq_ignore_ascii_case(b"transfer-encoding"))
+        .map(|(_, v)| v)
+        .collect();
+
+    let mut chunked = false;
+    if !te_values.is_empty() {
+        if te_values.len() > 1 && !observe {
+            return Err(HttpPoison::DuplicateTransferEncoding);
+        }
+        let codings: Vec<&[u8]> = te_values
+            .iter()
+            .flat_map(|v| v.split(|&b| b == b','))
+            .map(|t| t.trim_ascii())
+            .filter(|t| !t.is_empty())
+            .collect();
+        chunked = codings
+            .last()
+            .is_some_and(|t| t.eq_ignore_ascii_case(b"chunked"));
+        if !observe {
+            // Only `chunked` and `identity` are understood, and
+            // `chunked` must come last or the length is undefined.
+            for (i, coding) in codings.iter().enumerate() {
+                let is_chunked = coding.eq_ignore_ascii_case(b"chunked");
+                if !is_chunked && !coding.eq_ignore_ascii_case(b"identity") {
+                    return Err(HttpPoison::UnknownTransferCoding);
+                }
+                if is_chunked && i != codings.len() - 1 {
+                    return Err(HttpPoison::NonFinalChunked);
+                }
+            }
+            if !chunked {
+                return Err(HttpPoison::NonFinalChunked);
+            }
+        } else {
+            chunked = codings.iter().any(|t| t.eq_ignore_ascii_case(b"chunked"));
+        }
     }
+
+    // ── Content-Length ──
+    // One header may itself carry a comma-separated list; every value
+    // across every header has to agree.
+    let mut lengths: Vec<u64> = Vec::new();
+    let mut saw_cl = false;
+    for (_, v) in headers
+        .iter()
+        .filter(|(k, _)| k.as_ref().eq_ignore_ascii_case(b"content-length"))
+    {
+        saw_cl = true;
+        for part in v.split(|&b| b == b',') {
+            let t = part.trim_ascii();
+            if t.is_empty() {
+                continue;
+            }
+            match parse_decimal(t) {
+                Some(n) => lengths.push(n),
+                None if observe => {}
+                None => return Err(HttpPoison::InvalidContentLength),
+            }
+        }
+    }
+    let content_length = if lengths.is_empty() {
+        if saw_cl && !observe && !chunked {
+            // A `Content-Length` header that yielded no usable value.
+            return Err(HttpPoison::InvalidContentLength);
+        }
+        None
+    } else {
+        let first = lengths[0];
+        if lengths.iter().any(|n| *n != first) {
+            if !observe {
+                return Err(HttpPoison::ConflictingContentLength);
+            }
+        } else if lengths.len() > 1 {
+            applied.push(Normalization::CollapsedContentLength);
+        }
+        Some(first)
+    };
+
+    // ── the two together ──
+    if chunked && content_length.is_some() {
+        match policy {
+            SmugglingPolicy::Strict => {
+                return Err(HttpPoison::ContentLengthWithTransferEncoding);
+            }
+            // §6.3.3: the length is dropped and chunked framing wins.
+            SmugglingPolicy::Normalize => applied.push(Normalization::StrippedContentLength),
+            SmugglingPolicy::Observe => {}
+        }
+        return Ok((true, None, applied));
+    }
+
+    Ok((chunked, content_length, applied))
+}
+
+/// Parse a `Content-Length` value: ASCII digits only.
+///
+/// Deliberately stricter than `str::parse`, which accepts a leading
+/// `+`. A recipient that ignores the sign and one that rejects it
+/// disagree about the body length.
+fn parse_decimal(bytes: &[u8]) -> Option<u64> {
+    if bytes.is_empty() || !bytes.iter().all(u8::is_ascii_digit) {
+        return None;
+    }
+    std::str::from_utf8(bytes).ok()?.parse().ok()
+}
+
+/// Reject head bytes that two recipients could read differently.
+///
+/// Obs-fold (RFC 9112 §5.2, deprecated) and a bare CR (§2.2) are both
+/// parsed inconsistently across implementations, so under any policy
+/// but [`Observe`](SmugglingPolicy::Observe) they are refused rather
+/// than guessed at. Rejecting is what §5.2 permits a proxy to do, and
+/// the alternative — rewriting the field — would mean the `raw` bytes
+/// no longer match what the parser saw.
+fn check_head_bytes(head: &[u8]) -> Result<(), HttpPoison> {
+    let mut i = 0;
+    while i < head.len() {
+        match head[i] {
+            b'\r' => {
+                if head.get(i + 1) != Some(&b'\n') {
+                    return Err(HttpPoison::BareCr);
+                }
+                // A line beginning with SP or HTAB continues the one
+                // before it: an obs-fold.
+                if i > 0
+                    && matches!(head.get(i + 2), Some(b' ') | Some(b'\t'))
+                    && head.get(i + 3).is_some()
+                {
+                    return Err(HttpPoison::ObsFold);
+                }
+                i += 2;
+            }
+            _ => i += 1,
+        }
+    }
+    Ok(())
+}
+
+/// Reject a duplicated `Host`, which two hops could route on
+/// differently.
+fn check_single_host(headers: &[(Bytes, Bytes)]) -> Result<(), HttpPoison> {
+    let n = headers
+        .iter()
+        .filter(|(k, _)| k.as_ref().eq_ignore_ascii_case(b"host"))
+        .count();
+    if n > 1 {
+        return Err(HttpPoison::DuplicateHost);
+    }
+    Ok(())
 }
 
 /// Body framing for a response, given the matching request's method.
@@ -709,19 +934,21 @@ fn response_framing(
     status: u16,
     request_was_head: bool,
     headers: &[(Bytes, Bytes)],
-) -> BodyFraming {
+    policy: SmugglingPolicy,
+) -> Result<(BodyFraming, Vec<Normalization>), HttpPoison> {
     if request_was_head || matches!(status, 100..=199 | 204 | 304) {
-        return BodyFraming::None;
+        return Ok((BodyFraming::None, Vec::new()));
     }
-    if has_chunked_encoding(headers) {
-        return BodyFraming::Chunked;
+    let (te, cl, applied) = framing_headers(headers, policy)?;
+    if te {
+        return Ok((BodyFraming::Chunked, applied));
     }
-    match content_length(headers) {
-        Some(0) => BodyFraming::None,
-        Some(n) => BodyFraming::ContentLength(n),
+    Ok(match cl {
+        Some(0) => (BodyFraming::None, applied),
+        Some(n) => (BodyFraming::ContentLength(n), applied),
         // No length and no chunked framing: the body runs to close.
-        None => BodyFraming::UntilClose,
-    }
+        None => (BodyFraming::UntilClose, applied),
+    })
 }
 
 /// The body state a freshly framed message starts in.
@@ -787,27 +1014,6 @@ fn signals_close(head: &Head) -> bool {
     head.version == HttpVersion::Http1_0 && !tokens(b"connection", b"keep-alive")
 }
 
-/// `true` if any `Transfer-Encoding` header lists `chunked`.
-fn has_chunked_encoding(headers: &[(Bytes, Bytes)]) -> bool {
-    headers.iter().any(|(name, value)| {
-        name.as_ref().eq_ignore_ascii_case(b"transfer-encoding")
-            && value
-                .split(|&b| b == b',')
-                .any(|tok| tok.trim_ascii().eq_ignore_ascii_case(b"chunked"))
-    })
-}
-
-/// First `Content-Length` value, if numeric.
-fn content_length(headers: &[(Bytes, Bytes)]) -> Option<u64> {
-    for (name, value) in headers {
-        if name.as_ref().eq_ignore_ascii_case(b"content-length") {
-            let s = std::str::from_utf8(value).ok()?;
-            return s.trim().parse::<u64>().ok();
-        }
-    }
-    None
-}
-
 // ── head parsing ──────────────────────────────────────────────────
 
 /// Byte range within the head region.
@@ -846,9 +1052,10 @@ impl HeadOffsets {
                 .into_iter()
                 .map(|(n, v)| (cut(n), cut(v)))
                 .collect(),
-            // Both replaced by the caller once framing is known.
+            // All replaced by the caller once framing is known.
             framing: BodyFraming::None,
             interim: false,
+            applied: Vec::new(),
             raw,
         }
     }
@@ -1116,11 +1323,11 @@ mod tests {
         e.push(Dir::Request, b"POST /a HTTP/1.1\r\nHost: h\r\n\r\n");
         assert_eq!(framing_of(&mut e, Dir::Request), BodyFraming::None);
 
-        // Chunked wins over a length.
+        // Chunked frames the body when it is the only signal.
         let mut e = engine();
         e.push(
             Dir::Request,
-            b"POST /a HTTP/1.1\r\nContent-Length: 5\r\nTransfer-Encoding: chunked\r\n\r\n",
+            b"POST /a HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n",
         );
         assert_eq!(framing_of(&mut e, Dir::Request), BodyFraming::Chunked);
 
@@ -1192,7 +1399,10 @@ mod tests {
     #[test]
     fn head_response_has_no_body_despite_content_length() {
         let mut e = engine();
-        e.push(Dir::Request, b"HEAD /x HTTP/1.1\r\n\r\n");
+        e.push(
+            Dir::Request,
+            b"HEAD /x HTTP/1.1\r\n\r\nGET /y HTTP/1.1\r\n\r\n",
+        );
         let _ = drain(&mut e, Dir::Request);
         e.push(
             Dir::Response,
