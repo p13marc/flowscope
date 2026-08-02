@@ -165,6 +165,8 @@ pub mod extractor;
 #[cfg(feature = "aggregate")]
 pub mod aggregate;
 
+pub mod classify;
+
 pub mod detect;
 
 pub mod well_known;
