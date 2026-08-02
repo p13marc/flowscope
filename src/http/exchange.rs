@@ -78,6 +78,10 @@ impl HttpExchange {
 pub struct HttpExchangeParser {
     inner: HttpParser,
     pending: VecDeque<(HttpRequest, Timestamp)>,
+    /// Requests that were in flight when the flow was reset. Held
+    /// until the driver's `fin_*` so they can be reported with
+    /// [`HttpOutcome::Reset`] — `rst_*` itself has no output channel.
+    reset: VecDeque<(HttpRequest, Timestamp)>,
 }
 
 impl Default for HttpExchangeParser {
@@ -91,6 +95,7 @@ impl HttpExchangeParser {
         Self {
             inner: HttpParser::default(),
             pending: VecDeque::new(),
+            reset: VecDeque::new(),
         }
     }
 
@@ -98,6 +103,7 @@ impl HttpExchangeParser {
         Self {
             inner: HttpParser::with_config(config),
             pending: VecDeque::new(),
+            reset: VecDeque::new(),
         }
     }
 }
@@ -142,8 +148,34 @@ impl SessionParser for HttpExchangeParser {
     }
 
     fn fin_responder(&mut self, out: &mut Vec<Self::Message>) {
-        let mut _drop = Vec::new();
-        self.inner.fin_responder(&mut _drop);
+        let mut inner = Vec::new();
+        self.inner.fin_responder(&mut inner);
+        for msg in inner {
+            if let HttpMessage::Response(resp) = msg
+                && let Some((req, req_ts)) = self.pending.pop_front()
+            {
+                out.push(HttpExchange {
+                    request: req,
+                    response: Some(resp),
+                    elapsed: None,
+                    request_ts: req_ts,
+                    response_ts: None,
+                    outcome: HttpOutcome::Completed,
+                });
+            }
+        }
+        // Requests cut short by a reset are reported as such; the
+        // rest simply never saw a response.
+        for (req, ts) in self.reset.drain(..) {
+            out.push(HttpExchange {
+                request: req,
+                response: None,
+                elapsed: None,
+                request_ts: ts,
+                response_ts: None,
+                outcome: HttpOutcome::Reset,
+            });
+        }
         for (req, ts) in self.pending.drain(..) {
             out.push(HttpExchange {
                 request: req,
@@ -178,17 +210,10 @@ impl SessionParser for HttpExchangeParser {
 }
 
 impl HttpExchangeParser {
+    /// Move in-flight requests to the reset queue. `rst_*` has no
+    /// output channel, and the driver always calls `fin_*` after it,
+    /// so the exchanges surface there with [`HttpOutcome::Reset`].
     fn reset_pending(&mut self) {
-        // Re-classify pending requests as Reset on the next drain;
-        // the driver's tear-down sequence calls fin_* after rst_*,
-        // so push a marker into self by re-tagging on drain. Simple
-        // path: convert via fin_* doesn't know about the reset.
-        // Replace any pending pre-reset with Reset-outcome exchanges
-        // by clearing the queue and emitting them inline isn't
-        // possible (rst_* returns no messages). The next on_tick
-        // and final fin will flush; we mark the queue empty here so
-        // fin_responder doesn't double-emit. The lost-detail trade
-        // is acceptable for v1.
-        self.pending.clear();
+        self.reset.extend(self.pending.drain(..));
     }
 }

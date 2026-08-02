@@ -1,13 +1,24 @@
 #![no_main]
 
 use flowscope::Timestamp;
-use flowscope::http::{HttpConfig, HttpMessage, HttpParser};
+use flowscope::http::{HttpMessage, HttpParser};
 use flowscope::session::SessionParser;
 use libfuzzer_sys::fuzz_target;
 
-// Split the input at a fuzzer-chosen offset so the request /
-// response framing crosses a feed boundary — exercises the
-// chunked-body and Content-Length partial-buffering paths.
+/// Bodies decoded from whatever messages a pass produced.
+fn bodies(msgs: &[HttpMessage]) -> Vec<Vec<u8>> {
+    msgs.iter()
+        .map(|m| match m {
+            HttpMessage::Request(r) => r.body.to_vec(),
+            HttpMessage::Response(r) => r.body.to_vec(),
+            _ => Vec::new(),
+        })
+        .collect()
+}
+
+// Split the input at a fuzzer-chosen offset so request / response
+// framing crosses a feed boundary — exercises the chunked-body and
+// Content-Length partial-buffering paths.
 fuzz_target!(|data: &[u8]| {
     if data.is_empty() {
         return;
@@ -15,27 +26,37 @@ fuzz_target!(|data: &[u8]| {
     let split = (data[0] as usize) % data.len().max(1);
     let (req, resp) = data.split_at(split);
 
-    // Pass 1: passive-telemetry parser (flag off — default).
-    let mut parser = HttpParser::default();
-    let mut out = Vec::new();
-    parser.feed_initiator(req, Timestamp::default(), &mut out);
-    parser.feed_responder(resp, Timestamp::default(), &mut out);
+    // Pass 1: one feed per direction.
+    let mut whole = HttpParser::default();
+    let mut one_shot = Vec::new();
+    whole.feed_initiator(req, Timestamp::default(), &mut one_shot);
+    whole.feed_responder(resp, Timestamp::default(), &mut one_shot);
 
-    // Pass 2: inline-streaming parser. Same bytes, byte-at-a-time on
-    // the initiator side so header/body boundaries land at every
-    // offset. Invariant: the parser never panics, and inline mode
-    // never emits a full `Request` (only `RequestHead`) — the body is
-    // never buffered into a message.
-    let mut cfg = HttpConfig::default();
-    cfg.inline_streaming = true;
-    let mut inline = HttpParser::with_config(cfg);
-    let mut msgs = Vec::new();
+    // Pass 2: byte-at-a-time on both directions, so every header,
+    // chunk-size, and body boundary lands at a feed edge. Splitting
+    // the input differently must not change what the engine frames.
+    let mut drip = HttpParser::default();
+    let mut dripped = Vec::new();
     for b in req {
-        inline.feed_initiator(std::slice::from_ref(b), Timestamp::default(), &mut msgs);
+        drip.feed_initiator(std::slice::from_ref(b), Timestamp::default(), &mut dripped);
     }
-    inline.feed_responder(resp, Timestamp::default(), &mut msgs);
+    for b in resp {
+        drip.feed_responder(std::slice::from_ref(b), Timestamp::default(), &mut dripped);
+    }
+    assert_eq!(
+        bodies(&one_shot),
+        bodies(&dripped),
+        "framing must not depend on feed boundaries"
+    );
+
+    // Pass 3: end of stream. A FIN must never panic, and must never
+    // report the parser as poisoned — a close on an idle keep-alive
+    // connection is normal, not a framing failure.
+    let mut sink = Vec::new();
+    drip.fin_initiator(&mut sink);
+    drip.fin_responder(&mut sink);
     assert!(
-        !msgs.iter().any(|m| matches!(m, HttpMessage::Request(_))),
-        "inline mode must not emit a full Request"
+        !drip.is_poisoned(),
+        "the telemetry front-end never poisons a flow"
     );
 });

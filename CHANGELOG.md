@@ -1,5 +1,65 @@
 # Changelog
 
+## Unreleased (0.23.0 cycle) — inline-grade sans-IO L7 core
+
+Milestone [*Inline-grade: sans-IO L7 core for inline
+proxies*](https://github.com/p13marc/flowscope/milestone/3):
+flowscope becomes usable as the shared L7 core of an inline proxy,
+not only a passive observer. Migration recipes accrue in
+[`docs/migration-0.22-to-0.23.md`](docs/migration-0.22-to-0.23.md).
+
+### Changed (breaking)
+
+- **One streaming HTTP engine under both front-ends** (#160). The
+  HTTP/1.x state machine was reshaped into an internal streaming
+  engine that emits a head, then body spans it never retains, then
+  trailers, then an end marker. `HttpParser` is now an aggregating
+  front-end over it and keeps its public shape; the inline-proxy
+  front-end (#161) consumes the same events without aggregating.
+  Framing therefore lives in exactly one place.
+- `BodyFraming::UntilEof` renamed to `BodyFraming::UntilClose`,
+  matching RFC 9112 language. The enum never shipped to crates.io
+  (it was added after 0.22.0), so no released code can be affected.
+
+### Fixed
+
+- **Chunked bodies are decoded on the telemetry path.** Previously
+  `Transfer-Encoding: chunked` was never framed at all: the raw
+  chunk framing ended up inside `HttpRequest::body`, or the
+  direction desynced and swallowed every following message on the
+  connection. Trailer fields now join the message's header list.
+- **A clean FIN no longer looks like a framing failure.** End of
+  stream on an idle keep-alive connection used to force the
+  direction into a desynced state (`parser::eof` replaced the state
+  unconditionally), which a driver reported as `EndReason::ParseError`.
+- **Method-aware response framing** (RFC 9112 §6.3 rules 1–2):
+  responses to `HEAD` and all `1xx` / `204` / `304` responses are
+  framed as bodyless even when they carry `Content-Length` or
+  `Transfer-Encoding`. A `HEAD` response with a length no longer
+  consumes the following response as its body.
+- **Requests with neither `Content-Length` nor `Transfer-Encoding`
+  have no body** (§6.3 rule 6). A bodyless `POST` used to run to
+  end of stream and swallow subsequent pipelined requests.
+- `HttpOutcome::Reset` is reachable: `HttpExchangeParser` now
+  reports requests that were in flight at reset instead of
+  discarding them.
+
+### Performance
+
+- Header parsing uses a stack-resident scratch array — the
+  per-`step()` 64-element heap allocation is gone.
+- Consumed bytes are handed out as refcounted `Bytes` views over the
+  fed buffer instead of being copied out and `memmove`d away.
+- Line scanning resumes from a per-direction watermark, so a header
+  block or chunk-size line fed one byte at a time is scanned once in
+  total rather than once per feed.
+
+### Internal
+
+- The last `unsafe` in `src/http` is gone: head-field offsets are
+  computed with plain integer arithmetic (debug-asserted in range)
+  instead of raw-pointer `offset_from`.
+
 ## 0.22.0 (2026-07-03) — fingerprinting & encrypted-traffic frontier
 
 The #140 roadmap's fingerprinting/encrypted-traffic group: a

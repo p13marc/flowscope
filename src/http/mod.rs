@@ -57,29 +57,28 @@
 //! # Scope
 //!
 //! - HTTP/1.0 and HTTP/1.1.
-//! - Request line + headers + body via Content-Length.
+//! - Request line + headers + body via `Content-Length`, chunked
+//!   `Transfer-Encoding` (decoded, with trailers), or connection
+//!   close.
+//! - Method-aware response framing: `HEAD` / `1xx` / `204` / `304`
+//!   responses carry no body (RFC 9112 §6.3 rules 1–2).
 //! - Pipelined requests on one connection.
-//! - HTTP/2 / HTTP/3: out of scope.
-//! - Chunked Transfer-Encoding: **decoded in the telemetry path is
-//!   deferred**, but framing/boundary tracking IS handled in
-//!   inline-streaming mode (see below).
+//! - HTTP/2 / HTTP/3: out of scope here (see the `http2` feature).
 //!
-//! # Inline-streaming mode (for inline proxies)
+//! # One engine, two front-ends
 //!
-//! Set [`HttpConfig::inline_streaming`] to `true` to switch the
-//! request side from the passive-telemetry shape (buffer the whole
-//! body, then emit one [`HttpMessage::Request`]) to a proxy shape:
-//! a [`HttpMessage::RequestHead`] is emitted at header-completion
-//! time — before the body — carrying method / path / headers plus a
-//! [`BodyFraming`] describing how the body is delimited
-//! (Content-Length, chunked, or until-EOF). flowscope then drains
-//! and discards the body per that framing (chunked included) to find
-//! the next request boundary, **without ever buffering the body**, so
-//! the proxy routes on the head and streams the raw bytes itself. A
-//! framing desync poisons the parser (see
-//! [`SessionParser::is_poisoned`](crate::SessionParser::is_poisoned))
-//! so the driver tears the flow down instead of forwarding smuggled
-//! bytes. Default (`false`) leaves telemetry behaviour unchanged.
+//! Internally the module is a single streaming state machine
+//! (`engine`) that emits a head as soon as the header block parses,
+//! then body spans it never retains, then trailers, then an end
+//! marker. [`HttpParser`] is the passive-telemetry front-end: it
+//! aggregates those spans back into one [`HttpRequest`] /
+//! [`HttpResponse`] per message. Inline proxies use the streaming
+//! front-end, which forwards the events directly so the body is
+//! never buffered.
+//!
+//! Because framing lives in one place, chunked decoding, body
+//! delimitation, and (issue #163) the RFC 9112 §6.3 smuggling rules
+//! behave identically no matter which front-end you use.
 //!
 //! # Convenience accessors
 //!
@@ -117,13 +116,13 @@
 //! | [`header`](HttpResponse::header) | `Option<&[u8]>` | first matching header |
 //! | [`headers_all`](HttpResponse::headers_all) | `impl Iterator<Item = &[u8]>` | every matching header |
 
+mod engine;
 mod exchange;
 // JA4H is FoxIO License 1.1 (patent pending) — opt-in via the
 // `ja4plus` feature alongside JA4S. See LICENSE-FoxIO-1.1 +
 // NOTICE.
 #[cfg(feature = "ja4plus")]
 pub mod ja4h;
-mod parser;
 #[cfg(feature = "pcap")]
 mod pcap_iter;
 mod session;
@@ -135,7 +134,7 @@ pub use ja4h::{Ja4hParts, ja4h as ja4h_fingerprint, ja4h_parts};
 #[cfg(feature = "pcap")]
 pub use pcap_iter::{exchanges_from_pcap, requests_from_pcap, responses_from_pcap};
 pub use session::{HttpMessage, HttpParser};
-pub use types::{BodyFraming, HttpConfig, HttpRequest, HttpResponse, HttpVersion, RequestHead};
+pub use types::{BodyFraming, HttpConfig, HttpRequest, HttpResponse, HttpVersion};
 
 /// Slug returned by [`HttpParser`]'s `parser_kind()`. Use at
 /// match sites in place of a string literal so typos fail to
