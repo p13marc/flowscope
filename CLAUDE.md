@@ -26,10 +26,11 @@ the core.
 "Inline-grade: sans-IO L7 core for inline proxies", **in progress,
 not yet published**).
 
-Twelve PRs across three epics (#172 / #173 / #174), one branch/PR
-per issue, breaking-first so `docs/migration-0.22-to-0.23.md`
-accretes. Turns flowscope from a passive-telemetry library into one
-that can also sit inline in the data path.
+Fifteen PRs across three epics (#172 / #173 / #174) plus a
+backlog-clearing round, one branch/PR per issue, breaking-first so
+`docs/migration-0.22-to-0.23.md` accretes. Turns flowscope from a
+passive-telemetry library into one that can also sit inline in the
+data path.
 
 - **One streaming HTTP engine, two front-ends (`#160`, breaking).**
   `src/http/parser.rs` became `src/http/engine.rs`: a single
@@ -95,12 +96,49 @@ that can also sit inline in the data path.
   routing surface (`GrpcCall`, `GrpcStatus` incl. Trailers-Only).
   All buffers bounded by `Http2Config`. New fuzz target.
 
-Test count after the cycle: **2118 passing** (up from 1919 at
+**Backlog-clearing round (#184–#188), closing the audit's own
+findings before release.** The bounded-memory page states a memory
+contract; shipping it beside five open holes in that contract would
+have been inconsistent.
+
+- **`MemcapPolicy` behaves as documented (`#186`).** `DropPacket`
+  refuses the segment *before* handing it to the reassembler (the
+  only point where rejection is possible — `Reassembler::segment`
+  returns `()` and cannot be undone); `PassThrough` releases the
+  side's buffer and keeps the flow, via the new additive
+  `Reassembler::release` (default no-op); `Ignore`'s doc now says
+  it only reports, matching Suricata. Also: bytes a parser drained
+  return to the pool immediately instead of at flow end.
+- **Cleanup decoupled from event emission (`#185`).** Teardown keyed
+  off `FlowEvent::Ended`, which `EventMask::ENDED` can shed while
+  the tracker reaps the flow anyway — so shedding under load leaked
+  one reassembler pair and one parser per flow. Each sweep now
+  reconciles against the tracker, *after* ordinary teardown so a
+  flow ending in that same sweep still gets its final tick / `fin_*`
+  / `Closed`.
+- **`max_reassembler_buffer` defaults to `Some(1 MiB)` (`#188`),**
+  was `None`. Plus `SegmentBufferReassembler::append_ready` now
+  trims a segment larger than the whole cap instead of appending it
+  in full.
+- **QUIC reassembly bounded (`#184`).** New `QuicConfig` (conns /
+  TTL / crypto bytes / crypto frames) + `pending_dropped()` /
+  `tracked()`. The TTL advances only on *progress*, so replaying
+  frames can no longer hold an entry past it. The frame cap is what
+  bounds the quadratic re-sort; the byte cap alone would allow
+  65 536 one-byte frames.
+- **`PortScanDetector` capacity-bounded (`#187`).**
+  `with_capacity` (default 10 000) + LRU eviction on `last_touch` +
+  `evicted()`. `observe` deliberately keeps its `(key, success)`
+  signature.
+
+Test count after the cycle: **2161 passing** (up from 1919 at
 0.22.0). Zero clippy warnings under `--all-features --all-targets
 -D warnings`, zero rustdoc warnings. New modules: `src/classify.rs`,
 `src/http/{engine,proxy,poison,access}.rs`, `src/http2/`. New docs:
 `docs/tls-routing.md`, `docs/bounded-memory.md`,
-`docs/migration-0.22-to-0.23.md`. **Not yet published to crates.io.**
+`docs/migration-0.22-to-0.23.md`. Every issue in the milestone and
+the whole open backlog is closed. **Not yet published to crates.io —
+the user has asked for no release yet.**
 
 **0.22.0 cycle** (fingerprinting & encrypted-traffic frontier —
 the #140 roadmap's fingerprinting/L7-depth group,
@@ -983,7 +1021,7 @@ src/
 │   ├── patterns/                # Named detectors (plan 143, 0.12.0; always-on)
 │   │   ├── mod.rs               # public re-exports
 │   │   ├── beacon.rs            # BeaconDetector<K> — RITA CV composite score
-│   │   ├── portscan.rs          # PortScanDetector<K> — TRW (Jung 2004)
+│   │   ├── portscan.rs          # PortScanDetector<K> — TRW (Jung 2004); capacity-bounded since #187, 0.23
 │   │   └── dga.rs               # DgaScorer — bigram log-likelihood + embedded baseline
 │   ├── fingerprint.rs           # FingerprintBuilder + FlowFingerprint (issue #4, 0.17; `fingerprint` feature)
 │   └── file/                    # File hash sinks (plan 146, 0.12.0; `file-hash` feature)
@@ -1152,7 +1190,7 @@ src/
 │   └── types.rs                 # SmbMessage / SmbDialect / SmbCommand / NtlmAuth
 ├── quic/                        # `quic` feature — QUIC Initial passive decrypt (issue #3, 0.18)
 │   ├── parser.rs                # quic-parser pipeline + tls-parser ClientHello → SNI/ALPN
-│   ├── datagram.rs              # QuicUdpParser DatagramParser (UDP/443)
+│   ├── datagram.rs              # QuicUdpParser DatagramParser (UDP/443) + QuicConfig bounds + pending_dropped/tracked (#184, 0.23)
 │   └── types.rs                 # QuicInitial
 └── pcap/                        # `pcap` feature
     └── source.rs                # PcapFlowSource — offline replay
