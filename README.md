@@ -236,10 +236,12 @@ Per-feature dependency tree is documented inline in
 | [`docs/recipes.md`](docs/recipes.md) | picking an API, custom parsers, multi-protocol monitoring, cross-protocol correlation, structured output |
 | [`docs/observability.md`](docs/observability.md) | `metrics` + `tracing` vocabulary, cardinality budget, severity routing |
 | [`docs/eve-format.md`](docs/eve-format.md) | Suricata EVE JSON schema mapping |
+| [`docs/tls-routing.md`](docs/tls-routing.md) | routing TLS by SNI / ALPN: the degradation ladder, why ECH is advisory-only, post-quantum ClientHello sizes, ALPACA binding |
 | [`docs/sharded.md`](docs/sharded.md) | per-CPU sharded capture pattern |
 | [`docs/discoverability.md`](docs/discoverability.md) | one-page prelude tour grouped by use case |
 | [`docs/performance.md`](docs/performance.md) | criterion bench methodology + numbers |
 | [`docs/design.md`](docs/design.md) | why flowscope is shaped the way it is |
+| [`docs/migration-0.22-to-0.23.md`](docs/migration-0.22-to-0.23.md) | the 0.23 inline-proxy cycle — one streaming HTTP engine, `BodyFraming::UntilClose`, and the framing behaviour that changed |
 | [`docs/migration-0.21-to-0.22.md`](docs/migration-0.21-to-0.22.md) | the 0.22 breaks — stateful `QuicUdpParser::new()` (PQ ClientHello reassembly) + `parser_kinds` removal — plus the additive 0.22 surface |
 | [`docs/migration-0.20-to-0.21.md`](docs/migration-0.20-to-0.21.md) | the 0.21 detection-architecture breaks — typed `DetectorKind`, `DetectorScore::kind()`, opt-in per-packet `source_idx` |
 | [`docs/migration-0.19-to-0.20.md`](docs/migration-0.19-to-0.20.md) | the 0.20 driver/event convergence — one typed `Driver<E>`, removal of `Flow{Session,Datagram}Driver` + `SessionEvent`, with migration recipes |

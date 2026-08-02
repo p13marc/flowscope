@@ -149,6 +149,60 @@ impl TlsHandshake {
             }
         }
     }
+
+    /// The ALPN protocol to route on: the server's selection if the
+    /// handshake got that far, otherwise the client's first offer.
+    ///
+    /// The server's choice is the negotiated outcome; the client's
+    /// list is only a wish. A terminating proxy uses this to decide
+    /// whether to speak HTTP/1 or HTTP/2 on the connection.
+    ///
+    /// ```
+    /// use flowscope::tls::TlsHandshake;
+    ///
+    /// let mut hs = TlsHandshake::default();
+    /// hs.client_alpn = vec!["h2".into(), "http/1.1".into()];
+    /// assert_eq!(hs.routing_alpn(), Some("h2"));
+    ///
+    /// // Once the server picks, that wins over the offer order.
+    /// hs.server_alpn = Some("http/1.1".into());
+    /// assert_eq!(hs.routing_alpn(), Some("http/1.1"));
+    /// ```
+    pub fn routing_alpn(&self) -> Option<&str> {
+        self.server_alpn
+            .as_deref()
+            .or_else(|| self.client_alpn.first().map(String::as_str))
+    }
+
+    /// The name to route on, and whether it can be trusted as the
+    /// client's real target.
+    ///
+    /// Returns `(name, is_real_target)`. With ECH in play the SNI on
+    /// the wire is the outer cover domain, so `is_real_target` is
+    /// `false` and the caller should expect to fall further down the
+    /// ladder in `docs/tls-routing.md`. `None` means no SNI at all —
+    /// route by JA4, first-byte class, or pass through.
+    ///
+    /// This never *fails* on ECH: degrading is the designed
+    /// behaviour, and refusing connections that offer ECH would
+    /// refuse a growing share of ordinary traffic.
+    ///
+    /// ```
+    /// use flowscope::tls::{EchOutcome, TlsHandshake};
+    ///
+    /// let mut hs = TlsHandshake::default();
+    /// hs.sni = Some("api.example.com".into());
+    /// assert_eq!(hs.routing_sni(), Some(("api.example.com", true)));
+    ///
+    /// // With ECH offered, the same field is only a cover name.
+    /// hs.ech_outcome = EchOutcome::Accepted;
+    /// assert_eq!(hs.routing_sni(), Some(("api.example.com", false)));
+    /// ```
+    pub fn routing_sni(&self) -> Option<(&str, bool)> {
+        let name = self.sni.as_deref()?;
+        let is_real_target = matches!(self.ech_outcome, EchOutcome::NotOffered);
+        Some((name, is_real_target))
+    }
 }
 
 impl Default for TlsHandshake {

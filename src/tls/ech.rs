@@ -8,7 +8,8 @@
 //!
 //! Chrome and Firefox ship GREASE-ECH per
 //! [RFC 8701](https://www.rfc-editor.org/rfc/rfc8701) and
-//! `draft-ietf-tls-esni-25` §6.2 — they emit a structurally
+//! [RFC 9849](https://www.rfc-editor.org/rfc/rfc9849) §6.2 — they
+//! emit a structurally
 //! valid `encrypted_client_hello` extension (RFC type `0xfe0d`)
 //! on nearly every ClientHello with a random `config_id`, KDF,
 //! AEAD, encapsulated key, and payload. **Presence of the
@@ -54,8 +55,10 @@
 //! | [`EchState::LikelyGrease`] | extension present, no corroborating signal — most likely GREASE |
 //! | [`EchState::Rejected`] | server sent plaintext `retry_configs` (handshake-level signal only) |
 //!
-//! Issue #8 (0.18). See also: `draft-ietf-tls-esni-25`,
-//! [RFC 8701](https://www.rfc-editor.org/rfc/rfc8701).
+//! Issue #8 (0.18). See also
+//! [RFC 9849](https://www.rfc-editor.org/rfc/rfc9849) (ECH,
+//! published March 2026 — formerly `draft-ietf-tls-esni`) and
+//! [RFC 8701](https://www.rfc-editor.org/rfc/rfc8701) (GREASE).
 
 /// Classification of the `encrypted_client_hello` extension on
 /// a TLS ClientHello.

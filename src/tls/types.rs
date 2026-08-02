@@ -22,8 +22,20 @@ pub struct TlsClientHello {
     /// Compression methods offered. Plan 120: was `Vec<u8>` in 0.10.
     pub compression: Bytes,
     /// Server name (SNI) extension value, if present.
+    ///
+    /// When [`ech_present`](Self::ech_present) is set this is the
+    /// *outer* (cover) name, not the client's real target — see
+    /// [`sni_is_outer`](Self::sni_is_outer) and
+    /// `docs/tls-routing.md`.
     pub sni: Option<String>,
-    /// Negotiated ALPN protocols offered by the client.
+    /// ALPN protocols offered by the client, in preference order.
+    ///
+    /// A first-class routing signal alongside SNI: it is how a
+    /// terminating proxy knows whether to speak HTTP/1 or HTTP/2.
+    /// When the server's selection is also available, prefer that —
+    /// it is the negotiated outcome rather than an offer. See
+    /// [`TlsServerHello::alpn`] and
+    /// [`AppProtocol::from_tls_handshake`](crate::app_proto::AppProtocol::from_tls_handshake).
     pub alpn: Vec<String>,
     /// `supported_versions` extension (TLS 1.3+).
     pub supported_versions: Vec<TlsVersion>,
@@ -36,8 +48,15 @@ pub struct TlsClientHello {
     // ── ECH (Encrypted Client Hello) — plan 144, 0.12.0 ───
     /// `true` if the ClientHello carried the
     /// `encrypted_client_hello` extension (RFC type 0xfe0d,
-    /// `draft-ietf-tls-esni`). Outer-form only — inner is
-    /// encrypted and not observable passively.
+    /// [RFC 9849](https://www.rfc-editor.org/rfc/rfc9849)).
+    /// Outer-form only — the inner ClientHello is encrypted and not
+    /// observable passively.
+    ///
+    /// **Advisory only.** GREASE ECH (RFC 8701) is byte-identical to
+    /// real ECH, so this being `true` says nothing about whether the
+    /// client actually used ECH. Never route or fail differently on
+    /// it; use [`ech_state`](Self::ech_state) if you want the
+    /// GREASE-vs-real classification, and treat even that as a hint.
     pub ech_present: bool,
     /// HPKE `config_id` byte from the outer `ECHClientHello`
     /// struct, when ECH is present. Useful for clustering
@@ -108,8 +127,10 @@ pub struct TlsServerHello {
     /// The cipher suite the server picked.
     pub cipher_suite: u16,
     pub compression: u8,
-    /// Negotiated ALPN protocol, if the extension was present and
-    /// the server selected one.
+    /// The ALPN protocol the server selected, if any.
+    ///
+    /// Authoritative where the client's list is only an offer: when
+    /// both are available, route on this one.
     pub alpn: Option<String>,
     /// `supported_versions` extension — present in TLS 1.3 to
     /// signal the actual negotiated version.

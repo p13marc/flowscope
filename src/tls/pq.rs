@@ -1,5 +1,11 @@
 //! Post-quantum hybrid key-exchange group recognition (issue #135).
 //!
+//! Standards status (checked 2026-08): the ML-KEM hybrids are
+//! specified by `draft-ietf-tls-ecdhe-mlkem`, which is IESG-approved
+//! and in the RFC Editor queue but **has not been published as an
+//! RFC**. Cite the draft, not an RFC number. The codepoints below are
+//! IANA-registered and stable. ML-KEM itself is NIST FIPS 203.
+//!
 //! Modern browsers negotiate a *hybrid* key exchange that combines
 //! a classical curve (X25519 / P-256) with a post-quantum KEM
 //! (ML-KEM, formerly Kyber). The PQ public value is ~1.1 KiB, which

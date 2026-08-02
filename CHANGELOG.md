@@ -93,6 +93,24 @@ not only a passive observer. Migration recipes accrue in
   prelude. Complements `app_proto::classify`, which answers the same
   question from ALPN/SNI once a handshake exists.
 
+- **`docs/tls-routing.md`** (#167) — the contract for routing TLS by
+  SNI / ALPN: the degradation ladder (inner SNI → outer SNI + ALPN →
+  JA4 / first-byte class → raw passthrough), why `ech_present` is
+  advisory and must never be load-bearing, why the "SNI is in packet
+  one" assumption is dead under post-quantum key exchange, ALPN
+  precedence, and binding the decision to ALPN + SNI against ALPACA.
+- **`TlsHandshake::routing_alpn()` / `routing_sni()`** (#167) — the
+  ladder's first two rungs as accessors. `routing_alpn` prefers the
+  server's selection over the client's offer; `routing_sni` returns
+  the name *and* whether ECH means it is only a cover domain, so
+  degrading is explicit rather than accidental.
+- Standards citations corrected across the tree (verified 2026-08):
+  ECH is **RFC 9849** (published March 2026, formerly
+  `draft-ietf-tls-esni`); DNS carriage is **RFC 9848** and the SVCB
+  `ech` SvcParamKey is **5**; the ML-KEM hybrids are still
+  `draft-ietf-tls-ecdhe-mlkem` (IESG-approved, in the RFC Editor
+  queue) and are cited as a draft, not an RFC.
+
 ### Fixed (driver)
 
 - **Heuristic slots hand the parser the whole stream** (#166).
@@ -1428,6 +1446,24 @@ surface.
   method token. No dependencies, no feature gate; also in the
   prelude. Complements `app_proto::classify`, which answers the same
   question from ALPN/SNI once a handshake exists.
+
+- **`docs/tls-routing.md`** (#167) — the contract for routing TLS by
+  SNI / ALPN: the degradation ladder (inner SNI → outer SNI + ALPN →
+  JA4 / first-byte class → raw passthrough), why `ech_present` is
+  advisory and must never be load-bearing, why the "SNI is in packet
+  one" assumption is dead under post-quantum key exchange, ALPN
+  precedence, and binding the decision to ALPN + SNI against ALPACA.
+- **`TlsHandshake::routing_alpn()` / `routing_sni()`** (#167) — the
+  ladder's first two rungs as accessors. `routing_alpn` prefers the
+  server's selection over the client's offer; `routing_sni` returns
+  the name *and* whether ECH means it is only a cover domain, so
+  degrading is explicit rather than accidental.
+- Standards citations corrected across the tree (verified 2026-08):
+  ECH is **RFC 9849** (published March 2026, formerly
+  `draft-ietf-tls-esni`); DNS carriage is **RFC 9848** and the SVCB
+  `ech` SvcParamKey is **5**; the ML-KEM hybrids are still
+  `draft-ietf-tls-ecdhe-mlkem` (IESG-approved, in the RFC Editor
+  queue) and are cited as a draft, not an RFC.
 
 ### Fixed (driver)
 
