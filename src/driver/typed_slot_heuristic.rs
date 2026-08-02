@@ -35,12 +35,28 @@ pub const PROBE_BUFFER_CAP: usize = 64;
 /// Default probing-budget if the user doesn't override.
 pub const DEFAULT_PROBE_PACKETS: u8 = 4;
 
+/// Cap on the bytes held for replay while probing one flow.
+///
+/// Probe packets are kept so the parser can be given the *whole*
+/// stream once a signature pins, not just the packet that happened
+/// to match. That means holding frames, so it is bounded: a flow
+/// whose probe frames exceed this replays nothing and the parser
+/// starts from the pinning packet (the pre-0.23 behaviour).
+const PROBE_REPLAY_BYTE_CAP: usize = 16 * 1024;
+
 /// Per-flow detection state inside a heuristic slot.
 pub(super) enum FlowDetection {
     Probing {
         seen: u8,
         init_buf: ArrayVec<u8, PROBE_BUFFER_CAP>,
         resp_buf: ArrayVec<u8, PROBE_BUFFER_CAP>,
+        /// Frames seen while probing, in arrival order, so they can
+        /// be replayed into the parser when the signature pins.
+        replay: Vec<Vec<u8>>,
+        /// Total bytes in `replay`; once it passes
+        /// [`PROBE_REPLAY_BYTE_CAP`] the queue is dropped and replay
+        /// is abandoned for this flow.
+        replay_bytes: usize,
     },
     Pinned,
     GaveUp,
@@ -52,6 +68,8 @@ impl Default for FlowDetection {
             seen: 0,
             init_buf: ArrayVec::new(),
             resp_buf: ArrayVec::new(),
+            replay: Vec::new(),
+            replay_bytes: 0,
         }
     }
 }
@@ -141,6 +159,24 @@ where
     }
 }
 
+impl<E, P> TypedHeuristicSessionSlot<E, P>
+where
+    E: FlowExtractor,
+    E::Key: Hash + Eq + Send + Sync + 'static,
+    P: SessionParser + Sync,
+    P::Message: Send + Sync + 'static,
+{
+    /// Drop per-flow probe state for flows that just ended, so the
+    /// map does not grow for the lifetime of the slot.
+    fn forget_ended(&mut self, events: &[Event<E::Key>]) {
+        for ev in events {
+            if let Event::Ended { key, .. } = ev {
+                self.states.remove(key);
+            }
+        }
+    }
+}
+
 impl<E, P> ErasedSlot<E::Key> for TypedHeuristicSessionSlot<E, P>
 where
     E: FlowExtractor + Send,
@@ -165,6 +201,9 @@ where
         };
 
         let state = self.states.entry(key.clone()).or_default();
+        // Frames buffered before the pin, to be replayed in order so
+        // the parser sees the connection from its first byte.
+        let mut replay_frames: Vec<Vec<u8>> = Vec::new();
         let should_dispatch = match state {
             FlowDetection::Pinned => true,
             FlowDetection::GaveUp => false,
@@ -172,6 +211,8 @@ where
                 seen,
                 init_buf,
                 resp_buf,
+                replay,
+                replay_bytes,
             } => {
                 match orientation {
                     Orientation::Forward => extend_probe(init_buf, payload),
@@ -182,12 +223,30 @@ where
                 if matches!(init_match, SignatureMatch::Match)
                     || matches!(resp_match, SignatureMatch::Match)
                 {
+                    // Hand over everything seen before this packet;
+                    // the pinning frame itself is dispatched below.
+                    replay_frames = std::mem::take(replay);
                     *state = FlowDetection::Pinned;
                     true
+                } else if definitely_not(init_match) && definitely_not(resp_match) {
+                    // `SignatureMatch` is tri-state precisely so a
+                    // definitive miss can stop early: more bytes
+                    // cannot turn a NoMatch into a Match, so burning
+                    // the rest of the budget only delays the verdict.
+                    *state = FlowDetection::GaveUp;
+                    false
                 } else {
                     *seen = seen.saturating_add(1);
                     if *seen >= self.max_probe_packets {
                         *state = FlowDetection::GaveUp;
+                    } else if *replay_bytes + view.frame.len() <= PROBE_REPLAY_BYTE_CAP {
+                        *replay_bytes += view.frame.len();
+                        replay.push(view.frame.to_vec());
+                    } else {
+                        // Too much to hold: give up on replaying
+                        // rather than growing without bound.
+                        replay.clear();
+                        *replay_bytes = usize::MAX;
                     }
                     false
                 }
@@ -197,25 +256,39 @@ where
             return;
         }
         let parser_kind = self.parser_kind;
+        let before = lifecycle_out.len();
+        for frame in &replay_frames {
+            self.session_scratch.clear();
+            let replayed = PacketView::new(frame, view.timestamp);
+            self.driver.track_into(replayed, &mut self.session_scratch);
+            for ev in self.session_scratch.drain(..) {
+                route_session_event_pub(ev, parser_kind, &self.msg_buf, lifecycle_out);
+            }
+        }
         self.session_scratch.clear();
         self.driver.track_into(view, &mut self.session_scratch);
         for ev in self.session_scratch.drain(..) {
             route_session_event_pub(ev, parser_kind, &self.msg_buf, lifecycle_out);
         }
+        self.forget_ended(&lifecycle_out[before..]);
     }
 
     fn sweep_into(&mut self, now: Timestamp, lifecycle_out: &mut Vec<Event<E::Key>>) {
         let parser_kind = self.parser_kind;
+        let before = lifecycle_out.len();
         for ev in self.driver.sweep(now) {
             route_session_event_pub(ev, parser_kind, &self.msg_buf, lifecycle_out);
         }
+        self.forget_ended(&lifecycle_out[before..]);
     }
 
     fn finish_into(&mut self, lifecycle_out: &mut Vec<Event<E::Key>>) {
         let parser_kind = self.parser_kind;
+        let before = lifecycle_out.len();
         for ev in self.driver.finish() {
             route_session_event_pub(ev, parser_kind, &self.msg_buf, lifecycle_out);
         }
+        self.forget_ended(&lifecycle_out[before..]);
     }
 
     fn force_close_into(
@@ -318,6 +391,23 @@ where
     }
 }
 
+impl<E, D> TypedHeuristicDatagramSlot<E, D>
+where
+    E: FlowExtractor,
+    E::Key: Hash + Eq + Send + Sync + 'static,
+    D: DatagramParser + Sync,
+    D::Message: Send + Sync + 'static,
+{
+    /// Drop per-flow probe state for flows that just ended.
+    fn forget_ended(&mut self, events: &[Event<E::Key>]) {
+        for ev in events {
+            if let Event::Ended { key, .. } = ev {
+                self.states.remove(key);
+            }
+        }
+    }
+}
+
 impl<E, D> ErasedSlot<E::Key> for TypedHeuristicDatagramSlot<E, D>
 where
     E: FlowExtractor + Send,
@@ -342,12 +432,15 @@ where
             FlowDetection::Pinned => true,
             FlowDetection::GaveUp => false,
             FlowDetection::Probing { seen, .. } => {
-                if matches!((self.signature)(payload), SignatureMatch::Match) {
+                let verdict = (self.signature)(payload);
+                if matches!(verdict, SignatureMatch::Match) {
                     *state = FlowDetection::Pinned;
                     true
                 } else {
+                    // A definitive miss ends probing now: more
+                    // datagrams cannot turn a NoMatch into a Match.
                     *seen = seen.saturating_add(1);
-                    if *seen >= self.max_probe_packets {
+                    if definitely_not(verdict) || *seen >= self.max_probe_packets {
                         *state = FlowDetection::GaveUp;
                     }
                     false
@@ -367,16 +460,20 @@ where
 
     fn sweep_into(&mut self, now: Timestamp, lifecycle_out: &mut Vec<Event<E::Key>>) {
         let parser_kind = self.parser_kind;
+        let before = lifecycle_out.len();
         for ev in self.driver.sweep(now) {
             route_session_event_pub(ev, parser_kind, &self.msg_buf, lifecycle_out);
         }
+        self.forget_ended(&lifecycle_out[before..]);
     }
 
     fn finish_into(&mut self, lifecycle_out: &mut Vec<Event<E::Key>>) {
         let parser_kind = self.parser_kind;
+        let before = lifecycle_out.len();
         for ev in self.driver.finish() {
             route_session_event_pub(ev, parser_kind, &self.msg_buf, lifecycle_out);
         }
+        self.forget_ended(&lifecycle_out[before..]);
     }
 
     fn force_close_into(
@@ -396,10 +493,26 @@ where
 // ── Helpers (duplicated from `heuristic.rs` to avoid making
 //             those private fns crate-visible just for re-use). ──
 
+/// Append to a probe buffer, silently stopping at the cap.
+///
+/// Truncation is fine for *deciding*: every shipped signature reaches
+/// a verdict well inside [`PROBE_BUFFER_CAP`]. It is not fine for
+/// *parsing*, which is why the frames themselves are kept separately
+/// for replay rather than these buffers being reused as input.
 fn extend_probe(buf: &mut ArrayVec<u8, PROBE_BUFFER_CAP>, payload: &[u8]) {
     let room = PROBE_BUFFER_CAP - buf.len();
     let to_take = room.min(payload.len());
     let _ = buf.try_extend_from_slice(&payload[..to_take]);
+}
+
+/// A verdict that more bytes cannot overturn.
+///
+/// [`SignatureMatch::NeedMoreData`] means "a valid prefix so far", so
+/// only an outright `NoMatch` is conclusive. An empty buffer reports
+/// `NeedMoreData`, so a direction that has not spoken yet never
+/// counts as a miss.
+fn definitely_not(m: SignatureMatch) -> bool {
+    matches!(m, SignatureMatch::NoMatch)
 }
 
 fn tcp_payload(frame: &[u8]) -> Option<&[u8]> {

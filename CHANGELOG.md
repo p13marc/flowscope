@@ -93,6 +93,24 @@ not only a passive observer. Migration recipes accrue in
   prelude. Complements `app_proto::classify`, which answers the same
   question from ALPN/SNI once a handshake exists.
 
+### Fixed (driver)
+
+- **Heuristic slots hand the parser the whole stream** (#166).
+  Packets consumed while probing were previously dropped: a signature
+  that pinned on packet 3 meant the parser never saw packets 1 and 2 —
+  including the bytes that identified the protocol. Probe frames are
+  now replayed in order when the flow pins, bounded by a 16 KiB
+  per-flow cap (past which replay is abandoned rather than the buffer
+  growing).
+- **A definitive `NoMatch` ends probing immediately** (#166).
+  `SignatureMatch` is tri-state so a conclusive miss can stop early,
+  but the slots treated `NoMatch` like `NeedMoreData` and burned the
+  whole probe budget anyway.
+- **Probe state no longer outlives its flow** (#166). Per-flow
+  detection entries were removed only by `force_close`, so
+  `Pinned` / `GaveUp` entries accumulated for the lifetime of the
+  slot under flow churn. They are now released when the flow ends.
+
 ### Changed (breaking)
 
 - **One streaming HTTP engine under both front-ends** (#160). The
@@ -1410,6 +1428,24 @@ surface.
   method token. No dependencies, no feature gate; also in the
   prelude. Complements `app_proto::classify`, which answers the same
   question from ALPN/SNI once a handshake exists.
+
+### Fixed (driver)
+
+- **Heuristic slots hand the parser the whole stream** (#166).
+  Packets consumed while probing were previously dropped: a signature
+  that pinned on packet 3 meant the parser never saw packets 1 and 2 —
+  including the bytes that identified the protocol. Probe frames are
+  now replayed in order when the flow pins, bounded by a 16 KiB
+  per-flow cap (past which replay is abandoned rather than the buffer
+  growing).
+- **A definitive `NoMatch` ends probing immediately** (#166).
+  `SignatureMatch` is tri-state so a conclusive miss can stop early,
+  but the slots treated `NoMatch` like `NeedMoreData` and burned the
+  whole probe budget anyway.
+- **Probe state no longer outlives its flow** (#166). Per-flow
+  detection entries were removed only by `force_close`, so
+  `Pinned` / `GaveUp` entries accumulated for the lifetime of the
+  slot under flow churn. They are now released when the flow ends.
 
 ### Changed (breaking)
 
