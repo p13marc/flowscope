@@ -278,28 +278,47 @@ impl TcpOverlapPolicy {
 #[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
 #[non_exhaustive]
 pub enum MemcapPolicy {
-    /// **Default.** Silently drop new segments when the cap
-    /// is hit. The flow stays alive; the parser sees a gap
-    /// and may resync. A single
-    /// [`AnomalyKind::GlobalMemcapHit`] fires per tick on the
-    /// first violation; subsequent violations in the same
-    /// tick are coalesced into the same anomaly's running
-    /// count.
+    /// **Default.** Count the violation and change nothing —
+    /// buffering continues past the cap. Matches Suricata's
+    /// `memcap-policy: ignore`, which is likewise a reporting
+    /// mode rather than an enforcement one.
+    ///
+    /// A single [`AnomalyKind::GlobalMemcapHit`] fires per tick
+    /// on the first violation; later violations in the same tick
+    /// coalesce into it.
+    ///
+    /// **This does not bound memory.** Choose
+    /// [`DropPacket`](Self::DropPacket) to actually enforce the
+    /// cap, or [`PassThrough`](Self::PassThrough) /
+    /// [`DropFlow`](Self::DropFlow) to reclaim what is already
+    /// buffered.
     #[default]
     Ignore,
-    /// End the violating flow on the next tick — emits
-    /// `Ended { reason: BufferOverflow }`. Use when you'd
-    /// rather lose one flow than corrupt analysis on it.
+    /// End the violating flow — emits
+    /// `Ended { reason: BufferOverflow }` in the same tick and
+    /// releases both of its reassemblers. Use when you'd rather
+    /// lose one flow than corrupt analysis on it.
     DropFlow,
-    /// Discard the segment that would push past the memcap
-    /// but keep the flow + existing buffer intact. The
-    /// reassembler stays usable; only the offending packet
-    /// is dropped.
+    /// Refuse the segment that would push past the memcap,
+    /// keeping the flow and everything already buffered. The
+    /// reassembler stays usable; the parser sees a gap and may
+    /// resync.
+    ///
+    /// The decision is made *before* the segment is handed to the
+    /// reassembler — [`Reassembler::segment`](crate::Reassembler::segment)
+    /// cannot be undone — so it is conservative: a reassembler
+    /// that would have deduplicated the payload is still charged
+    /// its full length.
     DropPacket,
-    /// Stop reassembling this flow (poison its reassembler)
-    /// but keep tracking flow stats. Parser stops emitting
-    /// messages on the affected flow; the flow itself stays
-    /// alive in the tracker.
+    /// Stop reassembling the offending side and release what it
+    /// holds, but keep the flow in the tracker. Flow accounting
+    /// continues; the parser stops seeing bytes for that side.
+    ///
+    /// Reclaiming the memory needs
+    /// [`Reassembler::release`](crate::Reassembler::release),
+    /// whose default is a no-op. Both shipped reassemblers
+    /// implement it; a custom one that does not will keep the
+    /// flow alive but free nothing.
     PassThrough,
 }
 
