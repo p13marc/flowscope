@@ -502,6 +502,11 @@ ignored = ["md-5"]
 
 # ── 00 getting started ──────────────────────────────
 [[example]]
+name = "http_streaming_proxy"
+path = "examples/01-l7-logging/http_streaming_proxy.rs"
+required-features = ["http"]
+
+[[example]]
 name = "from_stdin"
 path = "examples/00-getting-started/from_stdin.rs"
 required-features = ["pcap", "http"]

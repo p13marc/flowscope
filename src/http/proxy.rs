@@ -284,6 +284,122 @@ impl HttpProxyParser {
     }
 }
 
+/// [`HttpProxyParser`] as a [`SessionParser`](crate::SessionParser),
+/// so the streaming event stream can ride flowscope's own plumbing — the typed `Driver`, the
+/// pcap replay helpers, the `emit` writers.
+///
+/// Use this when flowscope drives the bytes. Use [`HttpProxyParser`]
+/// directly when *you* own the sockets: the trait has no way to
+/// express a short read, so the backpressure signal
+/// ([`push`](HttpProxyParser::push)'s accepted count) is not available
+/// through this adapter, and bytes are copied once at the boundary
+/// because the trait hands out `&[u8]`.
+///
+/// Unlike the passive [`HttpParser`](super::HttpParser), this reports
+/// a framing failure as a poisoned parser, so the driver ends the
+/// flow instead of continuing to feed a parser that has lost track of
+/// message boundaries.
+#[derive(Debug, Clone)]
+pub struct HttpProxySession {
+    inner: HttpProxyParser,
+}
+
+impl Default for HttpProxySession {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl HttpProxySession {
+    pub fn new() -> Self {
+        Self {
+            inner: HttpProxyParser::new(),
+        }
+    }
+
+    pub fn with_config(config: HttpProxyConfig) -> Self {
+        Self {
+            inner: HttpProxyParser::with_config(config),
+        }
+    }
+
+    /// The underlying parser, for state the trait does not expose.
+    pub fn parser(&self) -> &HttpProxyParser {
+        &self.inner
+    }
+
+    fn feed(&mut self, dir: FlowSide, bytes: &[u8], out: &mut Vec<HttpEvent>) {
+        if bytes.is_empty() {
+            return;
+        }
+        // The trait gives us a borrowed slice, so one copy here is
+        // unavoidable; everything downstream is refcounted views of
+        // it. Feed in a loop because the parser bounds how much it
+        // will hold at once.
+        let mut data = Bytes::copy_from_slice(bytes);
+        loop {
+            let accepted = self.inner.push(dir, &data);
+            while let Some(ev) = self.inner.next_event() {
+                out.push(ev);
+            }
+            if accepted == 0 || accepted == data.len() {
+                break;
+            }
+            data = data.slice(accepted..);
+        }
+    }
+}
+
+impl crate::SessionParser for HttpProxySession {
+    type Message = HttpEvent;
+
+    fn feed_initiator(&mut self, bytes: &[u8], _ts: crate::Timestamp, out: &mut Vec<HttpEvent>) {
+        self.feed(FlowSide::Initiator, bytes, out);
+    }
+
+    fn feed_responder(&mut self, bytes: &[u8], _ts: crate::Timestamp, out: &mut Vec<HttpEvent>) {
+        self.feed(FlowSide::Responder, bytes, out);
+    }
+
+    fn fin_initiator(&mut self, out: &mut Vec<HttpEvent>) {
+        self.inner.fin(FlowSide::Initiator);
+        while let Some(ev) = self.inner.next_event() {
+            out.push(ev);
+        }
+    }
+
+    fn fin_responder(&mut self, out: &mut Vec<HttpEvent>) {
+        self.inner.fin(FlowSide::Responder);
+        while let Some(ev) = self.inner.next_event() {
+            out.push(ev);
+        }
+    }
+
+    fn rst_initiator(&mut self) {
+        self.inner = HttpProxyParser::with_config(self.inner.config.clone());
+    }
+
+    fn rst_responder(&mut self) {
+        self.inner = HttpProxyParser::with_config(self.inner.config.clone());
+    }
+
+    fn parser_kind(&self) -> crate::ParserKind {
+        crate::ParserKind::Http1
+    }
+
+    fn is_poisoned(&self) -> bool {
+        self.inner.is_poisoned()
+    }
+
+    fn poison_reason(&self) -> Option<&str> {
+        self.inner.poison_reason()
+    }
+
+    fn is_done(&self) -> bool {
+        self.inner.is_done()
+    }
+}
+
 fn to_dir(side: FlowSide) -> Dir {
     match side {
         FlowSide::Initiator => Dir::Request,
@@ -783,6 +899,75 @@ mod tests {
         let _ = drain(&mut p);
         p.fin(FlowSide::Initiator);
         assert!(p.is_done(), "HTTP/1.0 defaults to closing");
+    }
+
+    // ── SessionParser adapter (#164) ──────────────────────────────
+
+    #[test]
+    fn adapter_emits_the_same_events_through_the_trait() {
+        use crate::SessionParser;
+        let mut s = HttpProxySession::new();
+        let mut out = Vec::new();
+        s.feed_initiator(
+            b"POST /a HTTP/1.1\r\nHost: h\r\nContent-Length: 5\r\n\r\nhello",
+            crate::Timestamp::default(),
+            &mut out,
+        );
+        assert!(matches!(out[0], HttpEvent::RequestHead(_)));
+        assert_eq!(decoded_of(&out), b"hello");
+        assert!(matches!(out.last(), Some(HttpEvent::End { .. })));
+    }
+
+    #[test]
+    fn adapter_reports_poison_so_the_driver_ends_the_flow() {
+        use crate::SessionParser;
+        let mut s = HttpProxySession::new();
+        let mut out = Vec::new();
+        // Content-Length and Transfer-Encoding together.
+        s.feed_initiator(
+            b"POST /a HTTP/1.1\r\nContent-Length: 6\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n",
+            crate::Timestamp::default(),
+            &mut out,
+        );
+        assert!(s.is_poisoned());
+        assert_eq!(
+            s.poison_reason(),
+            Some("content-length-with-transfer-encoding")
+        );
+    }
+
+    #[test]
+    fn adapter_survives_a_feed_larger_than_the_buffer_cap() {
+        // The trait hands over a whole slice at once with no way to
+        // say "not yet", so the adapter has to loop internally
+        // rather than silently dropping the tail.
+        use crate::SessionParser;
+        let cfg = HttpProxyConfig {
+            max_buffered_bytes: 512,
+            ..HttpProxyConfig::default()
+        };
+        let mut s = HttpProxySession::with_config(cfg);
+        let mut wire = b"POST /a HTTP/1.1\r\nContent-Length: 4096\r\n\r\n".to_vec();
+        wire.extend(std::iter::repeat_n(b'x', 4096));
+        let mut out = Vec::new();
+        s.feed_initiator(&wire, crate::Timestamp::default(), &mut out);
+        assert_eq!(decoded_of(&out).len(), 4096, "no body bytes may be lost");
+        assert!(matches!(out.last(), Some(HttpEvent::End { .. })));
+    }
+
+    #[test]
+    fn adapter_reset_clears_state() {
+        use crate::SessionParser;
+        let mut s = HttpProxySession::new();
+        let mut out = Vec::new();
+        s.feed_initiator(
+            b"POST /a HTTP/1.1\r\nContent-Length: 6\r\nTransfer-Encoding: chunked\r\n\r\n",
+            crate::Timestamp::default(),
+            &mut out,
+        );
+        assert!(s.is_poisoned());
+        s.rst_initiator();
+        assert!(!s.is_poisoned(), "a reset connection starts clean");
     }
 
     #[test]

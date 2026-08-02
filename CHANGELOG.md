@@ -66,6 +66,18 @@ not only a passive observer. Migration recipes accrue in
     U+212A KELVIN SIGN a routing-desync primitive.
   - `Normalization` records what was changed, because a normalized
     message's `raw` bytes must not be forwarded verbatim.
+- **`http::HttpProxySession`** (#164) — the streaming event stream as
+  a `SessionParser`, so it can ride the typed `Driver`, the pcap
+  helpers, and the `emit` writers when flowscope owns the bytes.
+  Unlike the passive parser it reports a framing failure as a
+  poisoned parser, so the driver ends the flow. Use `HttpProxyParser`
+  directly when you own the sockets — the trait cannot express a
+  short read, so the backpressure signal is not available through the
+  adapter.
+- New example `examples/01-l7-logging/http_streaming_proxy.rs` — the
+  inline-proxy loop end to end: route on the head, forward `raw`
+  spans (asserted byte-identical to the input), refuse an
+  ambiguously framed message.
 - **`http::HttpPoison`** — typed reasons the streaming parser stops,
   with a stable `as_str()` slug, so a proxy can map a framing failure
   to `400` versus `502` without parsing message strings.
