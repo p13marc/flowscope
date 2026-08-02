@@ -86,6 +86,18 @@ where
     /// `synthesise_buffer_overflow_ends` path picks these up
     /// in addition to reassembler-internal poison flags.
     memcap_killed: HashSet<(E::Key, FlowSide), RandomState>,
+    /// Sides released by [`MemcapPolicy::PassThrough`]. Their
+    /// reassemblers are poisoned so they stop buffering, but unlike a
+    /// genuine overflow poison that must NOT end the flow — keeping
+    /// the flow tracked is the whole difference between `PassThrough`
+    /// and `DropFlow` (issue #186).
+    memcap_released: HashSet<(E::Key, FlowSide), RandomState>,
+    /// Per-side byte occupancy as last folded into
+    /// [`Self::global_memcap_bytes`]. Lets the pool be re-synced when
+    /// a parser drains a reassembler between segments, which would
+    /// otherwise leave the pool over-reporting until flow end
+    /// (issue #186).
+    accounted_bytes: HashMap<(E::Key, FlowSide), u64, RandomState>,
 }
 
 // Common path — `S = ()`. Constructors live on this pinned impl
@@ -113,6 +125,8 @@ where
             monotonic_ts: None,
             global_memcap_bytes: 0,
             memcap_killed: HashSet::with_hasher(RandomState::new()),
+            memcap_released: HashSet::with_hasher(RandomState::new()),
+            accounted_bytes: HashMap::with_hasher(RandomState::new()),
         }
     }
 }
@@ -143,6 +157,8 @@ where
             monotonic_ts: None,
             global_memcap_bytes: 0,
             memcap_killed: HashSet::with_hasher(RandomState::new()),
+            memcap_released: HashSet::with_hasher(RandomState::new()),
+            accounted_bytes: HashMap::with_hasher(RandomState::new()),
         }
     }
 }
@@ -187,6 +203,8 @@ where
             monotonic_ts: None,
             global_memcap_bytes: 0,
             memcap_killed: HashSet::with_hasher(RandomState::new()),
+            memcap_released: HashSet::with_hasher(RandomState::new()),
+            accounted_bytes: HashMap::with_hasher(RandomState::new()),
         }
     }
 
@@ -311,6 +329,8 @@ where
         let reassemblers = &mut self.reassemblers;
         let global_bytes = &mut self.global_memcap_bytes;
         let memcap_killed = &mut self.memcap_killed;
+        let accounted_bytes = &mut self.accounted_bytes;
+        let memcap_released = &mut self.memcap_released;
         // Per-tick latch: at most one `GlobalMemcapHit` anomaly
         // per `track_pending` call regardless of how many segments
         // cross the line. Captures the bytes-in-flight at the
@@ -322,18 +342,49 @@ where
                 let r = reassemblers
                     .entry((key.clone(), side))
                     .or_insert_with(|| factory.new_reassembler(key, side));
-                // Pre-/post-segment byte deltas drive the running
-                // global total. Use saturating arithmetic — a
-                // bookkeeping bug should never panic in
-                // production.
+
+                // Re-sync this side's contribution before deciding.
+                // Bytes a parser drained via `take()` since the last
+                // segment are still counted in the pool otherwise, so
+                // a side that drains and goes quiet would trip the
+                // cap on stale accounting (issue #186).
                 let old_bytes = r.current_bytes();
+                let accounted = accounted_bytes.entry((key.clone(), side)).or_insert(0);
+                if old_bytes >= *accounted {
+                    *global_bytes = global_bytes.saturating_add(old_bytes - *accounted);
+                } else {
+                    *global_bytes = global_bytes.saturating_sub(*accounted - old_bytes);
+                }
+                *accounted = old_bytes;
+
+                // `DropPacket` is the one policy that can refuse a
+                // segment, and it has to decide *before* handing it
+                // over: `Reassembler::segment` returns `()`, so once
+                // the bytes are in there is no rollback. The check is
+                // deliberately conservative — a dedup reassembler
+                // might have grown by less than `payload.len()` — but
+                // erring toward refusing is the safe direction for a
+                // cap.
+                let would_exceed = memcap_cap
+                    .is_some_and(|cap| global_bytes.saturating_add(payload.len() as u64) > cap);
+                if would_exceed && memcap_policy == MemcapPolicy::DropPacket {
+                    // Latch the trip even though nothing was stored,
+                    // so the anomaly still fires for this tick.
+                    if memcap_tripped.is_none() {
+                        memcap_tripped = Some(*global_bytes);
+                    }
+                    return;
+                }
+
                 r.segment(seq, payload, ts);
                 let new_bytes = r.current_bytes();
-                if new_bytes >= old_bytes {
-                    *global_bytes = global_bytes.saturating_add(new_bytes - old_bytes);
+                if new_bytes >= *accounted {
+                    *global_bytes = global_bytes.saturating_add(new_bytes - *accounted);
                 } else {
-                    *global_bytes = global_bytes.saturating_sub(old_bytes - new_bytes);
+                    *global_bytes = global_bytes.saturating_sub(*accounted - new_bytes);
                 }
+                *accounted = new_bytes;
+
                 // Memcap enforcement (issue #26). When the cap is
                 // configured and we've exceeded it, apply the
                 // declared policy and latch the trip for anomaly
@@ -345,13 +396,26 @@ where
                         memcap_tripped = Some(*global_bytes);
                     }
                     match memcap_policy {
-                        MemcapPolicy::Ignore | MemcapPolicy::DropPacket => {
-                            // Ignore: anomaly only, leave bytes.
-                            // DropPacket: spec — "leave the bytes
-                            // but emit the anomaly" (rollback path
-                            // doesn't exist for arbitrary impls).
+                        // Suricata's `ignore`: count the violation,
+                        // change nothing. The flow keeps buffering.
+                        MemcapPolicy::Ignore => {}
+                        // Handled by the pre-check above; reaching
+                        // here means the segment fit the cap on its
+                        // own but the pool was already over, which
+                        // the next segment's pre-check will catch.
+                        MemcapPolicy::DropPacket => {}
+                        MemcapPolicy::PassThrough => {
+                            // Stop reassembling this side and free
+                            // what it holds, but leave the flow in
+                            // the tracker so accounting continues.
+                            let residual = r.current_bytes();
+                            r.release();
+                            let freed = residual.saturating_sub(r.current_bytes());
+                            *global_bytes = global_bytes.saturating_sub(freed);
+                            *accounted = r.current_bytes();
+                            memcap_released.insert((key.clone(), side));
                         }
-                        MemcapPolicy::DropFlow | MemcapPolicy::PassThrough => {
+                        MemcapPolicy::DropFlow => {
                             // Mark this side memcap-killed; the
                             // `synthesise_buffer_overflow_ends`
                             // path will emit the terminal
@@ -396,6 +460,7 @@ where
             reassemblers,
             &mut self.tracker,
             memcap_killed,
+            memcap_released,
         );
         for ev in synthesised {
             events.push(ev);
@@ -543,6 +608,7 @@ where
             &mut self.reassemblers,
             &mut self.tracker,
             &mut self.memcap_killed,
+            &self.memcap_released,
         );
         events.extend(synthesised);
         events
@@ -558,6 +624,8 @@ where
             events,
             &mut self.reassemblers,
             &mut self.global_memcap_bytes,
+            &mut self.accounted_bytes,
+            &mut self.memcap_released,
         );
     }
 
@@ -714,11 +782,21 @@ where
         reassemblers: &mut HashMap<(E::Key, FlowSide), F::Reassembler, RandomState>,
         tracker: &mut FlowTracker<E, S>,
         memcap_killed: &mut HashSet<(E::Key, FlowSide), RandomState>,
+        memcap_released: &HashSet<(E::Key, FlowSide), RandomState>,
     ) -> Vec<FlowEvent<E::Key>> {
         // Collect keys whose reassembler is poisoned.
+        //
+        // A side released by `MemcapPolicy::PassThrough` is poisoned
+        // on purpose — it stopped buffering so its memory could be
+        // reclaimed — and must not be read as a reason to end the
+        // flow. That distinction is the entire difference between
+        // `PassThrough` and `DropFlow`.
         let mut poisoned_keys: Vec<E::Key> = Vec::new();
-        for ((key, _side), r) in reassemblers.iter() {
-            if r.is_poisoned() && !poisoned_keys.contains(key) {
+        for ((key, side), r) in reassemblers.iter() {
+            if r.is_poisoned()
+                && !memcap_released.contains(&(key.clone(), *side))
+                && !poisoned_keys.contains(key)
+            {
                 poisoned_keys.push(key.clone());
             }
         }
@@ -775,6 +853,8 @@ where
         events: &mut [FlowEvent<E::Key>],
         reassemblers: &mut HashMap<(E::Key, FlowSide), F::Reassembler, RandomState>,
         global_memcap_bytes: &mut u64,
+        accounted_bytes: &mut HashMap<(E::Key, FlowSide), u64, RandomState>,
+        memcap_released: &mut HashSet<(E::Key, FlowSide), RandomState>,
     ) {
         for ev in events.iter_mut() {
             // Patch in reassembly diagnostics + drop reassemblers.
@@ -783,6 +863,9 @@ where
             } = ev
             {
                 for side in [FlowSide::Initiator, FlowSide::Responder] {
+                    // Per-side bookkeeping dies with the flow.
+                    accounted_bytes.remove(&(key.clone(), side));
+                    memcap_released.remove(&(key.clone(), side));
                     if let Some(mut r) = reassemblers.remove(&(key.clone(), side)) {
                         // Issue #26: decrement the running
                         // cross-flow memcap pool by this

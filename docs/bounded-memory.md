@@ -91,7 +91,7 @@ on the connection.
 |---|---|---|---|
 | in-order stream | `FlowTrackerConfig::max_reassembler_buffer` | **`None` — unbounded** | with a cap: `SlidingWindow` (default) drops oldest bytes, flow survives; `DropFlow` poisons → `Ended { BufferOverflow }` |
 | out-of-order segments | `SegmentBufferReassembler::with_max_ooo_buffer` | 256 KiB | evict oldest hole, then drop the arriving segment; 1 s hole deadline |
-| cross-flow pool | `reassembly_memcap` + `MemcapPolicy` | **`None` — off** | see caveats |
+| cross-flow pool | `reassembly_memcap` + `MemcapPolicy` | **`None` — off** | per policy: `Ignore` (default) reports only; `DropPacket` refuses the segment; `PassThrough` releases the side and keeps the flow; `DropFlow` ends it |
 
 **Set `max_reassembler_buffer` if you track untrusted traffic.** With
 the default, one flow whose parser never consumes grows one `Vec<u8>`
@@ -165,7 +165,6 @@ rather than quietly left in the code:
 |---|---|---|
 | QUIC CRYPTO reassembly has no per-connection byte cap, and its TTL refreshes on every packet | a peer replaying Initials on one DCID with never-completing CRYPTO frames grows one buffer without limit | [#184](https://github.com/p13marc/flowscope/issues/184) |
 | Reassembler and parser cleanup keys off `Ended` events | suppressing `EventMask::ENDED` (load shedding) leaves per-flow reassemblers and parsers resident — precisely during overload | [#185](https://github.com/p13marc/flowscope/issues/185) |
-| `MemcapPolicy::Ignore` (the default) and `DropPacket` emit an anomaly but free nothing | `reassembly_memcap` does not actually cap with the default policy; `PassThrough` behaves like `DropFlow` rather than as documented | [#186](https://github.com/p13marc/flowscope/issues/186) |
 | `PortScanDetector.sources` has no capacity or TTL | a spoofed-source SYN flood adds one entry per source, forever | [#187](https://github.com/p13marc/flowscope/issues/187) |
 | `max_reassembler_buffer` defaults to `None` | the default configuration has no per-flow reassembly bound | [#188](https://github.com/p13marc/flowscope/issues/188) |
 
@@ -173,6 +172,22 @@ Until they are closed, the mitigations are: cap
 `max_reassembler_buffer`, avoid `EventMask::ENDED` suppression, drive
 `PortScanDetector::forget`, and treat the QUIC parser as
 trusted-traffic-only.
+
+## Choosing a `MemcapPolicy`
+
+`reassembly_memcap` is off by default. When you turn it on, the policy
+decides whether it is a *report* or a *bound*:
+
+| Policy | Bounds memory? | Flow survives? |
+|---|---|---|
+| `Ignore` (default) | **No** — counts the violation, keeps buffering | yes |
+| `DropPacket` | Yes — refuses the segment that would cross the cap | yes |
+| `PassThrough` | Yes — releases the offending side's buffer | yes, still tracked |
+| `DropFlow` | Yes — ends the flow, freeing both sides | no |
+
+`Ignore` matches Suricata's `memcap-policy: ignore` and is a reporting
+mode. If you configured a cap because you need one, pick one of the
+other three.
 
 ## Testing this yourself
 

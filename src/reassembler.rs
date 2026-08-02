@@ -159,6 +159,21 @@ pub trait Reassembler: Send + 'static {
     ///
     /// New in 0.18.0 (issue #17 close — declarative hook;
     /// FlowDriver enforcement is its own follow-up).
+    /// Stop reassembling and release whatever is buffered.
+    ///
+    /// Called by the driver under
+    /// [`MemcapPolicy::PassThrough`](crate::MemcapPolicy::PassThrough):
+    /// the flow stays tracked and keeps accruing stats, but its L7
+    /// reassembly is abandoned so the memory comes back. A parser
+    /// fed from this reassembler will see the stream end.
+    ///
+    /// The default is a no-op, so this is additive for existing
+    /// implementations — but an implementation that does not override
+    /// it cannot honour the policy, and the driver's byte accounting
+    /// will correctly observe that nothing was freed. Override it if
+    /// your reassembler holds bytes.
+    fn release(&mut self) {}
+
     fn current_bytes(&self) -> u64 {
         0
     }
@@ -471,6 +486,14 @@ impl Reassembler for BufferedReassembler {
 
     fn retransmits(&self) -> u64 {
         Self::retransmits(self)
+    }
+
+    /// Drop the buffer and stop accepting bytes. See
+    /// [`Reassembler::release`].
+    fn release(&mut self) {
+        self.buffer.clear();
+        self.buffer.shrink_to_fit();
+        self.poisoned = true;
     }
 
     fn current_bytes(&self) -> u64 {

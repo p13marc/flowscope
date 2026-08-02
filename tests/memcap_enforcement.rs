@@ -9,8 +9,8 @@
 #![cfg(all(feature = "tracker", feature = "extractors", feature = "reassembler"))]
 
 use flowscope::{
-    AnomalyKind, BufferedReassemblerFactory, EndReason, FlowDriver, FlowEvent, FlowTrackerConfig,
-    MemcapPolicy, PacketView, Timestamp,
+    AnomalyKind, BufferedReassemblerFactory, EndReason, FlowDriver, FlowEvent, FlowSide,
+    FlowTrackerConfig, MemcapPolicy, PacketView, Timestamp,
     extract::{FiveTuple, parse::test_frames::ipv4_tcp},
 };
 
@@ -438,4 +438,153 @@ fn force_close_refunds_bytes_to_pool() {
     let key = FiveTuple::bidirectional().extract(pv).expect("extract").key;
     let _ = d.force_close(&key, Timestamp::new(2, 0));
     assert_eq!(d.reassembly_memcap_bytes(), 0, "force_close refunds bytes");
+}
+
+// ─── Enforcement, not just reporting (#186) ─────────────────
+//
+// The policies used to differ only in whether they ended the flow;
+// none of them actually kept the pool under the cap. These pin the
+// behaviour each variant now documents.
+
+#[test]
+fn drop_packet_actually_keeps_the_pool_under_the_cap() {
+    // The whole point of a cap. Previously `DropPacket` shared an
+    // empty match arm with `Ignore`: it emitted an anomaly and let
+    // the pool grow to 200 bytes against a 50-byte cap.
+    let mut d = driver_with_memcap(50, MemcapPolicy::DropPacket);
+    let payload = vec![b'A'; 200];
+    let frames = handshake_plus_data([10, 0, 0, 1], [10, 0, 0, 2], 1234, 80, 1000, 5000, &payload);
+    for f in &frames {
+        let _ = d.track(view(f, 0));
+    }
+    assert!(
+        d.reassembly_memcap_bytes() <= 50,
+        "pool must stay within the cap, saw {}",
+        d.reassembly_memcap_bytes()
+    );
+}
+
+#[test]
+fn drop_packet_still_reports_the_violation_it_prevented() {
+    // Refusing the segment must not make the trip invisible — the
+    // anomaly is how an operator learns the cap is too small.
+    let mut d = driver_with_memcap(50, MemcapPolicy::DropPacket);
+    let payload = vec![b'A'; 200];
+    let frames = handshake_plus_data([10, 0, 0, 1], [10, 0, 0, 2], 1234, 80, 1000, 5000, &payload);
+    let mut all: Vec<FlowEvent<_>> = Vec::new();
+    for f in &frames {
+        all.extend(d.track(view(f, 0)));
+    }
+    let hits = all
+        .iter()
+        .filter(|e| {
+            matches!(
+                e,
+                FlowEvent::TrackerAnomaly {
+                    kind: AnomalyKind::GlobalMemcapHit { .. },
+                    ..
+                }
+            )
+        })
+        .count();
+    assert_eq!(hits, 1, "the refusal must still be reported");
+}
+
+#[test]
+fn ignore_is_a_reporting_mode_and_says_so() {
+    // `Ignore` deliberately does NOT enforce — it mirrors Suricata's
+    // `memcap-policy: ignore`. Pinning that keeps it distinguishable
+    // from `DropPacket` rather than the two silently coinciding.
+    let mut d = driver_with_memcap(50, MemcapPolicy::Ignore);
+    let payload = vec![b'A'; 200];
+    let frames = handshake_plus_data([10, 0, 0, 1], [10, 0, 0, 2], 1234, 80, 1000, 5000, &payload);
+    for f in &frames {
+        let _ = d.track(view(f, 0));
+    }
+    assert!(
+        d.reassembly_memcap_bytes() > 50,
+        "Ignore reports without enforcing, by design"
+    );
+}
+
+#[test]
+fn pass_through_frees_the_bytes_and_keeps_the_flow() {
+    // Documented behaviour that the code did not implement: stop
+    // reassembling, but leave the flow tracked so accounting
+    // continues. It previously ended the flow like DropFlow.
+    let mut d = driver_with_memcap(50, MemcapPolicy::PassThrough);
+    let payload = vec![b'A'; 200];
+    let frames = handshake_plus_data([10, 0, 0, 1], [10, 0, 0, 2], 1234, 80, 1000, 5000, &payload);
+    let mut all: Vec<FlowEvent<_>> = Vec::new();
+    for f in &frames {
+        all.extend(d.track(view(f, 0)));
+    }
+
+    let ended: Vec<_> = all
+        .iter()
+        .filter(|e| {
+            matches!(
+                e,
+                FlowEvent::Ended {
+                    reason: EndReason::BufferOverflow,
+                    ..
+                }
+            )
+        })
+        .collect();
+    assert!(
+        ended.is_empty(),
+        "PassThrough keeps the flow alive; DropFlow is the variant that ends it"
+    );
+    assert_eq!(
+        d.reassembly_memcap_bytes(),
+        0,
+        "releasing the reassembler must return its bytes to the pool"
+    );
+    assert_eq!(d.tracker().flow_count(), 1, "the flow itself stays tracked");
+}
+
+#[test]
+fn drained_bytes_are_returned_to_the_pool() {
+    // A parser that consumes its buffer between segments used to
+    // leave the pool over-reporting until flow end, so the memcap
+    // tripped on bytes nobody was holding.
+    let mut d = driver_with_memcap(1_000_000, MemcapPolicy::Ignore);
+    let payload = vec![b'A'; 500];
+    let frames = handshake_plus_data([10, 0, 0, 1], [10, 0, 0, 2], 1234, 80, 1000, 5000, &payload);
+    for f in &frames {
+        let _ = d.track(view(f, 0));
+    }
+    assert_eq!(d.reassembly_memcap_bytes(), 500);
+
+    // Drain the initiator side the way a parser would.
+    let key = d
+        .snapshot_flow_stats()
+        .map(|(k, _)| k)
+        .next()
+        .expect("one flow");
+    if let Some(r) = d.reassembler(&key, FlowSide::Initiator) {
+        let _ = r.take();
+    }
+
+    // The pool still reflects the stale figure until the next
+    // segment re-syncs it — which is what the fix does.
+    let more = ipv4_tcp(
+        [0; 6],
+        [0; 6],
+        [10, 0, 0, 1],
+        [10, 0, 0, 2],
+        1234,
+        80,
+        1500,
+        5000,
+        0x18,
+        b"xy",
+    );
+    let _ = d.track(view(&more, 0));
+    assert!(
+        d.reassembly_memcap_bytes() <= 2,
+        "the drained 500 bytes must not still be counted, pool is {}",
+        d.reassembly_memcap_bytes()
+    );
 }

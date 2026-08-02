@@ -521,6 +521,16 @@ impl Reassembler for SegmentBufferReassembler {
         self.rexmit_inconsistencies
     }
 
+    /// Drop both the ready buffer and the out-of-order queue, and
+    /// stop accepting bytes. See [`Reassembler::release`].
+    fn release(&mut self) {
+        self.ready.clear();
+        self.ready.shrink_to_fit();
+        self.pending.clear();
+        self.pending_bytes = 0;
+        self.poisoned = true;
+    }
+
     fn current_bytes(&self) -> u64 {
         // Ready + OOO-pending. `high_watermark` returns the
         // peak; `current_bytes` is the instantaneous occupancy

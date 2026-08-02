@@ -171,6 +171,25 @@ not only a passive observer. Migration recipes accrue in
 
 ### Fixed
 
+- **`MemcapPolicy` now does what each variant documents** (#186). The
+  cross-flow reassembly memcap was a report, not a bound: `Ignore` and
+  `DropPacket` shared an empty match arm that freed nothing, and
+  `PassThrough` ended the flow exactly like `DropFlow`.
+  - `DropPacket` refuses the segment that would cross the cap. The
+    decision is made *before* handing it to the reassembler, because
+    `Reassembler::segment` cannot be undone — so it is conservative,
+    charging the full payload length even to a reassembler that would
+    have deduplicated it.
+  - `PassThrough` releases the offending side's buffer and leaves the
+    flow tracked, which is the difference from `DropFlow` its docs
+    always claimed. New additive `Reassembler::release` (default
+    no-op) does the freeing; both shipped reassemblers implement it.
+  - `Ignore`'s doc now says what it does — count the violation and
+    change nothing, matching Suricata's `memcap-policy: ignore`. It is
+    a reporting mode and is documented as not bounding memory.
+- **Bytes drained by a parser return to the memcap pool.** A side whose
+  parser consumed its buffer kept those bytes counted until the flow
+  ended, so the cap tripped on memory nobody held.
 - **`PUSH_PROMISE` no longer breaks an HTTP/2 connection.** The four
   promised-stream-id octets that precede the field block (RFC 9113
   §6.6) were being fed to HPACK, which failed the connection and —
@@ -1619,6 +1638,25 @@ surface.
 
 ### Fixed
 
+- **`MemcapPolicy` now does what each variant documents** (#186). The
+  cross-flow reassembly memcap was a report, not a bound: `Ignore` and
+  `DropPacket` shared an empty match arm that freed nothing, and
+  `PassThrough` ended the flow exactly like `DropFlow`.
+  - `DropPacket` refuses the segment that would cross the cap. The
+    decision is made *before* handing it to the reassembler, because
+    `Reassembler::segment` cannot be undone — so it is conservative,
+    charging the full payload length even to a reassembler that would
+    have deduplicated it.
+  - `PassThrough` releases the offending side's buffer and leaves the
+    flow tracked, which is the difference from `DropFlow` its docs
+    always claimed. New additive `Reassembler::release` (default
+    no-op) does the freeing; both shipped reassemblers implement it.
+  - `Ignore`'s doc now says what it does — count the violation and
+    change nothing, matching Suricata's `memcap-policy: ignore`. It is
+    a reporting mode and is documented as not bounding memory.
+- **Bytes drained by a parser return to the memcap pool.** A side whose
+  parser consumed its buffer kept those bytes counted until the flow
+  ended, so the cap tripped on memory nobody held.
 - **`PUSH_PROMISE` no longer breaks an HTTP/2 connection.** The four
   promised-stream-id octets that precede the field block (RFC 9113
   §6.6) were being fed to HPACK, which failed the connection and —
