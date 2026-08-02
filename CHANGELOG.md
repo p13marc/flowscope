@@ -82,6 +82,27 @@ not only a passive observer. Migration recipes accrue in
   with a stable `as_str()` slug, so a proxy can map a framing failure
   to `400` versus `502` without parsing message strings.
 
+- **`flowscope::http2`** — HTTP/2 frame layer, HPACK, and per-stream
+  events (#170), behind the new `http2` feature. `Http2Parser` is
+  sans-IO in the same shape as `HttpProxyParser`: feed bytes per
+  direction, drain events. Events reuse the HTTP/1 vocabulary —
+  `Head` / `Body` / `Trailers` / `End` — keyed by stream ID, plus
+  `StreamReset` and `GoAway`, so a consumer written against one
+  version works with the other.
+  - `StreamHead` exposes the pseudo-headers directly (`method()`,
+    `path()`, `authority()`, `scheme()`, `status()`) — `:authority`
+    and `:path` are the routing key a terminating proxy needs.
+  - A complete HPACK decoder (RFC 7541): static table, dynamic table
+    with eviction, the integer and string codings, and Huffman.
+    Hand-rolled, no new dependencies. Validated against the RFC
+    Appendix C vectors, including the sequences that only decode
+    correctly if the dynamic table carries across field blocks.
+  - `HEADERS` + `CONTINUATION` reassembly per stream, and a frame
+    interleaved into an open field block is refused (RFC 9113 §6.10).
+  - Every buffer bounded by `Http2Config`: frame size, field-block
+    size, HPACK table (a hard ceiling `SETTINGS` cannot raise),
+    concurrent streams, and unparsed bytes per direction.
+  - New fuzz target `fuzz/fuzz_targets/http2.rs`.
 - **`flowscope::classify`** (#165) — decide what protocol a
   connection speaks from its first bytes, without guessing on a short
   read. `classify_first_bytes(peek) -> Classify` returns either
@@ -1481,6 +1502,27 @@ In 0.15 it shipped under `tls-fingerprints` alongside the BSD JA3 + JA4-client
 fingerprints, which inadvertently put FoxIO-licensed code in the royalty-free
 surface.
 
+- **`flowscope::http2`** — HTTP/2 frame layer, HPACK, and per-stream
+  events (#170), behind the new `http2` feature. `Http2Parser` is
+  sans-IO in the same shape as `HttpProxyParser`: feed bytes per
+  direction, drain events. Events reuse the HTTP/1 vocabulary —
+  `Head` / `Body` / `Trailers` / `End` — keyed by stream ID, plus
+  `StreamReset` and `GoAway`, so a consumer written against one
+  version works with the other.
+  - `StreamHead` exposes the pseudo-headers directly (`method()`,
+    `path()`, `authority()`, `scheme()`, `status()`) — `:authority`
+    and `:path` are the routing key a terminating proxy needs.
+  - A complete HPACK decoder (RFC 7541): static table, dynamic table
+    with eviction, the integer and string codings, and Huffman.
+    Hand-rolled, no new dependencies. Validated against the RFC
+    Appendix C vectors, including the sequences that only decode
+    correctly if the dynamic table carries across field blocks.
+  - `HEADERS` + `CONTINUATION` reassembly per stream, and a frame
+    interleaved into an open field block is refused (RFC 9113 §6.10).
+  - Every buffer bounded by `Http2Config`: frame size, field-block
+    size, HPACK table (a hard ceiling `SETTINGS` cannot raise),
+    concurrent streams, and unparsed bytes per direction.
+  - New fuzz target `fuzz/fuzz_targets/http2.rs`.
 - **`flowscope::classify`** (#165) — decide what protocol a
   connection speaks from its first bytes, without guessing on a short
   read. `classify_first_bytes(peek) -> Classify` returns either

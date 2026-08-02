@@ -167,6 +167,9 @@ pub mod aggregate;
 
 pub mod classify;
 
+#[cfg(feature = "http2")]
+pub mod http2;
+
 pub mod detect;
 
 pub mod well_known;

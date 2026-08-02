@@ -9,6 +9,7 @@ cargo-fuzz = true
 
 [dependencies]
 libfuzzer-sys = "0.4"
+bytes = "1"
 
 [dependencies.flowscope]
 path = ".."
@@ -19,6 +20,7 @@ features = [
     "dns",
     "extractors",
     "http",
+    "http2",
     "icmp",
     "lldp",
     "ndp",
@@ -56,6 +58,13 @@ bench = false
 [[bin]]
 name = "http"
 path = "fuzz_targets/http.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "http2"
+path = "fuzz_targets/http2.rs"
 test = false
 doc = false
 bench = false

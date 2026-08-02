@@ -107,6 +107,8 @@ slug_enum! {
     pub enum ParserKind {
         /// HTTP/1.x ([`crate::http`]).
         Http1 => "http/1",
+        /// HTTP/2 ([`crate::http2`]).
+        Http2 => "http/2",
         /// TLS ClientHello / ServerHello / Alert / ApplicationData
         /// ([`crate::tls`]).
         Tls => "tls",
