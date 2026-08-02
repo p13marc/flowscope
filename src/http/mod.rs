@@ -65,20 +65,77 @@
 //! - Pipelined requests on one connection.
 //! - HTTP/2 / HTTP/3: out of scope here (see the `http2` feature).
 //!
-//! # One engine, two front-ends
+//! # Two front-ends, one engine
 //!
-//! Internally the module is a single streaming state machine
-//! (`engine`) that emits a head as soon as the header block parses,
-//! then body spans it never retains, then trailers, then an end
-//! marker. [`HttpParser`] is the passive-telemetry front-end: it
-//! aggregates those spans back into one [`HttpRequest`] /
-//! [`HttpResponse`] per message. Inline proxies use the streaming
-//! front-end, which forwards the events directly so the body is
-//! never buffered.
+//! Internally this module is a single streaming state machine that
+//! emits a head as soon as the header block parses, then body spans
+//! it never retains, then trailers, then an end marker. Two public
+//! shapes sit on top of it — pick by what you are building:
+//!
+//! | | [`HttpParser`] | [`HttpProxyParser`] |
+//! |---|---|---|
+//! | For | passive observation | an inline proxy |
+//! | Output | one [`HttpRequest`] / [`HttpResponse`] per message | [`HttpEvent`]s as they happen |
+//! | Body | buffered, capped by `max_buffer` | never retained |
+//! | Routing key | after the whole message | at the head, before the body |
+//! | Framing violation | dropped quietly, flow survives | typed [`HttpPoison`], connection stops |
+//! | Driven by | flowscope (`SessionParser`) | you (`push` / `next_event`) |
+//!
+//! [`HttpProxySession`] bridges the two worlds: the streaming event
+//! stream as a `SessionParser`, so it can ride the typed `Driver` and
+//! the pcap helpers when flowscope owns the bytes.
 //!
 //! Because framing lives in one place, chunked decoding, body
-//! delimitation, and (issue #163) the RFC 9112 §6.3 smuggling rules
-//! behave identically no matter which front-end you use.
+//! delimitation, method-aware response framing, and the RFC 9112
+//! §6.3 smuggling rules behave identically whichever you use — only
+//! the [`SmugglingPolicy`] differs, and that is deliberate: a proxy
+//! refuses an ambiguous message, an observer keeps observing.
+//!
+//! # Inline proxying
+//!
+//! ```no_run
+//! use bytes::Bytes;
+//! use flowscope::FlowSide;
+//! use flowscope::http::{HttpEvent, HttpProxyParser};
+//!
+//! # fn read_from_client() -> Bytes { Bytes::new() }
+//! # fn forward_upstream(_: &[u8]) {}
+//! # fn close_with_status(_: u16) {}
+//! let mut proxy = HttpProxyParser::new();
+//! let mut pending = read_from_client();
+//!
+//! while !pending.is_empty() {
+//!     // A short count means "drain events first" — that is the
+//!     // backpressure signal, and slicing is a refcount bump.
+//!     let accepted = proxy.push(FlowSide::Initiator, &pending);
+//!     pending = pending.slice(accepted..);
+//!
+//!     while let Some(ev) = proxy.next_event() {
+//!         match ev {
+//!             // Pick a backend before a single body byte is read.
+//!             HttpEvent::RequestHead(head) => {
+//!                 let authority = head.authority();
+//!                 forward_upstream(&head.raw);
+//!             }
+//!             // Relay the wire bytes; nothing is retained here.
+//!             HttpEvent::Body { raw, .. } => forward_upstream(&raw),
+//!             HttpEvent::SwitchProtocols { .. } => break, // splice from here
+//!             _ => {}
+//!         }
+//!     }
+//!
+//!     // Framing is in doubt: stop, do not forward the remainder.
+//!     if let Some(reason) = proxy.poison() {
+//!         eprintln!("refusing connection: {reason}");
+//!         close_with_status(400);
+//!         break;
+//!     }
+//! }
+//! ```
+//!
+//! See `examples/01-l7-logging/http_streaming_proxy.rs` for a
+//! runnable version, including the check that forwarded bytes are
+//! byte-identical to what arrived.
 //!
 //! # Convenience accessors
 //!
@@ -136,7 +193,7 @@ pub use ja4h::{Ja4hParts, ja4h as ja4h_fingerprint, ja4h_parts};
 #[cfg(feature = "pcap")]
 pub use pcap_iter::{exchanges_from_pcap, requests_from_pcap, responses_from_pcap};
 pub use poison::HttpPoison;
-pub use proxy::{HttpEvent, HttpProxyConfig, HttpProxyParser};
+pub use proxy::{HttpEvent, HttpProxyConfig, HttpProxyParser, HttpProxySession};
 pub use session::{HttpMessage, HttpParser};
 pub use types::{
     Authority, BodyFraming, HttpConfig, HttpRequest, HttpResponse, HttpVersion, Normalization,

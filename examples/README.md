@@ -40,6 +40,7 @@ the categories sort logically in `ls`.
 |---|---|---|
 | **`http_log`** | `http,pcap` | One-line summary of every HTTP request + response (per-message). |
 | **`http_exchanges`** | `http,pcap` | One log line per request/response PAIR via `HttpExchangeParser` (plan 107). Access-log-shaped rows with RTT and outcome. |
+| **`http_streaming_proxy`** *(0.23)* | `http` | The inline-proxy loop with `HttpProxyParser` (#161–#163): route on the head before the body, forward `raw` spans verbatim (asserted byte-identical), refuse an ambiguously framed message. No sockets — pure framing. |
 | **`tls_observer`** | `tls,pcap` | SNI / ALPN / cipher list for every TLS ClientHello + ServerHello. |
 | **`quic_initial_observer`** *(0.18)* | `quic,pcap` | SNI / ALPN for every QUIC Initial packet (passive Initial decrypt). |
 | **`encrypted_app_classify`** *(0.22)* | *(none)* | Identify h2/h3 + DoT/DoQ/DoH over an encrypted transport from ALPN / SNI / port via `app_proto::classify` (#138). |
