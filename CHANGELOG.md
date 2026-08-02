@@ -103,6 +103,14 @@ not only a passive observer. Migration recipes accrue in
     size, HPACK table (a hard ceiling `SETTINGS` cannot raise),
     concurrent streams, and unparsed bytes per direction.
   - New fuzz target `fuzz/fuzz_targets/http2.rs`.
+- **gRPC routing surface** (#171), in `flowscope::http2`. `GrpcCall`
+  splits a `:path` into service and method, `is_grpc_content_type`
+  recognises the `application/grpc*` family, and `GrpcStatus` reads
+  the outcome from trailers — including the Trailers-Only case, where
+  the status arrives in the stream's single `HEADERS` block. Worth
+  knowing: a gRPC call that *failed* still carries HTTP `200`, so a
+  proxy logging only the HTTP status records every failure as a
+  success.
 - **`flowscope::classify`** (#165) — decide what protocol a
   connection speaks from its first bytes, without guessing on a short
   read. `classify_first_bytes(peek) -> Classify` returns either
@@ -1523,6 +1531,14 @@ surface.
     size, HPACK table (a hard ceiling `SETTINGS` cannot raise),
     concurrent streams, and unparsed bytes per direction.
   - New fuzz target `fuzz/fuzz_targets/http2.rs`.
+- **gRPC routing surface** (#171), in `flowscope::http2`. `GrpcCall`
+  splits a `:path` into service and method, `is_grpc_content_type`
+  recognises the `application/grpc*` family, and `GrpcStatus` reads
+  the outcome from trailers — including the Trailers-Only case, where
+  the status arrives in the stream's single `HEADERS` block. Worth
+  knowing: a gRPC call that *failed* still carries HTTP `200`, so a
+  proxy logging only the HTTP status records every failure as a
+  success.
 - **`flowscope::classify`** (#165) — decide what protocol a
   connection speaks from its first bytes, without guessing on a short
   read. `classify_first_bytes(peek) -> Classify` returns either
