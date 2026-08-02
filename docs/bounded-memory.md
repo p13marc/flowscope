@@ -83,19 +83,23 @@ on the connection.
 | DNS-over-TCP buffer | *(implicit)* | ~64 KiB | bounded by the 16-bit length prefix |
 | `dns::NameMap` | `max_ips` / `max_claims_per_ip` / `max_pending` | 16 384 / 8 / 4096 | LRU |
 | IP fragment reassembly | `FragmentConfig::max_datagrams` / `max_datagram_bytes` / `timeout` | 4096 / 64 KiB / 30 s | drop oldest datagram / drop / expire |
-| QUIC pending Initials | *(internal)* | 1024 conns, 5 s TTL | evict oldest |
+| QUIC pending Initials | `QuicConfig::max_pending_connections` / `pending_ttl` | 1024 conns / 5 s | evict the entry longest without progress |
+| QUIC CRYPTO per connection | `QuicConfig::max_crypto_bytes` / `max_crypto_frames` | 64 KiB / 64 frames | refuse the frame, count it in `pending_dropped()` |
 
-## TCP reassembly — caps are opt-in
+## TCP reassembly
 
 | Buffer | Knob | Default | On exceed |
 |---|---|---|---|
-| in-order stream | `FlowTrackerConfig::max_reassembler_buffer` | **`None` — unbounded** | with a cap: `SlidingWindow` (default) drops oldest bytes, flow survives; `DropFlow` poisons → `Ended { BufferOverflow }` |
+| in-order stream | `FlowTrackerConfig::max_reassembler_buffer` | 1 MiB per side | `SlidingWindow` (default) drops oldest bytes, flow survives; `DropFlow` poisons → `Ended { BufferOverflow }` |
 | out-of-order segments | `SegmentBufferReassembler::with_max_ooo_buffer` | 256 KiB | evict oldest hole, then drop the arriving segment; 1 s hole deadline |
 | cross-flow pool | `reassembly_memcap` + `MemcapPolicy` | **`None` — off** | per policy: `Ignore` (default) reports only; `DropPacket` refuses the segment; `PassThrough` releases the side and keeps the flow; `DropFlow` ends it |
 
-**Set `max_reassembler_buffer` if you track untrusted traffic.** With
-the default, one flow whose parser never consumes grows one `Vec<u8>`
-per direction without limit.
+`max_reassembler_buffer` defaulted to `None` before 0.23. It is now
+1 MiB per side, so the default configuration is bounded; raise it if
+you reassemble larger messages whole, and check
+`FlowStats::reassembly_bytes_dropped_oversize_initiator` / `_responder`
+if a parser starts seeing gaps. The **cross-flow** pool is still
+opt-in.
 
 ## Flow table
 
@@ -158,21 +162,22 @@ one to use in production.
 
 ## Known gaps
 
-The #169 audit found these still open. They are real, and listed here
-rather than quietly left in the code:
+None outstanding. The #169 audit found five; all are closed, and four
+of them changed behaviour in ways worth knowing about:
 
-| Gap | Impact | Issue |
-|---|---|---|
-| QUIC CRYPTO reassembly has no per-connection byte cap, and its TTL refreshes on every packet | a peer replaying Initials on one DCID with never-completing CRYPTO frames grows one buffer without limit | [#184](https://github.com/p13marc/flowscope/issues/184) |
-| `PortScanDetector.sources` has no capacity or TTL | a spoofed-source SYN flood adds one entry per source, forever | [#187](https://github.com/p13marc/flowscope/issues/187) |
-
-Until they are closed, the mitigations are to drive
-`PortScanDetector::forget` and to treat the QUIC parser as
-trusted-traffic-only.
-
-Two gaps from that audit are now closed and worth knowing about
-because they change behaviour:
-
+- **QUIC reassembly is bounded on every axis** ([#184]). CRYPTO
+  accumulation had no per-connection byte or frame cap, and the TTL
+  was refreshed on *arrival* — so `evict_stale` could never reach a
+  DCID that was being actively fed, which is exactly the traffic it
+  existed to bound. The TTL now advances only when the contiguous
+  reassembled prefix grows, and `QuicConfig` caps bytes, frames, and
+  connections. `QuicUdpParser::pending_dropped()` and `tracked()`
+  make the bounds observable.
+- **`PortScanDetector` is capacity-bounded** ([#187]). Entries were
+  released on a verdict, but a source that stayed `Inconclusive`
+  persisted forever — one per spoofed address. `with_capacity`
+  (default 10 000) evicts the least-recently-touched source, which by
+  the detector's own semantics simply restarts it at λ = 0.
 - **Cleanup no longer keys off `Ended`** ([#185]). Per-flow
   reassemblers and parsers used to be torn down only when the flow's
   `Ended` event was seen — but that event is gated on
@@ -182,12 +187,17 @@ because they change behaviour:
   whatever belongs to a flow that is gone, refunding its memcap
   bytes. Suppressing `Ended` is safe.
 - **`max_reassembler_buffer` now defaults to 1 MiB** ([#188]), with
-  the existing `SlidingWindow` policy. The default configuration is
-  bounded. See
-  [the migration guide](migration-0.22-to-0.23.md#reassembly-is-bounded-by-default)
+  the existing `SlidingWindow` policy. See
+  [the migration guide](migration-0.22-to-0.23.md#5-reassembly-is-bounded-by-default-188)
   if you were relying on unbounded reassembly.
 
+The fifth, [#186], made `MemcapPolicy` behave as each variant
+documents — see the next section.
+
+[#184]: https://github.com/p13marc/flowscope/issues/184
 [#185]: https://github.com/p13marc/flowscope/issues/185
+[#186]: https://github.com/p13marc/flowscope/issues/186
+[#187]: https://github.com/p13marc/flowscope/issues/187
 [#188]: https://github.com/p13marc/flowscope/issues/188
 
 ## Choosing a `MemcapPolicy`

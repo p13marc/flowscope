@@ -63,7 +63,7 @@ mod parser;
 mod pcap_iter;
 mod types;
 
-pub use datagram::{QUIC_PORT, QuicUdpParser};
+pub use datagram::{QUIC_PORT, QuicConfig, QuicUdpParser};
 pub use parser::{ParseError, parse, parser_kind};
 #[cfg(feature = "pcap")]
 pub use pcap_iter::initials_from_pcap;
