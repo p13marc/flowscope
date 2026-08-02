@@ -264,6 +264,144 @@ impl HttpResponse {
     }
 }
 
+/// Request start line + headers, surfaced by the streaming parser at
+/// header-completion time — *before* the body.
+///
+/// This is the routing-time view an inline proxy needs: everything
+/// required to pick a backend (method, target, `Host`, all headers)
+/// plus the [`framing`](Self::framing) describing how the body is
+/// delimited, so the caller can stream the body itself and know where
+/// the next message starts.
+///
+/// Headers keep their original case and their raw bytes: a proxy
+/// forwards fields it does not itself read, so nothing is normalized
+/// away. [`raw`](Self::raw) is the exact on-wire head, which is what
+/// a verbatim-forwarding proxy relays.
+///
+/// Contrast [`HttpRequest`], emitted only once the whole body has
+/// been buffered — the passive-telemetry shape.
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[non_exhaustive]
+pub struct RequestHead {
+    pub method: Bytes,
+    /// Request-target exactly as it appeared: origin-form
+    /// (`/path?q`), absolute-form (`http://host/path`), authority-form
+    /// (`host:port`, for `CONNECT`), or `*`.
+    pub path: Bytes,
+    pub version: HttpVersion,
+    /// Header fields in wire order, original case, raw values.
+    pub headers: Vec<(Bytes, Bytes)>,
+    pub framing: BodyFraming,
+    /// The exact on-wire head: start line through the blank line.
+    pub raw: Bytes,
+}
+
+/// Response status line + headers, surfaced before the body.
+///
+/// Framing is computed using the matching request's method, per RFC
+/// 9112 §6.3 rules 1–2 — a response to `HEAD` is bodyless whatever
+/// its headers claim.
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[non_exhaustive]
+pub struct ResponseHead {
+    pub status: u16,
+    pub reason: Bytes,
+    pub version: HttpVersion,
+    pub headers: Vec<(Bytes, Bytes)>,
+    pub framing: BodyFraming,
+    /// `true` for a `1xx` interim response. Interim responses precede
+    /// the final one and never carry a body; a proxy forwards them
+    /// and keeps waiting.
+    pub interim: bool,
+    /// The exact on-wire head: status line through the blank line.
+    pub raw: Bytes,
+}
+
+impl RequestHead {
+    /// Method as a UTF-8 `&str` (e.g. `"GET"`). `None` if non-UTF-8.
+    pub fn method_str(&self) -> Option<&str> {
+        std::str::from_utf8(&self.method).ok()
+    }
+
+    /// Request-target as a UTF-8 `&str`.
+    pub fn path_str(&self) -> Option<&str> {
+        std::str::from_utf8(&self.path).ok()
+    }
+
+    /// `Host:` header value as UTF-8 — the modal routing key.
+    ///
+    /// This is the raw field. For a routing decision that also honours
+    /// an absolute-form request-target, prefer the authority accessor
+    /// added by issue #163.
+    pub fn host(&self) -> Option<&str> {
+        self.header_str("host")
+    }
+
+    /// `Content-Length:` header value parsed as `u64`.
+    pub fn content_length(&self) -> Option<u64> {
+        self.header_str("content-length")
+            .and_then(|v| v.trim().parse().ok())
+    }
+
+    /// First match (case-insensitive) for an arbitrary header.
+    pub fn header(&self, name: &str) -> Option<&[u8]> {
+        header_lookup(&self.headers, name).next()
+    }
+
+    /// All matches (case-insensitive) for an arbitrary header.
+    pub fn headers_all<'a>(&'a self, name: &'a str) -> impl Iterator<Item = &'a [u8]> + 'a {
+        header_lookup(&self.headers, name)
+    }
+
+    fn header_str(&self, name: &str) -> Option<&str> {
+        self.header(name).and_then(|v| std::str::from_utf8(v).ok())
+    }
+}
+
+impl ResponseHead {
+    /// Reason phrase as a UTF-8 `&str`.
+    pub fn reason_str(&self) -> Option<&str> {
+        std::str::from_utf8(&self.reason).ok()
+    }
+
+    /// Status class — `status / 100`, or `None` outside `[100, 599]`.
+    pub fn status_class(&self) -> Option<u8> {
+        let cls = self.status / 100;
+        if (1..=5).contains(&cls) {
+            Some(cls as u8)
+        } else {
+            None
+        }
+    }
+
+    /// `2xx` predicate.
+    pub fn is_success(&self) -> bool {
+        self.status_class() == Some(2)
+    }
+
+    /// `Content-Length:` header value parsed as `u64`.
+    pub fn content_length(&self) -> Option<u64> {
+        self.header_str("content-length")
+            .and_then(|v| v.trim().parse().ok())
+    }
+
+    /// First match (case-insensitive) for an arbitrary header.
+    pub fn header(&self, name: &str) -> Option<&[u8]> {
+        header_lookup(&self.headers, name).next()
+    }
+
+    /// All matches (case-insensitive) for an arbitrary header.
+    pub fn headers_all<'a>(&'a self, name: &'a str) -> impl Iterator<Item = &'a [u8]> + 'a {
+        header_lookup(&self.headers, name)
+    }
+
+    fn header_str(&self, name: &str) -> Option<&str> {
+        self.header(name).and_then(|v| std::str::from_utf8(v).ok())
+    }
+}
+
 /// Case-insensitive header iterator. Pulled out so request and
 /// response share one implementation. RFC 7230 §3.2 mandates
 /// case-insensitive matching on header names.

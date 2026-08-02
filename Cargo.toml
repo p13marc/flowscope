@@ -110,6 +110,8 @@ chrono = { version = "0.4", default-features = false, features = ["alloc"], opti
 
 [dev-dependencies]
 proptest = "1"
+# Tests drive the streaming HTTP parser, whose `push` takes `Bytes`.
+bytes = "1"
 pcap-file = "2"
 metrics-util = "0.20"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }

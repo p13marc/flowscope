@@ -125,6 +125,8 @@ mod exchange;
 pub mod ja4h;
 #[cfg(feature = "pcap")]
 mod pcap_iter;
+mod poison;
+mod proxy;
 mod session;
 mod types;
 
@@ -133,8 +135,12 @@ pub use exchange::{HttpExchange, HttpExchangeParser, HttpOutcome};
 pub use ja4h::{Ja4hParts, ja4h as ja4h_fingerprint, ja4h_parts};
 #[cfg(feature = "pcap")]
 pub use pcap_iter::{exchanges_from_pcap, requests_from_pcap, responses_from_pcap};
+pub use poison::HttpPoison;
+pub use proxy::{HttpEvent, HttpProxyConfig, HttpProxyParser, SwitchKind};
 pub use session::{HttpMessage, HttpParser};
-pub use types::{BodyFraming, HttpConfig, HttpRequest, HttpResponse, HttpVersion};
+pub use types::{
+    BodyFraming, HttpConfig, HttpRequest, HttpResponse, HttpVersion, RequestHead, ResponseHead,
+};
 
 /// Slug returned by [`HttpParser`]'s `parser_kind()`. Use at
 /// match sites in place of a string literal so typos fail to

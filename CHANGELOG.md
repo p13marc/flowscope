@@ -8,6 +8,25 @@ flowscope becomes usable as the shared L7 core of an inline proxy,
 not only a passive observer. Migration recipes accrue in
 [`docs/migration-0.22-to-0.23.md`](docs/migration-0.22-to-0.23.md).
 
+### Added
+
+- **`http::HttpProxyParser` — a sans-IO streaming HTTP/1.1 parser**
+  (#161). Feed bytes per direction with `push(dir, &Bytes) -> usize`,
+  drain `HttpEvent`s: `RequestHead` / `ResponseHead` before the body,
+  `Body` spans the parser never retains, `Trailers`, `End`. No
+  sockets, no async, no clock — the caller owns I/O and backpressure.
+  - Every event carries the exact wire bytes it consumed, so
+    concatenating `raw` reproduces the message byte for byte: a
+    forwarding proxy relays `raw` while flowscope tracks boundaries.
+  - `push` returning a short count is the backpressure signal
+    (`HttpProxyConfig::max_buffered_bytes`); re-offer the remainder
+    with `data.slice(accepted..)`, which is a refcount bump.
+  - New public types: `HttpEvent`, `SwitchKind`, `HttpProxyConfig`,
+    `RequestHead`, `ResponseHead`, `HttpPoison`.
+- **`http::HttpPoison`** — typed reasons the streaming parser stops,
+  with a stable `as_str()` slug, so a proxy can map a framing failure
+  to `400` versus `502` without parsing message strings.
+
 ### Changed (breaking)
 
 - **One streaming HTTP engine under both front-ends** (#160). The

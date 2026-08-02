@@ -189,6 +189,95 @@ mod http_props {
             prop_assert_eq!(request_bodies(&m1), request_bodies(&m2));
         }
 
+        /// The streaming parser's `raw` spans must reproduce the wire
+        /// bytes exactly, whatever the feed boundaries. This is the
+        /// contract a verbatim-forwarding proxy relies on.
+        #[test]
+        fn proxy_raw_spans_reproduce_the_wire(
+            body_len in 0usize..200,
+            split_at in 1usize..300,
+        ) {
+            use bytes::Bytes;
+            use flowscope::FlowSide;
+            use flowscope::http::{HttpEvent, HttpProxyParser};
+
+            fn raw_of(evs: &[HttpEvent]) -> Vec<u8> {
+                let mut v = Vec::new();
+                for ev in evs {
+                    match ev {
+                        HttpEvent::RequestHead(h) => v.extend_from_slice(&h.raw),
+                        HttpEvent::ResponseHead(h) => v.extend_from_slice(&h.raw),
+                        HttpEvent::Body { raw, .. } => v.extend_from_slice(raw),
+                        HttpEvent::Trailers { raw, .. } => v.extend_from_slice(raw),
+                        _ => {}
+                    }
+                }
+                v
+            }
+
+            let body = vec![b'x'; body_len];
+            let bytes = build_request("POST", "/test", &body);
+            let split = split_at.min(bytes.len().saturating_sub(1)).max(1);
+
+            let mut p = HttpProxyParser::new();
+            let mut evs = Vec::new();
+            for part in [&bytes[..split], &bytes[split..]] {
+                let data = Bytes::copy_from_slice(part);
+                let n = p.push(FlowSide::Initiator, &data);
+                prop_assert_eq!(n, data.len());
+                while let Some(ev) = p.next_event() {
+                    evs.push(ev);
+                }
+            }
+            prop_assert_eq!(raw_of(&evs), bytes);
+            prop_assert!(!p.is_poisoned());
+        }
+
+        /// However the bytes are split, the streaming parser must
+        /// never hold more than its cap — a body is never accumulated.
+        #[test]
+        fn proxy_never_buffers_a_body(body_len in 0usize..4000) {
+            use bytes::Bytes;
+            use flowscope::FlowSide;
+            use flowscope::http::{HttpProxyConfig, HttpProxyParser};
+
+            let body = vec![b'y'; body_len];
+            let bytes = build_request("POST", "/big", &body);
+            let cap = HttpProxyConfig::default().max_buffered_bytes;
+
+            let mut p = HttpProxyParser::new();
+            for b in &bytes {
+                let one = Bytes::copy_from_slice(std::slice::from_ref(b));
+                p.push(FlowSide::Initiator, &one);
+                while p.next_event().is_some() {}
+                prop_assert!(p.buffered(FlowSide::Initiator) <= cap);
+            }
+            prop_assert_eq!(p.buffered(FlowSide::Initiator), 0);
+        }
+
+        /// Random bytes must not panic the streaming parser, and a
+        /// poisoned connection must stay poisoned and accept nothing.
+        #[test]
+        fn proxy_no_panic_on_random_bytes(
+            bytes in prop::collection::vec(any::<u8>(), 0..512),
+        ) {
+            use bytes::Bytes;
+            use flowscope::FlowSide;
+            use flowscope::http::HttpProxyParser;
+
+            let mut p = HttpProxyParser::new();
+            let data = Bytes::from(bytes);
+            p.push(FlowSide::Initiator, &data);
+            p.push(FlowSide::Responder, &data);
+            while p.next_event().is_some() {}
+            p.fin(FlowSide::Initiator);
+            p.fin(FlowSide::Responder);
+            if p.is_poisoned() {
+                prop_assert!(p.poison().is_some());
+                prop_assert_eq!(p.push(FlowSide::Initiator, &data), 0);
+            }
+        }
+
         /// A FIN at any point must not panic, and must never be
         /// reported as a poisoned parser — a clean close on an idle
         /// keep-alive connection is normal.
