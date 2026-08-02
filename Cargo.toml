@@ -135,7 +135,8 @@ test-helpers = ["extractors"]
 # Protocol parsers. Each is a self-contained module gated by its feature.
 http = ["reassembler", "session", "dep:httparse", "dep:bytes"]
 # HTTP/2 frame layer + HPACK + per-stream routing (issue #170).
-# Pure compute; no new dependencies beyond `bytes`.
+# Pure compute; no new dependencies beyond `bytes`. Does NOT depend on
+# `http` — `--features http2` alone is a valid build.
 http2 = ["session", "dep:bytes"]
 tls = ["reassembler", "session", "dep:tls-parser", "dep:bytes"]
 # TLS fingerprint family (plan 131) — JA3 + JA4 TLS *client* fingerprints.
@@ -382,7 +383,7 @@ fingerprint = ["dep:arrayvec"]
 # guards in `src/feature_umbrellas.rs`.
 
 # L7 application parsers shipped since 0.1 (the "core four").
-parsers-core = ["http", "tls", "dns", "icmp"]
+parsers-core = ["http", "http2", "tls", "dns", "icmp"]
 # L2 / L3 asset-discovery parsers (link- and network-layer).
 parsers-l2l3 = ["arp", "ndp", "lldp", "cdp", "dhcp"]
 # Tier-2 protocol completion (0.18) — everything else license-clean.
@@ -508,6 +509,26 @@ ignored = ["md-5"]
 name = "http_streaming_proxy"
 path = "examples/01-l7-logging/http_streaming_proxy.rs"
 required-features = ["http"]
+
+[[example]]
+name = "http2_streams"
+path = "examples/01-l7-logging/http2_streams.rs"
+required-features = ["http2"]
+
+[[example]]
+name = "grpc_routing"
+path = "examples/01-l7-logging/grpc_routing.rs"
+required-features = ["http2"]
+
+[[example]]
+name = "first_byte_router"
+path = "examples/01-l7-logging/first_byte_router.rs"
+required-features = ["http", "http2"]
+
+[[example]]
+name = "http_access_log_eve"
+path = "examples/05-export/http_access_log_eve.rs"
+required-features = ["http", "emit-eve"]
 
 [[example]]
 name = "from_stdin"

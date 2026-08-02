@@ -14,7 +14,7 @@ consumer-driven sink trait.
 Behind the `file-hash` Cargo feature. New in 0.12.0 (plan 146).
 
 ```toml
-flowscope = { version = "0.22", features = ["file-hash", "tls-fingerprints"] }
+flowscope = { version = "0.23", features = ["file-hash", "tls-fingerprints"] }
 ```
 
 With `tls-fingerprints` enabled (which pulls `sha2` + `md-5`),

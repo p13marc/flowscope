@@ -17,7 +17,7 @@
 //! | Metric | Type | Labels |
 //! |--------|------|--------|
 //! | `flowscope_flows_created_total` | counter | `l4` (`tcp`/`udp`/`other`) |
-//! | `flowscope_flows_ended_total` | counter | `reason` (`fin`/`rst`/`idle`/`evicted`/`buffer_overflow`) |
+//! | `flowscope_flows_ended_total` | counter | `reason` (`fin`/`rst`/`idle`/`evicted`/`buffer_overflow`/`parse_error`/`parser_done`/`force_closed`) |
 //! | `flowscope_flows_active` | gauge | — |
 //! | `flowscope_packets_unmatched_total` | counter | — |
 //! | `flowscope_bytes_total` | counter | `side` (`initiator`/`responder`) |
@@ -27,7 +27,11 @@
 //! | `flowscope_anomalies_total` | counter | `kind` (`buffer_overflow`/`ooo_segment`/`flow_table_eviction`/`parse_error`/`retransmit`/`reassembler_high_watermark`) |
 //! | `flowscope_reassembly_dropped_ooo_total` | counter | `side` |
 //! | `flowscope_reassembly_bytes_dropped_oversize_total` | counter | `side` |
+//! | `flowscope_reassembler_high_watermark_bytes` | histogram | `side` |
 //! | `flowscope_retransmits_total` | counter | `side` |
+//! | `flowscope_flow_ticks_total` | counter | — |
+//! | `flowscope_http_messages_total` | counter | `direction` (`request`/`response`) |
+//! | `flowscope_http_poisoned_total` | counter | `reason` ([`HttpPoison`](crate::http::HttpPoison) slug) |
 //!
 //! # Cardinality
 //!

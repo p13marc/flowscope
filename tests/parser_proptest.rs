@@ -278,6 +278,48 @@ mod http_props {
             }
         }
 
+        /// The two front-ends sit on one engine, so they must agree
+        /// about what the body was. This is the property that keeps
+        /// them from drifting as the engine changes: the aggregating
+        /// parser's `body` must equal the streaming parser's decoded
+        /// `Body` spans concatenated.
+        #[test]
+        fn both_front_ends_decode_the_same_body(
+            chunk_sizes in prop::collection::vec(1usize..40, 1..5),
+            split_at in 1usize..300,
+        ) {
+            use bytes::Bytes;
+            use flowscope::FlowSide;
+            use flowscope::http::{HttpEvent, HttpProxyParser};
+
+            let chunks: Vec<Vec<u8>> = chunk_sizes.iter().map(|n| vec![b'q'; *n]).collect();
+            let refs: Vec<&[u8]> = chunks.iter().map(|c| c.as_slice()).collect();
+            let bytes = build_chunked_request("/both", &refs);
+            let split = split_at.min(bytes.len().saturating_sub(1)).max(1);
+
+            // Aggregating front-end.
+            let mut agg = HttpParser::default();
+            let mut msgs = Vec::new();
+            agg.feed_initiator(&bytes[..split], Timestamp::default(), &mut msgs);
+            agg.feed_initiator(&bytes[split..], Timestamp::default(), &mut msgs);
+            let aggregated = request_bodies(&msgs);
+
+            // Streaming front-end over the same bytes.
+            let mut proxy = HttpProxyParser::new();
+            let mut streamed = Vec::new();
+            for part in [&bytes[..split], &bytes[split..]] {
+                let data = Bytes::copy_from_slice(part);
+                proxy.push(FlowSide::Initiator, &data);
+                while let Some(ev) = proxy.next_event() {
+                    if let HttpEvent::Body { data, .. } = ev {
+                        streamed.extend_from_slice(&data);
+                    }
+                }
+            }
+
+            prop_assert_eq!(aggregated, vec![streamed]);
+        }
+
         /// A FIN at any point must not panic, and must never be
         /// reported as a poisoned parser — a clean close on an idle
         /// keep-alive connection is normal.

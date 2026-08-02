@@ -64,10 +64,14 @@ pub(crate) struct Frame {
     pub kind: FrameKind,
     pub flags: u8,
     pub stream_id: u32,
-    /// Payload with padding and priority prefix already removed for
-    /// the types that carry them, so callers see only field-block or
-    /// application data.
+    /// Payload with padding, priority prefix, and the `PUSH_PROMISE`
+    /// promised-stream-id already removed, so callers see only
+    /// field-block or application data.
     pub payload: Bytes,
+    /// The stream a `PUSH_PROMISE` reserves (RFC 9113 §6.6). The
+    /// field block describes *that* stream, while any
+    /// `CONTINUATION` still arrives on the sending stream.
+    pub promised_stream_id: Option<u32>,
 }
 
 impl Frame {
@@ -137,12 +141,32 @@ pub(crate) fn parse_frame(
         payload = payload.slice(5..);
     }
 
+    // Strip the promised stream identifier on PUSH_PROMISE (§6.6).
+    // These four octets precede the field block; feeding them to
+    // HPACK would corrupt the dynamic table for the rest of the
+    // connection.
+    let mut promised_stream_id = None;
+    if kind == FrameKind::PushPromise {
+        if payload.len() < 4 {
+            return Err(Http2Error::MalformedFrame);
+        }
+        promised_stream_id = Some(
+            (u32::from(payload[0]) << 24
+                | u32::from(payload[1]) << 16
+                | u32::from(payload[2]) << 8
+                | u32::from(payload[3]))
+                & 0x7fff_ffff,
+        );
+        payload = payload.slice(4..);
+    }
+
     Ok(Some((
         Frame {
             kind,
             flags,
             stream_id,
             payload,
+            promised_stream_id,
         },
         total,
     )))
@@ -266,6 +290,28 @@ mod tests {
         let buf = frame_bytes(0xfa, 0, 1, b"ext");
         let (f, _) = parse_frame(&buf, 16_384).unwrap().unwrap();
         assert_eq!(f.kind, FrameKind::Unknown(0xfa));
+    }
+
+    #[test]
+    fn the_promised_stream_id_is_stripped_from_push_promise() {
+        // §6.6: the four promised-id octets precede the field block.
+        // Leaving them in feeds them to HPACK, which corrupts the
+        // dynamic table for the rest of the connection.
+        let mut payload = 2u32.to_be_bytes().to_vec();
+        payload.extend_from_slice(b"BLOCK");
+        let buf = frame_bytes(0x5, flags::END_HEADERS, 1, &payload);
+        let (f, _) = parse_frame(&buf, 16_384).unwrap().unwrap();
+        assert_eq!(f.promised_stream_id, Some(2));
+        assert_eq!(f.payload.as_ref(), b"BLOCK");
+    }
+
+    #[test]
+    fn a_push_promise_too_short_for_its_promised_id_is_refused() {
+        let buf = frame_bytes(0x5, flags::END_HEADERS, 1, &[0, 0]);
+        assert!(matches!(
+            parse_frame(&buf, 16_384),
+            Err(Http2Error::MalformedFrame)
+        ));
     }
 
     #[test]

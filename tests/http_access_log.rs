@@ -163,6 +163,37 @@ fn access_logging_holds_no_body_bytes() {
     assert_eq!(out[0].request_body_bytes, 1_048_576, "counted, not kept");
 }
 
+/// Exact counter lookup — a substring check on the rendered snapshot
+/// would pass even if the labels were inverted.
+#[cfg(feature = "metrics")]
+fn counter_value(
+    rows: &[(
+        metrics_util::CompositeKey,
+        Option<metrics::Unit>,
+        Option<metrics::SharedString>,
+        metrics_util::debugging::DebugValue,
+    )],
+    name: &str,
+    label: Option<(&str, &str)>,
+) -> u64 {
+    use metrics_util::MetricKind;
+    use metrics_util::debugging::DebugValue;
+    for (k, _unit, _desc, v) in rows {
+        if k.kind() != MetricKind::Counter || k.key().name() != name {
+            continue;
+        }
+        if let Some((lk, lv)) = label
+            && !k.key().labels().any(|l| l.key() == lk && l.value() == lv)
+        {
+            continue;
+        }
+        if let DebugValue::Counter(n) = v {
+            return *n;
+        }
+    }
+    0
+}
+
 #[cfg(feature = "metrics")]
 #[test]
 fn streaming_path_moves_the_flowscope_counters() {
@@ -193,17 +224,48 @@ fn streaming_path_moves_the_flowscope_counters() {
         while bad.next_event().is_some() {}
     });
 
-    let rendered = format!("{:?}", snapshotter.snapshot().into_vec());
-    assert!(
-        rendered.contains("flowscope_http_messages_total"),
-        "framed messages must be counted: {rendered}"
+    let rows = snapshotter.snapshot().into_vec();
+
+    // One request head and one response head were framed. Asserting
+    // the label as well as the count is the point: a substring check
+    // would pass with the directions swapped.
+    assert_eq!(
+        counter_value(
+            &rows,
+            flowscope::obs::METRIC_HTTP_MESSAGES,
+            Some(("direction", "request"))
+        ),
+        1,
+        "one request head framed"
     );
-    assert!(
-        rendered.contains("flowscope_http_poisoned_total"),
-        "refusals must be counted: {rendered}"
+    assert_eq!(
+        counter_value(
+            &rows,
+            flowscope::obs::METRIC_HTTP_MESSAGES,
+            Some(("direction", "response"))
+        ),
+        1,
+        "one response head framed"
     );
-    assert!(
-        rendered.contains("content-length-with-transfer-encoding"),
-        "the refusal reason must be a metric label: {rendered}"
+
+    // The refusal is counted under the specific violation, so an
+    // operator can tell CL.TE from a header overflow.
+    assert_eq!(
+        counter_value(
+            &rows,
+            flowscope::obs::METRIC_HTTP_POISONED,
+            Some(("reason", "content-length-with-transfer-encoding"))
+        ),
+        1,
+        "the refusal reason must be the metric label"
+    );
+    assert_eq!(
+        counter_value(
+            &rows,
+            flowscope::obs::METRIC_HTTP_POISONED,
+            Some(("reason", "head-overflow"))
+        ),
+        0,
+        "an unrelated reason must not be attributed"
     );
 }

@@ -359,9 +359,14 @@ impl HttpProxyParser {
 /// because the trait hands out `&[u8]`.
 ///
 /// Unlike the passive [`HttpParser`](super::HttpParser), this reports
-/// a framing failure as a poisoned parser, so the driver ends the
-/// flow instead of continuing to feed a parser that has lost track of
-/// message boundaries.
+/// a framing failure as a poisoned parser. The driver responds by
+/// dropping the parser and emitting
+/// [`Event::ParserClosed`](crate::driver::Event::ParserClosed) with
+/// [`EndReason::ParseError`](crate::EndReason::ParseError), rather
+/// than continuing to feed a parser that has lost track of where
+/// messages end. The TCP flow itself keeps going — closing the
+/// connection is the caller's decision, since the caller owns the
+/// socket.
 #[derive(Debug, Clone)]
 pub struct HttpProxySession {
     inner: HttpProxyParser,

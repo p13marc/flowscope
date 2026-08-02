@@ -111,6 +111,22 @@ flow-lifecycle `Event<K>` stream. See
 flowscope ships 30+ feature-gated parsers and analytics modules.
 Highlights:
 
+- **Sit inline, not just on a tap** *(0.23)*. A sans-IO streaming
+  HTTP/1.1 parser (`http::HttpProxyParser`): route on the request
+  head before a body byte arrives, forward the exact wire bytes
+  while flowscope tracks message boundaries, and refuse an
+  ambiguously framed message rather than pass a
+  [request-smuggling](docs/recipes.md#inline-proxying-routing-before-the-body)
+  desync through. No sockets, no async, no clock — you own the I/O
+  and the backpressure. Plus `classify::classify_first_bytes` to
+  decide what a connection is speaking before you route it.
+- **HTTP/2 and gRPC** *(0.23)*. Frame layer, a complete RFC 7541
+  HPACK decoder, `HEADERS` + `CONTINUATION` reassembly, and
+  per-stream events keyed by stream ID (`http2`). gRPC calls
+  dispatch by service/method, with the outcome read from trailers —
+  including Trailers-Only, where a *failed* call still carries
+  HTTP 200.
+
 - **Web & encrypted traffic.** TLS handshake + ECH +
   [JA3 / JA4](https://github.com/FoxIO-LLC/ja4) client
   fingerprints. **QUIC Initial** passive decrypt → ClientHello
@@ -216,14 +232,15 @@ AF_XDP) which consumes flowscope's traits.
 
 ```toml
 [dependencies]
-flowscope = { version = "0.22", features = ["full"] }
+flowscope = { version = "0.23", features = ["full"] }
 ```
 
 MSRV is Rust 1.97. The `full` feature pulls in everything; for production
 builds, name the parsers you actually use to minimise compile time and binary
 size. Coarse umbrellas sit between "one parser" and `full`: `l7` (all
-license-clean wire parsers), the `parsers-core` / `parsers-l2l3` /
-`parsers-tier2` tiers, and the capability bundles `nsm`, `ml`, and `export`.
+license-clean wire parsers, including `http2`), the `parsers-core` /
+`parsers-l2l3` / `parsers-tier2` tiers, and the capability bundles `nsm`,
+`ml`, and `export`.
 Per-feature dependency tree is documented inline in
 [`Cargo.toml`](Cargo.toml).
 

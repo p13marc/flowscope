@@ -182,6 +182,20 @@ impl Default for Http2Config {
     }
 }
 
+/// A field block spanning `HEADERS`/`PUSH_PROMISE` + `CONTINUATION`.
+#[derive(Debug, Clone)]
+struct PartialBlock {
+    /// The stream `CONTINUATION` frames must arrive on.
+    continuation_stream: u32,
+    /// The stream the assembled block *describes*. Differs from
+    /// `continuation_stream` for `PUSH_PROMISE`, whose block
+    /// describes the promised stream while its continuations arrive
+    /// on the sending one (RFC 9113 §6.6).
+    describes_stream: u32,
+    bytes: BytesMut,
+    end_stream: bool,
+}
+
 /// What a stream has seen so far, so trailers can be told from a head.
 ///
 /// Tracked **per direction**: a stream carries a request head from
@@ -210,9 +224,9 @@ impl StreamState {
 struct DirState {
     buf: BytesMut,
     hpack: HpackDecoder,
-    /// Stream whose field block is open, and the bytes so far.
-    /// `Some` means no other frame may interleave on that stream.
-    partial: Option<(u32, BytesMut, bool)>,
+    /// The field block currently being assembled, if any. `Some`
+    /// means no other frame may interleave on `continuation_stream`.
+    partial: Option<PartialBlock>,
     /// Effective `SETTINGS_MAX_FRAME_SIZE` for what this side sends.
     max_frame_size: u32,
     /// Set once the preface has been consumed (request side only).
@@ -382,7 +396,11 @@ impl Http2Parser {
         // While a field block is open, only CONTINUATION on the same
         // stream may follow (§6.10). Anything else means the two
         // endpoints no longer agree on where the block ends.
-        if let Some(open_id) = self.dir(dir).partial.as_ref().map(|(id, _, _)| *id)
+        if let Some(open_id) = self
+            .dir(dir)
+            .partial
+            .as_ref()
+            .map(|p| p.continuation_stream)
             && (f.kind != FrameKind::Continuation || f.stream_id != open_id)
         {
             return Err(Http2Error::InterleavedContinuation);
@@ -475,13 +493,22 @@ impl Http2Parser {
         if f.payload.len() > self.config.max_header_block_bytes {
             return Err(Http2Error::HeaderListTooLong);
         }
-        let end_stream = f.has(flags::END_STREAM);
+        // A PUSH_PROMISE's block describes the stream it reserves,
+        // not the one it arrived on.
+        let describes_stream = f.promised_stream_id.unwrap_or(f.stream_id);
+        // A promise does not end the stream it arrives on.
+        let end_stream = f.promised_stream_id.is_none() && f.has(flags::END_STREAM);
         if f.has(flags::END_HEADERS) {
-            self.complete_block(dir, f.stream_id, &f.payload.clone(), end_stream)
+            self.complete_block(dir, describes_stream, &f.payload.clone(), end_stream)
         } else {
-            let mut acc = BytesMut::with_capacity(f.payload.len());
-            acc.extend_from_slice(&f.payload);
-            self.dir_mut(dir).partial = Some((f.stream_id, acc, end_stream));
+            let mut bytes = BytesMut::with_capacity(f.payload.len());
+            bytes.extend_from_slice(&f.payload);
+            self.dir_mut(dir).partial = Some(PartialBlock {
+                continuation_stream: f.stream_id,
+                describes_stream,
+                bytes,
+                end_stream,
+            });
             Ok(())
         }
     }
@@ -490,20 +517,18 @@ impl Http2Parser {
         let cap = self.config.max_header_block_bytes;
         let (stream_id, end_stream, block) = {
             let d = self.dir_mut(dir);
-            let Some((id, acc, end)) = d.partial.as_mut() else {
+            let Some(partial) = d.partial.as_mut() else {
                 return Err(Http2Error::UnexpectedContinuation);
             };
-            if acc.len() + f.payload.len() > cap {
+            if partial.bytes.len() + f.payload.len() > cap {
                 return Err(Http2Error::HeaderListTooLong);
             }
-            acc.extend_from_slice(&f.payload);
+            partial.bytes.extend_from_slice(&f.payload);
             if !f.has(flags::END_HEADERS) {
                 return Ok(());
             }
-            let id = *id;
-            let end = *end;
-            let block = d.partial.take().map(|(_, acc, _)| acc).unwrap_or_default();
-            (id, end, block)
+            let done = d.partial.take().expect("just checked");
+            (done.describes_stream, done.end_stream, done.bytes)
         };
         self.complete_block(dir, stream_id, &block.freeze(), end_stream)
     }
@@ -754,6 +779,115 @@ mod tests {
         };
         assert_eq!(for_stream(1), b"one");
         assert_eq!(for_stream(3), b"three");
+    }
+
+    #[test]
+    fn a_push_promise_decodes_and_is_keyed_to_the_promised_stream() {
+        // Regression: the four promised-id octets precede the field
+        // block. Feeding them to HPACK killed the connection and
+        // would have corrupted the dynamic table for every later
+        // block — so a server that pushes broke everything after it.
+        let mut p = started();
+        let _ = feed(
+            &mut p,
+            FlowSide::Initiator,
+            frame(0x1, flags::END_HEADERS, 1, &[0x82]),
+        );
+
+        let mut payload = 2u32.to_be_bytes().to_vec();
+        payload.push(0x84); // :path /
+        payload.extend(literal(":authority", "push.example"));
+        let evs = feed(
+            &mut p,
+            FlowSide::Responder,
+            frame(0x5, flags::END_HEADERS, 1, &payload),
+        );
+
+        assert!(
+            !p.is_failed(),
+            "a valid PUSH_PROMISE must not fail the connection"
+        );
+        match &evs[0] {
+            Http2Event::Head(h) => {
+                assert_eq!(h.stream_id, 2, "the block describes the promised stream");
+                assert_eq!(h.path(), Some("/"));
+                assert_eq!(h.authority(), Some("push.example"));
+            }
+            other => panic!("expected a head, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_push_promise_does_not_corrupt_later_blocks() {
+        // The real damage from the bug above: HPACK state is shared,
+        // so a mis-decoded promise poisons every block after it.
+        let mut p = started();
+        let mut payload = 2u32.to_be_bytes().to_vec();
+        payload.extend(literal(":authority", "shared.example"));
+        let _ = feed(
+            &mut p,
+            FlowSide::Responder,
+            frame(0x5, flags::END_HEADERS, 1, &payload),
+        );
+        // Index 62 is the entry the promise just inserted.
+        let evs = feed(
+            &mut p,
+            FlowSide::Responder,
+            frame(0x1, flags::END_HEADERS, 3, &[0x88, 0xbe]),
+        );
+        assert!(!p.is_failed());
+        match &evs[0] {
+            Http2Event::Head(h) => assert_eq!(h.authority(), Some("shared.example")),
+            other => panic!("expected a head, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn sequential_streams_beyond_the_concurrency_cap_keep_working() {
+        // A completed stream must free its slot. Otherwise a long
+        // keep-alive connection doing ordinary sequential requests
+        // would hit TooManyStreams and be killed — a false positive
+        // on entirely normal traffic.
+        let mut p = Http2Parser::with_config(Http2Config::default().with_max_concurrent_streams(4));
+        p.push(FlowSide::Initiator, &Bytes::from_static(PREFACE));
+        for i in 0..40u32 {
+            let id = i * 2 + 1;
+            let _ = feed(
+                &mut p,
+                FlowSide::Initiator,
+                frame(0x1, flags::END_HEADERS | flags::END_STREAM, id, &[0x82]),
+            );
+            let _ = feed(
+                &mut p,
+                FlowSide::Responder,
+                frame(0x1, flags::END_HEADERS | flags::END_STREAM, id, &[0x88]),
+            );
+            assert!(
+                !p.is_failed(),
+                "sequential streams must not exhaust the cap"
+            );
+            assert!(p.tracked_streams() <= 4, "tracked {}", p.tracked_streams());
+        }
+    }
+
+    #[test]
+    fn a_reset_stream_frees_its_slot() {
+        let mut p = Http2Parser::with_config(Http2Config::default().with_max_concurrent_streams(4));
+        p.push(FlowSide::Initiator, &Bytes::from_static(PREFACE));
+        for i in 0..40u32 {
+            let id = i * 2 + 1;
+            let _ = feed(
+                &mut p,
+                FlowSide::Initiator,
+                frame(0x1, flags::END_HEADERS, id, &[0x82]),
+            );
+            let _ = feed(
+                &mut p,
+                FlowSide::Initiator,
+                frame(0x3, 0, id, &8u32.to_be_bytes()),
+            );
+            assert!(!p.is_failed(), "cancelled streams must free their slots");
+        }
     }
 
     #[test]
