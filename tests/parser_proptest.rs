@@ -29,6 +29,32 @@ mod http_props {
 
     use super::*;
 
+    /// Same request, chunk-framed instead of Content-Length framed.
+    fn build_chunked_request(path: &str, chunks: &[&[u8]]) -> Vec<u8> {
+        let mut v = Vec::new();
+        v.extend_from_slice(b"POST ");
+        v.extend_from_slice(path.as_bytes());
+        v.extend_from_slice(
+            b" HTTP/1.1\r\nHost: example.com\r\nTransfer-Encoding: chunked\r\n\r\n",
+        );
+        for c in chunks {
+            v.extend_from_slice(format!("{:x}\r\n", c.len()).as_bytes());
+            v.extend_from_slice(c);
+            v.extend_from_slice(b"\r\n");
+        }
+        v.extend_from_slice(b"0\r\n\r\n");
+        v
+    }
+
+    fn request_bodies(msgs: &[HttpMessage]) -> Vec<Vec<u8>> {
+        msgs.iter()
+            .filter_map(|m| match m {
+                HttpMessage::Request(r) => Some(r.body.to_vec()),
+                _ => None,
+            })
+            .collect()
+    }
+
     fn build_request(method: &str, path: &str, body: &[u8]) -> Vec<u8> {
         let mut v = Vec::new();
         v.extend_from_slice(method.as_bytes());
@@ -96,6 +122,87 @@ mod http_props {
             p.feed_responder(&bytes, Timestamp::default(), &mut sink);
             p.rst_initiator();
             p.rst_responder();
+        }
+
+        /// A chunked body decodes to the concatenated chunk payloads,
+        /// whatever the feed boundaries — the shared engine frames it
+        /// identically one-shot or split.
+        #[test]
+        fn chunked_split_invariance(
+            sizes in prop::collection::vec(0usize..40, 1..5),
+            split_at in 1usize..300,
+        ) {
+            let chunks: Vec<Vec<u8>> = sizes.iter().map(|n| vec![b'z'; *n]).collect();
+            // A zero-length chunk terminates the body early, so only
+            // non-empty chunks form the payload sequence.
+            let non_empty: Vec<&[u8]> = chunks
+                .iter()
+                .map(|c| c.as_slice())
+                .take_while(|c| !c.is_empty())
+                .collect();
+            let bytes = build_chunked_request("/c", &non_empty);
+            let expected: Vec<u8> = non_empty.concat();
+            let split = split_at.min(bytes.len().saturating_sub(1)).max(1);
+
+            let mut p1 = HttpParser::default();
+            let mut m1 = Vec::new();
+            p1.feed_initiator(&bytes, Timestamp::default(), &mut m1);
+
+            let mut p2 = HttpParser::default();
+            let mut m2 = Vec::new();
+            p2.feed_initiator(&bytes[..split], Timestamp::default(), &mut m2);
+            p2.feed_initiator(&bytes[split..], Timestamp::default(), &mut m2);
+
+            prop_assert_eq!(request_bodies(&m1), vec![expected.clone()]);
+            prop_assert_eq!(request_bodies(&m2), vec![expected]);
+        }
+
+        /// Pipelined chunk-framed requests: every boundary is found,
+        /// so the message count matches no matter how many there are.
+        #[test]
+        fn pipelined_chunked_request_count_matches(n in 1usize..6) {
+            let mut bytes = Vec::new();
+            for i in 0..n {
+                bytes.extend_from_slice(&build_chunked_request(&format!("/p{i}"), &[b"abc"]));
+            }
+            let mut p = HttpParser::default();
+            let mut msgs = Vec::new();
+            p.feed_initiator(&bytes, Timestamp::default(), &mut msgs);
+            prop_assert_eq!(count_requests(&msgs), n);
+        }
+
+        /// Feeding one byte at a time must agree with a single feed.
+        #[test]
+        fn byte_at_a_time_matches_one_shot(body_len in 0usize..120) {
+            let body = vec![b'x'; body_len];
+            let bytes = build_request("POST", "/drip", &body);
+
+            let mut whole = HttpParser::default();
+            let mut m1 = Vec::new();
+            whole.feed_initiator(&bytes, Timestamp::default(), &mut m1);
+
+            let mut drip = HttpParser::default();
+            let mut m2 = Vec::new();
+            for b in &bytes {
+                drip.feed_initiator(std::slice::from_ref(b), Timestamp::default(), &mut m2);
+            }
+            prop_assert_eq!(request_bodies(&m1), request_bodies(&m2));
+        }
+
+        /// A FIN at any point must not panic, and must never be
+        /// reported as a poisoned parser — a clean close on an idle
+        /// keep-alive connection is normal.
+        #[test]
+        fn fin_after_random_bytes_never_poisons(
+            bytes in prop::collection::vec(any::<u8>(), 0..512),
+        ) {
+            let mut p = HttpParser::default();
+            let mut sink = Vec::new();
+            p.feed_initiator(&bytes, Timestamp::default(), &mut sink);
+            sink.clear();
+            p.fin_initiator(&mut sink);
+            p.fin_responder(&mut sink);
+            prop_assert!(!p.is_poisoned());
         }
     }
 }

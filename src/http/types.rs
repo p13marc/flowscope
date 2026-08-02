@@ -45,6 +45,33 @@ pub enum HttpVersion {
     Http1_1,
 }
 
+/// How a message body is delimited on the wire — decided from the
+/// headers at header-completion time, before any body byte is read.
+///
+/// The parser needs this to know where a message ends and the next
+/// one begins; an inline proxy needs it to stream the body itself.
+/// For responses it is computed using the matching request's method,
+/// per RFC 9112 §6.3 rules 1–2.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
+#[non_exhaustive]
+pub enum BodyFraming {
+    /// No body: an explicit `Content-Length: 0`, a request with
+    /// neither `Content-Length` nor `Transfer-Encoding` (§6.3 rule
+    /// 6), or a response that cannot carry one (`HEAD`, `1xx`,
+    /// `204`, `304` — §6.3 rules 1–2).
+    None,
+    /// `Content-Length: n` — exactly `n` body bytes follow.
+    ContentLength(u64),
+    /// `Transfer-Encoding: chunked` — chunk-framed body follows,
+    /// terminated by a zero-size chunk and a trailer section.
+    Chunked,
+    /// Neither length nor chunked framing: the body extends to the
+    /// connection close. Responses only — typical of HTTP/1.0.
+    UntilClose,
+}
+
 // ── Plan 78: convenience header accessors ─────────────────────────
 //
 // Every HTTP monitor against 0.6 ended up writing

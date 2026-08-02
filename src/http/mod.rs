@@ -57,10 +57,28 @@
 //! # Scope
 //!
 //! - HTTP/1.0 and HTTP/1.1.
-//! - Request line + headers + body via Content-Length.
+//! - Request line + headers + body via `Content-Length`, chunked
+//!   `Transfer-Encoding` (decoded, with trailers), or connection
+//!   close.
+//! - Method-aware response framing: `HEAD` / `1xx` / `204` / `304`
+//!   responses carry no body (RFC 9112 §6.3 rules 1–2).
 //! - Pipelined requests on one connection.
-//! - HTTP/2 / HTTP/3: out of scope.
-//! - Chunked Transfer-Encoding: deferred.
+//! - HTTP/2 / HTTP/3: out of scope here (see the `http2` feature).
+//!
+//! # One engine, two front-ends
+//!
+//! Internally the module is a single streaming state machine
+//! (`engine`) that emits a head as soon as the header block parses,
+//! then body spans it never retains, then trailers, then an end
+//! marker. [`HttpParser`] is the passive-telemetry front-end: it
+//! aggregates those spans back into one [`HttpRequest`] /
+//! [`HttpResponse`] per message. Inline proxies use the streaming
+//! front-end, which forwards the events directly so the body is
+//! never buffered.
+//!
+//! Because framing lives in one place, chunked decoding, body
+//! delimitation, and (issue #163) the RFC 9112 §6.3 smuggling rules
+//! behave identically no matter which front-end you use.
 //!
 //! # Convenience accessors
 //!
@@ -98,13 +116,13 @@
 //! | [`header`](HttpResponse::header) | `Option<&[u8]>` | first matching header |
 //! | [`headers_all`](HttpResponse::headers_all) | `impl Iterator<Item = &[u8]>` | every matching header |
 
+mod engine;
 mod exchange;
 // JA4H is FoxIO License 1.1 (patent pending) — opt-in via the
 // `ja4plus` feature alongside JA4S. See LICENSE-FoxIO-1.1 +
 // NOTICE.
 #[cfg(feature = "ja4plus")]
 pub mod ja4h;
-mod parser;
 #[cfg(feature = "pcap")]
 mod pcap_iter;
 mod session;
@@ -116,7 +134,7 @@ pub use ja4h::{Ja4hParts, ja4h as ja4h_fingerprint, ja4h_parts};
 #[cfg(feature = "pcap")]
 pub use pcap_iter::{exchanges_from_pcap, requests_from_pcap, responses_from_pcap};
 pub use session::{HttpMessage, HttpParser};
-pub use types::{HttpConfig, HttpRequest, HttpResponse, HttpVersion};
+pub use types::{BodyFraming, HttpConfig, HttpRequest, HttpResponse, HttpVersion};
 
 /// Slug returned by [`HttpParser`]'s `parser_kind()`. Use at
 /// match sites in place of a string literal so typos fail to
