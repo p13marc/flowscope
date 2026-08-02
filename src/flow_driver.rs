@@ -592,6 +592,7 @@ where
         let now = self.clamp_now(now);
         let snapshot = self.snapshot_anomaly_state();
         let mut events = self.tracker.sweep(now);
+        self.reconcile_with_tracker();
         if self.emit_anomalies {
             let anomalies =
                 Self::diff_anomaly_state(snapshot, &self.reassemblers, &self.tracker, now);
@@ -627,6 +628,38 @@ where
             &mut self.accounted_bytes,
             &mut self.memcap_released,
         );
+    }
+
+    /// Drop per-flow resources whose flow the tracker no longer holds.
+    ///
+    /// Cleanup normally rides on `FlowEvent::Ended` — but that event
+    /// is gated on [`EventMask::ENDED`](crate::EventMask), while the
+    /// tracker removes the flow either way. With `Ended` suppressed
+    /// (load shedding, issue #79) the reassemblers and parsers for
+    /// reaped flows would otherwise be held for the life of the
+    /// driver, which is worst precisely when shedding is switched on.
+    ///
+    /// Reconciling against the tracker rather than tracking reaped
+    /// keys separately keeps this self-healing: it recovers state
+    /// stranded for *any* reason, and adds no accumulator of its own
+    /// that could become the next leak. Runs on sweep, which is
+    /// already the periodic maintenance point, and costs one hash
+    /// lookup per live reassembler.
+    fn reconcile_with_tracker(&mut self) {
+        let tracker = &self.tracker;
+        let global = &mut self.global_memcap_bytes;
+        let accounted = &mut self.accounted_bytes;
+        let released = &mut self.memcap_released;
+        self.reassemblers.retain(|(key, side), r| {
+            if tracker.get(key).is_some() {
+                return true;
+            }
+            // The flow is gone; refund what this side still holds.
+            *global = global.saturating_sub(r.current_bytes());
+            accounted.remove(&(key.clone(), *side));
+            released.remove(&(key.clone(), *side));
+            false
+        });
     }
 
     /// Inspector for the cross-flow reassembly memcap accounting

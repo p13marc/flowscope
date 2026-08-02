@@ -101,7 +101,20 @@ pub struct FlowTrackerConfig {
     /// no reassemblers; custom `ReassemblerFactory` impls must read
     /// this and honour it themselves.
     ///
-    /// `None` means unbounded (historical behaviour).
+    /// Default `Some(1 MiB)` per side. `None` means unbounded, which
+    /// is only safe when you control the traffic: a single flow whose
+    /// parser never consumes will grow one buffer per direction
+    /// without limit.
+    ///
+    /// With the default [`OverflowPolicy::SlidingWindow`][sw] the flow
+    /// survives a breach — the oldest bytes are dropped and
+    /// [`FlowStats::reassembly_bytes_dropped_oversize_initiator`] /
+    /// `_responder` record how many, so truncation is visible rather
+    /// than silent.
+    ///
+    /// Changed from `None` in 0.23 (issue #188).
+    ///
+    /// [sw]: crate::event::OverflowPolicy::SlidingWindow
     pub max_reassembler_buffer: Option<usize>,
     /// Companion to [`max_reassembler_buffer`](Self::max_reassembler_buffer);
     /// no effect unless that field is `Some`.
@@ -153,10 +166,13 @@ pub struct FlowTrackerConfig {
     /// reassembly buffering across every live flow. When the
     /// running sum trips this cap on a `track` call, the
     /// configured [`Self::reassembly_memcap_policy`] decides
-    /// the response (drop the packet, drop the flow, etc.).
+    /// the response — see [`crate::event::MemcapPolicy`], where
+    /// each variant documents whether it reports the breach or
+    /// bounds it.
     ///
-    /// `None` (default) = unbounded; the per-flow
-    /// `max_reassembler_buffer` is the only cap.
+    /// `None` (default) = no tracker-wide cap; the per-flow
+    /// `max_reassembler_buffer` (default 1 MiB per side) is the
+    /// only bound.
     ///
     /// Issue #17 (0.18 close).
     pub reassembly_memcap: Option<u64>,
@@ -235,7 +251,7 @@ impl Default for FlowTrackerConfig {
             max_flows: 100_000,
             initial_capacity: 1024,
             sweep_interval: Duration::from_secs(1),
-            max_reassembler_buffer: None,
+            max_reassembler_buffer: Some(1024 * 1024),
             overflow_policy: crate::event::OverflowPolicy::SlidingWindow,
             reassembler_high_watermark_pct: None,
             flow_tick_interval: None,

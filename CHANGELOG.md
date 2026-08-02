@@ -190,6 +190,27 @@ not only a passive observer. Migration recipes accrue in
 - **Bytes drained by a parser return to the memcap pool.** A side whose
   parser consumed its buffer kept those bytes counted until the flow
   ended, so the cap tripped on memory nobody held.
+- **Per-flow cleanup no longer depends on `Ended` being emitted**
+  (#185). Reassembler and parser teardown keyed off the flow's `Ended`
+  event, but that event is gated on `EventMask::ENDED` while the
+  tracker reaps the flow either way — so a consumer shedding events
+  under load held one reassembler pair and one parser per flow for the
+  life of the driver, precisely during overload. Every sweep now
+  reconciles against the tracker and releases whatever belongs to a
+  flow that is gone, refunding its memcap bytes. The reconciliation
+  runs *after* ordinary teardown, so a flow ending during that same
+  sweep still gets its final tick, `fin_*`, and `Closed`; only
+  genuinely stranded state is reclaimed, and it gets no `fin_*`,
+  because there is no `Ended` event to attach the messages to.
+- **`SegmentBufferReassembler` respects its cap for oversize
+  segments** (#188). Under `SlidingWindow`, a segment larger than the
+  whole cap was appended in full after dropping everything buffered,
+  leaving the buffer above the limit. It now keeps the newest `cap`
+  bytes and counts the rest in `bytes_dropped_oversize`, matching
+  `BufferedReassembler`.
+- **A duplicated copy of this cycle's entries had landed inside the
+  0.16.0 section** of this file. Removed; the 0.16.0 history is
+  unchanged.
 - **`PUSH_PROMISE` no longer breaks an HTTP/2 connection.** The four
   promised-stream-id octets that precede the field block (RFC 9113
   §6.6) were being fed to HPACK, which failed the connection and —
@@ -254,6 +275,16 @@ not only a passive observer. Migration recipes accrue in
 - `BodyFraming::UntilEof` renamed to `BodyFraming::UntilClose`,
   matching RFC 9112 language. The enum never shipped to crates.io
   (it was added after 0.22.0), so no released code can be affected.
+- **`FlowTrackerConfig::max_reassembler_buffer` defaults to
+  `Some(1 MiB)`** per side, was `None` (#188). The default
+  configuration is now bounded: previously a flow whose parser never
+  consumed grew one buffer per direction without limit. With the
+  existing `OverflowPolicy::SlidingWindow` default the flow survives a
+  breach — the oldest bytes are dropped and counted in
+  `FlowStats::reassembly_bytes_dropped_oversize_initiator` /
+  `_responder`, so truncation is visible rather than silent. Raise the
+  cap (or set `None` for the old behaviour, safe only when you control
+  the traffic) if you reassemble larger messages whole.
 
 ### Fixed
 
@@ -1548,166 +1579,6 @@ non-commercial; patent pending) — *not* MIT/Apache like the rest of flowscope.
 In 0.15 it shipped under `tls-fingerprints` alongside the BSD JA3 + JA4-client
 fingerprints, which inadvertently put FoxIO-licensed code in the royalty-free
 surface.
-
-- **`flowscope::http2`** — HTTP/2 frame layer, HPACK, and per-stream
-  events (#170), behind the new `http2` feature. `Http2Parser` is
-  sans-IO in the same shape as `HttpProxyParser`: feed bytes per
-  direction, drain events. Events reuse the HTTP/1 vocabulary —
-  `Head` / `Body` / `Trailers` / `End` — keyed by stream ID, plus
-  `StreamReset` and `GoAway`, so a consumer written against one
-  version works with the other.
-  - `StreamHead` exposes the pseudo-headers directly (`method()`,
-    `path()`, `authority()`, `scheme()`, `status()`) — `:authority`
-    and `:path` are the routing key a terminating proxy needs.
-  - A complete HPACK decoder (RFC 7541): static table, dynamic table
-    with eviction, the integer and string codings, and Huffman.
-    Hand-rolled, no new dependencies. Validated against the RFC
-    Appendix C vectors, including the sequences that only decode
-    correctly if the dynamic table carries across field blocks.
-  - `HEADERS` + `CONTINUATION` reassembly per stream, and a frame
-    interleaved into an open field block is refused (RFC 9113 §6.10).
-  - Every buffer bounded by `Http2Config`: frame size, field-block
-    size, HPACK table (a hard ceiling `SETTINGS` cannot raise),
-    concurrent streams, and unparsed bytes per direction.
-  - New fuzz target `fuzz/fuzz_targets/http2.rs`.
-- **gRPC routing surface** (#171), in `flowscope::http2`. `GrpcCall`
-  splits a `:path` into service and method, `is_grpc_content_type`
-  recognises the `application/grpc*` family, and `GrpcStatus` reads
-  the outcome from trailers — including the Trailers-Only case, where
-  the status arrives in the stream's single `HEADERS` block. Worth
-  knowing: a gRPC call that *failed* still carries HTTP `200`, so a
-  proxy logging only the HTTP status records every failure as a
-  success.
-- **`flowscope::classify`** (#165) — decide what protocol a
-  connection speaks from its first bytes, without guessing on a short
-  read. `classify_first_bytes(peek) -> Classify` returns either
-  `Decided(WireProtocol)` (`Tls` / `Http1` / `Http2Preface` / `Ssh` /
-  `Raw`) or `NeedMore`, and a prefix never decides differently from
-  the full input — the property a router depends on. The HTTP/2
-  preface is tested before HTTP/1 because `PRI ` is also a plausible
-  method token. No dependencies, no feature gate; also in the
-  prelude. Complements `app_proto::classify`, which answers the same
-  question from ALPN/SNI once a handshake exists.
-
-- **Access logging and metrics for the inline path** (#168). An
-  operator switching a deployment from observing to proxying should
-  not lose visibility.
-  - `http::HttpAccessLog` turns the `HttpEvent` stream into
-    `HttpAccessRecord`s — method, target, authority, status, wire
-    byte counts, and how the exchange ended — **without retaining a
-    single body byte**. Requests pair with responses in wire order;
-    `1xx` interims never become their own record.
-  - `HttpAccessOutcome` distinguishes `Completed` / `NoResponse` /
-    `Switched` / `Refused { reason }`, so a connection the proxy
-    refused for a framing violation appears in the log with its
-    typed reason instead of going quiet.
-  - `EveJsonWriter::write_http_access` emits it as a Suricata-shaped
-    `event_type: "http"` line, with the outcome and refusal reason
-    under the `flowscope` extension object.
-  - New metrics: `flowscope_http_messages_total{direction}` and
-    `flowscope_http_poisoned_total{reason}`.
-- **`docs/tls-routing.md`** (#167) — the contract for routing TLS by
-  SNI / ALPN: the degradation ladder (inner SNI → outer SNI + ALPN →
-  JA4 / first-byte class → raw passthrough), why `ech_present` is
-  advisory and must never be load-bearing, why the "SNI is in packet
-  one" assumption is dead under post-quantum key exchange, ALPN
-  precedence, and binding the decision to ALPN + SNI against ALPACA.
-- **`TlsHandshake::routing_alpn()` / `routing_sni()`** (#167) — the
-  ladder's first two rungs as accessors. `routing_alpn` prefers the
-  server's selection over the client's offer; `routing_sni` returns
-  the name *and* whether ECH means it is only a cover domain, so
-  degrading is explicit rather than accidental.
-- Standards citations corrected across the tree (verified 2026-08):
-  ECH is **RFC 9849** (published March 2026, formerly
-  `draft-ietf-tls-esni`); DNS carriage is **RFC 9848** and the SVCB
-  `ech` SvcParamKey is **5**; the ML-KEM hybrids are still
-  `draft-ietf-tls-ecdhe-mlkem` (IESG-approved, in the RFC Editor
-  queue) and are cited as a draft, not an RFC.
-
-- **`docs/bounded-memory.md`** (#169) — the memory contract, from a
-  crate-wide audit of every accumulation path: which buffers are
-  capped, which caps are **opt-in** (notably
-  `max_reassembler_buffer`, which defaults to `None`), what happens
-  on overflow, and the five gaps the audit found that are still open
-  (#184–#188). `tests/bounded_memory.rs` is the adversarial suite
-  behind it.
-- `HttpProxyConfig` and `HttpConfig` gain `with_*` builder methods, so
-  a cap can be adjusted in one expression from outside the crate —
-  `#[non_exhaustive]` makes struct-literal construction unavailable
-  there.
-
-### Fixed
-
-- **`MemcapPolicy` now does what each variant documents** (#186). The
-  cross-flow reassembly memcap was a report, not a bound: `Ignore` and
-  `DropPacket` shared an empty match arm that freed nothing, and
-  `PassThrough` ended the flow exactly like `DropFlow`.
-  - `DropPacket` refuses the segment that would cross the cap. The
-    decision is made *before* handing it to the reassembler, because
-    `Reassembler::segment` cannot be undone — so it is conservative,
-    charging the full payload length even to a reassembler that would
-    have deduplicated it.
-  - `PassThrough` releases the offending side's buffer and leaves the
-    flow tracked, which is the difference from `DropFlow` its docs
-    always claimed. New additive `Reassembler::release` (default
-    no-op) does the freeing; both shipped reassemblers implement it.
-  - `Ignore`'s doc now says what it does — count the violation and
-    change nothing, matching Suricata's `memcap-policy: ignore`. It is
-    a reporting mode and is documented as not bounding memory.
-- **Bytes drained by a parser return to the memcap pool.** A side whose
-  parser consumed its buffer kept those bytes counted until the flow
-  ended, so the cap tripped on memory nobody held.
-- **`PUSH_PROMISE` no longer breaks an HTTP/2 connection.** The four
-  promised-stream-id octets that precede the field block (RFC 9113
-  §6.6) were being fed to HPACK, which failed the connection and —
-  worse, had it not failed — would have corrupted the dynamic table
-  for every later block. The pushed head is now keyed to the stream
-  it reserves, not the one it arrived on.
-- **A refused connection always produces an access record.** When the
-  refusal happened before any request head parsed — which is the
-  common case for a smuggled message, since the violation is caught
-  at head-parse time — `HttpAccessLog` produced nothing at all, so
-  the most important event in the log was silent. It now emits a
-  record carrying the refusal reason, with an empty method and target
-  because there never was a valid one.
-- `http2` is now a member of `parsers-core`, so `--features l7` and
-  `--features full` include it. It was absent from every umbrella,
-  and the drift guard could not catch the omission because it only
-  checks features already in its list.
-
-### Fixed
-
-- **A poisoned or tunnelled HTTP direction no longer stores bytes it
-  will never parse** (#169). After a desync, a protocol switch, or
-  end of stream, `Engine::push` was still appending while nothing
-  consumed the buffer — so a peer that kept sending grew it for the
-  life of the connection. This was a regression introduced with the
-  engine unification (#160): the pre-0.23 parser cleared its buffer
-  on every failed step. Guarded by tests now.
-- **Heuristic probe state is bounded** (#169). #166 released entries
-  when a flow ended, but a flow the signature rules out is never
-  registered with the inner driver and so never produces an `Ended`
-  event — meaning a scan against a heuristic slot still leaked one
-  entry per source. The map is now capped, evicting decided entries
-  first.
-
-### Fixed (driver)
-
-- **Heuristic slots hand the parser the whole stream** (#166).
-  Packets consumed while probing were previously dropped: a signature
-  that pinned on packet 3 meant the parser never saw packets 1 and 2 —
-  including the bytes that identified the protocol. Probe frames are
-  now replayed in order when the flow pins, bounded by a 16 KiB
-  per-flow cap (past which replay is abandoned rather than the buffer
-  growing).
-- **A definitive `NoMatch` ends probing immediately** (#166).
-  `SignatureMatch` is tri-state so a conclusive miss can stop early,
-  but the slots treated `NoMatch` like `NeedMoreData` and burned the
-  whole probe budget anyway.
-- **Probe state no longer outlives its flow** (#166). Per-flow
-  detection entries were removed only by `force_close`, so
-  `Pinned` / `GaveUp` entries accumulated for the lifetime of the
-  slot under flow churn. They are now released when the flow ends.
 
 ### Changed (breaking)
 
