@@ -156,6 +156,35 @@ agree (Community ID, biflow keys, dedup); reach for `side` for
 | [`flowscope::fingerprint`](https://docs.rs/flowscope/latest/flowscope/fingerprint/index.html) | One import site for the whole JA4+ family, grouped by license (royalty-free `tls-fingerprints` vs FoxIO `ja4plus`). **0.22, #136.** |
 | `tls::ja3_fingerprint` / `ja3_canonical` | Standalone JA3 from a parsed `TlsClientHello`. **0.22, #136.** |
 
+## "I want to route a connection before I've seen the body"
+
+The inline path. Everything here is sans-IO: you own the sockets, and
+the parser tells you where messages begin and end.
+
+| Want | Reach for |
+|---|---|
+| decide what protocol this is, from the first bytes | [`classify_first_bytes`](https://docs.rs/flowscope/latest/flowscope/classify/fn.classify_first_bytes.html) → `Classify::Decided(WireProtocol)` / `NeedMore` |
+| route an HTTP request on its head, before the body | `http::HttpProxyParser` → `HttpEvent::RequestHead` → `RequestHead::authority()` |
+| the same, keyed by stream, over HTTP/2 | `http2::Http2Parser` → `Http2Event::Head` → `StreamHead::authority()` / `path()` |
+| dispatch a gRPC call, and get its *real* outcome | `http2::grpc_call` → `GrpcCall`; `http2::grpc_status` / `grpc_status_of` → `GrpcStatus` |
+| route TLS by SNI / ALPN, degrading safely under ECH | `TlsHandshake::routing_sni()` / `routing_alpn()`, and [`tls-routing.md`](tls-routing.md) |
+| let flowscope drive the bytes instead | `http::HttpProxySession` on the typed `Driver` |
+
+Not the same as `app_proto::classify`: that answers "what is this"
+from a *negotiated handshake* (ALPN / SNI / port), after TLS or QUIC
+has been parsed. `classify::classify_first_bytes` answers it from the
+first cleartext bytes, before anything has been parsed at all.
+
+## "I want an access log, or to know why a connection was refused"
+
+| Want | Reach for |
+|---|---|
+| one record per HTTP exchange, without retaining bodies | `http::HttpAccessLog` → `HttpAccessRecord` |
+| tell apart completed / unanswered / tunnelled / refused | `HttpAccessOutcome` |
+| the specific framing rule a refusal broke | `http::HttpPoison` (and its `as_str()` slug, which is also the metric label) |
+| write it where a SIEM already looks | `EveJsonWriter::write_http_access` → `event_type: "http"` |
+| count it | `flowscope_http_messages_total{direction}`, `flowscope_http_poisoned_total{reason}` |
+
 ## Prelude manifest
 
 `use flowscope::prelude::*;` brings the following into scope
@@ -165,7 +194,8 @@ agree (Community ID, biflow keys, dedup); reach for `side` for
 `AnomalyFields`, `AsPacketView`, `Error`, `ErrorCode`, `ErrorKind`,
 `KeyFields`, `Module`, `PacketView`, `Result`, `Timestamp`,
 `AppProtocol` *(0.22)*, `AppTransport` *(0.22)*, `FragmentKey`
-*(0.22)*, `IpFragmentReassembler` *(0.22)*.
+*(0.22)*, `IpFragmentReassembler` *(0.22)*, `Classify` *(0.23)*,
+`WireProtocol` *(0.23)*, `classify_first_bytes` *(0.23)*.
 
 **`extractors`:** `FiveTuple`, `Extracted`, `FlowExtractor`, `L4Proto`,
 `Orientation`, `TcpFlags`, `TcpInfo`, `Layer`, `LayerKind`,
@@ -186,6 +216,16 @@ agree (Community ID, biflow keys, dedup); reach for `side` for
 `DriverBuilder`, `Event`, `SlotHandle`, `SlotMessage`. (Register one
 session/datagram slot per protocol; this replaced the per-parser
 `FlowSessionDriver` / `FlowDatagramDriver` in 0.20.)
+
+**`http2`:** `Http2Event` *(0.23)*, `Http2Parser` *(0.23)*,
+`StreamHead` *(0.23)*.
+
+> The HTTP/1 streaming types (`HttpProxyParser`, `HttpEvent`,
+> `RequestHead`, …) are deliberately **not** in the prelude: they
+> share names with the passive `http` types a monitor already
+> imports, and silently pulling both into scope would make which one
+> you got depend on import order. Import them explicitly from
+> `flowscope::http`.
 
 **`pcap`:** `PcapFlowSource`.
 

@@ -6,16 +6,23 @@
 //! Suricata TA, Tenzir's `read_suricata`, and ECS-converting
 //! downstream pipelines.
 //!
-//! Three `event_type` values produced:
+//! Four `event_type` values produced. Three are derived from the
+//! [`FlowEvent`] stream by [`EveJsonWriter::write_event`]:
 //! - `"flow"` — per-flow on [`FlowEvent::Ended`].
 //! - `"anomaly"` — per [`FlowEvent::FlowAnomaly`] or
 //!   [`FlowEvent::TrackerAnomaly`].
 //! - `"stats"` — per [`FlowEvent::Tick`] (off by default; opt-in
 //!   via [`EveOptions::include_stats`]).
 //!
-//! Per-message protocol records (`event_type: "http"` / `"dns"` /
-//! `"tls"`) are out of scope for 0.12 — add per-protocol EVE
-//! shapes when a consumer asks.
+//! The fourth is written explicitly rather than derived, because the
+//! streaming HTTP parser is driven by the caller rather than by the
+//! tracker:
+//! - `"http"` — per HTTP exchange, via
+//!   [`EveJsonWriter::write_http_access`] (issue #168). Carries no
+//!   5-tuple: the streaming parser is handed bytes, not packets.
+//!
+//! Per-message `"dns"` / `"tls"` records remain out of scope — add
+//! them when a consumer asks.
 
 use std::io::{self, Write};
 

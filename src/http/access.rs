@@ -203,14 +203,35 @@ impl HttpAccessLog {
     /// Call when the connection ends, or when the parser refuses it —
     /// pass the [`poison`](super::HttpProxyParser::poison) so the
     /// records say *why* nothing came back.
+    ///
+    /// A refusal always produces at least one record, even when the
+    /// connection was refused before any request head parsed. That
+    /// case is the one that matters most — a message so malformed it
+    /// never framed — and a log that stayed silent about it would
+    /// report that nothing happened. Such a record carries an empty
+    /// method and target, because there was never a valid one.
     pub fn finish(&mut self, poison: Option<HttpPoison>, out: &mut Vec<HttpAccessRecord>) {
         let outcome = match (poison, self.switched) {
             (Some(reason), _) => HttpAccessOutcome::Refused { reason },
             (None, true) => HttpAccessOutcome::Switched,
             (None, false) => HttpAccessOutcome::NoResponse,
         };
+        let had_pending = !self.pending.is_empty();
         while let Some(p) = self.pending.pop_front() {
             out.push(self.record(p, outcome.clone()));
+        }
+        if !had_pending && poison.is_some() {
+            out.push(self.record(
+                Pending {
+                    method: Bytes::new(),
+                    path: Bytes::new(),
+                    authority: None,
+                    version: HttpVersion::Http1_1,
+                    body_bytes: 0,
+                    complete: true,
+                },
+                outcome,
+            ));
         }
         self.response_bytes = 0;
         self.status = None;
@@ -314,17 +335,40 @@ mod tests {
 
     #[test]
     fn a_refused_connection_says_why() {
+        // CL + TE is caught at head-parse time, so no request head is
+        // ever emitted and there is nothing to pair with. The refusal
+        // must still be logged — it is the whole reason an operator
+        // reads this log.
         let (recs, _) = run(
             b"POST /a HTTP/1.1\r\nHost: h\r\nContent-Length: 6\r\n\
               Transfer-Encoding: chunked\r\n\r\n0\r\n\r\n",
             b"",
         );
-        // The request never framed, so there is nothing to pair —
-        // but the refusal itself must not be silent.
-        assert!(
-            recs.iter()
-                .all(|r| matches!(r.outcome, HttpAccessOutcome::Refused { .. }))
+        assert_eq!(recs.len(), 1, "a refusal must produce a record");
+        assert_eq!(
+            recs[0].outcome,
+            HttpAccessOutcome::Refused {
+                reason: HttpPoison::ContentLengthWithTransferEncoding
+            }
         );
+        // No head ever parsed, so there is no method or target to
+        // report — and the record says so rather than inventing one.
+        assert!(recs[0].method.is_empty());
+        assert!(recs[0].path.is_empty());
+    }
+
+    #[test]
+    fn a_refusal_after_a_head_keeps_the_request_details() {
+        // The other half: when the head did parse, the record must
+        // carry it rather than falling back to the empty form.
+        let (recs, _) = run(
+            b"GET /wanted HTTP/1.1\r\nHost: h\r\n\r\n\
+              POST /a HTTP/1.1\r\nContent-Length: 1\r\nContent-Length: 2\r\n\r\n",
+            b"",
+        );
+        assert_eq!(recs.len(), 1);
+        assert_eq!(recs[0].path_str(), Some("/wanted"));
+        assert!(matches!(recs[0].outcome, HttpAccessOutcome::Refused { .. }));
     }
 
     #[test]

@@ -37,6 +37,7 @@ macro_rules! l7_requires {
 
 l7_requires!(
     "http",
+    "http2",
     "tls",
     "tls-fingerprints",
     "dns",
@@ -117,7 +118,7 @@ macro_rules! tier_requires {
     };
 }
 
-tier_requires!("parsers-core" => "http", "tls", "dns", "icmp");
+tier_requires!("parsers-core" => "http", "http2", "tls", "dns", "icmp");
 tier_requires!("parsers-l2l3" => "arp", "ndp", "lldp", "cdp", "dhcp");
 tier_requires!("parsers-tier2" =>
     "ssh", "ntp", "ssdp", "tftp", "mdns", "netbios-ns", "ftp", "smtp",

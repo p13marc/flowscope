@@ -318,3 +318,163 @@ fn unknown_variant_fails_to_deserialize() {
     let result: Result<L4Proto, _> = serde_json::from_value(json);
     assert!(result.is_err());
 }
+
+// ── 0.23: the inline-proxy and HTTP/2 surface ─────────────────────
+//
+// These types cross a wire (EVE records, stored access logs), so
+// their serde shape is part of the contract. The `rename_all` and
+// `tag` attributes in particular are easy to change by accident;
+// pinning the emitted JSON is what makes that a test failure rather
+// than a downstream surprise.
+
+#[cfg(feature = "http")]
+#[test]
+fn body_framing_uses_snake_case_slugs() {
+    use flowscope::http::BodyFraming;
+    assert_eq!(round_trip(BodyFraming::None), serde_json::json!("none"));
+    assert_eq!(
+        round_trip(BodyFraming::ContentLength(42)),
+        serde_json::json!({ "content_length": 42 })
+    );
+    assert_eq!(
+        round_trip(BodyFraming::Chunked),
+        serde_json::json!("chunked")
+    );
+    assert_eq!(
+        round_trip(BodyFraming::UntilClose),
+        serde_json::json!("until_close")
+    );
+}
+
+#[cfg(feature = "http")]
+#[test]
+fn http_poison_slugs_match_as_str() {
+    use flowscope::http::HttpPoison;
+    // The JSON form and the metric-label form must not drift apart:
+    // an operator correlating a log line with a metric depends on
+    // them being the same string.
+    for p in [
+        HttpPoison::HeadOverflow,
+        HttpPoison::ContentLengthWithTransferEncoding,
+        HttpPoison::ConflictingContentLength,
+        HttpPoison::NonFinalChunked,
+        HttpPoison::DuplicateHost,
+        HttpPoison::UnexpectedResponse,
+    ] {
+        let json = round_trip(p);
+        let as_str = p.as_str();
+        assert_eq!(
+            json.as_str().unwrap().replace('_', "-"),
+            as_str,
+            "serde slug and as_str() must agree for {p:?}"
+        );
+    }
+}
+
+#[cfg(feature = "http")]
+#[test]
+fn smuggling_policy_and_normalization_round_trip() {
+    use flowscope::http::{Normalization, SmugglingPolicy};
+    assert_eq!(
+        round_trip(SmugglingPolicy::Strict),
+        serde_json::json!("strict")
+    );
+    assert_eq!(
+        round_trip(SmugglingPolicy::Normalize),
+        serde_json::json!("normalize")
+    );
+    assert_eq!(
+        round_trip(SmugglingPolicy::Observe),
+        serde_json::json!("observe")
+    );
+    assert_eq!(
+        round_trip(Normalization::StrippedContentLength),
+        serde_json::json!("stripped_content_length")
+    );
+}
+
+#[cfg(feature = "http")]
+#[test]
+fn access_outcome_is_internally_tagged_on_kind() {
+    use flowscope::http::{HttpAccessOutcome, HttpPoison};
+    assert_eq!(
+        round_trip(HttpAccessOutcome::Completed),
+        serde_json::json!({ "kind": "completed" })
+    );
+    assert_eq!(
+        round_trip(HttpAccessOutcome::NoResponse),
+        serde_json::json!({ "kind": "no_response" })
+    );
+    // The payload-carrying variant is the one most likely to break
+    // silently if the tag attribute changes.
+    assert_eq!(
+        round_trip(HttpAccessOutcome::Refused {
+            reason: HttpPoison::BareCr
+        }),
+        serde_json::json!({ "kind": "refused", "reason": "bare_cr" })
+    );
+}
+
+#[cfg(feature = "http")]
+#[test]
+fn access_record_round_trips_from_the_consumer_side() {
+    use flowscope::http::HttpAccessRecord;
+    // The record is `#[non_exhaustive]` — a consumer receives it, it
+    // does not build it. So the direction worth pinning is the one a
+    // consumer actually uses: reading a stored record back.
+    let stored = serde_json::json!({
+        "method": [80, 79, 83, 84],
+        "path": [47, 111],
+        "authority": "api.example",
+        "version": "http1_1",
+        "status": 201,
+        "request_body_bytes": 5,
+        "response_body_bytes": 2,
+        "outcome": { "kind": "completed" }
+    });
+    let rec: HttpAccessRecord =
+        serde_json::from_value(stored.clone()).expect("a stored record must deserialize");
+    assert_eq!(rec.method_str(), Some("POST"));
+    assert_eq!(rec.status, Some(201));
+    assert_eq!(rec.request_body_bytes, 5);
+    // And back out unchanged.
+    assert_eq!(serde_json::to_value(&rec).unwrap(), stored);
+}
+
+#[test]
+fn wire_protocol_round_trips() {
+    use flowscope::classify::WireProtocol;
+    assert_eq!(round_trip(WireProtocol::Tls), serde_json::json!("tls"));
+    assert_eq!(round_trip(WireProtocol::Http1), serde_json::json!("http1"));
+    assert_eq!(
+        round_trip(WireProtocol::Http2Preface),
+        serde_json::json!("http2_preface")
+    );
+    assert_eq!(round_trip(WireProtocol::Raw), serde_json::json!("raw"));
+}
+
+#[cfg(feature = "http2")]
+#[test]
+fn http2_error_round_trips() {
+    use flowscope::http2::Http2Error;
+    assert_eq!(
+        round_trip(Http2Error::BadPreface),
+        serde_json::json!("bad_preface")
+    );
+    assert_eq!(
+        round_trip(Http2Error::HpackInvalidIndex),
+        serde_json::json!("hpack_invalid_index")
+    );
+}
+
+#[cfg(feature = "http2")]
+#[test]
+fn grpc_status_round_trips_from_the_consumer_side() {
+    use flowscope::http2::GrpcStatus;
+    let stored = serde_json::json!({ "code": 5, "message": [110, 111] });
+    let s: GrpcStatus = serde_json::from_value(stored.clone()).expect("deserialize");
+    assert_eq!(s.code, 5);
+    assert_eq!(s.name(), Some("NOT_FOUND"));
+    assert!(!s.is_ok());
+    assert_eq!(serde_json::to_value(&s).unwrap(), stored);
+}

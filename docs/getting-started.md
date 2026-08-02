@@ -19,23 +19,24 @@ After each, the right doc to read next is called out.
 
 ```toml
 [dependencies]
-flowscope = "0.22"
+flowscope = "0.23"
 ```
 
-MSRV is Rust 1.88 (June 2025).
+MSRV is Rust 1.97.
 
 The default features cover the core stack (`extractors`,
 `tracker`, `reassembler`, `session`). Opt into protocol parsers
 and observability piecemeal:
 
 ```toml
-flowscope = { version = "0.22", features = ["l7", "pcap", "metrics", "tracing", "emit-eve"] }
+flowscope = { version = "0.23", features = ["l7", "pcap", "metrics", "tracing", "emit-eve"] }
 ```
 
 | Feature | What it adds |
 |---------|--------------|
-| `http`, `tls`, `dns`, `icmp` | L7 parsers, one feature each |
-| `l7` | Umbrella — enables `http` + `tls` + `dns` + `icmp` |
+| `http`, `tls`, `dns`, `icmp` | L7 parsers, one feature each. `http` is HTTP/1.x. |
+| `http2` | HTTP/2 frame layer + HPACK + per-stream routing, and the gRPC call/status surface |
+| `l7` | Umbrella — every license-clean protocol parser (`parsers-core` + `parsers-l2l3` + `parsers-tier2` + `tls-fingerprints`) |
 | `pcap` | Offline pcap source |
 | `metrics`, `tracing` | Observability (zero-cost when off) |
 | `serde` | `Serialize` + `Deserialize` on every public event / message type |

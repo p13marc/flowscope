@@ -171,6 +171,26 @@ not only a passive observer. Migration recipes accrue in
 
 ### Fixed
 
+- **`PUSH_PROMISE` no longer breaks an HTTP/2 connection.** The four
+  promised-stream-id octets that precede the field block (RFC 9113
+  §6.6) were being fed to HPACK, which failed the connection and —
+  worse, had it not failed — would have corrupted the dynamic table
+  for every later block. The pushed head is now keyed to the stream
+  it reserves, not the one it arrived on.
+- **A refused connection always produces an access record.** When the
+  refusal happened before any request head parsed — which is the
+  common case for a smuggled message, since the violation is caught
+  at head-parse time — `HttpAccessLog` produced nothing at all, so
+  the most important event in the log was silent. It now emits a
+  record carrying the refusal reason, with an empty method and target
+  because there never was a valid one.
+- `http2` is now a member of `parsers-core`, so `--features l7` and
+  `--features full` include it. It was absent from every umbrella,
+  and the drift guard could not catch the omission because it only
+  checks features already in its list.
+
+### Fixed
+
 - **A poisoned or tunnelled HTTP direction no longer stores bytes it
   will never parse** (#169). After a desync, a protocol switch, or
   end of stream, `Engine::push` was still appending while nothing
@@ -1596,6 +1616,26 @@ surface.
   a cap can be adjusted in one expression from outside the crate —
   `#[non_exhaustive]` makes struct-literal construction unavailable
   there.
+
+### Fixed
+
+- **`PUSH_PROMISE` no longer breaks an HTTP/2 connection.** The four
+  promised-stream-id octets that precede the field block (RFC 9113
+  §6.6) were being fed to HPACK, which failed the connection and —
+  worse, had it not failed — would have corrupted the dynamic table
+  for every later block. The pushed head is now keyed to the stream
+  it reserves, not the one it arrived on.
+- **A refused connection always produces an access record.** When the
+  refusal happened before any request head parsed — which is the
+  common case for a smuggled message, since the violation is caught
+  at head-parse time — `HttpAccessLog` produced nothing at all, so
+  the most important event in the log was silent. It now emits a
+  record carrying the refusal reason, with an empty method and target
+  because there never was a valid one.
+- `http2` is now a member of `parsers-core`, so `--features l7` and
+  `--features full` include it. It was absent from every umbrella,
+  and the drift guard could not catch the omission because it only
+  checks features already in its list.
 
 ### Fixed
 

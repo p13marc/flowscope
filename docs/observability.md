@@ -15,7 +15,7 @@ Both are **zero-cost when off**. Every entry point is an
 no runtime branches, no string formatting, no allocations.
 
 ```toml
-flowscope = { version = "0.22", features = ["metrics", "tracing"] }
+flowscope = { version = "0.23", features = ["metrics", "tracing"] }
 ```
 
 Pick one or both. Both depend on the `tracker` feature (already
@@ -39,6 +39,8 @@ on by default).
 | `flowscope_reassembler_high_watermark_bytes` | histogram | `side` | Peak per-side buffer occupancy at `Ended` |
 | `flowscope_retransmits_total` | counter | `side` | Classified TCP retransmits at `Ended` |
 | `flowscope_flow_ticks_total` | counter | — | Per-flow periodic `Tick` events emitted |
+| `flowscope_http_messages_total` | counter | `direction` (`request` / `response`) | Each HTTP message framed by the streaming parser (`http`) |
+| `flowscope_http_poisoned_total` | counter | `reason` (an [`HttpPoison`] slug) | Each connection the streaming HTTP parser refused (`http`) |
 
 Metric names are exported as `pub const` from `flowscope::obs`
 (`METRIC_FLOWS_CREATED`, …) so downstream config can reference
@@ -50,12 +52,20 @@ All label values are `&'static str` — no per-call allocations.
 
 **Never extend the obs module with flow-key-derived labels** (5-
 tuple, MAC, IP). That creates one time series per flow and blows
-up your storage backend. Stick to the four coarse axes:
+up your storage backend. Stick to the coarse axes:
 
 - `l4` — protocol family.
-- `reason` — end-of-flow classification.
+- `reason` — end-of-flow classification, **and** (on
+  `flowscope_http_poisoned_total`) the framing violation that made
+  the streaming HTTP parser refuse a connection. The axis is shared
+  but the value spaces are disjoint, so a query filtering on one
+  metric never sees the other's values.
 - `kind` — anomaly classification.
 - `side` — `initiator` vs `responder`.
+- `direction` — `request` vs `response`, on the HTTP message counter.
+
+Every one of these is a small closed set, which is the property that
+matters: cardinality is bounded by the vocabulary, not by traffic.
 
 If you need per-flow telemetry, snapshot via
 `tracker.iter_active()` or `driver.snapshot_flow_stats()` and
@@ -118,6 +128,13 @@ PrometheusBuilder::new()
 - **Buffer-cap pressure**:
   `rate(flowscope_anomalies_total{kind="buffer_overflow"}[1m])`
   — persistent non-zero means stuck parsers or undersized cap.
+- **HTTP framing refusals** (inline paths):
+  `sum by (reason) (rate(flowscope_http_poisoned_total[5m]))`
+  — non-zero is either an attack or a broken client, and the
+  `reason` label says which framing rule was violated. Worth an
+  alert rather than a dashboard panel.
+- **HTTP message throughput**:
+  `sum by (direction) (rate(flowscope_http_messages_total[1m]))`
 - **Eviction pressure**:
   `increase(flowscope_anomalies_total{kind="flow_table_eviction"}[5m])`
   — non-zero means `max_flows` is bottlenecking; bump it or

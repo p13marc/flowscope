@@ -70,5 +70,12 @@ pub use grpc::{
 };
 pub use stream::{Http2Config, Http2Event, Http2Parser, StreamHead};
 
-/// Slug returned by [`Http2Parser`]'s `parser_kind()`.
+/// Stable slug for HTTP/2, matching
+/// [`ParserKind::Http2`](crate::ParserKind::Http2)`.as_str()`.
+///
+/// [`Http2Parser`] is driven directly rather than through
+/// `SessionParser` — h2 multiplexes, so its events are keyed by
+/// stream rather than by direction, which the trait's per-direction
+/// shape cannot express. Use this constant at match sites that
+/// switch on a parser slug.
 pub const PARSER_KIND: &str = "http/2";

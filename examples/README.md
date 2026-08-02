@@ -40,6 +40,9 @@ the categories sort logically in `ls`.
 |---|---|---|
 | **`http_log`** | `http,pcap` | One-line summary of every HTTP request + response (per-message). |
 | **`http_exchanges`** | `http,pcap` | One log line per request/response PAIR via `HttpExchangeParser` (plan 107). Access-log-shaped rows with RTT and outcome. |
+| **`http2_streams`** *(0.23)* | `http2` | HTTP/2 per-stream routing (#170): interleaved streams, `HEADERS` + `CONTINUATION` reassembly, a dynamic-table reference across streams, `RST_STREAM` / `GOAWAY`. Synthetic frames — h2 is normally inside TLS. |
+| **`grpc_routing`** *(0.23)* | `http2` | gRPC dispatch by service/method plus the real outcome (#171). Shows why `:status` is not enough: **a failed call still returns HTTP 200**, and the status lives in the trailers — or in the head, for Trailers-Only. |
+| **`first_byte_router`** *(0.23)* | `http`, `http2` | Classify a connection from its first bytes (#165), then replay those bytes into the chosen parser. Covers the `NeedMore` loop, the h2-before-h1 ordering, and the server-speaks-first timeout. |
 | **`http_streaming_proxy`** *(0.23)* | `http` | The inline-proxy loop with `HttpProxyParser` (#161–#163): route on the head before the body, forward `raw` spans verbatim (asserted byte-identical), refuse an ambiguously framed message. No sockets — pure framing. |
 | **`tls_observer`** | `tls,pcap` | SNI / ALPN / cipher list for every TLS ClientHello + ServerHello. |
 | **`quic_initial_observer`** *(0.18)* | `quic,pcap` | SNI / ALPN for every QUIC Initial packet (passive Initial decrypt). |
@@ -110,6 +113,7 @@ the categories sort logically in `ls`.
 | **`flow_csv_export`** | `pcap,emit` | `flows.csv` via `FlowEventCsvWriter` (RFC-4180 quoted; plan 101). |
 | **`flow_json_export`** | `pcap,emit-ndjson` | NDJSON via `FlowEventNdjsonWriter` — drop-in for Elasticsearch / Loki / ClickHouse. |
 | **`zeek_style_conn_log`** | `pcap,emit` | Tab-separated Zeek `conn.log` via `ZeekConnLogWriter` (with `#fields` / `#types` / `#close` headers + UID generation). |
+| **`http_access_log_eve`** *(0.23)* | `http`, `emit-eve` | Access log from the **inline** path (#168): `HttpAccessLog` → `EveJsonWriter::write_http_access`. Four outcomes, including a connection refused for smuggling — the record a passive log cannot produce. | `event_type: "http"` NDJSON |
 | **`eve_writer`** | `pcap,emit-eve` | Suricata EVE JSON via `EveJsonWriter` (0.12) — drop-in for Filebeat / Splunk Suricata TA / Tenzir / ECS pipelines. With `community-id`, every record carries the portable cross-tool `community_id`. |
 | **`detector_to_eve`** | `pcap,extractors,tracker,emit-eve` | Plan-147 single-detector → SIEM pipeline: `PortScanDetector` scores route through `EveJsonWriter::write_owned_anomaly`. |
 | **`prometheus_exporter`** | `pcap,extractors,tracker,reassembler,metrics` | Render the `metrics` feature's counters / gauges / summaries as Prometheus text-exposition. Doc-comment shows the canonical production wiring via `metrics-exporter-prometheus`. |

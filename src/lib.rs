@@ -47,7 +47,7 @@
 //! |-----------------|-------|
 //! | `full`          | `l7` + every license-clean capability (excludes FoxIO `ja4plus`) |
 //! | `l7`            | every license-clean wire parser (the three `parsers-*` tiers + `tls-fingerprints`) |
-//! | `parsers-core`  | `http` `tls` `dns` `icmp` |
+//! | `parsers-core`  | `http` `http2` `tls` `dns` `icmp` |
 //! | `parsers-l2l3`  | `arp` `ndp` `lldp` `cdp` `dhcp` (L2/L3 asset discovery) |
 //! | `parsers-tier2` | the 19 Tier-2 parsers (`ssh` `ntp` `ssdp` `tftp` `mdns` `netbios-ns` `ftp` `smtp` `wireguard` `modbus` `stun` `rdp` `snmp` `radius` `quic` `smb` `ldap` `kerberos` `dnp3`) |
 //! | `nsm`           | network-security monitoring: `fingerprint` + `tls-fingerprints` + `analysis` |
@@ -58,7 +58,8 @@
 //!
 //! | Feature | Module | What you get |
 //! |---------|--------|--------------|
-//! | `http` | [`http`] | HTTP/1.x request/response parser |
+//! | `http` | [`http`] | HTTP/1.x — passive parser plus the sans-IO streaming parser for inline proxies |
+//! | `http2` | [`http2`] | HTTP/2 frame layer + HPACK + per-stream routing; gRPC call and status |
 //! | `tls` | [`tls`] | TLS handshake observer (ClientHello/ServerHello/Alert) |
 //! | `dns` | [`dns`] | DNS-over-UDP/TCP parsers + query/response correlator |
 //! | `icmp` | [`icmp`] | ICMPv4/v6 decoder + inner-flow correlation |
@@ -114,6 +115,7 @@
 //! | [`fingerprint`] | unified JA4+ facade — one import site for the whole family, grouped by license (distinct from the `fingerprint`-feature behavioural detector above) |
 //! | [`app_proto`] | identify h2 / h3 + DoT / DoQ / DoH over an encrypted transport from ALPN / SNI / port (no decryption) |
 //! | [`ip_fragment`] | IP fragment reassembly (RFC 791 key, RFC 5722 overlap-drop) — defeats fragmentation-based L4/L7 evasion |
+//! | [`classify`] | what protocol is this, from the first bytes on the wire — the cleartext counterpart to [`app_proto`] |
 //!
 //! **Observability** (zero-cost when off):
 //!

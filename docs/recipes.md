@@ -17,11 +17,18 @@ top-to-bottom; the first "yes" picks your API.
    packet: `driver.track_into(view, &mut events)` +
    `slot.drain(&mut msgs)`. Handles are `Send + Sync` (0.12).
 
+0. **Sitting inline in the data path, not observing a tap?**
+   → Use `flowscope::http::HttpProxyParser` (or
+   `flowscope::http2::Http2Parser`). You own the sockets; feed
+   bytes with `push`, drain `HttpEvent`s, forward the `raw` spans.
+   Every other branch below assumes passive observation. See
+   [Inline proxying](#inline-proxying-routing-before-the-body).
+
 1. **Only care about flow lifecycle, not L7?**
    → Use `FlowTracker` directly, consume `FlowEvent`. Cheapest
    path; no reassembler, no parsers.
 
-2. **Parsing a protocol flowscope doesn't ship?** (HTTP/2, AMQP,
+2. **Parsing a protocol flowscope doesn't ship?** (AMQP,
    custom framed binary, …)
    → Implement `SessionParser` for TCP or `DatagramParser` for
    UDP. Register it on the typed `Driver` with
@@ -437,6 +444,129 @@ see the
 module docs. Full model: `docs/concepts.md` →
 "Direction, orientation, and capture leg".
 
+## Inline proxying: routing before the body
+
+Everything else in this file observes traffic. This recipe *is* in
+the data path: the proxy owns the sockets and forwards the bytes, and
+flowscope is a framing oracle beside that path — it says where
+messages begin and end, and whether the framing can be trusted at
+all.
+
+The shape is `push` bytes, drain events:
+
+```rust,no_run
+use bytes::Bytes;
+use flowscope::FlowSide;
+use flowscope::http::{HttpEvent, HttpProxyParser};
+
+# fn read_from_client() -> Bytes { Bytes::new() }
+# fn forward_upstream(_: &[u8]) {}
+# fn choose_backend(_: Option<&str>) {}
+# fn close_with_status(_: u16) {}
+let mut proxy = HttpProxyParser::new();
+let mut pending = read_from_client();
+
+while !pending.is_empty() {
+    // A short count means "drain events first" — that is the
+    // backpressure signal. Slicing Bytes is a refcount bump.
+    let accepted = proxy.push(FlowSide::Initiator, &pending);
+    pending = pending.slice(accepted..);
+
+    while let Some(ev) = proxy.next_event() {
+        match ev {
+            HttpEvent::RequestHead(head) => {
+                // Routing happens here, before a body byte is read.
+                let authority = head.authority().ok().map(|a| a.host);
+                choose_backend(authority.as_deref());
+                forward_upstream(&head.raw);
+            }
+            // Relay the wire bytes. The parser retains nothing.
+            HttpEvent::Body { raw, .. } => forward_upstream(&raw),
+            HttpEvent::SwitchProtocols { .. } => break, // splice from here
+            _ => {}
+        }
+    }
+
+    if let Some(reason) = proxy.poison() {
+        // Framing is in doubt. Do not forward the remainder: past a
+        // desync the two endpoints no longer agree where messages
+        // end, which is what request smuggling exploits.
+        eprintln!("refusing connection: {reason}");
+        close_with_status(400);
+        break;
+    }
+}
+```
+
+Three rules that are easy to get wrong:
+
+- **Forward `raw`, not `data`.** Every event carries the exact bytes
+  it consumed; concatenating them reproduces the message byte for
+  byte. `data` is the *decoded* body (chunk framing removed), which
+  is what you want only if you are re-framing.
+- **A short `push` return is not an error.** It means the direction
+  is holding its cap of unparsed data. Drain events and re-offer.
+- **Poison is terminal.** `push` returns 0 afterwards, by design.
+
+Under `SmugglingPolicy::Normalize`, check `head.applied`: a non-empty
+list means the head's `raw` bytes still carry the ambiguity that was
+normalized away, so re-serialize from the parsed headers instead of
+forwarding them.
+
+Runnable: `examples/01-l7-logging/http_streaming_proxy.rs`. The
+memory contract is in [`bounded-memory.md`](bounded-memory.md); the
+TLS side of routing is in [`tls-routing.md`](tls-routing.md).
+
+## HTTP/2 and gRPC
+
+`flowscope::http2::Http2Parser` has the same shape — `push` per
+direction, drain events — but keyed by stream, since h2 multiplexes.
+
+```rust,no_run
+use bytes::Bytes;
+use flowscope::FlowSide;
+use flowscope::http2::{Http2Event, Http2Parser, grpc_call, grpc_status};
+
+# fn wire() -> Bytes { Bytes::new() }
+let mut p = Http2Parser::new();
+p.push(FlowSide::Initiator, &wire());
+
+while let Some(ev) = p.next_event() {
+    match ev {
+        Http2Event::Head(head) => {
+            // :authority and :path are the routing key.
+            if let Some(call) = grpc_call(&head) {
+                println!("stream {} -> {}/{}", head.stream_id, call.service, call.method);
+            }
+        }
+        Http2Event::Trailers { fields, .. } => {
+            // gRPC reports its outcome here, not in :status.
+            if let Some(status) = grpc_status(&fields) {
+                println!("grpc: {:?}", status.name());
+            }
+        }
+        _ => {}
+    }
+}
+```
+
+The one thing worth internalising: **a gRPC call that failed still
+carries HTTP `200`.** The real status is `grpc-status` in the
+trailers — or, for a Trailers-Only response, in the stream's single
+`HEADERS` block, which arrives as a `Head` rather than as `Trailers`.
+`grpc_status_of(&head)` covers that case so you do not have to branch
+on which it was.
+
+Two caveats specific to h2:
+
+- **HPACK is connection-wide.** The parser must be fed every field
+  block in order; there is no skipping streams you do not care about.
+  A decode failure is fatal to the connection, not to one stream.
+- **Reassembly holes desync HPACK.** With the default
+  `OverflowPolicy::SlidingWindow`, a dropped out-of-order segment
+  will corrupt the dynamic table. For h2 over an unreliable capture,
+  prefer `DropFlow` and treat the flow as lost.
+
 ## Buffer-cap pressure on the reassembler
 
 Watch occupancy without waiting for `BufferOverflow`:
@@ -526,13 +656,13 @@ flushes and recovers the sink.
 
 ```toml
 # CSV + Zeek conn.log writers — no extra deps.
-flowscope = { version = "0.22", features = ["emit"] }
+flowscope = { version = "0.23", features = ["emit"] }
 
 # NDJSON writer — adds serde_json.
-flowscope = { version = "0.22", features = ["emit-ndjson"] }
+flowscope = { version = "0.23", features = ["emit-ndjson"] }
 
 # Suricata 7.x EVE JSON — adds serde_json (0.12).
-flowscope = { version = "0.22", features = ["emit-eve"] }
+flowscope = { version = "0.23", features = ["emit-eve"] }
 ```
 
 ```rust,ignore
@@ -883,7 +1013,7 @@ feature — `Histogram` for explicit-bucket distributions
 reads on unbounded streams.
 
 ```toml
-flowscope = { version = "0.22", features = ["aggregate"] }
+flowscope = { version = "0.23", features = ["aggregate"] }
 ```
 
 ```rust,ignore
@@ -1413,7 +1543,7 @@ loop {
 
 `max = 0` is a valid no-op; `max = usize::MAX` is equivalent to
 `drain()`. The shipped sharded-driver example
-(`examples/00-getting-started/sharded_capture.rs`) uses
+(`examples/08-performance/sharded_capture.rs`) uses
 `drain_n(out, 64)` as the canonical pattern.
 
 ### Per-flow typed state via `FlowStateMap`

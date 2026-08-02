@@ -7,10 +7,11 @@ capture pipelines. Single crate with feature-gated modules. Runtime-
 free, cross-platform — no tokio, no futures, no Linux-specific code in
 the core.
 
-- Edition 2024, MSRV 1.88 (bumped from 1.85 in plan 99 for
-  let-chains)
-- Single Cargo package; modules `http` / `tls` (+ `tls-fingerprints`) / `dns` /
-  `pcap` are opt-in via Cargo features. Observability hooks
+- Edition 2024, MSRV 1.97 (uniformized across toolchains, images,
+  and CI after the 0.22 cycle; was 1.88)
+- Single Cargo package; modules `http` / `http2` / `tls`
+  (+ `tls-fingerprints`) / `dns` / `pcap` are opt-in via Cargo
+  features. Observability hooks
   (`metrics`, `tracing`) are opt-in too.
 - Pairs with [`netring`](https://crates.io/crates/netring) for live
   Linux capture; with `pcap` files for offline replay; with any other
@@ -968,6 +969,14 @@ src/
 │   ├── hyperloglog.rs           # HyperLogLog<K> cardinality sketch
 │   ├── mergeable.rs             # Mergeable trait
 │   └── welford.rs               # WelfordStats — running stats (count/mean/var/min/max) (issue #15, 0.18)
+├── classify.rs                  # classify_first_bytes → WireProtocol — protocol from the first bytes (#165, 0.23)
+├── http2/                       # `http2` feature — HTTP/2 + HPACK + gRPC (#170/#171, 0.23)
+│   ├── error.rs                 # Http2Error
+│   ├── frame.rs                 # frame header + padding/priority/promised-id stripping + SETTINGS
+│   ├── grpc.rs                  # GrpcCall + GrpcStatus + is_grpc_content_type
+│   ├── hpack.rs                 # RFC 7541 decoder: static + dynamic table, integer/string codings
+│   ├── huffman.rs               # RFC 7541 Appendix B canonical Huffman table
+│   └── stream.rs                # Http2Parser + Http2Event + StreamHead + Http2Config
 ├── detect/                      # flowscope::detect (plan 102 sub-C, 0.10)
 │   ├── mod.rs                   # shannon_entropy + 5 light primitives + NgramDist
 │   ├── signatures.rs            # 10 magic-byte recognizers + registry          (plan 113 sub-A, 0.10)
@@ -1046,10 +1055,13 @@ src/
 ├── obs.rs                       # metrics / tracing hooks (plan 40, 0.2.0)
 │                                # (former tracing-messages sub-feature removed in 0.12, plan 131 — always-on under `tracing`)
 ├── http/                        # `http` feature
+│   ├── access.rs                # HttpAccessLog + HttpAccessRecord + HttpAccessOutcome (#168, 0.23)
+│   ├── engine.rs                # THE streaming state machine — one engine, two front-ends (#160, 0.23; was parser.rs)
 │   ├── exchange.rs              # HttpExchangeParser + HttpExchange + HttpOutcome (plan 107, 0.10)
-│   ├── parser.rs                # internal step() machine (httparse-based)
-│   ├── session.rs               # HttpParser (SessionParser, plan 31, the only public shape since 0.9.0)
-│   └── types.rs                 # HttpRequest / HttpResponse / HttpConfig
+│   ├── poison.rs                # HttpPoison typed refusal reasons (#163, 0.23)
+│   ├── proxy.rs                 # HttpProxyParser + HttpEvent + HttpProxyConfig + HttpProxySession (#161/#164, 0.23)
+│   ├── session.rs               # HttpParser — the aggregating telemetry front-end over engine.rs
+│   └── types.rs                 # HttpRequest / HttpResponse / HttpConfig / RequestHead / ResponseHead / BodyFraming / SmugglingPolicy / Authority
 │                                # + 9 new accessors                              (plan 110 sub-A, 0.10)
 ├── tls/                         # `tls` feature
 │   ├── parser.rs                # internal step() machine (tls-parser-based)
@@ -1215,6 +1227,30 @@ The legacy `HttpFactory` / `TlsFactory` callback-handler shape
   106, 0.10).
 - `tests/http_exchange.rs`, `tests/dns_exchange.rs` —
   exchange aggregators (plan 107, 0.10).
+- `tests/http_smuggling.rs` — RFC 9112 §6.3 regression corpus:
+  CL.TE / TE.CL / TE.TE, duplicate + conflicting `Content-Length`,
+  obs-fold, bare CR, duplicate `Host`, request-target authority.
+  Each asserts the **typed** `HttpPoison`, not just "it failed"
+  (#163, 0.23).
+- `tests/bounded_memory.rs` — the adversarial suite behind
+  `docs/bounded-memory.md`: slow drip, endless head, 64 MiB body,
+  unterminated chunk/trailer framing, unbounded pipelining, a caller
+  that never drains, post-poison and post-tunnel accumulation
+  (#169, 0.23).
+- `tests/http_access_log.rs` — inline access records → EVE
+  `event_type: "http"`, plus exact-label metric assertions
+  (#168, 0.23).
+- `tests/http_proxy_driver.rs` — `HttpProxySession` through the typed
+  `Driver`: events reach the slot, and a framing violation drops the
+  parser with `ParserClosed { ParseError }` (#164, 0.23).
+- `tests/http2_streams.rs` + `tests/http2_proptest.rs` — HTTP/2
+  end-to-end routing and the split-invariance / bounded-state /
+  terminal-failure properties (#170, 0.23).
+- `tests/classify_proptest.rs` — prefix safety for
+  `classify_first_bytes`: a short peek never decides differently from
+  the full input (#165, 0.23).
+- `tests/driver_heuristic.rs` — probe replay, `NoMatch` fast-fail,
+  and bounded probe state on heuristic slots (#166, 0.23).
 - `benches/{extractor,tracker,reassembler,session_driver,dedup}.rs`
   — criterion benchmark harness (0.3.0). Run with
   `cargo bench --all-features`; baselines in

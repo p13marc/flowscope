@@ -37,8 +37,8 @@ custom keys opt in by implementing `KeyFields`. (The
 
 ## Event types
 
-Three EVE `event_type` values are produced. Each is toggled
-on `EveOptions`:
+Three come from the `FlowEvent` stream via `write_event`, each
+toggled on `EveOptions`:
 
 | `FlowEvent` variant      | `event_type` | Toggle                | Default |
 |--------------------------|--------------|-----------------------|---------|
@@ -50,6 +50,9 @@ on `EveOptions`:
 `StateChange` produce no EVE output. Use the dedicated
 `FlowEventCsvWriter` / `FlowEventNdjsonWriter` if you need
 those.
+
+A fourth, `event_type: "http"`, is written explicitly rather than
+derived from a `FlowEvent` — see below.
 
 ## Common fields
 
@@ -312,11 +315,48 @@ options.custom_anomaly_type = "applayer";  // default
 let mut eve = EveJsonWriter::with_options(sink, options);
 ```
 
+## `event_type: "http"` — access records (0.23)
+
+`EveJsonWriter::write_http_access(&record, ts)` emits one line per
+HTTP exchange, built from an
+[`HttpAccessRecord`](https://docs.rs/flowscope/latest/flowscope/http/struct.HttpAccessRecord.html).
+It is written explicitly, not from the `FlowEvent` stream, because
+the streaming HTTP parser is driven by the caller rather than by the
+tracker — see `HttpAccessLog`.
+
+```json
+{"timestamp":"2023-11-14T22:13:20.000000+0000","flow_id":1,
+ "event_type":"http","app_proto":"http",
+ "http":{"hostname":"api.example","http_method":"POST","url":"/orders",
+         "status":201,"request_body_len":5,"response_body_len":2,
+         "protocol":"HTTP/1.1"},
+ "flowscope":{"outcome":"completed"}}
+```
+
+| Field | Meaning |
+|---|---|
+| `http.hostname` | Routing authority — the absolute-form target if the request had one, else `Host`. |
+| `http.http_method` / `http.url` | Method and request-target as they appeared on the wire. |
+| `http.status` | Final response status. **Omitted** when no response was framed — not zero. |
+| `http.request_body_len` / `http.response_body_len` | Body bytes **as framed on the wire** (chunk framing included), counted as they passed. The parser never held them. |
+| `flowscope.outcome` | `completed` / `no_response` / `switched` / `refused`. |
+| `flowscope.refused_reason` | Present only on `refused`: the [`HttpPoison`] slug naming the framing violation. |
+
+Two things to know before you build on this:
+
+- **There is no 5-tuple on these records.** The streaming parser is
+  handed bytes, not packets, so it has no addresses to report. Join
+  on `flow_id`, or emit the `"flow"` record alongside.
+- **A refused connection still produces a line.** That is the point:
+  a proxy that declined to forward a smuggled request is exactly the
+  event an operator needs, and a log that omitted it would report
+  that nothing happened.
+
 ## What's NOT emitted
 
-- Per-message records (`event_type: "http"` / `"dns"` /
-  `"tls"`). Out of scope for the 0.12-0.13 cycle — file an
-  issue if needed.
+- Per-message `event_type: "dns"` / `"tls"` records. Out of scope —
+  file an issue if needed. (`"http"` **is** emitted, since 0.23; see
+  above.)
 - Alerts (`event_type: "alert"`). flowscope does not run
   Suricata rules; rule alerts come from Suricata.
 - Field ordering. `serde_json::Map` uses insertion-order
@@ -326,7 +366,7 @@ let mut eve = EveJsonWriter::with_options(sink, options);
 ## Schema version
 
 This document targets Suricata 7.x EVE. The exact mapping is
-locked through the 0.13 cycle; field additions will be
+locked through the 0.23 cycle; field additions will be
 additive. For ECS-strict pipelines, pipe through Logstash with
 the ECS-Suricata conversion module.
 

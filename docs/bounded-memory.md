@@ -21,7 +21,7 @@ Produced by the issue #169 audit; the assertions behind it live in
 
 | If you are… | Do this |
 |---|---|
-| building an inline proxy | use `HttpProxyParser`. Every cap is on by default and `push` returns a short count as backpressure. |
+| building an inline proxy | use `HttpProxyParser` (or `Http2Parser` for h2). Every cap is on by default and `push` returns a short count as backpressure. |
 | running passive telemetry at scale | set `FlowTrackerConfig::max_reassembler_buffer` — it is `None` (unbounded per side) by default. |
 | using load-shedding (`EventMask`) | be aware resource cleanup is currently tied to `Ended` events; see the caveats. |
 | using `correlate` primitives directly | prefer the bounded constructors; several types offer only `new_unbounded`. |
@@ -50,6 +50,29 @@ it now.)
 The passive `HttpParser` does buffer bodies — that is its purpose —
 bounded by `HttpConfig::max_buffer` (1 MiB). Past it the body is
 dropped and the message is still framed and emitted.
+
+## HTTP/2 — bounded by default
+
+Every cap is on out of the box, and `SETTINGS` from the peer can
+lower the effective limits but never raise them past these.
+
+| Buffer | Knob | Default | On exceed |
+|---|---|---|---|
+| one frame | `Http2Config::max_frame_size` | 1 MiB | `FrameTooLarge` (the protocol allows 16 MiB − 1; this is deliberately tighter) |
+| one field block, across `HEADERS` + `CONTINUATION` | `max_header_block_bytes` | 64 KiB | `HeaderListTooLong` |
+| HPACK dynamic table | `max_hpack_table_bytes` | 64 KiB | **hard ceiling** — a peer advertising a larger `SETTINGS_HEADER_TABLE_SIZE` is refused with `HpackTableSizeExceeded` |
+| concurrent streams tracked | `max_concurrent_streams` | 256 | `TooManyStreams` |
+| unparsed bytes per direction | `max_buffered_bytes` | 1 MiB | `push` accepts fewer bytes — backpressure |
+
+The HPACK ceiling is the one worth understanding: the dynamic table
+is memory *the peer decides the size of*, so the peer's advertised
+value is clamped rather than trusted. A failure is fatal to the
+connection, not the stream — HPACK state is shared, so once the table
+is out of step every later field block decodes to plausible nonsense.
+
+A completed or reset stream frees its slot immediately, so
+`max_concurrent_streams` bounds concurrency rather than total streams
+on the connection.
 
 ## TLS, DNS, QUIC, IP fragments
 
