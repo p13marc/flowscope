@@ -82,6 +82,17 @@ not only a passive observer. Migration recipes accrue in
   with a stable `as_str()` slug, so a proxy can map a framing failure
   to `400` versus `502` without parsing message strings.
 
+- **`flowscope::classify`** (#165) — decide what protocol a
+  connection speaks from its first bytes, without guessing on a short
+  read. `classify_first_bytes(peek) -> Classify` returns either
+  `Decided(WireProtocol)` (`Tls` / `Http1` / `Http2Preface` / `Ssh` /
+  `Raw`) or `NeedMore`, and a prefix never decides differently from
+  the full input — the property a router depends on. The HTTP/2
+  preface is tested before HTTP/1 because `PRI ` is also a plausible
+  method token. No dependencies, no feature gate; also in the
+  prelude. Complements `app_proto::classify`, which answers the same
+  question from ALPN/SNI once a handshake exists.
+
 ### Changed (breaking)
 
 - **One streaming HTTP engine under both front-ends** (#160). The
@@ -1388,6 +1399,17 @@ non-commercial; patent pending) — *not* MIT/Apache like the rest of flowscope.
 In 0.15 it shipped under `tls-fingerprints` alongside the BSD JA3 + JA4-client
 fingerprints, which inadvertently put FoxIO-licensed code in the royalty-free
 surface.
+
+- **`flowscope::classify`** (#165) — decide what protocol a
+  connection speaks from its first bytes, without guessing on a short
+  read. `classify_first_bytes(peek) -> Classify` returns either
+  `Decided(WireProtocol)` (`Tls` / `Http1` / `Http2Preface` / `Ssh` /
+  `Raw`) or `NeedMore`, and a prefix never decides differently from
+  the full input — the property a router depends on. The HTTP/2
+  preface is tested before HTTP/1 because `PRI ` is also a plausible
+  method token. No dependencies, no feature gate; also in the
+  prelude. Complements `app_proto::classify`, which answers the same
+  question from ALPN/SNI once a handshake exists.
 
 ### Changed (breaking)
 
