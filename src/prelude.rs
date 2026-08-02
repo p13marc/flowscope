@@ -119,6 +119,9 @@ pub use crate::app_proto::{AppProtocol, Transport as AppTransport};
 // Issue #165 (0.23): what protocol is this, from the first bytes —
 // the cleartext counterpart to the ALPN/SNI-derived `app_proto`.
 pub use crate::classify::{Classify, WireProtocol, classify_first_bytes};
+// Issue #170 (0.23): HTTP/2 frames + HPACK + per-stream routing.
+#[cfg(feature = "http2")]
+pub use crate::http2::{Http2Event, Http2Parser, StreamHead};
 // Issue #138 (0.22): IP fragment reassembly — anti-evasion.
 pub use crate::ip_fragment::{FragmentKey, IpFragmentReassembler};
 // Issue #16 / #28 (0.18): IPFIX canonical record + binary

@@ -134,6 +134,9 @@ test-helpers = ["extractors"]
 
 # Protocol parsers. Each is a self-contained module gated by its feature.
 http = ["reassembler", "session", "dep:httparse", "dep:bytes"]
+# HTTP/2 frame layer + HPACK + per-stream routing (issue #170).
+# Pure compute; no new dependencies beyond `bytes`.
+http2 = ["session", "dep:bytes"]
 tls = ["reassembler", "session", "dep:tls-parser", "dep:bytes"]
 # TLS fingerprint family (plan 131) — JA3 + JA4 TLS *client* fingerprints.
 # Royalty-free / BSD-3-Clause-equivalent (JA3 = Salesforce, JA4 client =
