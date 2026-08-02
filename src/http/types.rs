@@ -264,6 +264,22 @@ impl HttpResponse {
     }
 }
 
+/// What a protocol switch handed the connection over to. After one of
+/// these the parser stops: the caller splices the remaining bytes
+/// through untouched.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum SwitchKind {
+    /// A `2xx` to `CONNECT` — the rest of the connection is a tunnel.
+    ConnectTunnel,
+    /// `101 Switching Protocols`; the token from the `Upgrade` header
+    /// (for example `websocket`).
+    Upgrade { protocol: Bytes },
+    /// The HTTP/2 connection preface appeared where a request was
+    /// expected — a prior-knowledge h2 client.
+    Http2PriorKnowledge,
+}
+
 /// Request start line + headers, surfaced by the streaming parser at
 /// header-completion time — *before* the body.
 ///

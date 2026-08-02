@@ -30,7 +30,7 @@ use std::collections::VecDeque;
 use bytes::{Bytes, BytesMut};
 
 use super::poison::HttpPoison;
-use super::types::{BodyFraming, HttpVersion};
+use super::types::{BodyFraming, HttpVersion, SwitchKind};
 use crate::error::{Error, Module};
 
 /// Number of header slots parsed without touching the heap. Requests
@@ -102,6 +102,10 @@ pub(crate) struct Head {
     /// How this message's body is delimited, decided here at head
     /// time — for responses using the matching request's method.
     pub framing: BodyFraming,
+    /// `true` for a `1xx` interim response: it precedes the final
+    /// response, never carries a body, and does not complete the
+    /// exchange.
+    pub interim: bool,
     /// The exact on-wire head, start line through the blank line.
     pub raw: Bytes,
 }
@@ -136,6 +140,9 @@ pub(crate) enum EngineEvent {
     },
     /// The message is fully framed; the next one may follow.
     End,
+    /// The connection left HTTP/1.x behind. Both directions stop
+    /// parsing; the caller tunnels the remaining bytes verbatim.
+    Switch(SwitchKind),
 }
 
 /// Body-reading sub-state.
@@ -170,6 +177,9 @@ enum DirState {
     /// Awaiting a start line + header block.
     Head,
     Body(BodyState),
+    /// A protocol switch handed the connection over; nothing further
+    /// is parsed here.
+    Tunnel,
     /// Clean end of stream. Distinct from [`Desynced`](Self::Desynced):
     /// a FIN on an idle keep-alive connection is not an error.
     Closed,
@@ -187,6 +197,8 @@ enum DirState {
 struct ReqCtx {
     /// `HEAD` responses carry no body whatever the headers say.
     is_head: bool,
+    /// A `2xx` to `CONNECT` turns the connection into a tunnel.
+    is_connect: bool,
 }
 
 /// One direction's buffer + state.
@@ -196,6 +208,10 @@ struct DirMachine {
     state: DirState,
     /// Why this direction desynced, if it did.
     poison: Option<HttpPoison>,
+    /// The in-flight message asked for the connection to close once
+    /// it completes (`Connection: close`, or HTTP/1.0 without
+    /// `keep-alive`).
+    close_after_message: bool,
     /// How far [`scan_blank_line`] / [`scan_crlf`] has already looked,
     /// so a slowly-fed line is scanned once overall instead of once
     /// per feed.
@@ -208,6 +224,7 @@ impl DirMachine {
             buf: BytesMut::new(),
             state: DirState::Head,
             poison: None,
+            close_after_message: false,
             scanned: 0,
         }
     }
@@ -216,6 +233,7 @@ impl DirMachine {
         self.buf.clear();
         self.state = DirState::Head;
         self.poison = None;
+        self.close_after_message = false;
         self.scanned = 0;
     }
 
@@ -234,6 +252,9 @@ pub(crate) struct Engine {
     response: DirMachine,
     /// Requests awaiting a response, in wire order.
     pending: VecDeque<ReqCtx>,
+    /// A protocol switch to report once the response head that
+    /// announced it has been fully framed.
+    pending_switch: Option<SwitchKind>,
 }
 
 impl Engine {
@@ -243,6 +264,7 @@ impl Engine {
             request: DirMachine::new(),
             response: DirMachine::new(),
             pending: VecDeque::new(),
+            pending_switch: None,
         }
     }
 
@@ -290,7 +312,7 @@ impl Engine {
         loop {
             let state = self.dir(dir).state.clone();
             match state {
-                DirState::Desynced | DirState::Closed => return Ok(None),
+                DirState::Desynced | DirState::Closed | DirState::Tunnel => return Ok(None),
                 DirState::Head => match self.poll_head(dir)? {
                     Some(ev) => return Ok(Some(ev)),
                     // Head not complete yet.
@@ -339,10 +361,31 @@ impl Engine {
         matches!(self.dir(dir).state, DirState::Closed)
     }
 
+    /// `true` once a protocol switch handed the connection over.
+    pub(crate) fn is_tunnelled(&self) -> bool {
+        matches!(self.request.state, DirState::Tunnel)
+    }
+
     // ── head ──────────────────────────────────────────────────────
 
     fn poll_head(&mut self, dir: Dir) -> crate::Result<Option<EngineEvent>> {
         let limits = self.limits.clone();
+
+        // A prior-knowledge HTTP/2 client opens with the connection
+        // preface where a request line would be (RFC 9113 §3.4).
+        // Recognising it here keeps the parser from reporting a
+        // malformed request for perfectly valid h2 traffic.
+        if dir == Dir::Request {
+            match preface_match(&self.request.buf) {
+                PrefaceMatch::Yes => {
+                    self.switch_to_tunnel();
+                    return Ok(Some(EngineEvent::Switch(SwitchKind::Http2PriorKnowledge)));
+                }
+                PrefaceMatch::Partial => return Ok(None),
+                PrefaceMatch::No => {}
+            }
+        }
+
         let m = self.dir_mut(dir);
 
         let Some(hlen) = scan_blank_line(&m.buf, &mut m.scanned) else {
@@ -364,34 +407,106 @@ impl Engine {
         };
         let raw = m.take(hlen);
         let head = parts.into_head(dir, &raw, raw.clone());
+        let wants_close = signals_close(&head);
 
-        // Response framing needs the request method (§6.3 rules 1-2).
-        let framing = match dir {
-            Dir::Request => request_framing(&head.headers),
-            Dir::Response => {
-                let ctx = self.pending.pop_front();
-                response_framing(head.status, ctx.is_some_and(|c| c.is_head), &head.headers)
-            }
-        };
-        if dir == Dir::Request {
-            if self.pending.len() >= self.limits.max_pipelined {
+        match dir {
+            Dir::Request => {
+                if self.pending.len() >= self.limits.max_pipelined {
+                    let m = self.dir_mut(dir);
+                    return Err(Self::desync(m, HttpPoison::PipelineOverflow));
+                }
+                self.pending.push_back(ReqCtx {
+                    is_head: head.method.as_ref().eq_ignore_ascii_case(b"HEAD"),
+                    is_connect: head.method.as_ref().eq_ignore_ascii_case(b"CONNECT"),
+                });
+                let framing = request_framing(&head.headers);
+                let head = Head { framing, ..head };
                 let m = self.dir_mut(dir);
-                return Err(Self::desync(m, HttpPoison::PipelineOverflow));
+                m.close_after_message = wants_close;
+                m.state = body_state(framing);
+                Ok(Some(EngineEvent::Head(head)))
             }
-            self.pending.push_back(ReqCtx {
-                is_head: head.method.as_ref().eq_ignore_ascii_case(b"HEAD"),
-            });
+            Dir::Response => self.finish_response_head(head, wants_close),
+        }
+    }
+
+    /// Frame a response head, applying the interim and tunnel rules.
+    ///
+    /// `1xx` responses (RFC 9110 §15.2) precede the final response and
+    /// never carry a body, so they neither consume the pending request
+    /// nor open a body state — a proxy forwards them and keeps
+    /// reading. `101` and a `2xx` to `CONNECT` end HTTP framing
+    /// altogether.
+    fn finish_response_head(
+        &mut self,
+        head: Head,
+        wants_close: bool,
+    ) -> crate::Result<Option<EngineEvent>> {
+        let status = head.status;
+
+        // 101 Switching Protocols: forward the head, then hand the
+        // connection over (RFC 9110 §15.2.2).
+        if status == 101 {
+            let protocol = header_value(&head.headers, b"upgrade").unwrap_or_default();
+            let head = Head {
+                framing: BodyFraming::None,
+                interim: false,
+                ..head
+            };
+            self.pending.pop_front();
+            self.pending_switch = Some(SwitchKind::Upgrade { protocol });
+            self.response.state = DirState::Body(BodyState::Length { remaining: 0 });
+            return Ok(Some(EngineEvent::Head(head)));
         }
 
-        let head = Head { framing, ..head };
-        let next = match framing {
-            BodyFraming::None => DirState::Body(BodyState::Length { remaining: 0 }),
-            BodyFraming::ContentLength(n) => DirState::Body(BodyState::Length { remaining: n }),
-            BodyFraming::Chunked => DirState::Body(BodyState::Chunked(ChunkState::Size)),
-            BodyFraming::UntilClose => DirState::Body(BodyState::UntilClose),
+        // Other 1xx: interim. Do not consume the request — the final
+        // response for it is still to come.
+        if (100..=199).contains(&status) {
+            let head = Head {
+                framing: BodyFraming::None,
+                interim: true,
+                ..head
+            };
+            // Straight back to Head: an interim has no body and does
+            // not complete the exchange.
+            self.response.state = DirState::Head;
+            return Ok(Some(EngineEvent::Head(head)));
+        }
+
+        let ctx = self.pending.pop_front();
+        let is_head_request = ctx.is_some_and(|c| c.is_head);
+
+        // A successful CONNECT turns the rest into a tunnel
+        // (RFC 9110 §9.3.6).
+        if ctx.is_some_and(|c| c.is_connect) && (200..=299).contains(&status) {
+            let head = Head {
+                framing: BodyFraming::None,
+                interim: false,
+                ..head
+            };
+            self.pending_switch = Some(SwitchKind::ConnectTunnel);
+            self.response.state = DirState::Body(BodyState::Length { remaining: 0 });
+            return Ok(Some(EngineEvent::Head(head)));
+        }
+
+        let framing = response_framing(status, is_head_request, &head.headers);
+        let head = Head {
+            framing,
+            interim: false,
+            ..head
         };
-        self.dir_mut(dir).state = next;
+        self.response.close_after_message = wants_close;
+        self.response.state = body_state(framing);
         Ok(Some(EngineEvent::Head(head)))
+    }
+
+    /// Put both directions into tunnel state.
+    fn switch_to_tunnel(&mut self) {
+        self.request.state = DirState::Tunnel;
+        self.response.state = DirState::Tunnel;
+        self.request.buf.clear();
+        self.response.buf.clear();
+        self.pending.clear();
     }
 
     // ── body ──────────────────────────────────────────────────────
@@ -399,7 +514,21 @@ impl Engine {
     fn poll_body(&mut self, dir: Dir, body: BodyState) -> crate::Result<Progress> {
         match body {
             BodyState::Length { remaining: 0 } => {
-                self.dir_mut(dir).state = DirState::Head;
+                // A switch announced by this message takes effect now
+                // that it is fully framed.
+                if let Some(kind) = self.pending_switch.take() {
+                    self.switch_to_tunnel();
+                    return Ok(Progress::Event(EngineEvent::Switch(kind)));
+                }
+                let m = self.dir_mut(dir);
+                m.state = if m.close_after_message {
+                    // The peer said it will close once this message
+                    // ends, so nothing more can arrive on this
+                    // direction.
+                    DirState::Closed
+                } else {
+                    DirState::Head
+                };
                 Ok(Progress::Event(EngineEvent::End))
             }
             BodyState::Length { remaining } => {
@@ -595,6 +724,69 @@ fn response_framing(
     }
 }
 
+/// The body state a freshly framed message starts in.
+fn body_state(framing: BodyFraming) -> DirState {
+    match framing {
+        BodyFraming::None => DirState::Body(BodyState::Length { remaining: 0 }),
+        BodyFraming::ContentLength(n) => DirState::Body(BodyState::Length { remaining: n }),
+        BodyFraming::Chunked => DirState::Body(BodyState::Chunked(ChunkState::Size)),
+        BodyFraming::UntilClose => DirState::Body(BodyState::UntilClose),
+    }
+}
+
+/// The 24-octet HTTP/2 client connection preface (RFC 9113 §3.4).
+const H2_PREFACE: &[u8] = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
+
+/// Whether a buffer starts the HTTP/2 preface.
+enum PrefaceMatch {
+    Yes,
+    /// A prefix so far — `PRI ` also starts a plausible HTTP/1
+    /// request line, so nothing can be decided yet.
+    Partial,
+    No,
+}
+
+fn preface_match(buf: &[u8]) -> PrefaceMatch {
+    let n = buf.len().min(H2_PREFACE.len());
+    if buf[..n] != H2_PREFACE[..n] {
+        return PrefaceMatch::No;
+    }
+    if buf.len() >= H2_PREFACE.len() {
+        PrefaceMatch::Yes
+    } else {
+        PrefaceMatch::Partial
+    }
+}
+
+/// First value of a header, case-insensitively.
+fn header_value(headers: &[(Bytes, Bytes)], name: &[u8]) -> Option<Bytes> {
+    headers
+        .iter()
+        .find(|(k, _)| k.as_ref().eq_ignore_ascii_case(name))
+        .map(|(_, v)| v.clone())
+}
+
+/// Whether a message says the connection closes once it completes.
+///
+/// HTTP/1.1 defaults to persistent connections and opts out with
+/// `Connection: close`; HTTP/1.0 defaults the other way and opts in
+/// with `Connection: keep-alive` (RFC 9112 §9.3).
+fn signals_close(head: &Head) -> bool {
+    let tokens = |name: &[u8], want: &[u8]| {
+        head.headers
+            .iter()
+            .filter(|(k, _)| k.as_ref().eq_ignore_ascii_case(name))
+            .any(|(_, v)| {
+                v.split(|&b| b == b',')
+                    .any(|t| t.trim_ascii().eq_ignore_ascii_case(want))
+            })
+    };
+    if tokens(b"connection", b"close") {
+        return true;
+    }
+    head.version == HttpVersion::Http1_0 && !tokens(b"connection", b"keep-alive")
+}
+
 /// `true` if any `Transfer-Encoding` header lists `chunked`.
 fn has_chunked_encoding(headers: &[(Bytes, Bytes)]) -> bool {
     headers.iter().any(|(name, value)| {
@@ -654,8 +846,9 @@ impl HeadOffsets {
                 .into_iter()
                 .map(|(n, v)| (cut(n), cut(v)))
                 .collect(),
-            // Replaced by the caller once framing is known.
+            // Both replaced by the caller once framing is known.
             framing: BodyFraming::None,
+            interim: false,
             raw,
         }
     }
@@ -988,7 +1181,7 @@ mod tests {
                     raw.extend_from_slice(r);
                 }
                 EngineEvent::Trailers { raw: r, .. } => raw.extend_from_slice(r),
-                EngineEvent::End => {}
+                EngineEvent::End | EngineEvent::Switch(_) => {}
             }
         }
         assert_eq!(decoded, b"hello world");

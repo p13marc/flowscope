@@ -7,25 +7,9 @@ use bytes::Bytes;
 use super::{
     engine::{Dir, Engine, EngineEvent, EngineLimits},
     poison::HttpPoison,
-    types::{RequestHead, ResponseHead},
+    types::{RequestHead, ResponseHead, SwitchKind},
 };
 use crate::FlowSide;
-
-/// What a protocol switch handed the connection over to. After one of
-/// these the parser stops: the caller splices the remaining bytes
-/// through untouched.
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum SwitchKind {
-    /// A `2xx` to `CONNECT` — the rest of the connection is a tunnel.
-    ConnectTunnel,
-    /// `101 Switching Protocols`; the token from the `Upgrade` header
-    /// (for example `websocket`).
-    Upgrade { protocol: Bytes },
-    /// The HTTP/2 connection preface appeared where a request was
-    /// expected — a prior-knowledge h2 client.
-    Http2PriorKnowledge,
-}
 
 /// One step of progress on a connection.
 #[derive(Debug, Clone)]
@@ -271,12 +255,18 @@ impl HttpProxyParser {
         self.poison().map(HttpPoison::as_str)
     }
 
-    /// `true` once both directions have seen end of stream.
+    /// `true` once no further HTTP message can arrive, so the caller
+    /// can close or recycle the connection without guessing.
     ///
-    /// Issue #162 extends this to the HTTP-semantic cases —
-    /// `Connection: close` after a final response, and protocol
-    /// switches — so a caller can close or reuse deterministically.
+    /// That is the case after a protocol switch (the bytes belong to
+    /// the tunnel now), and once both directions are finished —
+    /// either by end of stream or because a message said the
+    /// connection closes when it completes (`Connection: close`, or
+    /// HTTP/1.0 without `keep-alive`).
     pub fn is_done(&self) -> bool {
+        if self.engine.is_tunnelled() {
+            return true;
+        }
         self.engine.is_closed(Dir::Request) && self.engine.is_closed(Dir::Response)
     }
 
@@ -320,8 +310,7 @@ fn convert(dir: Dir, ev: EngineEvent) -> HttpEvent {
                 version: h.version,
                 headers: h.headers,
                 framing: h.framing,
-                // Interim (1xx) handling lands with issue #162.
-                interim: false,
+                interim: h.interim,
                 raw: h.raw,
             }),
         },
@@ -336,6 +325,7 @@ fn convert(dir: Dir, ev: EngineEvent) -> HttpEvent {
             raw,
         },
         EngineEvent::End => HttpEvent::End { dir: side },
+        EngineEvent::Switch(kind) => HttpEvent::SwitchProtocols { kind },
     }
 }
 
@@ -562,6 +552,229 @@ mod tests {
         );
         let _ = drain(&mut p);
         assert_eq!(p.poison(), Some(HttpPoison::InvalidChunkSize));
+    }
+
+    // ── interim responses, tunnels, completion (#162) ─────────────
+
+    fn statuses(evs: &[HttpEvent]) -> Vec<(u16, bool)> {
+        evs.iter()
+            .filter_map(|e| match e {
+                HttpEvent::ResponseHead(h) => Some((h.status, h.interim)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn interim_responses_precede_the_final_one() {
+        // 100-continue then the real response. The interim must be
+        // reported (a proxy forwards it) but must not complete the
+        // exchange or consume the request.
+        let mut p = HttpProxyParser::new();
+        push_all(
+            &mut p,
+            FlowSide::Initiator,
+            b"POST /u HTTP/1.1\r\nExpect: 100-continue\r\nContent-Length: 2\r\n\r\n",
+        );
+        let _ = drain(&mut p);
+        push_all(
+            &mut p,
+            FlowSide::Responder,
+            b"HTTP/1.1 100 Continue\r\n\r\nHTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok",
+        );
+        let evs = drain(&mut p);
+        assert_eq!(statuses(&evs), vec![(100, true), (200, false)]);
+        assert_eq!(decoded_of(&evs), b"ok");
+        // Exactly one End: the interim did not complete anything.
+        assert_eq!(
+            evs.iter()
+                .filter(|e| matches!(e, HttpEvent::End { .. }))
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn multiple_interims_then_final() {
+        // 103 Early Hints (RFC 8297) can repeat before the final.
+        let mut p = HttpProxyParser::new();
+        push_all(&mut p, FlowSide::Initiator, b"GET /a HTTP/1.1\r\n\r\n");
+        let _ = drain(&mut p);
+        push_all(
+            &mut p,
+            FlowSide::Responder,
+            b"HTTP/1.1 103 Early Hints\r\nLink: </s.css>\r\n\r\n\
+              HTTP/1.1 103 Early Hints\r\nLink: </t.css>\r\n\r\n\
+              HTTP/1.1 200 OK\r\nContent-Length: 1\r\n\r\nx",
+        );
+        let evs = drain(&mut p);
+        assert_eq!(statuses(&evs), vec![(103, true), (103, true), (200, false)]);
+    }
+
+    #[test]
+    fn response_reader_runs_before_the_request_body_is_sent() {
+        // The 100-continue deadlock: the server answers while the
+        // request body is still outstanding. Framing the response
+        // must not wait on the request completing.
+        let mut p = HttpProxyParser::new();
+        push_all(
+            &mut p,
+            FlowSide::Initiator,
+            b"POST /u HTTP/1.1\r\nExpect: 100-continue\r\nContent-Length: 1000000\r\n\r\n",
+        );
+        let _ = drain(&mut p);
+        push_all(
+            &mut p,
+            FlowSide::Responder,
+            b"HTTP/1.1 100 Continue\r\n\r\n",
+        );
+        let evs = drain(&mut p);
+        assert_eq!(statuses(&evs), vec![(100, true)]);
+    }
+
+    #[test]
+    fn connect_tunnel_switches_and_stops_parsing() {
+        let mut p = HttpProxyParser::new();
+        push_all(
+            &mut p,
+            FlowSide::Initiator,
+            b"CONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\n\r\n",
+        );
+        let _ = drain(&mut p);
+        push_all(
+            &mut p,
+            FlowSide::Responder,
+            b"HTTP/1.1 200 Connection Established\r\n\r\n",
+        );
+        let evs = drain(&mut p);
+        assert!(matches!(
+            evs.last(),
+            Some(HttpEvent::SwitchProtocols {
+                kind: SwitchKind::ConnectTunnel
+            })
+        ));
+        // Tunnelled bytes are the caller's to splice; nothing further
+        // is parsed as HTTP.
+        push_all(&mut p, FlowSide::Initiator, b"\x16\x03\x01\x02\x00\x01");
+        assert!(p.next_event().is_none());
+        assert!(!p.is_poisoned());
+    }
+
+    #[test]
+    fn failed_connect_is_a_normal_response() {
+        let mut p = HttpProxyParser::new();
+        push_all(
+            &mut p,
+            FlowSide::Initiator,
+            b"CONNECT example.com:443 HTTP/1.1\r\n\r\n",
+        );
+        let _ = drain(&mut p);
+        push_all(
+            &mut p,
+            FlowSide::Responder,
+            b"HTTP/1.1 403 Forbidden\r\nContent-Length: 2\r\n\r\nno",
+        );
+        let evs = drain(&mut p);
+        assert!(
+            !evs.iter()
+                .any(|e| matches!(e, HttpEvent::SwitchProtocols { .. })),
+            "a rejected CONNECT does not open a tunnel"
+        );
+        assert_eq!(decoded_of(&evs), b"no");
+    }
+
+    #[test]
+    fn websocket_upgrade_switches_with_the_protocol_token() {
+        let mut p = HttpProxyParser::new();
+        push_all(
+            &mut p,
+            FlowSide::Initiator,
+            b"GET /chat HTTP/1.1\r\nHost: h\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n",
+        );
+        let _ = drain(&mut p);
+        push_all(
+            &mut p,
+            FlowSide::Responder,
+            b"HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n",
+        );
+        let evs = drain(&mut p);
+        match evs.last() {
+            Some(HttpEvent::SwitchProtocols {
+                kind: SwitchKind::Upgrade { protocol },
+            }) => assert_eq!(protocol.as_ref(), b"websocket"),
+            other => panic!("expected an Upgrade switch, got {other:?}"),
+        }
+        // The 101 head itself is still reported, so a proxy forwards it.
+        assert_eq!(statuses(&evs), vec![(101, false)]);
+    }
+
+    #[test]
+    fn http2_preface_is_recognised_not_mistaken_for_a_request() {
+        let mut p = HttpProxyParser::new();
+        push_all(
+            &mut p,
+            FlowSide::Initiator,
+            b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n\x00\x00\x00\x04\x00\x00\x00\x00\x00",
+        );
+        let evs = drain(&mut p);
+        assert!(matches!(
+            evs.first(),
+            Some(HttpEvent::SwitchProtocols {
+                kind: SwitchKind::Http2PriorKnowledge
+            })
+        ));
+        assert!(!p.is_poisoned(), "h2 traffic is not a framing failure");
+    }
+
+    #[test]
+    fn partial_preface_waits_instead_of_guessing() {
+        let mut p = HttpProxyParser::new();
+        push_all(&mut p, FlowSide::Initiator, b"PRI * HTTP/2.0\r\n");
+        assert!(
+            p.next_event().is_none(),
+            "a prefix of the preface must not decide either way"
+        );
+        push_all(&mut p, FlowSide::Initiator, b"\r\nSM\r\n\r\n");
+        assert!(matches!(
+            p.next_event(),
+            Some(HttpEvent::SwitchProtocols {
+                kind: SwitchKind::Http2PriorKnowledge
+            })
+        ));
+    }
+
+    #[test]
+    fn connection_close_completes_the_direction() {
+        let mut p = HttpProxyParser::new();
+        push_all(&mut p, FlowSide::Initiator, b"GET /a HTTP/1.1\r\n\r\n");
+        let _ = drain(&mut p);
+        push_all(
+            &mut p,
+            FlowSide::Responder,
+            b"HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: 2\r\n\r\nhi",
+        );
+        let evs = drain(&mut p);
+        assert_eq!(decoded_of(&evs), b"hi");
+        p.fin(FlowSide::Initiator);
+        assert!(
+            p.is_done(),
+            "after a Connection: close response the connection is finished"
+        );
+    }
+
+    #[test]
+    fn http_1_0_response_without_keep_alive_completes() {
+        let mut p = HttpProxyParser::new();
+        push_all(&mut p, FlowSide::Initiator, b"GET /a HTTP/1.0\r\n\r\n");
+        let _ = drain(&mut p);
+        push_all(
+            &mut p,
+            FlowSide::Responder,
+            b"HTTP/1.0 200 OK\r\nContent-Length: 2\r\n\r\nhi",
+        );
+        let _ = drain(&mut p);
+        p.fin(FlowSide::Initiator);
+        assert!(p.is_done(), "HTTP/1.0 defaults to closing");
     }
 
     #[test]

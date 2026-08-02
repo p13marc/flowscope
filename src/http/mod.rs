@@ -136,10 +136,11 @@ pub use ja4h::{Ja4hParts, ja4h as ja4h_fingerprint, ja4h_parts};
 #[cfg(feature = "pcap")]
 pub use pcap_iter::{exchanges_from_pcap, requests_from_pcap, responses_from_pcap};
 pub use poison::HttpPoison;
-pub use proxy::{HttpEvent, HttpProxyConfig, HttpProxyParser, SwitchKind};
+pub use proxy::{HttpEvent, HttpProxyConfig, HttpProxyParser};
 pub use session::{HttpMessage, HttpParser};
 pub use types::{
     BodyFraming, HttpConfig, HttpRequest, HttpResponse, HttpVersion, RequestHead, ResponseHead,
+    SwitchKind,
 };
 
 /// Slug returned by [`HttpParser`]'s `parser_kind()`. Use at
