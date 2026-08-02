@@ -128,6 +128,34 @@ not only a passive observer. Migration recipes accrue in
   `draft-ietf-tls-ecdhe-mlkem` (IESG-approved, in the RFC Editor
   queue) and are cited as a draft, not an RFC.
 
+- **`docs/bounded-memory.md`** (#169) — the memory contract, from a
+  crate-wide audit of every accumulation path: which buffers are
+  capped, which caps are **opt-in** (notably
+  `max_reassembler_buffer`, which defaults to `None`), what happens
+  on overflow, and the five gaps the audit found that are still open
+  (#184–#188). `tests/bounded_memory.rs` is the adversarial suite
+  behind it.
+- `HttpProxyConfig` and `HttpConfig` gain `with_*` builder methods, so
+  a cap can be adjusted in one expression from outside the crate —
+  `#[non_exhaustive]` makes struct-literal construction unavailable
+  there.
+
+### Fixed
+
+- **A poisoned or tunnelled HTTP direction no longer stores bytes it
+  will never parse** (#169). After a desync, a protocol switch, or
+  end of stream, `Engine::push` was still appending while nothing
+  consumed the buffer — so a peer that kept sending grew it for the
+  life of the connection. This was a regression introduced with the
+  engine unification (#160): the pre-0.23 parser cleared its buffer
+  on every failed step. Guarded by tests now.
+- **Heuristic probe state is bounded** (#169). #166 released entries
+  when a flow ended, but a flow the signature rules out is never
+  registered with the inner driver and so never produces an `Ended`
+  event — meaning a scan against a heuristic slot still leaked one
+  entry per source. The map is now capped, evicting decided entries
+  first.
+
 ### Fixed (driver)
 
 - **Heuristic slots hand the parser the whole stream** (#166).
@@ -1498,6 +1526,34 @@ surface.
   `ech` SvcParamKey is **5**; the ML-KEM hybrids are still
   `draft-ietf-tls-ecdhe-mlkem` (IESG-approved, in the RFC Editor
   queue) and are cited as a draft, not an RFC.
+
+- **`docs/bounded-memory.md`** (#169) — the memory contract, from a
+  crate-wide audit of every accumulation path: which buffers are
+  capped, which caps are **opt-in** (notably
+  `max_reassembler_buffer`, which defaults to `None`), what happens
+  on overflow, and the five gaps the audit found that are still open
+  (#184–#188). `tests/bounded_memory.rs` is the adversarial suite
+  behind it.
+- `HttpProxyConfig` and `HttpConfig` gain `with_*` builder methods, so
+  a cap can be adjusted in one expression from outside the crate —
+  `#[non_exhaustive]` makes struct-literal construction unavailable
+  there.
+
+### Fixed
+
+- **A poisoned or tunnelled HTTP direction no longer stores bytes it
+  will never parse** (#169). After a desync, a protocol switch, or
+  end of stream, `Engine::push` was still appending while nothing
+  consumed the buffer — so a peer that kept sending grew it for the
+  life of the connection. This was a regression introduced with the
+  engine unification (#160): the pre-0.23 parser cleared its buffer
+  on every failed step. Guarded by tests now.
+- **Heuristic probe state is bounded** (#169). #166 released entries
+  when a flow ended, but a flow the signature rules out is never
+  registered with the inner driver and so never produces an `Ended`
+  event — meaning a scan against a heuristic slot still leaked one
+  entry per source. The map is now capped, evicting decided entries
+  first.
 
 ### Fixed (driver)
 

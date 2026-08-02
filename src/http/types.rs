@@ -630,6 +630,22 @@ pub struct HttpConfig {
     pub max_headers: usize,
 }
 
+impl HttpConfig {
+    /// Cap the buffered bytes per direction.
+    #[must_use]
+    pub fn with_max_buffer(mut self, n: usize) -> Self {
+        self.max_buffer = n;
+        self
+    }
+
+    /// Cap the header-field count per message.
+    #[must_use]
+    pub fn with_max_headers(mut self, n: usize) -> Self {
+        self.max_headers = n;
+        self
+    }
+}
+
 impl Default for HttpConfig {
     fn default() -> Self {
         Self {
