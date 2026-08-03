@@ -521,6 +521,16 @@ path = "examples/01-l7-logging/grpc_routing.rs"
 required-features = ["http2"]
 
 [[example]]
+name = "http2_header_rewrite"
+path = "examples/01-l7-logging/http2_header_rewrite.rs"
+required-features = ["http2"]
+
+[[example]]
+name = "http2_driver"
+path = "examples/01-l7-logging/http2_driver.rs"
+required-features = ["http2", "extractors", "tracker", "reassembler", "session"]
+
+[[example]]
 name = "first_byte_router"
 path = "examples/01-l7-logging/first_byte_router.rs"
 required-features = ["http", "http2"]

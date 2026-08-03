@@ -263,7 +263,7 @@ Per-feature dependency tree is documented inline in
 | [`docs/migration-0.21-to-0.22.md`](docs/migration-0.21-to-0.22.md) | the 0.22 breaks — stateful `QuicUdpParser::new()` (PQ ClientHello reassembly) + `parser_kinds` removal — plus the additive 0.22 surface |
 | [`docs/migration-0.20-to-0.21.md`](docs/migration-0.20-to-0.21.md) | the 0.21 detection-architecture breaks — typed `DetectorKind`, `DetectorScore::kind()`, opt-in per-packet `source_idx` |
 | [`docs/migration-0.19-to-0.20.md`](docs/migration-0.19-to-0.20.md) | the 0.20 driver/event convergence — one typed `Driver<E>`, removal of `Flow{Session,Datagram}Driver` + `SessionEvent`, with migration recipes |
-| [`examples/`](examples/) | 70+ runnable examples grouped by use case (l7 logging, forensics, detection, observability, export, custom protocols, multi-protocol, performance, low-level) |
+| [`examples/`](examples/) | 75+ runnable examples grouped by use case (l7 logging, forensics, detection, observability, export, custom protocols, multi-protocol, performance, low-level) |
 | [`CHANGELOG.md`](CHANGELOG.md) | release history + migration recipes |
 
 ## License
