@@ -148,14 +148,26 @@ have been inconsistent.
   `evicted()`. `observe` deliberately keeps its `(key, success)`
   signature.
 
-Test count after the cycle: **2161 passing** (up from 1919 at
+Test count after the cycle: **2219 passing** (up from 1919 at
 0.22.0). Zero clippy warnings under `--all-features --all-targets
 -D warnings`, zero rustdoc warnings. New modules: `src/classify.rs`,
-`src/http/{engine,proxy,poison,access}.rs`, `src/http2/`. New docs:
-`docs/tls-routing.md`, `docs/bounded-memory.md`,
-`docs/migration-0.22-to-0.23.md`. Every issue in the milestone and
-the whole open backlog is closed. **Not yet published to crates.io —
-the user has asked for no release yet.**
+`src/http/{engine,proxy,poison,access}.rs`, `src/http2/` (including
+`hpack_encode.rs` and `session.rs`). New docs: `docs/tls-routing.md`,
+`docs/bounded-memory.md`, `docs/migration-0.22-to-0.23.md`. New
+examples: `http2_driver`, `http2_header_rewrite` (#196/#197), on top
+of the milestone's five.
+
+Every issue in the milestone is closed, and so is the backlog it was
+gated on. Two follow-ups filed *from* this work remain open and are
+deliberately not release blockers: **#200** (a quadratic
+`BytesMut::clone()` per frame in `drive_inner` — pre-existing,
+bounded, but ~64 MiB of memcpy to drain a full default buffer) and
+**#201** (no `detect::signatures` entry for the h2 preface, so
+heuristic slots cannot pin h2 — which is what `Http2Session`'s
+preface tolerance was built for).
+
+**Not yet published to crates.io — the user has asked for no release
+yet.**
 
 **0.22.0 cycle** (fingerprinting & encrypted-traffic frontier —
 the #140 roadmap's fingerprinting/L7-depth group,
@@ -501,7 +513,7 @@ New modules registered in `src/`:
   `(FiveTupleKey, FlowStats, EndReason)` tuples).
 - **Examples** — 16 new examples across the 0.18 cycle covering
   every new feature surface; see `examples/README.md` for the
-  full catalogue. Total examples now > 60.
+  full catalogue. Total examples now ~79.
 - Test count after the pre-publish hardening: **1099 passing**
   (1089 lib + 10 integration), zero clippy warnings under
   `--all-features --all-targets -D warnings`, zero rustdoc
