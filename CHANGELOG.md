@@ -1,11 +1,11 @@
 # Changelog
 
-## Unreleased (0.23.0 cycle) — inline-grade sans-IO L7 core
+## 0.23.0 (2026-08-03) — inline-grade sans-IO L7 core
 
 Milestone [*Inline-grade: sans-IO L7 core for inline
 proxies*](https://github.com/p13marc/flowscope/milestone/3):
 flowscope becomes usable as the shared L7 core of an inline proxy,
-not only a passive observer. Migration recipes accrue in
+not only a passive observer. Migration recipes are in
 [`docs/migration-0.22-to-0.23.md`](docs/migration-0.22-to-0.23.md).
 
 ### Added

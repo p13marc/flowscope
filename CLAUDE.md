@@ -23,8 +23,8 @@ the core.
 ## Implementation Status
 
 **0.23.0 cycle** (inline-proxy / sans-IO L7 core — milestone
-"Inline-grade: sans-IO L7 core for inline proxies", **in progress,
-not yet published**).
+"Inline-grade: sans-IO L7 core for inline proxies", **published to
+crates.io as 0.23.0 on 2026-08-03**).
 
 Fifteen PRs across three epics (#172 / #173 / #174) plus a
 backlog-clearing round, one branch/PR per issue, breaking-first so
@@ -172,8 +172,7 @@ of the milestone's five.
 Every issue is closed: the milestone, the backlog it was gated on,
 and the two follow-ups this work itself produced.
 
-**Not yet published to crates.io — the user has asked for no release
-yet.**
+Published to crates.io as `0.23.0` on 2026-08-03, tagged `0.23.0`.
 
 **0.22.0 cycle** (fingerprinting & encrypted-traffic frontier —
 the #140 roadmap's fingerprinting/L7-depth group,
