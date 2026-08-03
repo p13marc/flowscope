@@ -49,6 +49,22 @@
 //! still carries HTTP `200` — the status is in the trailers, which is
 //! what makes reading them necessary rather than optional.
 //!
+//! # Driving it
+//!
+//! [`Http2Parser`] is sans-IO: you own the sockets, you feed it, and
+//! you read the accepted count as backpressure. To let flowscope
+//! drive the bytes instead — port-routed or heuristic slots on the
+//! typed `Driver`, pcap replay, the `emit` writers — register
+//! [`Http2Session`], the [`SessionParser`](crate::SessionParser)
+//! adapter, exactly as HTTP/1 registers
+//! [`HttpProxySession`](crate::http::HttpProxySession).
+//!
+//! The multiplexing does not disappear at that boundary, it moves:
+//! the envelope's `side` is the transport direction the bytes arrived
+//! on, and the routing key stays the `stream_id` on the event.
+//! `Http2Session` also tolerates a missing connection preface by
+//! default, because a driver may hand it a flow already in progress.
+//!
 //! # Scope
 //!
 //! This is an observer and a router, not an endpoint. It reads frames
@@ -61,6 +77,7 @@ mod frame;
 mod grpc;
 mod hpack;
 mod huffman;
+mod session;
 mod stream;
 
 pub use error::Http2Error;
@@ -68,14 +85,11 @@ pub use frame::{FrameKind, PREFACE};
 pub use grpc::{
     GrpcCall, GrpcStatus, grpc_call, grpc_status, grpc_status_of, is_grpc_content_type,
 };
+pub use session::Http2Session;
 pub use stream::{Http2Config, Http2Event, Http2Parser, StreamHead};
 
 /// Stable slug for HTTP/2, matching
 /// [`ParserKind::Http2`](crate::ParserKind::Http2)`.as_str()`.
 ///
-/// [`Http2Parser`] is driven directly rather than through
-/// `SessionParser` — h2 multiplexes, so its events are keyed by
-/// stream rather than by direction, which the trait's per-direction
-/// shape cannot express. Use this constant at match sites that
-/// switch on a parser slug.
+/// Use this constant at match sites that switch on a parser slug.
 pub const PARSER_KIND: &str = "http/2";

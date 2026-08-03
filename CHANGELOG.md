@@ -10,6 +10,27 @@ not only a passive observer. Migration recipes accrue in
 
 ### Added
 
+- **`http2::Http2Session` — HTTP/2 on the typed `Driver`** (#196).
+  `Http2Parser` as a `SessionParser`, so per-stream h2 events ride the
+  same plumbing HTTP/1 has used since #164: port-routed and heuristic
+  slots, pcap replay, the `emit` writers. A terminal `Http2Error`
+  surfaces as a poisoned parser, which the driver reports as
+  `Event::ParserClosed { reason: EndReason::ParseError }`.
+  - The envelope's `side` is the *transport* direction the bytes
+    arrived on; because h2 multiplexes, the key to route on stays the
+    `stream_id` on the event itself.
+  - New `Http2Config::require_preface` (default `true`, so
+    `Http2Parser::new()` is unchanged). `Http2Session::new()` sets it
+    `false`: a driver may hand the parser a connection already in
+    progress — a capture started mid-flow, a heuristic slot that
+    pinned after probing — and refusing those as `BadPreface` reports
+    a protocol violation when nothing is wrong. Tolerating is not
+    resynchronising: bytes that are not frame-aligned still fail, as a
+    framing error rather than a preface one.
+  - New parser surface: `Http2Parser::{fin, is_finished, is_done,
+    config}`. `is_done` deliberately does not count `GOAWAY` — that
+    forbids *new* streams while in-flight ones still have responses to
+    deliver.
 - **`http::HttpProxyParser` — a sans-IO streaming HTTP/1.1 parser**
   (#161). Feed bytes per direction with `push(dir, &Bytes) -> usize`,
   drain `HttpEvent`s: `RequestHead` / `ResponseHead` before the body,
@@ -208,6 +229,19 @@ not only a passive observer. Migration recipes accrue in
   leaving the buffer above the limit. It now keeps the newest `cap`
   bytes and counts the rest in `bytes_dropped_oversize`, matching
   `BufferedReassembler`.
+- **An HTTP/2 direction could wedge permanently** (#196). With
+  `max_frame_size` above `max_buffered_bytes` — the default pair, for
+  any frame over 1 MiB − 9 — the parser buffered to the cap waiting
+  for a frame that could never fit, then refused every byte for the
+  rest of the connection while reporting no error. The two caps now
+  compose: the buffer cap is the effective frame ceiling, so such a
+  frame is refused with `FrameTooLarge` at its 9-byte header before a
+  byte is buffered, and a direction that genuinely cannot progress
+  fails with the previously unreachable `Http2Error::BufferOverflow`.
+  The resulting contract — **`push` returning 0 always implies
+  `is_failed()` or `is_finished(dir)`** — is what makes the
+  `SessionParser` adapter safe, since the trait cannot express a short
+  read and an adapter must be able to treat a refusal as terminal.
 - **QUIC CRYPTO reassembly is bounded on every axis a peer
   controls** (#184). Accumulation had no per-connection byte or frame
   cap, and `last_seen` was refreshed on *arrival* — so `evict_stale`
