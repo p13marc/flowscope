@@ -91,21 +91,32 @@ pub(crate) type Field = (Bytes, Bytes);
 
 /// Per-entry overhead the dynamic-table size accounting adds
 /// (RFC 7541 §4.1).
-const ENTRY_OVERHEAD: usize = 32;
+pub(crate) const ENTRY_OVERHEAD: usize = 32;
 
-/// A decoded field block's field-count ceiling, independent of the
-/// peer's `SETTINGS_MAX_HEADER_LIST_SIZE`, so a malicious peer cannot
-/// make one block allocate without bound.
-const MAX_FIELDS_PER_BLOCK: usize = 256;
+/// A field block's field-count ceiling, independent of the peer's
+/// `SETTINGS_MAX_HEADER_LIST_SIZE`, so a malicious peer cannot make
+/// one block allocate without bound. The encoder mirrors it, so
+/// flowscope never emits a block its own decoder would refuse.
+pub(crate) const MAX_FIELDS_PER_BLOCK: usize = 256;
 
-/// HPACK decoder for one direction of one connection.
+/// An entry's accounted size (RFC 7541 §4.1).
+pub(crate) fn entry_size(name: &[u8], value: &[u8]) -> usize {
+    name.len() + value.len() + ENTRY_OVERHEAD
+}
+
+/// The HPACK dynamic table (RFC 7541 §2.3.2).
 ///
-/// Must be fed every field block in receive order — see the module
-/// docs for why.
+/// Shared by [`HpackDecoder`] and
+/// [`HpackEncoder`](super::hpack_encode::HpackEncoder) on purpose.
+/// The encoder's copy is a *model of the peer's decoder*: if the two
+/// applied §4.1 accounting or §4.4 eviction even slightly
+/// differently, every later field block on the connection would
+/// decode to plausible-looking nonsense. One implementation of the
+/// rules is the only way to make that structurally impossible.
 #[derive(Debug, Clone)]
-pub(crate) struct HpackDecoder {
+pub(crate) struct DynamicTable {
     /// Most-recently-added first, as the index space requires.
-    dynamic: std::collections::VecDeque<(Bytes, Bytes)>,
+    entries: std::collections::VecDeque<Field>,
     /// Current accounted size, per RFC 7541 §4.1.
     size: usize,
     /// The limit the peer's `SETTINGS_HEADER_TABLE_SIZE` sets.
@@ -114,26 +125,115 @@ pub(crate) struct HpackDecoder {
     hard_max_size: usize,
 }
 
-impl HpackDecoder {
+impl DynamicTable {
     pub(crate) fn new(max_size: usize, hard_max_size: usize) -> Self {
         Self {
-            dynamic: std::collections::VecDeque::new(),
+            entries: std::collections::VecDeque::new(),
             size: 0,
             max_size: max_size.min(hard_max_size),
             hard_max_size,
         }
     }
 
-    /// Apply a `SETTINGS_HEADER_TABLE_SIZE` change from the peer.
+    pub(crate) fn max_size(&self) -> usize {
+        self.max_size
+    }
+
+    pub(crate) fn hard_max_size(&self) -> usize {
+        self.hard_max_size
+    }
+
+    /// Bytes currently accounted to the table.
+    pub(crate) fn size(&self) -> usize {
+        self.size
+    }
+
+    pub(crate) fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    /// Entry `i`, newest first — the dynamic half of the index space.
+    pub(crate) fn get(&self, i: usize) -> Option<&Field> {
+        self.entries.get(i)
+    }
+
+    /// Newest first, for the encoder's reverse lookup.
+    pub(crate) fn iter(&self) -> impl Iterator<Item = &Field> {
+        self.entries.iter()
+    }
+
+    /// Apply a new size limit, evicting down to it.
     pub(crate) fn set_max_size(&mut self, n: usize) {
         self.max_size = n.min(self.hard_max_size);
         self.evict();
     }
 
+    /// Add an entry, evicting from the back until it fits.
+    pub(crate) fn insert(&mut self, name: Bytes, value: Bytes) {
+        let sz = entry_size(&name, &value);
+        // §4.4: an entry larger than the whole table empties it and
+        // is not added.
+        if sz > self.max_size {
+            self.entries.clear();
+            self.size = 0;
+            return;
+        }
+        self.size += sz;
+        self.entries.push_front((name, value));
+        self.evict();
+    }
+
+    fn evict(&mut self) {
+        while self.size > self.max_size {
+            match self.entries.pop_back() {
+                Some((n, v)) => {
+                    self.size = self.size.saturating_sub(entry_size(&n, &v));
+                }
+                None => {
+                    self.size = 0;
+                    break;
+                }
+            }
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn snapshot(&self) -> Vec<Field> {
+        self.entries.iter().cloned().collect()
+    }
+}
+
+/// HPACK decoder for one direction of one connection.
+///
+/// Must be fed every field block in receive order — see the module
+/// docs for why.
+#[derive(Debug, Clone)]
+pub(crate) struct HpackDecoder {
+    table: DynamicTable,
+}
+
+impl HpackDecoder {
+    pub(crate) fn new(max_size: usize, hard_max_size: usize) -> Self {
+        Self {
+            table: DynamicTable::new(max_size, hard_max_size),
+        }
+    }
+
+    /// Apply a `SETTINGS_HEADER_TABLE_SIZE` change from the peer.
+    pub(crate) fn set_max_size(&mut self, n: usize) {
+        self.table.set_max_size(n);
+    }
+
     /// Number of entries currently held — for tests and diagnostics.
     #[cfg(test)]
     pub(crate) fn len(&self) -> usize {
-        self.dynamic.len()
+        self.table.len()
+    }
+
+    /// The table itself, for lockstep assertions against an encoder.
+    #[cfg(test)]
+    pub(crate) fn table(&self) -> &DynamicTable {
+        &self.table
     }
 
     /// Decode one complete field block.
@@ -159,18 +259,17 @@ impl HpackDecoder {
                 // 6.2.1 Literal with Incremental Indexing.
                 let (name, value, rest) = self.decode_literal(buf, 6)?;
                 buf = rest;
-                self.insert(name.clone(), value.clone());
+                self.table.insert(name.clone(), value.clone());
                 out.push((name, value));
             } else if first & 0x20 != 0 {
                 // 6.3 Dynamic Table Size Update.
                 let (n, rest) = decode_int(buf, 5)?;
                 buf = rest;
                 let n = usize::try_from(n).map_err(|_| Http2Error::HpackInvalidIndex)?;
-                if n > self.hard_max_size {
+                if n > self.table.hard_max_size() {
                     return Err(Http2Error::HpackTableSizeExceeded);
                 }
-                self.max_size = n;
-                self.evict();
+                self.table.set_max_size(n);
             } else {
                 // 6.2.2 / 6.2.3 Literal without / never indexed.
                 let (name, value, rest) = self.decode_literal(buf, 4)?;
@@ -211,39 +310,10 @@ impl HpackDecoder {
                 Bytes::from_static(v.as_bytes()),
             ));
         }
-        self.dynamic
+        self.table
             .get(idx - STATIC_TABLE.len() - 1)
             .cloned()
             .ok_or(Http2Error::HpackInvalidIndex)
-    }
-
-    /// Add an entry, evicting from the back until it fits.
-    fn insert(&mut self, name: Bytes, value: Bytes) {
-        let entry_size = name.len() + value.len() + ENTRY_OVERHEAD;
-        // §4.4: an entry larger than the whole table empties it and
-        // is not added.
-        if entry_size > self.max_size {
-            self.dynamic.clear();
-            self.size = 0;
-            return;
-        }
-        self.size += entry_size;
-        self.dynamic.push_front((name, value));
-        self.evict();
-    }
-
-    fn evict(&mut self) {
-        while self.size > self.max_size {
-            match self.dynamic.pop_back() {
-                Some((n, v)) => {
-                    self.size = self.size.saturating_sub(n.len() + v.len() + ENTRY_OVERHEAD);
-                }
-                None => {
-                    self.size = 0;
-                    break;
-                }
-            }
-        }
     }
 }
 
@@ -299,6 +369,13 @@ fn decode_string(buf: &[u8]) -> Result<(Bytes, &[u8]), Http2Error> {
         Bytes::copy_from_slice(raw)
     };
     Ok((out, tail))
+}
+
+/// `decode_int` for the encoder's round-trip test, which lives in a
+/// sibling module.
+#[cfg(test)]
+pub(crate) fn decode_int_for_test(buf: &[u8], prefix: u8) -> Result<(u64, &[u8]), Http2Error> {
+    decode_int(buf, prefix)
 }
 
 #[cfg(test)]

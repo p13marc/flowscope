@@ -78,6 +78,36 @@ which is what makes `Http2Session` safe — the `SessionParser` trait
 cannot express a short read, so an adapter must be able to treat a
 refusal as terminal.
 
+### Encoding
+
+`HpackEncoder` (#197) is bounded too, for a different reason from
+everything above.
+
+| Buffer | Knob | Default | On exceed |
+|---|---|---|---|
+| encoder dynamic table | `HpackEncoder::with_max_table_size` | 4 KiB | oldest entry evicted (RFC 7541 §4.4); never exceeds the peer's `SETTINGS_HEADER_TABLE_SIZE` either |
+| one encoded field block | `with_max_block_bytes` | 64 KiB | `HeaderListTooLong`; nothing written, table unmoved |
+| fields per encoded block | *(const, mirrors the decoder)* | 256 | `HeaderListTooLong` |
+
+The decoder's caps exist because a *peer* chooses the input. The
+encoder's input comes from your own code, so what its caps protect is
+the **peer's** decoder, and the invariant that flowscope never emits a
+block its own decoder would refuse — which is why the field-count and
+block-size ceilings are deliberately the same numbers as
+`Http2Parser`'s.
+
+The table cap is smaller than the decode-side ceiling (4 KiB against
+64 KiB) on purpose: a larger encoder table adds little compression,
+costs a linear scan per field, and widens the window a CRIME-family
+oracle operates in.
+
+Refusal is total. On error no bytes are written and the dynamic table
+has not advanced, so the encoder stays usable *and* in step with the
+peer — a half-encoded block would leave the table holding inserts
+whose bytes never reached the wire, which is permanent desync.
+`encode_into` appends to a caller-supplied `Vec`, so a caller who
+wants zero steady-state allocation reuses one buffer across blocks.
+
 The HPACK ceiling is the one worth understanding: the dynamic table
 is memory *the peer decides the size of*, so the peer's advertised
 value is clamped rather than trusted. A failure is fatal to the

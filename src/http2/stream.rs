@@ -107,6 +107,22 @@ pub enum Http2Event {
         last_stream_id: u32,
         error_code: u32,
     },
+    /// The peer's `SETTINGS` (RFC 9113 §6.5.2), for a caller that
+    /// re-emits — an [`HpackEncoder`](super::HpackEncoder) needs the
+    /// table size, and [`write_headers`](super::write_headers) needs
+    /// the frame size.
+    ///
+    /// **Direction is the thing to get right.** `dir` is the side
+    /// that *sent* these settings, and they govern what that side is
+    /// willing to *receive*. So settings from
+    /// [`FlowSide::Initiator`] configure the encoder writing *toward
+    /// the client* — the responder-direction one — which is the same
+    /// inversion the parser applies to its own decoders.
+    Settings {
+        dir: FlowSide,
+        header_table_size: Option<u32>,
+        max_frame_size: Option<u32>,
+    },
 }
 
 /// Caps for [`Http2Parser`].
@@ -433,6 +449,17 @@ impl Http2Parser {
         self.streams.len()
     }
 
+    /// Largest frame this parser will accept on `dir` — the
+    /// effective `SETTINGS_MAX_FRAME_SIZE`, already clamped by
+    /// [`Http2Config::max_frame_size`] and the buffer cap.
+    ///
+    /// Pass `max_frame_size(FlowSide::Responder)` to
+    /// [`write_headers`](super::write_headers) when writing toward
+    /// the client.
+    pub fn max_frame_size(&self, dir: FlowSide) -> u32 {
+        self.dir(dir).max_frame_size
+    }
+
     /// The caps this parser was built with.
     pub fn config(&self) -> &Http2Config {
         &self.config
@@ -587,6 +614,13 @@ impl Http2Parser {
                         // above what the buffer can hold whole.
                         let ceiling = self.config.effective_max_frame_size();
                         self.dir_mut(target).max_frame_size = n.min(ceiling);
+                    }
+                    if s.header_table_size.is_some() || s.max_frame_size.is_some() {
+                        self.events.push_back(Http2Event::Settings {
+                            dir,
+                            header_table_size: s.header_table_size,
+                            max_frame_size: s.max_frame_size,
+                        });
                     }
                 }
             }

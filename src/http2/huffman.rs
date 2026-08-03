@@ -9,7 +9,11 @@
 use super::error::Http2Error;
 
 /// `(code, bit_length)` per symbol; index 256 is the EOS marker.
-const CODES: &[(u32, u32)] = &[
+///
+/// Indexed by byte value, so encoding is a direct `CODES[b as usize]`
+/// while decoding has to search — the table is shaped for the
+/// forward direction.
+pub(crate) const CODES: &[(u32, u32)] = &[
     (0x1ff8, 13),
     (0x7fffd8, 23),
     (0xfffffe2, 28),
@@ -322,9 +326,112 @@ fn lookup(code: u32, len: u32) -> Option<usize> {
     CODES.iter().position(|&(c, l)| l == len && c == code)
 }
 
+/// Encoded length in whole octets, including the padding bits.
+///
+/// Separate from [`encode_into`] because an HPACK string literal puts
+/// its length *before* the data (RFC 7541 §5.2), so the length has to
+/// be known without back-patching — and because the encoder compares
+/// it against the raw length to decide whether Huffman is worth it.
+pub(crate) fn encoded_len(input: &[u8]) -> usize {
+    input
+        .iter()
+        .map(|&b| CODES[b as usize].1 as usize)
+        .sum::<usize>()
+        .div_ceil(8)
+}
+
+/// Huffman-encode `input`, appending to `out` (RFC 7541 Appendix B).
+///
+/// The trailing bits are padded with the most significant bits of the
+/// EOS code — all ones — which is exactly what [`decode`] requires,
+/// so the two are each other's acceptance test.
+pub(crate) fn encode_into(out: &mut Vec<u8>, input: &[u8]) {
+    out.reserve(encoded_len(input));
+    // The longest code is 30 bits and at most 7 are carried over, so
+    // 37 bits at peak: a u64 accumulator never spills.
+    let mut acc: u64 = 0;
+    let mut bits: u32 = 0;
+    for &b in input {
+        let (code, len) = CODES[b as usize];
+        acc = (acc << len) | u64::from(code);
+        bits += len;
+        while bits >= 8 {
+            bits -= 8;
+            out.push((acc >> bits) as u8);
+        }
+    }
+    if bits > 0 {
+        let pad = 8 - bits;
+        out.push(((acc << pad) | ((1u64 << pad) - 1)) as u8);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn encode(input: &[u8]) -> Vec<u8> {
+        let mut v = Vec::new();
+        encode_into(&mut v, input);
+        v
+    }
+
+    /// The same RFC vectors, in the forward direction. Exact bytes,
+    /// not just a round trip: a round trip alone passes even if
+    /// encoder and decoder share a symmetric bug.
+    #[test]
+    fn encodes_the_rfc_examples() {
+        assert_eq!(
+            encode(b"www.example.com"),
+            [
+                0xf1, 0xe3, 0xc2, 0xe5, 0xf2, 0x3a, 0x6b, 0xa0, 0xab, 0x90, 0xf4, 0xff
+            ]
+        );
+        assert_eq!(encode(b"no-cache"), [0xa8, 0xeb, 0x10, 0x64, 0x9c, 0xbf]);
+        assert_eq!(encode(b"302"), [0x64, 0x02]);
+        assert_eq!(encode(b"private"), [0xae, 0xc3, 0x77, 0x1a, 0x4b]);
+        assert_eq!(
+            encode(b"Mon, 21 Oct 2013 20:13:21 GMT"),
+            [
+                0xd0, 0x7a, 0xbe, 0x94, 0x10, 0x54, 0xd4, 0x44, 0xa8, 0x20, 0x05, 0x95, 0x04, 0x0b,
+                0x81, 0x66, 0xe0, 0x82, 0xa6, 0x2d, 0x1b, 0xff,
+            ]
+        );
+    }
+
+    #[test]
+    fn every_byte_round_trips() {
+        // Includes the empty string, which must encode to nothing
+        // rather than to a lone pad byte.
+        assert!(encode(b"").is_empty());
+        for b in 0..=255u8 {
+            let enc = encode(&[b]);
+            assert_eq!(decode(&enc).unwrap(), vec![b], "byte {b:#04x}");
+        }
+        // And every pair, which exercises the carry across octets.
+        for a in (0..=255u8).step_by(17) {
+            for b in (0..=255u8).step_by(13) {
+                let enc = encode(&[a, b]);
+                assert_eq!(decode(&enc).unwrap(), vec![a, b], "{a:#04x} {b:#04x}");
+            }
+        }
+    }
+
+    #[test]
+    fn encoded_len_matches_what_encode_produces() {
+        for s in [
+            &b""[..],
+            b"a",
+            b"www.example.com",
+            b"no-cache",
+            b"custom-key",
+            b"Mon, 21 Oct 2013 20:13:21 GMT",
+            &[0u8; 33],
+            &[0xffu8; 7],
+        ] {
+            assert_eq!(encoded_len(s), encode(s).len(), "{s:?}");
+        }
+    }
 
     #[test]
     fn decodes_the_rfc_examples() {

@@ -583,6 +583,45 @@ in progress, and refusing those as `BadPreface` would report a
 protocol violation when nothing is wrong. Tolerating is not
 resynchronising — bytes that are not frame-aligned still fail.
 
+### Re-emitting a header block
+
+Routing only needs to read. A proxy that *modifies* a header has to
+re-encode: h2 header fields are a stateful compressed encoding, so
+the original bytes cannot be forwarded once anything changes.
+
+```rust,no_run
+use bytes::Bytes;
+use flowscope::http2::{HpackEncoder, write_headers};
+
+let mut enc = HpackEncoder::new();
+# let fields: Vec<(Bytes, Bytes)> = Vec::new();
+let block = enc.encode(&fields)?;
+let frames = write_headers(1, &block, true, 16_384)?;
+# Ok::<(), flowscope::http2::Http2Error>(())
+```
+
+Three things to know before using it.
+
+**The encoder's dynamic table is a model of the peer's decoder.**
+Every block it produces must actually be sent, in order. A block you
+build and then drop leaves the two tables permanently out of step,
+and the corruption surfaces frames later on an unrelated stream. One
+encoder per direction, never shared.
+
+**Feed it the peer's settings.** `Http2Event::Settings` reports
+`SETTINGS_HEADER_TABLE_SIZE` and `SETTINGS_MAX_FRAME_SIZE`; pass the
+first to `set_peer_max_table_size` and the second to `write_headers`.
+Watch the direction — settings from the *initiator* govern what the
+initiator receives, so they configure the encoder writing toward the
+client.
+
+**Credential fields are never indexed by default.** An indexed repeat
+proves a value recurred, which is the CRIME-family oracle: inject a
+guess, watch the block shrink when it is right. That matters most
+where a proxy pools one backend connection across many clients, since
+one dynamic table then carries every client's cookies. Override with
+`with_sensitivity` if your deployment is single-tenant.
+
 Two caveats specific to h2:
 
 - **HPACK is connection-wide.** The parser must be fed every field

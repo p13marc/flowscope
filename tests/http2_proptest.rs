@@ -11,7 +11,9 @@
 
 use bytes::Bytes;
 use flowscope::FlowSide;
-use flowscope::http2::{Http2Config, Http2Event, Http2Parser, PREFACE};
+use flowscope::http2::{
+    HeaderSensitivity, HpackEncoder, Http2Config, Http2Event, Http2Parser, PREFACE, write_headers,
+};
 use proptest::prelude::*;
 
 fn frame(kind: u8, flags: u8, stream: u32, payload: &[u8]) -> Vec<u8> {
@@ -160,4 +162,94 @@ proptest! {
         bare.push(FlowSide::Initiator, &Bytes::from(bytes));
         while bare.next_event().is_some() {}
     }
+
+    /// Whatever the encoder produces, a real parser reads back
+    /// unchanged — across a *sequence* of blocks, which is the only
+    /// way the shared dynamic table is exercised. A single-block
+    /// round trip would pass even with the table wired up wrong.
+    #[test]
+    fn encoded_blocks_round_trip_through_the_parser(blocks in block_sequence()) {
+        fn index_everything(_: &[u8], _: &[u8]) -> HeaderSensitivity {
+            HeaderSensitivity::Indexable
+        }
+        let mut enc = HpackEncoder::new().with_sensitivity(index_everything);
+        let mut p = Http2Parser::new();
+        p.push(FlowSide::Initiator, &Bytes::from_static(PREFACE));
+
+        for (i, fields) in blocks.iter().enumerate() {
+            let block = match enc.encode(fields) {
+                Ok(b) => b,
+                // A refusal is a legitimate outcome; what must never
+                // happen is a block that encodes and then decodes to
+                // something else.
+                Err(_) => continue,
+            };
+            let stream = i as u32 * 2 + 1;
+            let wire = write_headers(stream, &block, true, 16_384).unwrap();
+            p.push(FlowSide::Initiator, &Bytes::from(wire));
+
+            let mut got = None;
+            while let Some(ev) = p.next_event() {
+                if let Http2Event::Head(h) = ev {
+                    got = Some(h);
+                }
+            }
+            let head = got.expect("a head per block");
+            prop_assert_eq!(&head.fields, fields, "block {} changed in flight", i);
+        }
+        prop_assert!(!p.is_failed(), "{:?}", p.error());
+    }
+
+    /// The encoder's table never exceeds what it was configured to
+    /// hold, however many blocks go through it.
+    #[test]
+    fn the_encoder_table_stays_bounded(blocks in block_sequence()) {
+        const CAP: usize = 512;
+        let mut enc = HpackEncoder::new().with_max_table_size(CAP);
+        for fields in &blocks {
+            let _ = enc.encode(fields);
+            prop_assert!(
+                enc.table_size() <= CAP,
+                "table grew to {}",
+                enc.table_size()
+            );
+        }
+    }
+}
+
+/// Field names biased toward the static table, so indexed and
+/// literal representations both get exercised, with values that are
+/// legal to send (no NUL/CR/LF, no edge whitespace).
+fn field_pair() -> impl Strategy<Value = (Bytes, Bytes)> {
+    let name = prop_oneof![
+        Just(":method".to_string()),
+        Just(":scheme".to_string()),
+        Just(":authority".to_string()),
+        Just("accept".to_string()),
+        Just("user-agent".to_string()),
+        "[a-z][a-z0-9-]{0,12}",
+    ];
+    let value = prop_oneof![
+        Just("GET".to_string()),
+        Just("https".to_string()),
+        "[a-zA-Z0-9/._-]{0,40}",
+    ];
+    (name, value).prop_map(|(n, v)| {
+        (
+            Bytes::copy_from_slice(n.as_bytes()),
+            Bytes::copy_from_slice(v.as_bytes()),
+        )
+    })
+}
+
+/// A run of field blocks on one connection. Pseudo-headers must
+/// precede regular fields, so each block is sorted that way.
+fn block_sequence() -> impl Strategy<Value = Vec<Vec<(Bytes, Bytes)>>> {
+    proptest::collection::vec(
+        proptest::collection::vec(field_pair(), 0..8).prop_map(|mut fields| {
+            fields.sort_by_key(|(n, _)| !n.starts_with(b":"));
+            fields
+        }),
+        0..6,
+    )
 }
