@@ -65,25 +65,48 @@
 //! `Http2Session` also tolerates a missing connection preface by
 //! default, because a driver may hand it a flow already in progress.
 //!
+//! # Re-emitting headers
+//!
+//! A proxy that *modifies* a header cannot forward the original
+//! bytes: HTTP/2 header fields are a stateful compressed encoding,
+//! not text. [`HpackEncoder`] produces a new field block and
+//! [`write_headers`] frames it as `HEADERS` plus any `CONTINUATION`
+//! the peer's `SETTINGS_MAX_FRAME_SIZE` requires.
+//!
+//! The encoder's dynamic table is **a model of the peer's decoder**,
+//! so every block it produces must actually be sent, in order. A
+//! block built and then dropped puts the two tables permanently out
+//! of step, and the corruption surfaces frames later on an unrelated
+//! stream. Use one encoder per direction.
+//!
+//! By default the encoder never indexes credential-bearing fields
+//! (`authorization`, `cookie`, …), because an indexed repeat is the
+//! CRIME-family oracle — see [`default_sensitivity`].
+//!
 //! # Scope
 //!
-//! This is an observer and a router, not an endpoint. It reads frames
-//! and field blocks; it does not manage flow control, priority, or
-//! push. `WINDOW_UPDATE` and `PRIORITY` are recognised and skipped —
-//! a forwarding proxy relays them untouched.
+//! This reads frames and field blocks, and can re-emit a field block.
+//! It is not an endpoint: it does not manage flow control, priority,
+//! or push, and it does not own a socket. `WINDOW_UPDATE` and
+//! `PRIORITY` are recognised and skipped — a forwarding proxy relays
+//! them untouched.
 
 mod error;
 mod frame;
 mod grpc;
 mod hpack;
+mod hpack_encode;
 mod huffman;
 mod session;
 mod stream;
 
 pub use error::Http2Error;
-pub use frame::{FrameKind, PREFACE};
+pub use frame::{FrameKind, PREFACE, write_headers};
 pub use grpc::{
     GrpcCall, GrpcStatus, grpc_call, grpc_status, grpc_status_of, is_grpc_content_type,
+};
+pub use hpack_encode::{
+    HeaderSensitivity, HpackEncoder, HuffmanPolicy, SensitivityFn, default_sensitivity,
 };
 pub use session::Http2Session;
 pub use stream::{Http2Config, Http2Event, Http2Parser, StreamHead};

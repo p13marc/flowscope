@@ -167,6 +167,7 @@ the parser tells you where messages begin and end.
 | route an HTTP request on its head, before the body | `http::HttpProxyParser` → `HttpEvent::RequestHead` → `RequestHead::authority()` |
 | the same, keyed by stream, over HTTP/2 | `http2::Http2Parser` → `Http2Event::Head` → `StreamHead::authority()` / `path()` |
 | let flowscope drive the h2 bytes instead of owning the socket | `http2::Http2Session` on the typed `Driver` (`session_on_ports`) |
+| re-emit an h2 header block after modifying it | `http2::HpackEncoder` → `http2::write_headers` |
 | dispatch a gRPC call, and get its *real* outcome | `http2::grpc_call` → `GrpcCall`; `http2::grpc_status` / `grpc_status_of` → `GrpcStatus` |
 | route TLS by SNI / ALPN, degrading safely under ECH | `TlsHandshake::routing_sni()` / `routing_alpn()`, and [`tls-routing.md`](tls-routing.md) |
 | let flowscope drive the bytes instead | `http::HttpProxySession` on the typed `Driver` |
@@ -219,7 +220,10 @@ session/datagram slot per protocol; this replaced the per-parser
 `FlowSessionDriver` / `FlowDatagramDriver` in 0.20.)
 
 **`http2`:** `Http2Event` *(0.23)*, `Http2Parser` *(0.23)*,
-`Http2Session` *(0.23)*, `StreamHead` *(0.23)*.
+`Http2Session` *(0.23)*, `StreamHead` *(0.23)*. Not in the prelude,
+since they are only needed by a proxy that rewrites:
+`HpackEncoder`, `HeaderSensitivity`, `HuffmanPolicy`,
+`write_headers` *(0.23)*.
 
 > The HTTP/1 streaming types (`HttpProxyParser`, `HttpEvent`,
 > `RequestHead`, …) are deliberately **not** in the prelude: they

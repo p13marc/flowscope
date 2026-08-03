@@ -371,6 +371,13 @@ fn decode_string(buf: &[u8]) -> Result<(Bytes, &[u8]), Http2Error> {
     Ok((out, tail))
 }
 
+/// `decode_int` for the encoder's round-trip test, which lives in a
+/// sibling module.
+#[cfg(test)]
+pub(crate) fn decode_int_for_test(buf: &[u8], prefix: u8) -> Result<(u64, &[u8]), Http2Error> {
+    decode_int(buf, prefix)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

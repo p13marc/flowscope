@@ -70,6 +70,13 @@ doc = false
 bench = false
 
 [[bin]]
+name = "hpack_roundtrip"
+path = "fuzz_targets/hpack_roundtrip.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "icmp"
 path = "fuzz_targets/icmp.rs"
 test = false

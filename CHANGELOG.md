@@ -10,6 +10,48 @@ not only a passive observer. Migration recipes accrue in
 
 ### Added
 
+- **`http2::HpackEncoder` — HPACK encoding** (#197). The decoder has
+  shipped since #170; this is the forward direction, for a proxy that
+  modifies a header and has to re-emit the field block. HTTP/1 has no
+  equivalent problem — its headers are text — which is why this is a
+  real dependency rather than a nicety.
+  - `flowscope::http2::write_headers` frames a block as `HEADERS`
+    plus any `CONTINUATION` the peer's `SETTINGS_MAX_FRAME_SIZE`
+    requires. A field block is not a header: wrapping a 20 KiB one in
+    a single frame earns a connection-fatal `FRAME_SIZE_ERROR` from
+    the peer, several frames from the mistake.
+  - **The encoder's dynamic table is a model of the peer's decoder**,
+    so every block it produces must actually be sent, in order. The
+    table type is now shared with the decoder rather than
+    reimplemented, because two implementations of RFC 7541 §4.1
+    accounting is the bug class that surfaces frames later as
+    plausible-looking nonsense.
+  - **Credential-bearing fields are never indexed by default**
+    (`authorization`, `proxy-authorization`, `cookie`, `set-cookie`).
+    An indexed repeat proves a value recurred, which is the
+    CRIME-family oracle — and it matters most where a proxy pools one
+    backend connection across many clients, since one table then
+    carries every client's cookies. `cookie` is where indexing pays
+    best, so this costs real bytes; `with_sensitivity` overrides it.
+  - Encoding is **all or nothing**: on refusal nothing is written and
+    the table has not moved. A half-encoded block would leave the
+    table holding inserts whose bytes never reached the wire.
+  - Fields that could not legally be sent are refused —
+    `InvalidHeaderField` for an uppercase or non-token name, a
+    misplaced pseudo-header, CRLF or NUL in a value, or a
+    connection-specific field. Re-emitting CRLF inside a value is the
+    h2→h1 downgrade smuggling primitive #163 defends against on the
+    HTTP/1 side.
+  - New `Http2Event::Settings` and `Http2Parser::max_frame_size(dir)`
+    surface the peer's limits, which the parser previously consumed
+    with no way to observe. Note the inversion: settings from the
+    initiator govern what the initiator *receives*, so they configure
+    the encoder writing toward the client.
+  - Validated against RFC 7541 Appendix C in the **encode** direction
+    — C.2 through C.5 as exact-byte assertions, which pin eviction
+    ordering and index arithmetic — plus a whole-stack test that
+    round-trips through a real `Http2Parser`, a lockstep proptest,
+    and a new `hpack_roundtrip` fuzz target.
 - **`http2::Http2Session` — HTTP/2 on the typed `Driver`** (#196).
   `Http2Parser` as a `SessionParser`, so per-stream h2 events ride the
   same plumbing HTTP/1 has used since #164: port-routed and heuristic

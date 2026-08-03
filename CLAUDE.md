@@ -89,6 +89,15 @@ data path.
   desynced HTTP direction that kept accumulating — a regression from
   #160; heuristic probe state #166 had only partly bounded) and five
   pre-existing gaps now tracked as #184–#188.
+- **HPACK encoding (`#197`).** `HpackEncoder` + `write_headers`
+  (HEADERS/CONTINUATION only — no DATA/SETTINGS/RST writers, the
+  crate stays short of being an endpoint). The dynamic table is now
+  a shared `DynamicTable` used by both directions, because the
+  encoder's copy is a *model of the peer's decoder* and a divergence
+  surfaces blocks later. Never-index defaults on credential fields
+  (CRIME); all-or-nothing encoding via a conservative pre-flight, so
+  a refusal cannot desync the table. Validated against Appendix C in
+  the encode direction plus a whole-stack round trip.
 - **HTTP/2 on the typed `Driver` (`#196`).** `Http2Session` — the
   `SessionParser` adapter HTTP/1 got in #164. Plus
   `Http2Config::require_preface` (the session tolerates a missing
@@ -1017,6 +1026,7 @@ src/
 │   └── welford.rs               # WelfordStats — running stats (count/mean/var/min/max) (issue #15, 0.18)
 ├── classify.rs                  # classify_first_bytes → WireProtocol — protocol from the first bytes (#165, 0.23)
 ├── http2/                       # `http2` feature — HTTP/2 + HPACK + gRPC (#170/#171, 0.23)
+│   ├── hpack_encode.rs          # HpackEncoder + HeaderSensitivity + HuffmanPolicy (#197, 0.23)
 │   ├── session.rs               # Http2Session — SessionParser adapter for the typed Driver (#196, 0.23)
 │   ├── error.rs                 # Http2Error
 │   ├── frame.rs                 # frame header + padding/priority/promised-id stripping + SETTINGS
@@ -1293,6 +1303,9 @@ The legacy `HttpFactory` / `TlsFactory` callback-handler shape
 - `tests/http2_streams.rs` + `tests/http2_proptest.rs` — HTTP/2
   end-to-end routing and the split-invariance / bounded-state /
   terminal-failure properties (#170, 0.23).
+- `tests/http2_hpack_encode.rs` — encode → `write_headers` → a real
+  `Http2Parser` → identical fields, including a CONTINUATION split
+  and a mid-connection `SETTINGS` change (#197, 0.23).
 - `tests/http2_driver.rs` — `Http2Session` through the typed `Driver`:
   per-stream events reach the slot, a framing violation drops the
   parser with `ParserClosed { ParseError }`, and a mid-stream join is

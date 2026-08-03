@@ -42,6 +42,16 @@ pub enum Http2Error {
     HpackTableSizeExceeded,
     /// Invalid Huffman coding: EOS in the data, or bad padding.
     HuffmanInvalid,
+
+    // ── Encoding (this side's own output) ─────────────────────────
+    /// A field handed to the encoder could not legally be sent:
+    /// an uppercase or non-token name, a misplaced pseudo-header,
+    /// a control character in a value, or a connection-specific
+    /// field HTTP/2 forbids (RFC 9113 §8.2).
+    InvalidHeaderField,
+    /// A field block was framed for stream 0, or for a stream id with
+    /// the reserved high bit set (RFC 9113 §5.1.1).
+    InvalidStreamId,
 }
 
 impl Http2Error {
@@ -61,6 +71,8 @@ impl Http2Error {
             Self::HpackIntegerOverflow => "hpack-integer-overflow",
             Self::HpackTableSizeExceeded => "hpack-table-size-exceeded",
             Self::HuffmanInvalid => "huffman-invalid",
+            Self::InvalidHeaderField => "invalid-header-field",
+            Self::InvalidStreamId => "invalid-stream-id",
         }
     }
 }

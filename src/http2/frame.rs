@@ -172,6 +172,73 @@ pub(crate) fn parse_frame(
     )))
 }
 
+/// Frame a field block as `HEADERS` plus as many `CONTINUATION`
+/// frames as `max_frame_size` requires (RFC 9113 §6.2, §6.10).
+///
+/// The counterpart to
+/// [`HpackEncoder::encode`](super::HpackEncoder::encode): that
+/// produces a field block, this makes it something you can put on a
+/// socket. A block is not a header — wrapping a 20 KiB one in a
+/// single `HEADERS` frame earns a connection-fatal `FRAME_SIZE_ERROR`
+/// from the peer, several frames away from the mistake.
+///
+/// `END_STREAM` rides the `HEADERS` frame; `END_HEADERS` rides the
+/// last frame only. No padding and no priority prefix are emitted —
+/// padding is a covert channel with no legitimate use here, and
+/// priority is deprecated by RFC 9113 §5.3.
+///
+/// `max_frame_size` is the peer's advertised
+/// `SETTINGS_MAX_FRAME_SIZE`, available from
+/// [`Http2Event::Settings`](super::Http2Event::Settings) or
+/// [`Http2Parser::max_frame_size`](super::Http2Parser::max_frame_size).
+/// Values outside the protocol's `16384..=16777215` range are clamped
+/// into it.
+///
+/// # Errors
+///
+/// [`Http2Error::InvalidStreamId`] if `stream_id` is 0 — a field
+/// block never belongs to the connection stream — or has the
+/// reserved high bit set (RFC 9113 §5.1.1).
+pub fn write_headers(
+    stream_id: u32,
+    block: &[u8],
+    end_stream: bool,
+    max_frame_size: u32,
+) -> Result<Vec<u8>, Http2Error> {
+    if stream_id == 0 || stream_id > 0x7fff_ffff {
+        return Err(Http2Error::InvalidStreamId);
+    }
+    let chunk = max_frame_size.clamp(16_384, 16_777_215) as usize;
+    let mut out = Vec::with_capacity(block.len() + FRAME_HEADER_LEN);
+    let mut first = true;
+    // `chunks` yields nothing for an empty slice, but an empty field
+    // block is legal and still needs its `HEADERS` frame.
+    let mut it = block.chunks(chunk).peekable();
+    loop {
+        let part: &[u8] = it.next().unwrap_or(&[]);
+        let last = it.peek().is_none();
+        let kind = if first { 0x1 } else { 0x9 };
+        let mut fl = 0u8;
+        if last {
+            fl |= flags::END_HEADERS;
+        }
+        if first && end_stream {
+            fl |= flags::END_STREAM;
+        }
+        let len = part.len() as u32;
+        out.extend_from_slice(&[(len >> 16) as u8, (len >> 8) as u8, len as u8]);
+        out.push(kind);
+        out.push(fl);
+        out.extend_from_slice(&stream_id.to_be_bytes());
+        out.extend_from_slice(part);
+        first = false;
+        if last {
+            break;
+        }
+    }
+    Ok(out)
+}
+
 /// A `SETTINGS` payload, parsed into the parameters this observer
 /// acts on (RFC 9113 §6.5.2).
 #[derive(Debug, Clone, Copy, Default)]
@@ -207,6 +274,103 @@ pub(crate) fn parse_settings(payload: &[u8]) -> Result<Settings, Http2Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Walk every frame `write_headers` produced, back through the
+    /// parser that reads them. A writer with no counterpart parser
+    /// could only be tested against a hand-written byte table.
+    fn read_back(wire: &[u8]) -> Vec<(FrameKind, u8, u32, Vec<u8>)> {
+        let mut out = Vec::new();
+        let mut buf = Bytes::copy_from_slice(wire);
+        while !buf.is_empty() {
+            let (f, consumed) = parse_frame(&buf, u32::MAX)
+                .expect("parses")
+                .expect("complete");
+            out.push((f.kind, f.flags, f.stream_id, f.payload.to_vec()));
+            buf = buf.slice(consumed..);
+        }
+        out
+    }
+
+    #[test]
+    fn write_headers_round_trips_through_the_parser() {
+        let wire = write_headers(1, b"block-bytes", true, 16_384).unwrap();
+        let frames = read_back(&wire);
+        assert_eq!(frames.len(), 1);
+        let (kind, fl, id, payload) = &frames[0];
+        assert_eq!(*kind, FrameKind::Headers);
+        assert_eq!(*id, 1);
+        assert_eq!(fl & flags::END_HEADERS, flags::END_HEADERS);
+        assert_eq!(fl & flags::END_STREAM, flags::END_STREAM);
+        assert_eq!(payload, b"block-bytes");
+    }
+
+    #[test]
+    fn a_block_over_the_frame_size_continues() {
+        let max = 16_384usize;
+        let block = vec![0xabu8; max * 2 + 1];
+        let wire = write_headers(7, &block, false, max as u32).unwrap();
+        let frames = read_back(&wire);
+        assert_eq!(frames.len(), 3, "one HEADERS plus two CONTINUATION");
+
+        assert_eq!(frames[0].0, FrameKind::Headers);
+        assert_eq!(frames[1].0, FrameKind::Continuation);
+        assert_eq!(frames[2].0, FrameKind::Continuation);
+
+        // END_HEADERS only on the last; END_STREAM on none of them.
+        assert_eq!(frames[0].1 & flags::END_HEADERS, 0);
+        assert_eq!(frames[1].1 & flags::END_HEADERS, 0);
+        assert_eq!(frames[2].1 & flags::END_HEADERS, flags::END_HEADERS);
+        assert!(frames.iter().all(|f| f.1 & flags::END_STREAM == 0));
+
+        assert!(frames.iter().all(|f| f.2 == 7), "all on the same stream");
+        let rejoined: Vec<u8> = frames.iter().flat_map(|f| f.3.clone()).collect();
+        assert_eq!(rejoined, block, "the block survives the split");
+        assert_eq!(frames[2].3.len(), 1, "the remainder is its own frame");
+    }
+
+    #[test]
+    fn end_stream_rides_only_the_first_frame() {
+        let block = vec![0u8; 16_385];
+        let wire = write_headers(3, &block, true, 16_384).unwrap();
+        let frames = read_back(&wire);
+        assert_eq!(frames.len(), 2);
+        assert_eq!(frames[0].1 & flags::END_STREAM, flags::END_STREAM);
+        assert_eq!(
+            frames[1].1 & flags::END_STREAM,
+            0,
+            "END_STREAM on a CONTINUATION would be a protocol error"
+        );
+    }
+
+    #[test]
+    fn an_empty_block_still_produces_one_frame() {
+        let frames = read_back(&write_headers(1, b"", false, 16_384).unwrap());
+        assert_eq!(frames.len(), 1);
+        assert_eq!(frames[0].0, FrameKind::Headers);
+        assert!(frames[0].3.is_empty());
+    }
+
+    #[test]
+    fn stream_zero_and_the_reserved_bit_are_refused() {
+        assert_eq!(
+            write_headers(0, b"x", false, 16_384),
+            Err(Http2Error::InvalidStreamId),
+            "a field block never belongs to the connection stream"
+        );
+        assert_eq!(
+            write_headers(0x8000_0000, b"x", false, 16_384),
+            Err(Http2Error::InvalidStreamId)
+        );
+    }
+
+    #[test]
+    fn an_out_of_range_frame_size_is_clamped_not_hung() {
+        // 0 would be an infinite loop if it reached `chunks`.
+        let frames = read_back(&write_headers(1, &[0u8; 100], false, 0).unwrap());
+        assert_eq!(frames.len(), 1, "clamped up to the 16 KiB floor");
+        let huge = write_headers(1, &[0u8; 100], false, u32::MAX).unwrap();
+        assert_eq!(read_back(&huge).len(), 1);
+    }
 
     fn frame_bytes(kind: u8, flags: u8, stream: u32, payload: &[u8]) -> Bytes {
         let mut v = Vec::new();
