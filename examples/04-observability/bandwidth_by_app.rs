@@ -11,7 +11,6 @@
 //!   layered on the built-in well-known table.
 //!
 //! Recipe: `docs/recipes.md` § "0.14 patterns" / "Bandwidth-by-app".
-//! Migration doc: `docs/migration-0.13-to-0.14.md` §3, §4, §5, §13.
 //!
 //! ```bash
 //! cargo run --features pcap,extractors,tracker --example bandwidth_by_app

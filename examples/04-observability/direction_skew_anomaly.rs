@@ -16,7 +16,6 @@
 //!
 //! Recipe: `docs/recipes.md` § "0.14 patterns" /
 //! "Direction skew" (forthcoming).
-//! Migration doc: `docs/migration-0.13-to-0.14.md` §7, §14.
 //!
 //! ```bash
 //! cargo run --features pcap,extractors,tracker --example direction_skew_anomaly

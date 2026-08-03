@@ -15,7 +15,6 @@
 //!
 //! Recipe: `docs/recipes.md` § "0.14 patterns" /
 //! "Joining ICMP errors back to live flows".
-//! Migration doc: `docs/migration-0.13-to-0.14.md` §1, §2, §11.
 //!
 //! ```bash
 //! cargo run --features pcap,icmp,extractors,tracker --example icmp_explained_drops

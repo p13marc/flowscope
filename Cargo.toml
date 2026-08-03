@@ -14,7 +14,7 @@ readme = "README.md"
 documentation = "https://docs.rs/flowscope"
 # Internal-only files — useful in-repo, not on crates.io.
 # `target/` is auto-excluded.
-exclude = ["plans/", "CLAUDE.md", "fuzz/"]
+exclude = ["CLAUDE.md", "fuzz/"]
 
 [dependencies]
 bitflags = "2"

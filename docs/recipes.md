@@ -1185,20 +1185,11 @@ for owned in source.views() {
 }
 ```
 
-For the full set of migration recipes from prior versions, see:
-
-- [`docs/migration-0.10-to-0.11.md`](migration-0.10-to-0.11.md)
-  — parser API break + `Driver<E>` introduction.
-- [`docs/migration-0.11-to-0.12.md`](migration-0.11-to-0.12.md)
-  — `SlotHandle: Send + Sync` and the new opt-in features.
-- [`docs/migration-0.12-to-0.13.md`](migration-0.12-to-0.13.md)
-  — `Driver<E>: Send + Sync`, `OwnedAnomaly` + `DetectorScore`,
-  `BroadcastSlotHandle`, `drain_n`, `FlowStateMap`.
-- [`docs/migration-0.13-to-0.14.md`](migration-0.13-to-0.14.md)
-  — `FlowTracker::lookup_inner`, `DestUnreachableKind`,
-  `RollingRate`, `LabelTable`, `app_label` / `canonical_name`,
-  `drain_expired`, per-side `FlowStats` accessors. Strictly
-  additive.
+Migration guides ship one per breaking cycle; see
+[`docs/README.md`](README.md) for the current set. Guides for
+cycles older than 0.19 were retired in 0.23 — each published
+version's `.crate` tarball still carries the guide that was
+current for it, and `git log` has them all.
 
 ## 0.14 patterns
 
@@ -1611,8 +1602,7 @@ Before 0.13, this required `#[tokio::main(flavor = "current_thread")]`
 or `tokio::task::LocalSet::run_until` because the driver was
 incorrectly classified as `!Send`. The 0.13 cycle's plan 156 fixed
 this structurally — no `unsafe`, no opt-in knob, no runtime
-overhead. See [`docs/migration-0.12-to-0.13.md`](migration-0.12-to-0.13.md)
-§1 for the full story.
+overhead.
 
 ## Re-exporting flowscope types
 

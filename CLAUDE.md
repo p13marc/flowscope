@@ -1431,25 +1431,24 @@ into the standard observability ecosystem. Both zero-cost when off
   methods in 0.2.0 (purely additive). Future additions stay additive;
   breaking changes need a major bump.
 
-## Docs vs plans
+## Documentation
 
-The repo separates **reference docs** from **forward-looking
-plans**:
+`docs/` is the only documentation tree, and everything in it is
+**published reference material** for users of the library — it ships
+inside the crates.io package. Forward-looking work lives in the issue
+tracker, not in files.
 
-- **`docs/`** — published as part of the crates.io package.
-  Reference material for users of the library: how to pick an
-  API, what metrics fire, what the architecture looks like,
-  design rationale, consumer-feedback records.
-- **`plans/`** — in-repo only (excluded from the published
-  package via `Cargo.toml`'s `exclude` field). Forward-looking
-  work items only — concrete plans for features that haven't
-  shipped yet.
+**Convention**: nothing internal goes in `docs/`. Per-cycle
+plan-of-record syntheses, wishlists, upstream-feedback records,
+design proposals, and audit reports are working artifacts — keep them
+in the tracker or in a branch, and let `CHANGELOG.md` plus `git log`
+be the durable record. The `plans/` directory was retired in 0.23
+along with the last shipped plan file; a stale 0.18-cycle examples
+audit that had been shipping to crates.io users went with it.
 
-**Convention**: when an implementation plan ships, **delete the
-plan file** in the same PR series. `git log` is the historical
-record; `plans/` is the working backlog.
+### `docs/` inventory
 
-### `docs/` (published reference)
+Read in order:
 
 - `getting-started.md` — install + three minimal pipelines.
 - `concepts.md` — the four layers + event model.
@@ -1457,31 +1456,20 @@ record; `plans/` is the working backlog.
   monitoring, cross-protocol correlation, structured output.
 - `observability.md` — metric vocabulary, cardinality, tracing
   targets, severity routing.
-- `performance.md` — criterion bench methodology and baseline
-  numbers (0.3.0 snapshot).
+- `performance.md` — criterion bench methodology + how to
+  regression-test. Numbers are explicitly point-in-time.
 - `design.md` — why flowscope is shaped the way it is
   (runtime-free, run-to-completion threading, layered traits,
   locked serde format).
 
-Per-cycle upstream-feedback documents, per-cycle plan-of-record
-syntheses, design proposals, and audit reports are retired once
-their plans ship — `CHANGELOG.md` entries are the durable
-record, and `plans/INDEX.md` carries the surviving deferral /
-RFC notes.
+Reference, by topic: `discoverability.md`, `bounded-memory.md`,
+`tls-routing.md`, `tls-ech.md`, `eve-format.md`,
+`detect-patterns.md`, `file-hash.md`, `sharded.md`.
 
-### `plans/` (active backlog)
-
-- `INDEX.md` — backlog index, project conventions, deferred
-  items list (capability gaps without active plans), and the
-  numbering scheme.
-- `169-cycle-0-14-umbrella.md` — 0.14 cycle umbrella; retired
-  once `0.14.0` ships to crates.io.
-
-Shipped cycle wishlists / umbrellas / per-plan files are
-deleted after the cycle releases — the durable record is in
-`CHANGELOG.md`, the `docs/migration-*.md` series, and
-`git log`. See [`plans/INDEX.md`](plans/INDEX.md) for the
-numbering scheme used by new plans.
+Migration: one guide per breaking cycle, `migration-0.19-to-0.20.md`
+onward. Guides for cycles older than 0.19 were retired in 0.23 —
+each published version's `.crate` tarball still carries the guide
+that was current for it.
 
 ## Pre-publish checklist
 
@@ -1535,10 +1523,10 @@ needs a corresponding re-export under `netring::flow::*`.
 
 - `README.md` — front page (also published as the crates.io readme).
 - `CHANGELOG.md` — release history.
-- `docs/` — published reference docs (see [Docs vs plans](#docs-vs-plans)
+- `docs/` — published reference docs (see [Documentation](#documentation)
   for the full inventory).
-- `Cargo.toml` — package manifest. `exclude = ["plans/"]` keeps
-  the backlog out of the published package; `docs/` IS published.
+- `Cargo.toml` — package manifest. `exclude` keeps `CLAUDE.md` and
+  `fuzz/` out of the published package; `docs/` IS published.
 - `src/lib.rs` — top-level rustdoc + feature/module wiring.
 - `src/session.rs` — the strategic 1.0 abstraction
   (`SessionParser` / `DatagramParser`).

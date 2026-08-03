@@ -507,18 +507,24 @@ they trip people up:
 
 ## Known limitations
 
-- **OOO TCP reassembly with hole-fill** — `BufferedReassembler`
-  drops out-of-order segments. Strict drop is fine for most
-  protocols (resync on next message); HTTP/2 + HPACK is the
-  classic case where a hole desyncs the decoder. RFC tracked in
-  `plans/74-rfc-ooo-reassembly.md`.
-- **IPv4/IPv6 fragment reassembly** — `etherparse` parses the
-  first fragment; subsequent fragments are tracked under their
-  fragment-header tuple rather than reassembled into the inner
-  flow. Out of scope until a consumer hits a heavy-fragmentation
-  workload.
-- **Wall-clock vs packet-clock divergence on offline pcaps** —
-  live capture sweeps idle flows on a wall clock; offline replay
-  only sweeps at EOF. Workaround: call `tracker.sweep(now)`
-  yourself driven by packet timestamps. RFC for an opt-in
-  packet-clock auto-sweep at `plans/75-rfc-tracker-auto-sweep.md`.
+- **`BufferedReassembler` drops out-of-order segments.** Strict
+  drop is fine for most protocols (resync on the next message),
+  but HTTP/2 + HPACK is the classic case where a hole desyncs the
+  decoder for the rest of the connection. Use
+  [`SegmentBufferReassembler`](https://docs.rs/flowscope/latest/flowscope/struct.SegmentBufferReassembler.html)
+  when you need hole-fill: it queues out-of-order segments in a
+  `BTreeMap` and releases them once the gap arrives, with a
+  deadline past which the hole is abandoned.
+- **Fragmented IP needs an explicit reassembly pass.** The
+  extractors key on what `etherparse` gives them, so non-first
+  fragments land under their own fragment-header tuple rather
+  than joining the inner flow. Run
+  [`ip_fragment::IpFragmentReassembler`](https://docs.rs/flowscope/latest/flowscope/ip_fragment/struct.IpFragmentReassembler.html)
+  ahead of the tracker if your traffic is fragmented.
+- **Offline replay has no wall clock.** Live capture sweeps idle
+  flows against real time; a pcap only reaches the sweep at EOF,
+  so idle timeouts never fire mid-file. Either call
+  `tracker.sweep(now)` yourself driven by packet timestamps, or
+  use `FlowTracker::with_auto_sweep(interval)`, which derives the
+  clock from the packets themselves and gives live/offline
+  parity.

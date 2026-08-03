@@ -1,8 +1,7 @@
 # flowscope docs
 
 Published reference material — ships as part of the crates.io
-package. For forward-looking work items, see
-[`../plans/`](../plans/) (in-repo only).
+package. Forward-looking work lives in the issue tracker.
 
 ## Read in order
 
@@ -40,5 +39,6 @@ forward.
 | [`migration-0.20-to-0.21.md`](migration-0.20-to-0.21.md) | Typed `DetectorKind`, detection architecture. |
 | [`migration-0.19-to-0.20.md`](migration-0.19-to-0.20.md) | Driver/event convergence, `ParserKind`. |
 
-Earlier cycles: `migration-0.10-to-0.11.md` through
-`migration-0.17-to-0.18.md`.
+Guides for cycles older than 0.19 were retired in 0.23. Each
+published version's `.crate` tarball still carries the guide that
+was current for it, and `git log` has them all.

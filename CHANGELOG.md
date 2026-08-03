@@ -1694,7 +1694,7 @@ Test count after the cycle: **920 passing** (up from 809 at
 `--all-features --all-targets -D warnings`, zero rustdoc
 warnings. All 13 CI feature-matrix combinations clean.
 
-Migration: [`docs/migration-0.13-to-0.14.md`](docs/migration-0.13-to-0.14.md).
+Migration: `docs/migration-0.13-to-0.14.md` (retired in 0.23; see git history).
 
 ### Removed (breaking, pre-1.0)
 
