@@ -160,6 +160,40 @@ consumer suppressing `Ended` has said it does not want them. Flows
 that end normally are unaffected and still get their final tick, fin,
 and `Closed`.
 
+## 7. QUIC and port-scan state are now capped (#184, #187)
+
+No API changed — both parsers gained bounds where they previously had
+none. Nothing to do unless you operate at a scale that reaches them.
+
+**`QuicUdpParser`** now enforces `QuicConfig`: 1024 concurrent
+Initials, a 5 s TTL, and per connection 64 KiB / 64 CRYPTO frames.
+A post-quantum ClientHello is ~1.6 KiB in two or three Initials, so
+real handshakes are far below these. Two consequences worth knowing:
+
+- The TTL now advances only when reassembly makes *progress*.
+  Previously any packet on a connection ID refreshed it, which meant
+  an entry being fed junk could never expire.
+- Frames past a cap are refused and counted. Watch
+  `QuicUdpParser::pending_dropped()` — if it climbs on traffic you
+  trust, raise the cap:
+
+```rust
+use flowscope::quic::{QuicConfig, QuicUdpParser};
+
+let parser = QuicUdpParser::with_config(
+    QuicConfig::default().with_max_crypto_bytes(256 * 1024),
+);
+```
+
+**`PortScanDetector`** now holds at most 10 000 sources awaiting a
+verdict, evicting the least-recently-touched beyond that. Only
+sources still mid-evaluation occupy a slot — one that crosses either
+threshold is released immediately — so the cap is reached only under
+a very wide scan or spoofed-source flood. An evicted source restarts
+at λ = 0, exactly as it does after a verdict, so no observation is
+mis-scored; it just takes the full four failures again. `evicted()`
+reports the count, and `with_capacity(n)` raises it.
+
 ## Additive — no migration needed
 
 - The internal streaming engine (`src/http/engine.rs`) is

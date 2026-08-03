@@ -17,19 +17,16 @@ umbrellas are deleted too once the cycle releases.
 
 ## Active
 
-**0.23 inline-proxy cycle** (started 2026-08-02) — flowscope
-becomes the shared sans-IO L7 core for inline proxies (first
-consumer: zenoh-bridge-tcp). Plan of record:
-[`176-cycle-0-23-inline-proxy.md`](176-cycle-0-23-inline-proxy.md);
-inputs: [`requirements-inline-proxy.md`](requirements-inline-proxy.md)
-(R1–R10 spec) + [`spike-inline-streaming.md`](spike-inline-streaming.md)
-(feasibility spike, GO). GitHub plan of record:
-[milestone 3 "Inline-grade: sans-IO L7 core for inline proxies"](https://github.com/p13marc/flowscope/milestone/3)
-— epics #172 (streaming HTTP/1.1 exchange, P0) · #173
-(wire-protocol classification & TLS routing, P1) · #174
-(HTTP/2 + HPACK + gRPC, P2) with child issues #160–#171.
+_None._ The 0.23 inline-proxy cycle is complete — milestone 3
+("Inline-grade: sans-IO L7 core for inline proxies") closed 15/15,
+epics #172 / #173 / #174, plus the #184–#188 backlog round that
+closed the bounded-memory audit's own findings. Its plan file and
+the two inputs it was built from (the R1–R10 requirements spec and
+the feasibility spike) were retired per convention; the durable
+record is `CHANGELOG.md`, `docs/migration-0.22-to-0.23.md`, and
+`git log`. **0.23.0 is staged but not published.**
 
-(Cycles 0.18–0.22 shipped without passing through this file —
+(Cycles 0.18–0.22 also shipped without passing through this file —
 see `CHANGELOG.md`; 0.22.0 published to crates.io 2026-07-03.)
 
 ### RFCs (design drafts awaiting a go/no-go)
