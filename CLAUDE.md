@@ -157,14 +157,20 @@ Test count after the cycle: **2219 passing** (up from 1919 at
 examples: `http2_driver`, `http2_header_rewrite` (#196/#197), on top
 of the milestone's five.
 
-Every issue in the milestone is closed, and so is the backlog it was
-gated on. Two follow-ups filed *from* this work remain open and are
-deliberately not release blockers: **#200** (a quadratic
-`BytesMut::clone()` per frame in `drive_inner` — pre-existing,
-bounded, but ~64 MiB of memcpy to drain a full default buffer) and
-**#201** (no `detect::signatures` entry for the h2 preface, so
-heuristic slots cannot pin h2 — which is what `Http2Session`'s
-preface tolerance was built for).
+- **Zero-copy h2 framing (`#200`).** `drive_inner` deep-copied the
+  whole buffer per frame via `BytesMut::clone`, so payload events
+  each pinned a full-size copy. New `frame::peek_frame_len` finds
+  the boundary from the header alone; `split_to(total).freeze()` is
+  O(1). 128 KiB in 1024 frames: 72.3 MB allocated → 222 KB.
+  `tests/http2_zero_copy.rs` pins it with a counting allocator, by
+  holding total bytes fixed and varying only the frame count.
+- **`detect::signatures::http2_preface` (`#201`).** Lets a heuristic
+  slot pin h2 with no port —
+  `session_heuristic(Http2Session::new(), http2_preface)` — which is
+  what `Http2Session`'s preface tolerance was built for.
+
+Every issue is closed: the milestone, the backlog it was gated on,
+and the two follow-ups this work itself produced.
 
 **Not yet published to crates.io — the user has asked for no release
 yet.**
@@ -1038,6 +1044,7 @@ src/
 │   └── welford.rs               # WelfordStats — running stats (count/mean/var/min/max) (issue #15, 0.18)
 ├── classify.rs                  # classify_first_bytes → WireProtocol — protocol from the first bytes (#165, 0.23)
 ├── http2/                       # `http2` feature — HTTP/2 + HPACK + gRPC (#170/#171, 0.23)
+│   ├── frame.rs                 # frame parse + peek_frame_len (#200) + write_headers (#197)
 │   ├── hpack_encode.rs          # HpackEncoder + HeaderSensitivity + HuffmanPolicy (#197, 0.23)
 │   ├── session.rs               # Http2Session — SessionParser adapter for the typed Driver (#196, 0.23)
 │   ├── error.rs                 # Http2Error
@@ -1315,6 +1322,10 @@ The legacy `HttpFactory` / `TlsFactory` callback-handler shape
 - `tests/http2_streams.rs` + `tests/http2_proptest.rs` — HTTP/2
   end-to-end routing and the split-invariance / bounded-state /
   terminal-failure properties (#170, 0.23).
+- `tests/http2_zero_copy.rs` — allocation-volume guard for the frame
+  loop (#200): same total bytes split into 64× more frames must not
+  change what is allocated. Uses a counting `#[global_allocator]`,
+  hence its own file (#200, 0.23).
 - `tests/http2_hpack_encode.rs` — encode → `write_headers` → a real
   `Http2Parser` → identical fields, including a CONTINUATION split
   and a mid-connection `SETTINGS` change (#197, 0.23).

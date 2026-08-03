@@ -80,14 +80,17 @@ impl Frame {
     }
 }
 
-/// Try to read one frame from the front of `buf`.
+/// How many bytes the frame at the head of `buf` occupies, reading
+/// only its 9-octet header.
 ///
-/// Returns `Ok(None)` when the frame has not fully arrived. On
-/// success the caller must consume `FRAME_HEADER_LEN + length` bytes.
-pub(crate) fn parse_frame(
-    buf: &Bytes,
-    max_frame_size: u32,
-) -> Result<Option<(Frame, usize)>, Http2Error> {
+/// Takes a plain slice, so a caller holding a `BytesMut` can find the
+/// frame boundary *before* deciding what to make owned — which is
+/// what lets [`Http2Parser`](super::Http2Parser) hand `parse_frame` a
+/// `Bytes` covering exactly one frame instead of a copy of everything
+/// still buffered.
+///
+/// `Ok(None)` means the frame is not all here yet.
+pub(crate) fn peek_frame_len(buf: &[u8], max_frame_size: u32) -> Result<Option<usize>, Http2Error> {
     if buf.len() < FRAME_HEADER_LEN {
         return Ok(None);
     }
@@ -99,6 +102,22 @@ pub(crate) fn parse_frame(
     if buf.len() < total {
         return Ok(None);
     }
+    Ok(Some(total))
+}
+
+/// Try to read one frame from the front of `buf`.
+///
+/// Returns `Ok(None)` when the frame has not fully arrived. On success
+/// the second element is how many bytes it occupied, and the payload
+/// is a zero-copy view into `buf` — so pass a `Bytes` covering the
+/// frame rather than a copy of everything buffered behind it (#200).
+pub(crate) fn parse_frame(
+    buf: &Bytes,
+    max_frame_size: u32,
+) -> Result<Option<(Frame, usize)>, Http2Error> {
+    let Some(total) = peek_frame_len(buf, max_frame_size)? else {
+        return Ok(None);
+    };
 
     let kind = FrameKind::from_byte(buf[3]);
     let flags = buf[4];

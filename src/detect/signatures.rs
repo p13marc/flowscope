@@ -55,6 +55,46 @@ const HTTP_METHODS: &[&[u8]] = &[
     b"CONNECT ",
 ];
 
+/// The HTTP/2 client connection preface (RFC 9113 §3.4).
+///
+/// A client opens every h2 connection with the same 24 bytes, so this
+/// is the one signature in this module that is exact rather than
+/// heuristic — either the bytes are the preface or they are not.
+///
+/// Pair it with [`Http2Session`](crate::http2::Http2Session) on a
+/// heuristic slot: the session tolerates a *missing* preface
+/// precisely so a flow pinned this way still parses if the driver
+/// only saw the tail of it.
+///
+/// Ordering note for a router that tries several signatures: check
+/// this before [`http_request`]. `PRI` is a syntactically valid
+/// HTTP/1 method token, and although [`http_request`] does not list
+/// it, a looser HTTP/1 matcher would claim the preface.
+///
+/// ```
+/// use flowscope::detect::signatures::{http2_preface, SignatureMatch};
+///
+/// let preface = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
+/// assert_eq!(http2_preface(preface), SignatureMatch::Match);
+/// assert_eq!(http2_preface(b"PRI * HTTP/2"), SignatureMatch::NeedMoreData);
+/// assert_eq!(http2_preface(b"GET / HTTP/1.1"), SignatureMatch::NoMatch);
+/// ```
+pub fn http2_preface(bytes: &[u8]) -> SignatureMatch {
+    let preface = crate::classify::HTTP2_PREFACE;
+    let n = bytes.len().min(preface.len());
+    if bytes[..n] != preface[..n] {
+        // Definitive, at the first differing byte — a heuristic slot
+        // can stop probing rather than burn its whole budget.
+        return SignatureMatch::NoMatch;
+    }
+    if bytes.len() < preface.len() {
+        // A valid prefix. The preface is 24 bytes and routinely
+        // splits across segments.
+        return SignatureMatch::NeedMoreData;
+    }
+    SignatureMatch::Match
+}
+
 /// HTTP/1.x request: method + path + `HTTP/1.` within first 256 B.
 pub fn http_request(bytes: &[u8]) -> SignatureMatch {
     if bytes.is_empty() {
@@ -321,6 +361,7 @@ pub fn postgres_startup(bytes: &[u8]) -> SignatureMatch {
 pub fn registry() -> impl Iterator<Item = (&'static str, SignatureFn)> {
     [
         ("http", http_request as SignatureFn),
+        ("http2", http2_preface as SignatureFn),
         ("tls", tls_client_hello as SignatureFn),
         ("dns-udp", dns_message as SignatureFn),
         ("ssh", ssh_banner as SignatureFn),
@@ -521,9 +562,75 @@ mod tests {
     }
 
     #[test]
-    fn registry_lists_ten_signatures() {
+    fn registry_lists_eleven_signatures() {
         let count = registry().count();
-        assert_eq!(count, 10);
+        assert_eq!(count, 11);
+    }
+
+    #[test]
+    fn http2_preface_table() {
+        let preface = crate::classify::HTTP2_PREFACE;
+        assert_table(
+            http2_preface,
+            &[
+                (preface, SignatureMatch::Match),
+                // Every proper prefix is undecided, never a match.
+                (b"", SignatureMatch::NeedMoreData),
+                (b"P", SignatureMatch::NeedMoreData),
+                (b"PRI * HTTP/2.0\r\n\r\n", SignatureMatch::NeedMoreData),
+                // One byte short.
+                (&preface[..preface.len() - 1], SignatureMatch::NeedMoreData),
+                // Definitively not h2.
+                (b"GET / HTTP/1.1\r\n", SignatureMatch::NoMatch),
+                (b"PRX * HTTP/2.0", SignatureMatch::NoMatch),
+                // The right length, one wrong byte at the very end —
+                // the case a length-only check would wave through.
+                (
+                    b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\x00",
+                    SignatureMatch::NoMatch,
+                ),
+                (&[0u8; 24], SignatureMatch::NoMatch),
+            ],
+        );
+        // Trailing bytes after a complete preface still match: a real
+        // connection sends SETTINGS immediately after it.
+        let mut with_tail = preface.to_vec();
+        with_tail.extend_from_slice(&[0, 0, 0, 0x4, 0, 0, 0, 0, 0]);
+        assert_eq!(http2_preface(&with_tail), SignatureMatch::Match);
+    }
+
+    /// A router tries signatures in order, so the preface must not be
+    /// claimed by anything else — otherwise an h2 connection pins to
+    /// the wrong parser and every byte after is misread.
+    #[test]
+    fn no_other_signature_claims_the_h2_preface() {
+        let preface = crate::classify::HTTP2_PREFACE;
+        for (name, sig) in registry() {
+            if name == "http2" {
+                continue;
+            }
+            assert_ne!(
+                sig(preface),
+                SignatureMatch::Match,
+                "{name} claimed the HTTP/2 preface"
+            );
+        }
+    }
+
+    #[test]
+    fn splitting_invariance_http2_preface() {
+        // A prefix must never decide differently from the whole: the
+        // property a heuristic slot depends on when the preface
+        // arrives across segments.
+        let preface = crate::classify::HTTP2_PREFACE;
+        for end in 0..preface.len() {
+            assert_eq!(
+                http2_preface(&preface[..end]),
+                SignatureMatch::NeedMoreData,
+                "prefix of {end} bytes must stay undecided"
+            );
+        }
+        assert_eq!(http2_preface(preface), SignatureMatch::Match);
     }
 
     #[test]

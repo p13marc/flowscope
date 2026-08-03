@@ -10,6 +10,14 @@ not only a passive observer. Migration recipes accrue in
 
 ### Added
 
+- **`detect::signatures::http2_preface`** (#201) — pin HTTP/2 on a
+  heuristic slot when there is no port to route on:
+  `session_heuristic(Http2Session::new(), http2_preface)`. Exact
+  rather than heuristic, since every h2 client opens with the same 24
+  bytes; a proper prefix is `NeedMoreData` and anything else is a
+  definitive `NoMatch`, so a probe stops early instead of burning its
+  budget. Registered in `signatures::registry()`, and a test asserts
+  no other shipped signature claims the preface.
 - **`http2::HpackEncoder` — HPACK encoding** (#197). The decoder has
   shipped since #170; this is the forward direction, for a proxy that
   modifies a header and has to re-emit the field block. HTTP/1 has no
@@ -271,6 +279,17 @@ not only a passive observer. Migration recipes accrue in
   leaving the buffer above the limit. It now keeps the newest `cap`
   bytes and counts the rest in `bytes_dropped_oversize`, matching
   `BufferedReassembler`.
+- **The HTTP/2 frame loop copied the whole buffer on every frame**
+  (#200). `drive_inner` did `BytesMut::clone().freeze()` per
+  iteration, which is a deep copy — so draining N frames copied
+  O(N × buffer) bytes, and because payload slices pointed into that
+  copy, each frame's events pinned their own full-size copy of
+  everything still buffered. Retaining one small `Body` kept a whole
+  buffer alive. The frame boundary now comes from the 9-octet header
+  alone (`peek_frame_len`), and `split_to(total).freeze()` — both
+  O(1), sharing the allocation — hands the parser exactly one frame.
+  Measured with a counting allocator, 128 KiB split into 1024 frames:
+  **72.3 MB allocated before, 222 KB after**.
 - **An HTTP/2 direction could wedge permanently** (#196). With
   `max_frame_size` above `max_buffered_bytes` — the default pair, for
   any frame over 1 MiB − 9 — the parser buffered to the cap waiting

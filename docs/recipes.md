@@ -574,6 +574,17 @@ let slot = b.session_on_ports(Http2Session::new(), [8080]);
 let driver = b.build();
 ```
 
+On a non-standard port, pin by signature instead:
+
+```rust,no_run
+use flowscope::detect::signatures::http2_preface;
+# use flowscope::driver::Driver;
+# use flowscope::extract::FiveTuple;
+# use flowscope::http2::Http2Session;
+# let mut b = Driver::builder(FiveTuple::bidirectional());
+let slot = b.session_heuristic(Http2Session::new(), http2_preface);
+```
+
 Two differences from driving the parser yourself. The `SessionParser`
 trait cannot express a short read, so the accepted count — the
 backpressure signal — is not available through the adapter. And

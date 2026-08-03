@@ -547,11 +547,26 @@ impl Http2Parser {
 
         loop {
             let max = self.dir(dir).max_frame_size;
-            let buf = self.dir(dir).buf.clone().freeze();
-            let Some((f, used)) = frame::parse_frame(&buf, max)? else {
+            // Find the frame boundary from the header alone, then
+            // take ownership of exactly that many bytes.
+            // `split_to` and `freeze` are both O(1) and share the
+            // allocation, so a payload event is a view into the
+            // bytes the caller pushed rather than a copy.
+            //
+            // Cloning the whole `BytesMut` here instead — as this did
+            // until #200 — deep-copies everything still buffered on
+            // *every* frame, which is quadratic in the buffer, and
+            // leaves each frame's events pinning their own full-size
+            // copy.
+            let Some(total) = frame::peek_frame_len(&self.dir(dir).buf, max)? else {
                 return Ok(());
             };
-            let _ = self.dir_mut(dir).buf.split_to(used);
+            let raw = self.dir_mut(dir).buf.split_to(total).freeze();
+            let Some((f, _used)) = frame::parse_frame(&raw, max)? else {
+                // Unreachable: `peek_frame_len` already established
+                // the frame is whole and within the cap.
+                return Ok(());
+            };
             self.handle_frame(dir, f)?;
         }
     }
