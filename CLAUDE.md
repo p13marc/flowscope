@@ -148,7 +148,7 @@ have been inconsistent.
   `evicted()`. `observe` deliberately keeps its `(key, success)`
   signature.
 
-Test count after the cycle: **2219 passing** (up from 1919 at
+Test count after the cycle: **2227 passing** (up from 1919 at
 0.22.0). Zero clippy warnings under `--all-features --all-targets
 -D warnings`, zero rustdoc warnings. New modules: `src/classify.rs`,
 `src/http/{engine,proxy,poison,access}.rs`, `src/http2/` (including
