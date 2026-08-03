@@ -95,7 +95,10 @@ jobs:
         with:
           feature-group: all-features
 
-  # Smoke fuzz: 4 curated targets, 20s each. Full 16-target sweep stays local.
+  # Smoke fuzz: 5 curated targets, 20s each. Full 17-target sweep stays local.
+  # http2 is here because its HPACK decoder is hand-rolled and carries
+  # state across every field block on the connection — the shape where a
+  # bug surfaces frames later rather than at the malformed input.
   fuzz-smoke:
     runs-on: ubuntu-24.04
     steps:
@@ -109,6 +112,6 @@ jobs:
       - run: cargo install cargo-fuzz --locked
       - name: Fuzz smoke
         run: |
-          for t in dns_udp http tls layers; do
+          for t in dns_udp http http2 tls layers; do
             cargo +nightly fuzz run "$t" -- -max_total_time=20 -timeout=10 -rss_limit_mb=2048
           done
