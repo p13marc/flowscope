@@ -80,10 +80,6 @@ impl Frame {
     }
 }
 
-/// Try to read one frame from the front of `buf`.
-///
-/// Returns `Ok(None)` when the frame has not fully arrived. On
-/// success the caller must consume `FRAME_HEADER_LEN + length` bytes.
 /// How many bytes the frame at the head of `buf` occupies, reading
 /// only its 9-octet header.
 ///
@@ -109,6 +105,12 @@ pub(crate) fn peek_frame_len(buf: &[u8], max_frame_size: u32) -> Result<Option<u
     Ok(Some(total))
 }
 
+/// Try to read one frame from the front of `buf`.
+///
+/// Returns `Ok(None)` when the frame has not fully arrived. On success
+/// the second element is how many bytes it occupied, and the payload
+/// is a zero-copy view into `buf` — so pass a `Bytes` covering the
+/// frame rather than a copy of everything buffered behind it (#200).
 pub(crate) fn parse_frame(
     buf: &Bytes,
     max_frame_size: u32,

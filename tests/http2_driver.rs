@@ -18,6 +18,7 @@
     feature = "reassembler",
 ))]
 
+use flowscope::detect::signatures::http2_preface;
 use flowscope::driver::{Driver, Event};
 use flowscope::extract::{FiveTuple, parse::test_frames::ipv4_tcp};
 use flowscope::http2::{Http2Event, Http2Session, PREFACE};
@@ -257,5 +258,96 @@ fn a_well_framed_h2_flow_is_not_torn_down() {
             }
         )),
         "well-framed multiplexed traffic must not be reported as a parse error, got {events:?}"
+    );
+}
+
+/// Issue #201: h2 on a *heuristic* slot, with no port to route on.
+///
+/// This is what `Http2Session`'s preface tolerance was built for. The
+/// probe consumes the packets that carry the preface, so by the time
+/// the parser is pinned those bytes are already spent — a strict
+/// parser would then see a bare HEADERS frame and refuse it as
+/// `BadPreface`. #166 makes the driver replay probe frames into the
+/// pinned parser, so in fact it sees them; the tolerance is the
+/// belt-and-braces for when a segment was missed entirely.
+#[test]
+fn a_heuristic_slot_pins_h2_on_the_preface() {
+    let (mut driver, mut slot) = {
+        let mut b = Driver::builder(FiveTuple::bidirectional());
+        // No port set: the signature decides.
+        let slot = b.session_heuristic(Http2Session::new(), http2_preface);
+        (b.build(), slot)
+    };
+
+    let mut events = Vec::new();
+    let mut block = vec![0x82, 0x87];
+    block.extend(literal(":authority", "probe.example"));
+    block.extend(literal(":path", "/pinned"));
+
+    // The preface arrives split across two packets, so the signature
+    // has to say NeedMoreData before it can say Match.
+    let mut wire = PREFACE.to_vec();
+    wire.extend(frame(SETTINGS, 0, 0, &[]));
+    wire.extend(frame(HEADERS, END_HEADERS | END_STREAM, 1, &block));
+    let (first, rest) = wire.split_at(10);
+
+    driver.track_into(
+        PacketView::new(&packet(41000, 1000, first), Timestamp::new(1, 0)),
+        &mut events,
+    );
+    driver.track_into(
+        PacketView::new(
+            &packet(41000, 1000 + first.len() as u32, rest),
+            Timestamp::new(2, 0),
+        ),
+        &mut events,
+    );
+
+    let mut msgs = Vec::new();
+    slot.drain(&mut msgs);
+    let authority = msgs.iter().find_map(|m| match &m.message {
+        Http2Event::Head(h) => h.authority(),
+        _ => None,
+    });
+    assert_eq!(
+        authority,
+        Some("probe.example"),
+        "the flow must pin to h2 and route, got {msgs:?}"
+    );
+    assert!(
+        !events.iter().any(|e| matches!(
+            e,
+            Event::ParserClosed {
+                reason: EndReason::ParseError,
+                ..
+            }
+        )),
+        "pinning on the preface must not then reject it"
+    );
+}
+
+/// The other half: traffic that is definitively not h2 must not pin.
+#[test]
+fn a_heuristic_slot_leaves_non_h2_alone() {
+    let (mut driver, mut slot) = {
+        let mut b = Driver::builder(FiveTuple::bidirectional());
+        let slot = b.session_heuristic(Http2Session::new(), http2_preface);
+        (b.build(), slot)
+    };
+
+    let mut events = Vec::new();
+    driver.track_into(
+        PacketView::new(
+            &packet(41001, 1000, b"GET /ordinary HTTP/1.1\r\nHost: h\r\n\r\n"),
+            Timestamp::new(1, 0),
+        ),
+        &mut events,
+    );
+
+    let mut msgs = Vec::new();
+    slot.drain(&mut msgs);
+    assert!(
+        msgs.is_empty(),
+        "HTTP/1 must not reach the h2 slot: {msgs:?}"
     );
 }
