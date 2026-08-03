@@ -100,7 +100,7 @@ serde = { version = "1", features = ["derive"], optional = true }
 serde_json = { version = "1", optional = true }
 
 # `aggregate` feature — t-digest streaming quantile estimator
-tdigest = { version = "0.2", optional = true }
+tdigest = { version = "1.0", optional = true }
 
 # `chrono` feature — interop between `Timestamp` and chrono's
 # `DateTime<Utc>`. We need `alloc` for the `to_rfc3339_opts`
