@@ -6,7 +6,7 @@ use bytes::{Bytes, BytesMut};
 
 use super::{
     error::Http2Error,
-    frame::{self, FrameKind, PREFACE, flags},
+    frame::{self, FRAME_HEADER_LEN, FrameKind, PREFACE, flags},
     hpack::HpackDecoder,
 };
 use crate::FlowSide;
@@ -131,6 +131,26 @@ pub struct Http2Config {
     /// Unparsed bytes held per direction before `push` applies
     /// backpressure. Default 1 MiB.
     pub max_buffered_bytes: usize,
+    /// Whether the client connection preface must open the initiator
+    /// side. Default `true`.
+    ///
+    /// `true` is RFC 9113 §3.4 as written: the client's first 24
+    /// bytes are `PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n` or this is not
+    /// HTTP/2, and anything else is
+    /// [`Http2Error::BadPreface`].
+    ///
+    /// `false` *tolerates* its absence rather than skipping it: a
+    /// preface that is there is still consumed, and bytes that are
+    /// not one are read as frames from the first byte. Set it when
+    /// the parser may be handed a connection already in progress — a
+    /// capture started mid-flow, a heuristic slot that pinned after
+    /// probing, an h2c upgrade whose preface another component ate.
+    ///
+    /// It does **not** resynchronise: bytes that are not
+    /// frame-aligned still fail, just as a framing error rather than
+    /// `BadPreface`. This is what
+    /// [`Http2Session::new`](super::Http2Session::new) uses.
+    pub require_preface: bool,
 }
 
 impl Http2Config {
@@ -163,10 +183,39 @@ impl Http2Config {
     }
 
     /// Cap unparsed bytes per direction.
+    ///
+    /// Below `max_frame_size + 9` this becomes the effective frame
+    /// ceiling: a frame that could never be held whole is refused
+    /// with [`Http2Error::FrameTooLarge`] at its header.
     #[must_use]
     pub fn with_max_buffered_bytes(mut self, n: usize) -> Self {
         self.max_buffered_bytes = n;
         self
+    }
+
+    /// Require (or merely tolerate) the client connection preface.
+    #[must_use]
+    pub fn with_require_preface(mut self, yes: bool) -> Self {
+        self.require_preface = yes;
+        self
+    }
+
+    /// The largest frame that can actually be assembled.
+    ///
+    /// A frame bigger than a direction's buffer could never be held
+    /// whole, so the buffer cap is the real ceiling however high
+    /// `max_frame_size` is set. Left uncomposed the two caps
+    /// contradict each other and the parser wedges: it buffers to the
+    /// cap waiting for a frame that will never fit, then refuses
+    /// every subsequent byte for the life of the connection — with
+    /// the defaults, any frame larger than 1 MiB − 9. Refusing such a
+    /// frame at its header is the same verdict, reached before the
+    /// buffer fills and with a reason attached.
+    fn effective_max_frame_size(&self) -> u32 {
+        let by_buffer = self.max_buffered_bytes.saturating_sub(FRAME_HEADER_LEN);
+        u32::try_from(by_buffer)
+            .unwrap_or(u32::MAX)
+            .min(self.max_frame_size)
     }
 }
 
@@ -178,6 +227,7 @@ impl Default for Http2Config {
             max_hpack_table_bytes: 64 * 1024,
             max_concurrent_streams: 256,
             max_buffered_bytes: 1024 * 1024,
+            require_preface: true,
         }
     }
 }
@@ -219,6 +269,17 @@ impl StreamState {
     }
 }
 
+/// How the initiator's first bytes are treated (RFC 9113 §3.4).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Preface {
+    /// It must be there, or this is not HTTP/2.
+    Required,
+    /// Consume it if it is there; otherwise start reading frames.
+    Optional,
+    /// Dealt with — parse frames.
+    Seen,
+}
+
 /// One direction's byte buffer plus the field block being assembled.
 #[derive(Debug, Clone)]
 struct DirState {
@@ -229,19 +290,20 @@ struct DirState {
     partial: Option<PartialBlock>,
     /// Effective `SETTINGS_MAX_FRAME_SIZE` for what this side sends.
     max_frame_size: u32,
-    /// Set once the preface has been consumed (request side only).
-    preface_seen: bool,
+    /// Preface policy. Only the initiator side is ever anything but
+    /// [`Preface::Seen`] — servers open with `SETTINGS`.
+    preface: Preface,
     done: bool,
 }
 
 impl DirState {
-    fn new(cfg: &Http2Config) -> Self {
+    fn new(cfg: &Http2Config, preface: Preface) -> Self {
         Self {
             buf: BytesMut::new(),
             hpack: HpackDecoder::new(4096, cfg.max_hpack_table_bytes),
             partial: None,
-            max_frame_size: cfg.max_frame_size,
-            preface_seen: false,
+            max_frame_size: cfg.effective_max_frame_size(),
+            preface,
             done: false,
         }
     }
@@ -275,9 +337,15 @@ impl Http2Parser {
     }
 
     pub fn with_config(config: Http2Config) -> Self {
+        let initiator = if config.require_preface {
+            Preface::Required
+        } else {
+            Preface::Optional
+        };
         Self {
-            request: DirState::new(&config),
-            response: DirState::new(&config),
+            request: DirState::new(&config, initiator),
+            // Servers never send a preface; they open with SETTINGS.
+            response: DirState::new(&config, Preface::Seen),
             config,
             streams: HashMap::new(),
             events: std::collections::VecDeque::new(),
@@ -303,8 +371,16 @@ impl Http2Parser {
     ///
     /// A short count means the direction is holding
     /// [`max_buffered_bytes`](Http2Config::max_buffered_bytes) of
-    /// unparsed data — drain events and re-offer the rest. A failed
-    /// connection accepts nothing.
+    /// unparsed data — drain events and re-offer the rest with
+    /// `data.slice(n..)`, which is a refcount bump.
+    ///
+    /// **A zero return always implies a state the parser reports**:
+    /// [`is_failed`](Self::is_failed) or
+    /// [`is_finished`](Self::is_finished). The parser never sits on a
+    /// full buffer in silence, so a caller that cannot see the count
+    /// — [`Http2Session`](super::Http2Session), whose trait has no
+    /// way to express a short read — can treat a refusal as "ask why"
+    /// rather than "try again later".
     pub fn push(&mut self, dir: FlowSide, data: &Bytes) -> usize {
         if self.error.is_some() || self.dir(dir).done {
             return 0;
@@ -313,6 +389,17 @@ impl Http2Parser {
             .config
             .max_buffered_bytes
             .saturating_sub(self.dir(dir).buf.len());
+        if room == 0 {
+            // The buffer is full and the last parse could not consume
+            // it, so whatever sits at its head needs more room than
+            // the cap allows and no future byte completes it.
+            // Composing the caps keeps frames out of this state; what
+            // is left is a cap set below the 24-byte preface. Either
+            // way the connection is stuck, and a stuck parser that
+            // returns 0 forever is indistinguishable from silence.
+            self.fail(Http2Error::BufferOverflow);
+            return 0;
+        }
         let take = room.min(data.len());
         if take > 0 {
             self.dir_mut(dir).buf.extend_from_slice(&data[..take]);
@@ -346,6 +433,46 @@ impl Http2Parser {
         self.streams.len()
     }
 
+    /// The caps this parser was built with.
+    pub fn config(&self) -> &Http2Config {
+        &self.config
+    }
+
+    /// Signal end of stream on a direction.
+    ///
+    /// HTTP/2 has no close-delimited framing: whatever is buffered is
+    /// a truncated frame that can never complete, and an open field
+    /// block can never be decoded, so both are dropped. A FIN is not
+    /// a failure — an observer sees connections end mid-frame
+    /// constantly — and it emits nothing: the parser tracks whether a
+    /// stream has had a head, not whether it is still open, so
+    /// synthesising `End` for whatever is left would be inventing
+    /// events. Streams stay tracked; the other direction may still be
+    /// live.
+    pub fn fin(&mut self, dir: FlowSide) {
+        let d = self.dir_mut(dir);
+        d.done = true;
+        d.buf.clear();
+        d.partial = None;
+    }
+
+    /// `true` once this direction will accept nothing further — it
+    /// was [`fin`](Self::fin)'d, or the connection failed.
+    pub fn is_finished(&self, dir: FlowSide) -> bool {
+        self.dir(dir).done
+    }
+
+    /// `true` once no further event can arrive on either direction.
+    ///
+    /// A failed connection is also done; check
+    /// [`is_failed`](Self::is_failed) first if the distinction
+    /// matters. `GOAWAY` deliberately does **not** count: it forbids
+    /// *new* streams, and the in-flight ones still have responses to
+    /// deliver.
+    pub fn is_done(&self) -> bool {
+        self.request.done && self.response.done
+    }
+
     /// Parse as much of a direction's buffer as possible.
     fn drive(&mut self, dir: FlowSide) {
         if let Err(e) = self.drive_inner(dir) {
@@ -368,17 +495,27 @@ impl Http2Parser {
 
     fn drive_inner(&mut self, dir: FlowSide) -> Result<(), Http2Error> {
         // The client opens with the preface (RFC 9113 §3.4).
-        if dir == FlowSide::Initiator && !self.request.preface_seen {
+        if dir == FlowSide::Initiator && self.request.preface != Preface::Seen {
             let buf = &self.request.buf;
             let n = buf.len().min(PREFACE.len());
-            if buf[..n] != PREFACE[..n] {
+            if buf[..n] == PREFACE[..n] {
+                if buf.len() < PREFACE.len() {
+                    // A prefix so far. Wait under either policy: the
+                    // preface is 24 bytes and may be split across
+                    // segments, and nothing is lost by holding them.
+                    return Ok(());
+                }
+                let _ = self.request.buf.split_to(PREFACE.len());
+                self.request.preface = Preface::Seen;
+            } else if self.request.preface == Preface::Required {
                 return Err(Http2Error::BadPreface);
+            } else {
+                // Joined a connection already in progress: read what
+                // is here as frames. If these bytes are not frame
+                // aligned the frame layer says so a moment later —
+                // this tolerates a missing preface, not garbage.
+                self.request.preface = Preface::Seen;
             }
-            if buf.len() < PREFACE.len() {
-                return Ok(());
-            }
-            let _ = self.request.buf.split_to(PREFACE.len());
-            self.request.preface_seen = true;
         }
 
         loop {
@@ -446,8 +583,10 @@ impl Http2Parser {
                             .set_max_size((n as usize).min(hard));
                     }
                     if let Some(n) = s.max_frame_size {
-                        // Never above our own ceiling.
-                        self.dir_mut(target).max_frame_size = n.min(self.config.max_frame_size);
+                        // Never above our own ceiling, and never
+                        // above what the buffer can hold whole.
+                        let ceiling = self.config.effective_max_frame_size();
+                        self.dir_mut(target).max_frame_size = n.min(ceiling);
                     }
                 }
             }
@@ -1018,16 +1157,119 @@ mod tests {
     }
 
     #[test]
-    fn backpressure_applies_when_the_caller_does_not_drain() {
+    fn a_frame_that_could_never_fit_the_buffer_is_refused_at_its_header() {
+        // The wedge: `max_frame_size` above `max_buffered_bytes`
+        // means a frame the parser accepts but can never assemble. It
+        // used to buffer to the cap and then refuse every byte for
+        // the life of the connection, reporting nothing — and a
+        // caller that cannot see the accepted count, like the
+        // `SessionParser` adapter, would read that as silence.
         let mut p = Http2Parser::with_config(Http2Config::default().with_max_buffered_bytes(4096));
         p.push(FlowSide::Initiator, &Bytes::from_static(PREFACE));
-        // A frame header promising far more than arrives, so the
-        // buffer cannot drain.
+        // A 64 KiB DATA frame: legal under the 1 MiB default
+        // `max_frame_size`, impossible under a 4 KiB buffer.
         let mut wire = vec![0x00, 0xff, 0xff, 0x0, 0x0, 0, 0, 0, 1];
         wire.extend(std::iter::repeat_n(0u8, 8192));
-        let accepted = p.push(FlowSide::Initiator, &Bytes::from(wire));
-        assert!(accepted <= 4096, "accepted {accepted}");
-        assert!(p.buffered(FlowSide::Initiator) <= 4096);
+        p.push(FlowSide::Initiator, &Bytes::from(wire));
+        assert_eq!(p.error(), Some(Http2Error::FrameTooLarge));
+    }
+
+    #[test]
+    fn backpressure_applies_when_a_frame_spans_offers() {
+        // A short count is still the signal for a frame that *can*
+        // fit but has not all arrived. Backpressure is not a failure.
+        let mut p = Http2Parser::with_config(
+            Http2Config::default()
+                .with_max_buffered_bytes(8192)
+                .with_max_frame_size(4096),
+        );
+        p.push(FlowSide::Initiator, &Bytes::from_static(PREFACE));
+        // A 3500-byte DATA frame, delivered in two offers with far
+        // more trailing data than the buffer can take at once.
+        let mut wire = vec![0x00, 0x0d, 0xac, 0x0, 0x0, 0, 0, 0, 1];
+        wire.extend(std::iter::repeat_n(0u8, 3500));
+        wire.extend(std::iter::repeat_n(0u8, 16_384));
+        let accepted = p.push(FlowSide::Initiator, &Bytes::from(wire.clone()));
+        assert!(accepted < wire.len(), "a full buffer must short-count");
+        assert!(!p.is_failed(), "backpressure is not a failure");
+    }
+
+    /// Tolerating a missing preface must not mean reading a *present*
+    /// one as frames — `PRI *` would decode as a 5 MiB frame header
+    /// and kill the connection.
+    #[test]
+    fn an_optional_preface_is_still_consumed_when_present() {
+        let mut p = Http2Parser::with_config(Http2Config::default().with_require_preface(false));
+        let mut wire = PREFACE.to_vec();
+        wire.extend(frame(0x1, flags::END_HEADERS, 1, &[0x82]));
+        p.push(FlowSide::Initiator, &Bytes::from(wire));
+        assert!(!p.is_failed(), "{:?}", p.error());
+        assert!(matches!(p.next_event(), Some(Http2Event::Head(h)) if h.stream_id == 1));
+    }
+
+    #[test]
+    fn a_joined_connection_parses_frames_without_a_preface() {
+        let mut p = Http2Parser::with_config(Http2Config::default().with_require_preface(false));
+        p.push(
+            FlowSide::Initiator,
+            &Bytes::from(frame(0x1, flags::END_HEADERS, 7, &[0x82])),
+        );
+        assert!(!p.is_failed(), "{:?}", p.error());
+        assert!(matches!(p.next_event(), Some(Http2Event::Head(h)) if h.stream_id == 7));
+    }
+
+    /// The distinction that keeps `require_preface: false` honest: it
+    /// drops one precondition, it does not resynchronise.
+    #[test]
+    fn tolerating_the_preface_does_not_tolerate_garbage() {
+        let mut p = Http2Parser::with_config(Http2Config::default().with_require_preface(false));
+        p.push(
+            FlowSide::Initiator,
+            &Bytes::from_static(b"GET / HTTP/1.1\r\nHost: h\r\n\r\nxxxxxxxxxxxxxxxx"),
+        );
+        assert!(p.is_failed(), "HTTP/1 bytes are still not HTTP/2");
+        assert_ne!(
+            p.error(),
+            Some(Http2Error::BadPreface),
+            "it fails as a framing error, not a preface error"
+        );
+    }
+
+    #[test]
+    fn requiring_the_preface_is_still_the_default() {
+        let mut p = Http2Parser::new();
+        p.push(
+            FlowSide::Initiator,
+            &Bytes::from_static(b"GET / HTTP/1.1\r\n"),
+        );
+        assert_eq!(p.error(), Some(Http2Error::BadPreface));
+    }
+
+    #[test]
+    fn fin_drops_buffered_bytes_and_is_not_a_failure() {
+        let mut p = started();
+        // Half a frame header, then the connection ends.
+        p.push(FlowSide::Initiator, &Bytes::from_static(&[0, 0, 8, 0x0]));
+        p.fin(FlowSide::Initiator);
+        assert!(!p.is_failed(), "truncation at EOF is not a framing error");
+        assert_eq!(p.buffered(FlowSide::Initiator), 0);
+        assert!(p.next_event().is_none());
+        assert!(p.is_finished(FlowSide::Initiator));
+        assert!(!p.is_done(), "the responder may still be live");
+        p.fin(FlowSide::Responder);
+        assert!(p.is_done());
+    }
+
+    #[test]
+    fn a_buffer_cap_below_the_preface_fails_rather_than_stalls() {
+        // The one path cap composition cannot rescue: a cap so small
+        // that even the 24-byte preface cannot be held. This is the
+        // `BufferOverflow` guard, and the only way that variant is
+        // ever constructed.
+        let mut p = Http2Parser::with_config(Http2Config::default().with_max_buffered_bytes(8));
+        p.push(FlowSide::Initiator, &Bytes::copy_from_slice(&PREFACE[..8]));
+        p.push(FlowSide::Initiator, &Bytes::copy_from_slice(&PREFACE[8..]));
+        assert_eq!(p.error(), Some(Http2Error::BufferOverflow));
     }
 
     #[test]

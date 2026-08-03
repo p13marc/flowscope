@@ -557,6 +557,32 @@ trailers — or, for a Trailers-Only response, in the stream's single
 `grpc_status_of(&head)` covers that case so you do not have to branch
 on which it was.
 
+### Letting the driver own the bytes
+
+The snippet above is sans-IO: you hold the socket and feed the parser.
+To have flowscope drive it instead — port routing, pcap replay, the
+`emit` writers — register `Http2Session`, exactly as HTTP/1 registers
+`HttpProxySession`:
+
+```rust,no_run
+use flowscope::driver::Driver;
+use flowscope::extract::FiveTuple;
+use flowscope::http2::Http2Session;
+
+let mut b = Driver::builder(FiveTuple::bidirectional());
+let slot = b.session_on_ports(Http2Session::new(), [8080]);
+let driver = b.build();
+```
+
+Two differences from driving the parser yourself. The `SessionParser`
+trait cannot express a short read, so the accepted count — the
+backpressure signal — is not available through the adapter. And
+`Http2Session::new()` *tolerates* a missing connection preface where
+`Http2Parser::new()` requires it: a driver may hand it a flow already
+in progress, and refusing those as `BadPreface` would report a
+protocol violation when nothing is wrong. Tolerating is not
+resynchronising — bytes that are not frame-aligned still fail.
+
 Two caveats specific to h2:
 
 - **HPACK is connection-wide.** The parser must be fed every field

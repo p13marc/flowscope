@@ -89,6 +89,14 @@ data path.
   desynced HTTP direction that kept accumulating — a regression from
   #160; heuristic probe state #166 had only partly bounded) and five
   pre-existing gaps now tracked as #184–#188.
+- **HTTP/2 on the typed `Driver` (`#196`).** `Http2Session` — the
+  `SessionParser` adapter HTTP/1 got in #164. Plus
+  `Http2Config::require_preface` (the session tolerates a missing
+  preface so a mid-stream join parses rather than poisons) and a
+  wedge fix: `max_frame_size` and `max_buffered_bytes` now compose,
+  so `push` returning 0 always implies a reported state — the
+  invariant the adapter's loop rests on, since the trait cannot
+  express a short read.
 - **HTTP/2 + HPACK + gRPC (`#170`, `#171`).** New `http2` feature:
   frame layer, a hand-rolled RFC 7541 HPACK decoder (validated
   against the Appendix C vectors), HEADERS+CONTINUATION reassembly,
@@ -1009,6 +1017,7 @@ src/
 │   └── welford.rs               # WelfordStats — running stats (count/mean/var/min/max) (issue #15, 0.18)
 ├── classify.rs                  # classify_first_bytes → WireProtocol — protocol from the first bytes (#165, 0.23)
 ├── http2/                       # `http2` feature — HTTP/2 + HPACK + gRPC (#170/#171, 0.23)
+│   ├── session.rs               # Http2Session — SessionParser adapter for the typed Driver (#196, 0.23)
 │   ├── error.rs                 # Http2Error
 │   ├── frame.rs                 # frame header + padding/priority/promised-id stripping + SETTINGS
 │   ├── grpc.rs                  # GrpcCall + GrpcStatus + is_grpc_content_type
@@ -1284,6 +1293,10 @@ The legacy `HttpFactory` / `TlsFactory` callback-handler shape
 - `tests/http2_streams.rs` + `tests/http2_proptest.rs` — HTTP/2
   end-to-end routing and the split-invariance / bounded-state /
   terminal-failure properties (#170, 0.23).
+- `tests/http2_driver.rs` — `Http2Session` through the typed `Driver`:
+  per-stream events reach the slot, a framing violation drops the
+  parser with `ParserClosed { ParseError }`, and a mid-stream join is
+  **not** a parse error (#196, 0.23).
 - `tests/classify_proptest.rs` — prefix safety for
   `classify_first_bytes`: a short peek never decides differently from
   the full input (#165, 0.23).

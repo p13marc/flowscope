@@ -63,6 +63,20 @@ lower the effective limits but never raise them past these.
 | HPACK dynamic table | `max_hpack_table_bytes` | 64 KiB | **hard ceiling** — a peer advertising a larger `SETTINGS_HEADER_TABLE_SIZE` is refused with `HpackTableSizeExceeded` |
 | concurrent streams tracked | `max_concurrent_streams` | 256 | `TooManyStreams` |
 | unparsed bytes per direction | `max_buffered_bytes` | 1 MiB | `push` accepts fewer bytes — backpressure |
+| whether the client preface is required | `require_preface` | `true` | `BadPreface`; `Http2Session` sets `false` so a flow joined mid-connection parses |
+
+**The two size caps compose.** `max_buffered_bytes` is the *effective*
+frame ceiling: a frame larger than a direction's buffer could never be
+held whole, so it is refused with `FrameTooLarge` at its 9-byte header
+rather than buffered. Without that composition the two caps contradict
+each other and the direction wedges — it fills waiting for a frame that
+will never fit, then refuses every later byte for the life of the
+connection while reporting no error. A direction that genuinely cannot
+progress now fails with `BufferOverflow`. The contract this buys:
+**`push` returning 0 always implies `is_failed()` or `is_finished(dir)`**,
+which is what makes `Http2Session` safe — the `SessionParser` trait
+cannot express a short read, so an adapter must be able to treat a
+refusal as terminal.
 
 The HPACK ceiling is the one worth understanding: the dynamic table
 is memory *the peer decides the size of*, so the peer's advertised

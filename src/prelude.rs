@@ -120,8 +120,9 @@ pub use crate::app_proto::{AppProtocol, Transport as AppTransport};
 // the cleartext counterpart to the ALPN/SNI-derived `app_proto`.
 pub use crate::classify::{Classify, WireProtocol, classify_first_bytes};
 // Issue #170 (0.23): HTTP/2 frames + HPACK + per-stream routing.
+// Issue #196 (0.23): the typed-Driver adapter.
 #[cfg(feature = "http2")]
-pub use crate::http2::{Http2Event, Http2Parser, StreamHead};
+pub use crate::http2::{Http2Event, Http2Parser, Http2Session, StreamHead};
 // Issue #138 (0.22): IP fragment reassembly — anti-evasion.
 pub use crate::ip_fragment::{FragmentKey, IpFragmentReassembler};
 // Issue #16 / #28 (0.18): IPFIX canonical record + binary

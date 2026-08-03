@@ -1,8 +1,8 @@
 #![no_main]
 
 use bytes::Bytes;
-use flowscope::FlowSide;
-use flowscope::http2::{Http2Parser, PREFACE};
+use flowscope::http2::{Http2Config, Http2Parser, Http2Session, PREFACE};
+use flowscope::{FlowSide, SessionParser, Timestamp};
 use libfuzzer_sys::fuzz_target;
 
 /// HPACK is stateful across the whole connection, so the invariants
@@ -53,4 +53,25 @@ fuzz_target!(|data: &[u8]| {
     let mut bare = Http2Parser::new();
     bare.push(FlowSide::Initiator, &Bytes::copy_from_slice(data));
     while bare.next_event().is_some() {}
+
+    // Pass 4: through the `SessionParser` adapter, which cannot
+    // signal a short read. The invariant that replaces the accepted
+    // count: the parser never sits on a full buffer without failing,
+    // so "the adapter stopped early" always has a reported reason. A
+    // small cap reaches the state cheaply.
+    const CAP: usize = 4096;
+    let mut s = Http2Session::with_config(
+        Http2Config::default()
+            .with_require_preface(false)
+            .with_max_buffered_bytes(CAP),
+    );
+    let mut out = Vec::new();
+    s.feed_initiator(client, Timestamp::default(), &mut out);
+    s.feed_responder(server, Timestamp::default(), &mut out);
+    for dir in [FlowSide::Initiator, FlowSide::Responder] {
+        assert!(
+            s.parser().buffered(dir) < CAP || s.is_poisoned(),
+            "a wedged buffer must be reported, not held in silence"
+        );
+    }
 });
