@@ -246,9 +246,16 @@ impl HttpProxyParser {
     /// [`max_buffered_bytes`](HttpProxyConfig::max_buffered_bytes)
     /// allows. Drain events, then re-offer the remainder with
     /// `data.slice(accepted..)` — slicing a [`Bytes`] is a refcount
-    /// bump, not a copy. A poisoned connection accepts nothing.
+    /// bump, not a copy.
+    ///
+    /// A zero return is never "retry later": it means the parser will
+    /// accept nothing more — the connection is poisoned, or a
+    /// protocol switch handed the bytes to a tunnel
+    /// ([`is_tunnelled`](Self::is_tunnelled)); post-switch bytes are
+    /// the caller's to splice. (Before 0.24 a tunnelled parser
+    /// reported such bytes as accepted while silently dropping them.)
     pub fn push(&mut self, dir: FlowSide, data: &Bytes) -> usize {
-        if self.is_poisoned() {
+        if self.is_poisoned() || self.engine.is_tunnelled() {
             return 0;
         }
         let dir = to_dir(dir);
@@ -322,6 +329,18 @@ impl HttpProxyParser {
     /// Stable slug for [`poison`](Self::poison).
     pub fn poison_reason(&self) -> Option<&'static str> {
         self.poison().map(HttpPoison::as_str)
+    }
+
+    /// `true` once a protocol switch (`CONNECT` tunnel, `Upgrade`
+    /// 101, h2 prior knowledge) ended HTTP parsing on this
+    /// connection: the remaining bytes belong to the switched-to
+    /// protocol and [`push`](Self::push) accepts nothing more.
+    ///
+    /// Distinguishes a tunnel zero-return from a backpressure short
+    /// count; [`is_done`](Self::is_done) cannot, since it is also
+    /// `true` once both directions closed.
+    pub fn is_tunnelled(&self) -> bool {
+        self.engine.is_tunnelled()
     }
 
     /// `true` once no further HTTP message can arrive, so the caller
@@ -845,9 +864,12 @@ mod tests {
                 kind: SwitchKind::ConnectTunnel
             })
         ));
-        // Tunnelled bytes are the caller's to splice; nothing further
-        // is parsed as HTTP.
-        push_all(&mut p, FlowSide::Initiator, b"\x16\x03\x01\x02\x00\x01");
+        // Tunnelled bytes are the caller's to splice: push refuses
+        // them (0, not a silent drop), and is_tunnelled — not
+        // poisoned — says why.
+        assert!(p.is_tunnelled());
+        let refused = Bytes::from_static(b"\x16\x03\x01\x02\x00\x01");
+        assert_eq!(p.push(FlowSide::Initiator, &refused), 0);
         assert!(p.next_event().is_none());
         assert!(!p.is_poisoned());
     }
