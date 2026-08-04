@@ -1,5 +1,36 @@
 # Changelog
 
+## 0.24.0 (unreleased)
+
+### Added
+
+- **`RequestHead::upgrade_protocols()` / `RequestHead::is_websocket_upgrade()`**
+  (#204) — request-side upgrade detection for relays that must route
+  from a client-only peek. `upgrade_protocols()` yields the RFC 9110
+  §7.8 `Upgrade` tokens (comma-split, OWS-trimmed, across duplicate
+  instances) only when the `Connection` header names the `upgrade`
+  option; `is_websocket_upgrade()` checks the RFC 6455 §4.1
+  opening-handshake shape (`GET` + `websocket` token +
+  `Sec-WebSocket-Key`/`-Version`), deliberately version-agnostic —
+  detection, not negotiation.
+- **`HttpProxyParser::is_tunnelled()`** (#205) — whether a protocol
+  switch ended HTTP parsing, distinguishing a tunnel zero-return from
+  a backpressure short count (`is_done()` conflates tunnel with
+  double-close).
+
+### Changed
+
+- **`HttpProxyParser::push` returns 0 once tunnelled** (#205).
+  Previously, bytes pushed after a `SwitchProtocols` event were
+  reported as accepted while the engine silently dropped them.
+  **Migration:** a drain-then-reoffer loop must treat 0 as terminal,
+  not "retry later" — on 0, check `is_poisoned()` /
+  `is_tunnelled()`; a tunnelled connection's remaining bytes are the
+  caller's to splice. Bytes batched in the *same* `push` call as the
+  message that triggers the switch are still consumed and dropped by
+  design: the engine retains nothing past a switch, so stop feeding
+  at the `SwitchProtocols` event.
+
 ## 0.23.0 (2026-08-03) — inline-grade sans-IO L7 core
 
 Milestone [*Inline-grade: sans-IO L7 core for inline
