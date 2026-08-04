@@ -46,9 +46,14 @@ fn main() {
         while !pending.is_empty() {
             let accepted = proxy.push(FlowSide::Initiator, &pending);
             if accepted == 0 {
-                // Backpressure: drain events before offering more.
-                // (With default caps and this much traffic it never
-                // triggers, but a real proxy must handle it.)
+                // Zero is terminal on a poisoned or tunnelled parser;
+                // otherwise it is backpressure — drain events before
+                // offering more. (With default caps and this much
+                // traffic neither triggers, but a real proxy must
+                // handle both.)
+                if proxy.is_poisoned() || proxy.is_tunnelled() {
+                    break;
+                }
                 if proxy.next_event().is_none() {
                     break;
                 }
