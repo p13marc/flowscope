@@ -248,12 +248,14 @@ impl HttpProxyParser {
     /// `data.slice(accepted..)` — slicing a [`Bytes`] is a refcount
     /// bump, not a copy.
     ///
-    /// A zero return is never "retry later": it means the parser will
-    /// accept nothing more — the connection is poisoned, or a
-    /// protocol switch handed the bytes to a tunnel
-    /// ([`is_tunnelled`](Self::is_tunnelled)); post-switch bytes are
-    /// the caller's to splice. (Before 0.24 a tunnelled parser
-    /// reported such bytes as accepted while silently dropping them.)
+    /// On a zero return, check the state before deciding: a poisoned
+    /// connection ([`is_poisoned`](Self::is_poisoned)) or a tunnelled
+    /// one ([`is_tunnelled`](Self::is_tunnelled)) will accept nothing
+    /// more — post-switch bytes are the caller's to splice, starting
+    /// with [`take_tunnel_residue`](Self::take_tunnel_residue).
+    /// Otherwise a zero is backpressure like any short count: drain
+    /// events and re-offer. (Before 0.24 a tunnelled parser reported
+    /// pushed bytes as accepted while silently dropping them.)
     pub fn push(&mut self, dir: FlowSide, data: &Bytes) -> usize {
         if self.is_poisoned() || self.engine.is_tunnelled() {
             return 0;
@@ -341,6 +343,21 @@ impl HttpProxyParser {
     /// `true` once both directions closed.
     pub fn is_tunnelled(&self) -> bool {
         self.engine.is_tunnelled()
+    }
+
+    /// Take (once) the bytes that were already buffered for a
+    /// direction when the connection switched protocols — the first
+    /// bytes of the switched-to protocol, coalesced into the same
+    /// segment as the message that triggered the switch (a `101` plus
+    /// the first WebSocket frames, an h2 preface plus SETTINGS and
+    /// HEADERS in one client write). A splicing proxy must forward
+    /// these BEFORE relaying anything it reads after the
+    /// [`HttpEvent::SwitchProtocols`] event, or the switched-to
+    /// protocol desyncs. Empty when not tunnelled, or already taken.
+    /// (Before 0.24.1 these bytes were silently destroyed at the
+    /// switch.)
+    pub fn take_tunnel_residue(&mut self, dir: FlowSide) -> Bytes {
+        self.engine.take_residue(to_dir(dir))
     }
 
     /// `true` once no further HTTP message can arrive, so the caller
@@ -841,6 +858,104 @@ mod tests {
         );
         let evs = drain(&mut p);
         assert_eq!(statuses(&evs), vec![(100, true)]);
+    }
+
+    // 0.24.1: a half-close must not un-tunnel the connection — fin()
+    // previously replaced Tunnel with Closed, after which push() went back
+    // to accepting-and-dropping bytes (the exact bug the tunnelled-push
+    // contract exists to prevent).
+    #[test]
+    fn fin_preserves_the_tunnel() {
+        let mut p = HttpProxyParser::new();
+        push_all(
+            &mut p,
+            FlowSide::Initiator,
+            b"CONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\n\r\n",
+        );
+        let _ = drain(&mut p);
+        push_all(
+            &mut p,
+            FlowSide::Responder,
+            b"HTTP/1.1 200 Connection Established\r\n\r\n",
+        );
+        let _ = drain(&mut p);
+        assert!(p.is_tunnelled());
+
+        p.fin(FlowSide::Initiator);
+        assert!(p.is_tunnelled(), "a tunnel outlives a half-close");
+        assert!(p.is_done());
+        let late = Bytes::from_static(b"tunnel bytes");
+        assert_eq!(
+            p.push(FlowSide::Responder, &late),
+            0,
+            "post-fin tunnel must still refuse bytes, not drop them"
+        );
+    }
+
+    // 0.24.1: bytes coalesced into the same segment as the message that
+    // triggers the switch are the switched-to protocol's first bytes — they
+    // must be retrievable, not destroyed.
+    #[test]
+    fn tunnel_residue_after_upgrade_is_retrievable() {
+        let mut p = HttpProxyParser::new();
+        push_all(
+            &mut p,
+            FlowSide::Initiator,
+            b"GET /chat HTTP/1.1\r\nHost: h\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n",
+        );
+        let _ = drain(&mut p);
+        // The 101 and the first WebSocket frame arrive in ONE segment.
+        push_all(
+            &mut p,
+            FlowSide::Responder,
+            b"HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n\x82\x05FRAME",
+        );
+        let evs = drain(&mut p);
+        assert!(matches!(
+            evs.last(),
+            Some(HttpEvent::SwitchProtocols { .. })
+        ));
+        assert_eq!(
+            p.take_tunnel_residue(FlowSide::Responder).as_ref(),
+            b"\x82\x05FRAME",
+            "the coalesced first frame must survive the switch"
+        );
+        assert!(
+            p.take_tunnel_residue(FlowSide::Responder).is_empty(),
+            "residue is taken once"
+        );
+        assert!(p.take_tunnel_residue(FlowSide::Initiator).is_empty());
+    }
+
+    #[test]
+    fn tunnel_residue_h2_preface_is_byte_exact() {
+        let mut p = HttpProxyParser::new();
+        // Prior-knowledge h2: preface + SETTINGS in one client write. The
+        // preface itself is never consumed as HTTP, so the residue is the
+        // entire stream — a splicing proxy relays it verbatim.
+        let wire: &[u8] = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n\x00\x00\x00\x04\x00\x00\x00\x00\x00";
+        push_all(&mut p, FlowSide::Initiator, wire);
+        let evs = drain(&mut p);
+        assert!(matches!(
+            evs.first(),
+            Some(HttpEvent::SwitchProtocols {
+                kind: SwitchKind::Http2PriorKnowledge
+            })
+        ));
+        assert_eq!(p.take_tunnel_residue(FlowSide::Initiator).as_ref(), wire);
+    }
+
+    #[test]
+    fn no_residue_without_a_switch() {
+        let mut p = HttpProxyParser::new();
+        push_all(
+            &mut p,
+            FlowSide::Initiator,
+            b"GET / HTTP/1.1\r\nHost: h\r\n\r\n",
+        );
+        let _ = drain(&mut p);
+        assert!(p.take_tunnel_residue(FlowSide::Initiator).is_empty());
+        assert!(p.take_tunnel_residue(FlowSide::Responder).is_empty());
     }
 
     #[test]

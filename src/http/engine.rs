@@ -370,6 +370,14 @@ impl Engine {
                 m.state = DirState::Desynced;
                 None
             }
+            // A tunnel outlives a half-close: the switched-to protocol
+            // owns the connection, and forgetting the tunnel here would
+            // let push() start accepting-and-dropping bytes again — the
+            // exact bug the tunnelled-push contract exists to prevent.
+            DirState::Tunnel => {
+                m.state = DirState::Tunnel;
+                None
+            }
             _ => None,
         }
     }
@@ -556,12 +564,31 @@ impl Engine {
     }
 
     /// Put both directions into tunnel state.
+    ///
+    /// Bytes already buffered past the switch point are NOT discarded:
+    /// they are the first bytes of the switched-to protocol (a server
+    /// that flushes `101` + the first WebSocket frames in one segment,
+    /// an h2 client's preface+SETTINGS+HEADERS in one write) and the
+    /// caller must splice them. They stay in the direction buffers,
+    /// retrievable once via [`Engine::take_residue`]; `push` refuses
+    /// further bytes, so the residue is bounded by what arrived with
+    /// the switch.
     fn switch_to_tunnel(&mut self) {
         self.request.state = DirState::Tunnel;
         self.response.state = DirState::Tunnel;
-        self.request.buf.clear();
-        self.response.buf.clear();
         self.pending.clear();
+    }
+
+    /// Take (and clear) the bytes a direction had buffered when the
+    /// connection switched protocols. Empty if not tunnelled, or if
+    /// already taken.
+    pub(crate) fn take_residue(&mut self, dir: Dir) -> Bytes {
+        if !self.is_tunnelled() {
+            return Bytes::new();
+        }
+        let m = self.dir_mut(dir);
+        let n = m.buf.len();
+        m.take(n)
     }
 
     // ── body ──────────────────────────────────────────────────────

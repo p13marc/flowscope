@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.24.1 (2026-08-04)
+
+Two defects in the 0.24.0 tunnel contract, found by an adversarial audit of
+its first consumer (zenoh-bridge-tcp), plus a doc correction.
+
+### Fixed
+
+- **`fin()` no longer destroys the tunnel** (#210). A half-close after a
+  protocol switch replaced `Tunnel` with `Closed`, flipping
+  `is_tunnelled()` false — after which `push` went back to
+  accepting-and-dropping bytes, resurrecting the exact bug the 0.24
+  tunnelled-push contract eliminates. A tunnel is now sticky across FIN,
+  like a desync.
+- **Switch residue is retrievable instead of destroyed** (#210). Bytes
+  coalesced into the same segment as the switch-triggering message — a
+  `101` flushed together with the first WebSocket frames, an h2 preface +
+  SETTINGS + HEADERS in one client write — were cleared inside the engine
+  at the switch, unrecoverable by any caller. They are now retained and
+  exposed once via **`HttpProxyParser::take_tunnel_residue(dir)`**; a
+  splicing proxy must forward them before anything it reads after the
+  `SwitchProtocols` event. For prior-knowledge h2 the residue is the
+  entire byte-exact stream (the preface is never consumed as HTTP).
+
+### Changed
+
+- `push` docs corrected: a zero return is terminal only when
+  `is_poisoned()`/`is_tunnelled()`; otherwise it is backpressure — drain
+  and re-offer (0.24.0's doc overclaimed "never retry later"). The
+  streaming-proxy example now demonstrates the full contract.
+
 ## 0.24.0 (2026-08-04)
 
 ### Added
