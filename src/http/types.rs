@@ -505,9 +505,71 @@ impl RequestHead {
         parse_authority(raw)
     }
 
+    /// Protocols this request offers to upgrade to, per RFC 9110 §7.8.
+    ///
+    /// Yields the comma-separated, OWS-trimmed tokens of every
+    /// `Upgrade` header instance — but only when the `Connection`
+    /// header's own token list names `upgrade` (case-insensitively).
+    /// An `Upgrade` header that `Connection` does not name is not an
+    /// upgrade offer (§7.8: a sender of `Upgrade` MUST also send an
+    /// `upgrade` connection option) and yields nothing.
+    ///
+    /// ```
+    /// # use bytes::Bytes;
+    /// # use flowscope::FlowSide;
+    /// # use flowscope::http::{HttpEvent, HttpProxyParser};
+    /// let mut p = HttpProxyParser::new();
+    /// let wire = Bytes::from_static(
+    ///     b"GET /chat HTTP/1.1\r\nHost: a\r\nConnection: keep-alive, Upgrade\r\nUpgrade: WebSocket, h2c\r\n\r\n",
+    /// );
+    /// p.push(FlowSide::Initiator, &wire);
+    /// let Some(HttpEvent::RequestHead(head)) = p.next_event() else { panic!() };
+    /// let offered: Vec<&str> = head.upgrade_protocols().collect();
+    /// assert_eq!(offered, ["WebSocket", "h2c"]);
+    /// ```
+    pub fn upgrade_protocols(&self) -> impl Iterator<Item = &str> + '_ {
+        let named_in_connection = self
+            .headers_all("connection")
+            .flat_map(split_list_tokens)
+            .any(|t| t.eq_ignore_ascii_case("upgrade"));
+        self.headers_all("upgrade")
+            .flat_map(split_list_tokens)
+            .filter(move |_| named_in_connection)
+    }
+
+    /// Whether this request has the RFC 6455 §4.1 opening-handshake
+    /// shape: method `GET`, `websocket` among
+    /// [`upgrade_protocols`](Self::upgrade_protocols), and both
+    /// `Sec-WebSocket-Key` and `Sec-WebSocket-Version` present.
+    ///
+    /// Deliberately does **not** require `Sec-WebSocket-Version: 13`:
+    /// this is detection for a proxy or relay deciding where the
+    /// bytes go, not an endpoint negotiating the handshake — refusing
+    /// a future version here would misroute traffic the endpoints
+    /// could have agreed on themselves.
+    pub fn is_websocket_upgrade(&self) -> bool {
+        self.method.as_ref() == b"GET"
+            && self
+                .upgrade_protocols()
+                .any(|t| t.eq_ignore_ascii_case("websocket"))
+            && self.header("sec-websocket-key").is_some()
+            && self.header("sec-websocket-version").is_some()
+    }
+
     fn header_str(&self, name: &str) -> Option<&str> {
         self.header(name).and_then(|v| std::str::from_utf8(v).ok())
     }
+}
+
+/// Comma-separated list-field tokens (RFC 9110 §5.6.1): split on
+/// commas, trim optional whitespace, skip empty segments. Non-UTF-8
+/// segments are skipped — tokens are ASCII by grammar.
+fn split_list_tokens(value: &[u8]) -> impl Iterator<Item = &str> + '_ {
+    value
+        .split(|&b| b == b',')
+        .filter_map(|seg| std::str::from_utf8(seg).ok())
+        .map(|seg| seg.trim_matches(|c| c == ' ' || c == '\t'))
+        .filter(|seg| !seg.is_empty())
 }
 
 /// Byte range of the authority inside an absolute-form target, if the
