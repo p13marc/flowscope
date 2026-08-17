@@ -25,13 +25,13 @@ bitflags = "2"
 crossbeam-queue = "0.3"
 
 # `extractors` feature
-etherparse = { version = "0.16", optional = true }
+etherparse = { version = "0.21", optional = true }
 
 # `tracker` feature
 ahash = { version = "0.8", default-features = false, optional = true }
 smallvec = { version = "1", optional = true }
 arrayvec = { version = "0.7", optional = true }
-lru = { version = "0.16", optional = true }
+lru = { version = "0.18", optional = true }
 
 # `http` feature
 httparse = { version = "1.10", optional = true }
@@ -39,11 +39,11 @@ bytes = { version = "1", optional = true }
 
 # `smtp` feature — base64 for AUTH PLAIN/LOGIN credential decode.
 # Also used by the `community-id` feature (base64 of the SHA-1 digest).
-base64 = { version = "0.22", optional = true, default-features = false, features = ["alloc"] }
+base64 = { version = "0.23", optional = true, default-features = false, features = ["alloc"] }
 
 # `community-id` feature — SHA-1 for the Corelight Community ID v1
 # flow hash (the spec mandates SHA-1). RustCrypto, MIT/Apache.
-sha1 = { version = "0.10", optional = true }
+sha1 = { version = "0.11", optional = true }
 
 # `ja4plus` JA4X — x509 cert parsing. Gated behind the
 # combination of `tls-fingerprints` + `ja4plus`. MIT-licensed
@@ -77,12 +77,12 @@ tls-parser = { version = "0.12", optional = true }
 # `tls-fingerprints` sub-feature deps (JA3 + JA4 client TLS
 # fingerprints. Plan 131 collapsed the former `ja3` + `ja4`
 # split into a single feature flag — see CHANGELOG 0.12.0.)
-md-5 = { version = "0.10", optional = true }
+md-5 = { version = "0.11", optional = true }
 hex = { version = "0.4", optional = true }
-sha2 = { version = "0.10", optional = true }
+sha2 = { version = "0.11", optional = true }
 
 # `dns` feature
-simple-dns = { version = "0.10", optional = true }
+simple-dns = { version = "0.12", optional = true }
 
 # `pcap` feature
 pcap-file = { version = "2", optional = true }
@@ -115,7 +115,7 @@ bytes = "1"
 pcap-file = "2"
 metrics-util = "0.20"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-criterion = { version = "0.5", features = ["html_reports"] }
+criterion = { version = "0.8", features = ["html_reports"] }
 serde_json = "1"
 static_assertions = "1"
 
