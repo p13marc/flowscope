@@ -80,12 +80,20 @@ pub struct PacketInfo<K> {
     /// Set when the reassembler let this packet's payload through
     /// ([`SegmentOutcome::Passthrough`]): `payload[skip..]` are the
     /// next in-order bytes and were **not** buffered.
+    #[cfg_attr(
+        not(all(feature = "session", feature = "extractors")),
+        allow(dead_code)
+    )]
     pub(crate) passthrough: Option<usize>,
 }
 
 impl<K> PacketInfo<K> {
     /// The in-order bytes the reassembler let through for this
     /// packet (engine mode), sliced from `frame`.
+    #[cfg_attr(
+        not(all(feature = "session", feature = "extractors")),
+        allow(dead_code)
+    )]
     pub(crate) fn passthrough_bytes<'a>(&self, frame: &'a [u8]) -> Option<&'a [u8]> {
         let skip = self.passthrough?;
         let tcp = self.tcp.as_ref()?;
@@ -376,6 +384,10 @@ where
     last_tick_scan: Option<Timestamp>,
     /// Engine mode: in-order payloads are let through
     /// ([`Reassembler::segment_into`]) instead of buffered.
+    #[cfg_attr(
+        not(all(feature = "session", feature = "extractors")),
+        allow(dead_code)
+    )]
     passthrough: bool,
     /// Flows ended / forgotten as far as this driver knows; when the
     /// tracker's count differs, someone used the tracker directly
@@ -567,6 +579,10 @@ where
     }
 
     /// Engine mode (see [`PacketInfo::passthrough_bytes`]).
+    #[cfg_attr(
+        not(all(feature = "session", feature = "extractors")),
+        allow(dead_code)
+    )]
     pub(crate) fn set_passthrough(&mut self, on: bool) {
         self.passthrough = on;
     }
@@ -598,6 +614,10 @@ where
 
     /// Whether events of this kind reach the caller (see
     /// [`Self::emits`]).
+    #[cfg_attr(
+        not(all(feature = "session", feature = "extractors")),
+        allow(dead_code)
+    )]
     pub(crate) fn emits_mask(&self, bit: EventMask) -> bool {
         !self.tracker.events_paused() && !self.tracker.config().suppress_events.contains(bit)
     }
@@ -1120,6 +1140,10 @@ where
 
     /// Whether an auto-sweep ([`FlowTrackerConfig::auto_sweep_interval`])
     /// is due at `ts`.
+    #[cfg_attr(
+        not(all(feature = "session", feature = "extractors")),
+        allow(dead_code)
+    )]
     pub(crate) fn auto_sweep_due(&self, ts: Timestamp) -> bool {
         self.tracker.auto_sweep_due(ts)
     }
@@ -1193,6 +1217,10 @@ where
     }
 
     /// Ports of the packet that created a flow's stream state.
+    #[cfg_attr(
+        not(all(feature = "session", feature = "extractors")),
+        allow(dead_code)
+    )]
     pub(crate) fn stream_ports(&self, key: &E::Key) -> Option<(u16, u16)> {
         self.streams.get(key).and_then(|f| f.ports)
     }
@@ -1319,6 +1347,10 @@ where
 pub(crate) type SmallAnoms<K> = smallvec::SmallVec<[FlowEvent<K>; 2]>;
 
 /// One side's output of a sweep ([`FlowDriver::advance_streams`]).
+#[cfg_attr(
+    not(all(feature = "session", feature = "extractors")),
+    allow(dead_code)
+)]
 pub(crate) struct Released<'a, K> {
     pub(crate) key: &'a K,
     pub(crate) side: FlowSide,

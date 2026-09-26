@@ -254,7 +254,12 @@ pub(crate) fn record_packet_unmatched() {
     metrics::counter!(METRIC_PACKETS_UNMATCHED).increment(1);
 }
 
-#[cfg(all(feature = "metrics", feature = "session"))]
+#[cfg(all(
+    feature = "metrics",
+    feature = "session",
+    feature = "extractors",
+    feature = "reassembler"
+))]
 pub(crate) fn record_parser_closed(kind: crate::ParserKind, reason: EndReason) {
     metrics::counter!(
         METRIC_PARSER_CLOSED,
@@ -264,11 +269,21 @@ pub(crate) fn record_parser_closed(kind: crate::ParserKind, reason: EndReason) {
     .increment(1);
 }
 
-#[cfg(all(not(feature = "metrics"), feature = "session"))]
+#[cfg(all(
+    not(feature = "metrics"),
+    feature = "session",
+    feature = "extractors",
+    feature = "reassembler"
+))]
 #[inline(always)]
 pub(crate) fn record_parser_closed(_kind: crate::ParserKind, _reason: EndReason) {}
 
-#[cfg(all(feature = "metrics", feature = "session"))]
+#[cfg(all(
+    feature = "metrics",
+    feature = "session",
+    feature = "extractors",
+    feature = "reassembler"
+))]
 pub(crate) fn record_parser_side_stopped(
     kind: crate::ParserKind,
     side: crate::FlowSide,
@@ -283,7 +298,12 @@ pub(crate) fn record_parser_side_stopped(
     .increment(1);
 }
 
-#[cfg(all(not(feature = "metrics"), feature = "session"))]
+#[cfg(all(
+    not(feature = "metrics"),
+    feature = "session",
+    feature = "extractors",
+    feature = "reassembler"
+))]
 #[inline(always)]
 pub(crate) fn record_parser_side_stopped(
     _kind: crate::ParserKind,

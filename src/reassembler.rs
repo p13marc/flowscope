@@ -530,16 +530,7 @@ impl<K> ReassemblerFactory<K> for NoopReassemblerFactory {
     }
 }
 
-/// Default [`crate::FlowTrackerConfig::reassembly_max_ahead`]: how far
-/// ahead of the expected sequence number a segment may start and
-/// still be believed.
-pub const DEFAULT_MAX_AHEAD: u64 = 1024 * 1024;
-
-/// Default [`crate::FlowTrackerConfig::reassembly_ack_grace`]: how long
-/// a hole the peer has already acknowledged is still waited for
-/// (capture reordering between the two directions) before it is
-/// skipped.
-pub const DEFAULT_ACK_GRACE: std::time::Duration = std::time::Duration::from_millis(10);
+pub use crate::tracker::{DEFAULT_ACK_GRACE, DEFAULT_MAX_AHEAD};
 
 /// Default time a hole may block a stream before it is skipped.
 pub const DEFAULT_REORDER_DEADLINE: std::time::Duration = std::time::Duration::from_secs(1);

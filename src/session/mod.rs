@@ -1018,6 +1018,7 @@ where
     }
 }
 
+#[cfg(any(feature = "ftp", feature = "smtp"))]
 /// Gap recovery for line-oriented protocols: the bytes right after a
 /// gap start mid-line, so they are discarded up to and including the
 /// next `\n`. Feed each new chunk through this while `pending` is
@@ -1035,6 +1036,7 @@ pub(crate) fn skip_partial_line<'a>(pending: &mut bool, bytes: &'a [u8]) -> &'a 
     }
 }
 
+#[cfg(any(feature = "smb", feature = "modbus"))]
 /// Gap recovery for framed binary protocols: when `pending`, drop
 /// buffered bytes up to the first offset `find` accepts as a frame
 /// start (keeping at most `keep` trailing bytes while none is found).

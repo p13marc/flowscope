@@ -115,6 +115,17 @@ impl<S> FlowEntry<S> {
     }
 }
 
+/// Default [`FlowTrackerConfig::reassembly_max_ahead`]: how far
+/// ahead of the expected sequence number a segment may start and
+/// still be believed.
+pub const DEFAULT_MAX_AHEAD: u64 = 1024 * 1024;
+
+/// Default [`FlowTrackerConfig::reassembly_ack_grace`]: how long a
+/// hole the peer has already acknowledged is still waited for
+/// (capture reordering between the two directions) before it is
+/// skipped.
+pub const DEFAULT_ACK_GRACE: Duration = Duration::from_millis(10);
+
 /// Tracker configuration. Defaults follow Suricata's normal-mode values.
 ///
 /// `#[non_exhaustive]` to keep future additions purely additive.
@@ -330,8 +341,8 @@ impl Default for FlowTrackerConfig {
             tcp_overlap_policy: crate::event::TcpOverlapPolicy::First,
             reassembly_ooo_buffer: 256 * 1024,
             reassembly_ooo_deadline: Duration::from_secs(1),
-            reassembly_max_ahead: crate::reassembler::DEFAULT_MAX_AHEAD,
-            reassembly_ack_grace: crate::reassembler::DEFAULT_ACK_GRACE,
+            reassembly_max_ahead: DEFAULT_MAX_AHEAD,
+            reassembly_ack_grace: DEFAULT_ACK_GRACE,
             reassembly_memcap: None,
             reassembly_memcap_policy: crate::event::MemcapPolicy::Ignore,
             active_idle_threshold: Some(Duration::from_secs(1)),
@@ -466,6 +477,7 @@ impl<E: FlowExtractor, S: Send + 'static> FlowTracker<E, S> {
 
     /// Hand event gating and auto-sweeps to the owning driver (see
     /// the `driver_owned` field).
+    #[cfg(feature = "reassembler")]
     pub(crate) fn set_driver_owned(&mut self, owned: bool) {
         self.driver_owned = owned;
     }
@@ -483,6 +495,7 @@ impl<E: FlowExtractor, S: Send + 'static> FlowTracker<E, S> {
     }
 
     /// Flows removed by [`Self::forget`] so far.
+    #[cfg(feature = "reassembler")]
     pub(crate) fn forgotten(&self) -> u64 {
         self.forgotten
     }
