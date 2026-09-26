@@ -1086,3 +1086,51 @@ fn merge_by_lifecycle_pos_reproduces_session_driver_order() {
     merged.extend(next.map(|m| format!("{:?}", m.message)));
     assert_eq!(merged, reference);
 }
+
+// ── #193: API ────────────────────────────────────────────────────
+
+/// A per-flow factory builds one parser per flow from the flow key.
+#[test]
+fn driver_builder_accepts_per_flow_factories() {
+    #[derive(Clone)]
+    struct Tagged(u16);
+    impl SessionParser for Tagged {
+        type Message = u16;
+        fn feed_initiator(&mut self, _: &[u8], _: Timestamp, out: &mut Vec<u16>) {
+            out.push(self.0);
+        }
+        fn feed_responder(&mut self, _: &[u8], _: Timestamp, _: &mut Vec<u16>) {}
+    }
+    struct ByClientPort;
+    impl flowscope::SessionParserFactory<FiveTupleKey> for ByClientPort {
+        type Parser = Tagged;
+        fn new_parser(&mut self, key: &FiveTupleKey) -> Tagged {
+            Tagged(key.a.port().min(key.b.port()))
+        }
+    }
+    let frames = flow(&[(0, b"x".to_vec())]);
+    let mut b = Driver::builder(FiveTuple::bidirectional());
+    let mut slot = b.session_factory_on_ports(ByClientPort, [9000]);
+    let mut d = b.build();
+    let mut events = Vec::new();
+    for (t, f) in &frames {
+        d.track_into(PacketView::new(f, *t), &mut events);
+    }
+    let mut msgs = Vec::new();
+    slot.drain(&mut msgs);
+    assert_eq!(
+        msgs.iter().map(|m| m.message).collect::<Vec<_>>(),
+        vec![9000]
+    );
+}
+
+/// `emit_packet_source_idx(true)` survives a later `config(..)`.
+#[test]
+fn emit_packet_source_idx_is_order_independent() {
+    let mut b = Driver::builder(FiveTuple::bidirectional());
+    b.emit_packet_source_idx(true);
+    b.config(FlowTrackerConfig::default());
+    let _slot = b.session_broadcast(Collect::default());
+    let d = b.build();
+    assert!(d.tracker().config().emit_packet_source_idx);
+}

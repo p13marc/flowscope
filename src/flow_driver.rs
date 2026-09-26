@@ -1536,21 +1536,6 @@ impl<K> EventBuf<K> for FlowEvents<K> {
     }
 }
 
-impl<E, S> FlowDriver<E, crate::reassembler::BufferedReassemblerFactory, S>
-where
-    E: FlowExtractor,
-    S: Send + 'static,
-{
-    /// Drain buffered bytes for the given (key, side) and return
-    /// them as a `Vec<u8>`, **discarding gap markers** — prefer
-    /// [`Self::drain_stream`], which keeps them. Returns an empty
-    /// `Vec` when no reassembler exists or the buffer is empty.
-    pub fn drain_buffer(&mut self, key: &E::Key, side: FlowSide) -> Vec<u8> {
-        let mut out = StreamChunks::new();
-        self.drain_stream(key, side, &mut out);
-        out.data().to_vec()
-    }
-}
 #[cfg(test)]
 mod tests {
     use super::*;

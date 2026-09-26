@@ -82,7 +82,7 @@ fn bench_drop_flow_idle(c: &mut Criterion) {
             .with_overflow_policy(OverflowPolicy::DropFlow);
         // Trigger the poison once up-front.
         r.segment(0, &payload, Timestamp::default());
-        assert!(r.is_poisoned());
+        assert!(r.is_stopped());
         let mut seq = 1500u32;
         b.iter(|| {
             r.segment(seq, &payload, Timestamp::default());

@@ -619,8 +619,8 @@ pub trait SessionParser: Send + 'static {
     /// internal state is corrupted past recovery (desynced framing,
     /// invalid magic bytes that won't appear later, etc.).
     ///
-    /// Mirrors [`crate::Reassembler::is_poisoned`] — same wiring
-    /// shape, same operator mental model.
+    /// The reassembly-side counterpart is
+    /// [`crate::Reassembler::stop_reason`].
     fn is_poisoned(&self) -> bool {
         false
     }

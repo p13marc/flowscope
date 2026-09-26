@@ -444,6 +444,7 @@ impl MemcapPolicy {
 /// struct-literal construction from outside the crate.
 #[derive(Debug, Clone, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(default))]
 #[non_exhaustive]
 pub struct FlowStats {
     pub packets_initiator: u64,

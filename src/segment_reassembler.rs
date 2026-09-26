@@ -862,10 +862,6 @@ impl Reassembler for SegmentBufferReassembler {
         self.bytes_dropped_oversize
     }
 
-    fn is_poisoned(&self) -> bool {
-        self.stop.is_some()
-    }
-
     fn stop_reason(&self) -> Option<ReassemblyStop> {
         self.stop
     }
@@ -1257,7 +1253,7 @@ mod tests {
     fn rst_does_not_stop_reassembly() {
         let mut r = SegmentBufferReassembler::new();
         r.rst();
-        assert!(!r.is_poisoned());
+        assert!(r.stop_reason().is_none());
     }
 
     #[test]

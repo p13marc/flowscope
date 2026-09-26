@@ -378,17 +378,10 @@ pub trait Reassembler: Send + 'static {
         0
     }
 
-    /// True once the reassembler has stopped accepting bytes (see
-    /// [`ReassemblyStop`]). Default: `false`.
-    fn is_poisoned(&self) -> bool {
-        false
-    }
-
-    /// Why the reassembler stopped. The default derives it from
-    /// [`Self::is_poisoned`] and reports
-    /// [`ReassemblyStop::Overflow`].
+    /// Why the reassembler stopped accepting bytes, if it did (see
+    /// [`ReassemblyStop`]). Default: `None`.
     fn stop_reason(&self) -> Option<ReassemblyStop> {
-        self.is_poisoned().then_some(ReassemblyStop::Overflow)
+        None
     }
 
     /// Peak buffer occupancy ever observed for this side.
@@ -959,7 +952,7 @@ impl BufferedReassembler {
 
     /// True once this side stopped (overflow under
     /// [`OverflowPolicy::DropFlow`], or a memcap release).
-    pub fn is_poisoned(&self) -> bool {
+    pub fn is_stopped(&self) -> bool {
         self.stop.is_some()
     }
 
@@ -1294,10 +1287,6 @@ impl Reassembler for BufferedReassembler {
 
     fn bytes_dropped_oversize(&self) -> u64 {
         self.bytes_dropped_oversize
-    }
-
-    fn is_poisoned(&self) -> bool {
-        self.stop.is_some()
     }
 
     fn stop_reason(&self) -> Option<ReassemblyStop> {
@@ -1656,7 +1645,7 @@ mod tests {
         r.segment(0, &[0u8; 10_000], t());
         assert_eq!(r.buffered_len(), 10_000);
         assert_eq!(r.bytes_dropped_oversize(), 0);
-        assert!(!r.is_poisoned());
+        assert!(!r.is_stopped());
     }
 
     #[test]
@@ -1693,9 +1682,9 @@ mod tests {
             .with_max_buffer(100)
             .with_overflow_policy(OverflowPolicy::DropFlow);
         r.segment(0, &[b'a'; 80], t());
-        assert!(!r.is_poisoned());
+        assert!(!r.is_stopped());
         r.segment(80, &[b'b'; 80], t()); // overflow → stop
-        assert!(r.is_poisoned());
+        assert!(r.is_stopped());
         assert_eq!(r.stop_reason(), Some(ReassemblyStop::Overflow));
         assert_eq!(r.bytes_dropped_oversize(), 80);
         r.segment(160, &[b'c'; 10], t()); // no-op
@@ -1713,7 +1702,7 @@ mod tests {
             .with_overflow_policy(OverflowPolicy::DropFlow);
         r.segment(0, &[b'a'; 50], t());
         r.segment(50, &[b'b'; 50], t());
-        assert!(!r.is_poisoned());
+        assert!(!r.is_stopped());
         assert_eq!(r.buffered_len(), 100);
     }
 
@@ -1724,7 +1713,7 @@ mod tests {
             .with_overflow_policy(OverflowPolicy::DropFlow);
         let mut r: BufferedReassembler = f.new_reassembler(&0u32, FlowSide::Initiator);
         r.segment(0, &[0u8; 100], t());
-        assert!(r.is_poisoned());
+        assert!(r.is_stopped());
     }
 
     #[test]
@@ -1739,7 +1728,7 @@ mod tests {
         let mut r: BufferedReassembler = f.new_reassembler(&0u32, FlowSide::Initiator);
         assert_eq!(r.high_watermark_threshold(), Some((10, 50)));
         r.segment(0, &[0u8; 11], t());
-        assert!(r.is_poisoned());
+        assert!(r.is_stopped());
     }
 
     #[test]
@@ -1754,7 +1743,7 @@ mod tests {
         let mut r: BufferedReassembler = f.new_reassembler(&0u32, FlowSide::Initiator);
         r.segment(0, &[0u8; 11], t());
         // Cap pinned at 10, policy filled in from the config.
-        assert!(r.is_poisoned());
+        assert!(r.is_stopped());
 
         let mut f = BufferedReassemblerFactory::default().unbounded();
         <BufferedReassemblerFactory as ReassemblerFactory<u32>>::apply_config(&mut f, &cfg);
@@ -1868,14 +1857,11 @@ mod tests {
     }
 
     #[test]
-    fn default_stop_reason_derives_from_is_poisoned() {
+    fn default_stop_reason_is_none() {
         struct P;
         impl Reassembler for P {
             fn segment(&mut self, _: u32, _: &[u8], _: Timestamp) {}
-            fn is_poisoned(&self) -> bool {
-                true
-            }
         }
-        assert_eq!(P.stop_reason(), Some(ReassemblyStop::Overflow));
+        assert_eq!(P.stop_reason(), None);
     }
 }

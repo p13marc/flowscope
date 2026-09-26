@@ -327,11 +327,23 @@ macro_rules! shared_driver_api {
             self.engine.flow.tracker()
         }
 
-        /// Borrow the flow table mutably. Use [`Self::set_config`]
-        /// rather than `tracker_mut().set_config(..)` so reassembly
-        /// limits follow.
-        pub fn tracker_mut(&mut self) -> &mut FlowTracker<E, ()> {
-            self.engine.flow.tracker_mut()
+        /// In-place variant of [`Self::with_idle_timeout_fn`].
+        pub fn set_idle_timeout_fn<G>(&mut self, f: G)
+        where
+            G: Fn(&E::Key, Option<L4Proto>) -> Option<Duration> + Send + Sync + 'static,
+        {
+            self.engine.flow.tracker_mut().set_idle_timeout_fn(f);
+        }
+
+        /// Stop emitting lifecycle events (overload shunt); the
+        /// parser keeps running and flows keep being released.
+        pub fn pause_events(&mut self) {
+            self.engine.flow.pause_events();
+        }
+
+        /// Resume after [`Self::pause_events`].
+        pub fn resume_events(&mut self) {
+            self.engine.flow.resume_events();
         }
 
         /// Borrow the underlying flow driver (reassembly state, memcap

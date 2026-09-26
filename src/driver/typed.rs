@@ -55,7 +55,8 @@ use crate::{
     reassembler::StreamChunks,
     segment_reassembler::SegmentBufferReassemblerFactory,
     session::{
-        DatagramParser, SessionParser, TemplateFactory,
+        DatagramParser, DatagramParserFactory, SessionParser, SessionParserFactory,
+        TemplateFactory,
         core::{Ctx, DEFAULT_PROBE_PACKETS, DatagramCore, Ports, Selector, SessionCore, Stream},
         engine::{Dispatch, Engine},
     },
@@ -584,6 +585,7 @@ where
             monotonic_timestamps: false,
             emit_anomalies: false,
             emit_packet_details: false,
+            emit_packet_source_idx: None,
             dedup: None,
             idle_timeout_fn: None,
             slots: Vec::new(),
@@ -724,9 +726,29 @@ where
         self.engine.flow.tracker()
     }
 
-    /// Mutable borrow of the underlying tracker.
-    pub fn tracker_mut(&mut self) -> &mut FlowTracker<E, ()> {
-        self.engine.flow.tracker_mut()
+    /// Per-key idle-timeout override (see
+    /// [`FlowTracker::set_idle_timeout_fn`]); parser state follows.
+    pub fn set_idle_timeout_fn<G>(&mut self, f: G)
+    where
+        G: Fn(&E::Key, Option<L4Proto>) -> Option<std::time::Duration> + Send + Sync + 'static,
+    {
+        self.engine.flow.tracker_mut().set_idle_timeout_fn(f);
+    }
+
+    /// Replace the config (tracker and reassembly limits alike).
+    pub fn set_config(&mut self, config: FlowTrackerConfig) {
+        self.engine.flow.set_config(config);
+    }
+
+    /// Stop emitting lifecycle events (overload shunt); parsers keep
+    /// running and flows keep being released.
+    pub fn pause_events(&mut self) {
+        self.engine.flow.pause_events();
+    }
+
+    /// Resume after [`Self::pause_events`].
+    pub fn resume_events(&mut self) {
+        self.engine.flow.resume_events();
     }
 
     /// Borrow the underlying flow driver (reassembly state, memcap
@@ -756,6 +778,9 @@ where
     monotonic_timestamps: bool,
     emit_anomalies: bool,
     emit_packet_details: bool,
+    /// `Some` once [`Self::emit_packet_source_idx`] was called: wins
+    /// over the config's value whatever the call order.
+    emit_packet_source_idx: Option<bool>,
     dedup: Option<Dedup>,
     idle_timeout_fn: Option<IdleTimeoutFn<E::Key>>,
     slots: Vec<Box<dyn ErasedSlot<E::Key> + Send + Sync>>,
@@ -788,8 +813,9 @@ where
     /// Per-packet physical capture leg on [`Event::Packet`]
     /// (issue #121). Convenience passthrough for
     /// [`crate::FlowTrackerConfig::emit_packet_source_idx`].
+    /// Wins over the config's value regardless of call order.
     pub fn emit_packet_source_idx(&mut self, on: bool) -> &mut Self {
-        self.config.emit_packet_source_idx = on;
+        self.emit_packet_source_idx = Some(on);
         self
     }
 
@@ -821,6 +847,115 @@ where
 
     fn next_slot_id(&self) -> SlotId {
         SlotId(self.slots.len() as u32)
+    }
+
+    /// Register a session-parser **factory** for flows with either
+    /// port in `ports`: `factory.new_parser(&key)` builds each flow's
+    /// parser (per-flow configuration, shared state), where the other
+    /// registrations clone a template. New in 0.25.0.
+    pub fn session_factory_on_ports<F, I>(
+        &mut self,
+        factory: F,
+        ports: I,
+    ) -> SlotHandle<<F::Parser as SessionParser>::Message, E::Key>
+    where
+        F: SessionParserFactory<E::Key> + Send + Sync + 'static,
+        F::Parser: Send + Sync,
+        <F::Parser as SessionParser>::Message: Send + Sync + 'static,
+        I: IntoIterator<Item = u16>,
+    {
+        self.add_session_factory(factory, Selector::Ports(ports.into_iter().collect()))
+    }
+
+    /// [`Self::session_factory_on_ports`] for every TCP flow.
+    pub fn session_factory_broadcast<F>(
+        &mut self,
+        factory: F,
+    ) -> SlotHandle<<F::Parser as SessionParser>::Message, E::Key>
+    where
+        F: SessionParserFactory<E::Key> + Send + Sync + 'static,
+        F::Parser: Send + Sync,
+        <F::Parser as SessionParser>::Message: Send + Sync + 'static,
+    {
+        self.add_session_factory(factory, Selector::All)
+    }
+
+    /// Register a datagram-parser **factory** for flows with either
+    /// port in `ports`. New in 0.25.0.
+    pub fn datagram_factory_on_ports<F, I>(
+        &mut self,
+        factory: F,
+        ports: I,
+    ) -> SlotHandle<<F::Parser as DatagramParser>::Message, E::Key>
+    where
+        F: DatagramParserFactory<E::Key> + Send + Sync + 'static,
+        F::Parser: Send + Sync,
+        <F::Parser as DatagramParser>::Message: Send + Sync + 'static,
+        I: IntoIterator<Item = u16>,
+    {
+        self.add_datagram_factory(factory, Selector::Ports(ports.into_iter().collect()))
+    }
+
+    /// [`Self::datagram_factory_on_ports`] for every flow of the
+    /// parser's transports.
+    pub fn datagram_factory_broadcast<F>(
+        &mut self,
+        factory: F,
+    ) -> SlotHandle<<F::Parser as DatagramParser>::Message, E::Key>
+    where
+        F: DatagramParserFactory<E::Key> + Send + Sync + 'static,
+        F::Parser: Send + Sync,
+        <F::Parser as DatagramParser>::Message: Send + Sync + 'static,
+    {
+        self.add_datagram_factory(factory, Selector::All)
+    }
+
+    fn add_session_factory<F>(
+        &mut self,
+        factory: F,
+        selector: Selector,
+    ) -> SlotHandle<<F::Parser as SessionParser>::Message, E::Key>
+    where
+        F: SessionParserFactory<E::Key> + Send + Sync + 'static,
+        F::Parser: Send + Sync,
+        <F::Parser as SessionParser>::Message: Send + Sync + 'static,
+    {
+        let id = self.next_slot_id();
+        let queue = Arc::new(SegQueue::new());
+        self.slots.push(Box::new(SessionSlot {
+            core: SessionCore::new(factory, selector),
+            sink: Arc::clone(&queue),
+            id,
+        }));
+        SlotHandle {
+            inner: queue,
+            parser_kind: ParserKind::Unspecified,
+            slot: id,
+        }
+    }
+
+    fn add_datagram_factory<F>(
+        &mut self,
+        factory: F,
+        selector: Selector,
+    ) -> SlotHandle<<F::Parser as DatagramParser>::Message, E::Key>
+    where
+        F: DatagramParserFactory<E::Key> + Send + Sync + 'static,
+        F::Parser: Send + Sync,
+        <F::Parser as DatagramParser>::Message: Send + Sync + 'static,
+    {
+        let id = self.next_slot_id();
+        let queue = Arc::new(SegQueue::new());
+        self.slots.push(Box::new(DatagramSlot {
+            core: DatagramCore::new(factory, selector),
+            sink: Arc::clone(&queue),
+            id,
+        }));
+        SlotHandle {
+            inner: queue,
+            parser_kind: ParserKind::Unspecified,
+            slot: id,
+        }
     }
 
     fn add_session<P>(&mut self, parser: P, selector: Selector) -> SlotHandle<P::Message, E::Key>
@@ -1006,7 +1141,10 @@ where
     }
 
     /// Materialise the driver.
-    pub fn build(self) -> Driver<E> {
+    pub fn build(mut self) -> Driver<E> {
+        if let Some(on) = self.emit_packet_source_idx {
+            self.config.emit_packet_source_idx = on;
+        }
         let mut engine = Engine::new(self.extractor, self.config);
         engine.flow.set_emit_anomalies(self.emit_anomalies);
         engine
