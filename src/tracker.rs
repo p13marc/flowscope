@@ -812,7 +812,17 @@ impl<E: FlowExtractor, S: Send + 'static> FlowTracker<E, S> {
                 tcp_info.payload_len > 0,
             );
             let prev_state = entry.state;
-            let trans = tcp_state::transition(prev_state, tcp_info.flags, side);
+            let other_side_fin = match side {
+                FlowSide::Initiator => entry.stats.fin_responder,
+                FlowSide::Responder => entry.stats.fin_initiator,
+            };
+            if tcp_info.flags.contains(TcpFlags::FIN) {
+                match side {
+                    FlowSide::Initiator => entry.stats.fin_initiator = true,
+                    FlowSide::Responder => entry.stats.fin_responder = true,
+                }
+            }
+            let trans = tcp_state::transition(prev_state, tcp_info.flags, side, other_side_fin);
             if trans.state != prev_state {
                 entry.state = trans.state;
                 if trans.became_established {

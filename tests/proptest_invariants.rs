@@ -89,6 +89,7 @@ proptest! {
         ),
     ) {
         let mut state = FlowState::Active;
+        let mut fin = [false; 2];
         for (initiator, flags_byte) in seq {
             let mut flags = TcpFlags::empty();
             if flags_byte & 0x01 != 0 { flags |= TcpFlags::FIN; }
@@ -96,7 +97,11 @@ proptest! {
             if flags_byte & 0x04 != 0 { flags |= TcpFlags::RST; }
             if flags_byte & 0x10 != 0 { flags |= TcpFlags::ACK; }
             let side = if initiator { FlowSide::Initiator } else { FlowSide::Responder };
-            let new = flowscope::tcp_state::transition(state, flags, side).state;
+            let other_fin = fin[usize::from(initiator)];
+            if flags.contains(TcpFlags::FIN) {
+                fin[usize::from(!initiator)] = true;
+            }
+            let new = flowscope::tcp_state::transition(state, flags, side, other_fin).state;
             // The new state must be one of the known variants — no panic.
             // Implicit via the match — if the function returned an invalid
             // state, debug-mode would catch it.

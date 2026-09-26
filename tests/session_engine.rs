@@ -29,6 +29,7 @@ const SYN: u8 = 0x02;
 const ACK: u8 = 0x10;
 const PSH: u8 = 0x08;
 const FIN: u8 = 0x01;
+const MAC: [u8; 6] = [0; 6];
 
 fn ts_ms(ms: u64) -> Timestamp {
     let d = Duration::from_millis(ms);
@@ -716,4 +717,49 @@ fn heuristic_rejection_stops_reassembly_of_the_flow() {
             .iter()
             .any(|e| matches!(e, Event::ParserClosed { .. }))
     );
+}
+
+/// Issue #196: a retransmitted FIN from the side that closed first
+/// must not end the flow before the other side closes.
+#[test]
+fn retransmitted_fin_does_not_end_the_flow_early() {
+    use flowscope::{EndReason, FlowEvent, FlowTracker, extract::FiveTuple};
+    let mut t: FlowTracker<FiveTuple> = FlowTracker::new(FiveTuple::bidirectional());
+    let c = [10, 0, 0, 1];
+    let s = [10, 0, 0, 2];
+    let frames = [
+        ipv4_tcp(MAC, MAC, c, s, 1234, 80, 100, 0, 0x02, b""),
+        ipv4_tcp(MAC, MAC, s, c, 80, 1234, 500, 101, 0x12, b""),
+        ipv4_tcp(MAC, MAC, c, s, 1234, 80, 101, 501, 0x10, b""),
+        // Initiator FIN, then the same FIN again, then an ACK.
+        ipv4_tcp(MAC, MAC, c, s, 1234, 80, 101, 501, 0x11, b""),
+        ipv4_tcp(MAC, MAC, c, s, 1234, 80, 101, 501, 0x11, b""),
+        ipv4_tcp(MAC, MAC, s, c, 80, 1234, 501, 102, 0x10, b""),
+    ];
+    let mut ended = Vec::new();
+    for f in &frames {
+        for e in t.track(PacketView::new(f, Timestamp::new(1, 0))) {
+            if let FlowEvent::Ended { reason, .. } = e {
+                ended.push(reason);
+            }
+        }
+    }
+    assert!(ended.is_empty(), "flow must stay open: {ended:?}");
+    // The responder's FIN and the last ACK close it.
+    let fin = ipv4_tcp(MAC, MAC, s, c, 80, 1234, 501, 102, 0x11, b"");
+    let ack = ipv4_tcp(MAC, MAC, c, s, 1234, 80, 102, 502, 0x10, b"");
+    let _ = t.track(PacketView::new(&fin, Timestamp::new(1, 0)));
+    let evs = t.track(PacketView::new(&ack, Timestamp::new(1, 0)));
+    let stats = evs
+        .iter()
+        .find_map(|e| match e {
+            FlowEvent::Ended {
+                reason: EndReason::Fin,
+                stats,
+                ..
+            } => Some(stats.clone()),
+            _ => None,
+        })
+        .expect("closed by FIN");
+    assert!(stats.fin_initiator && stats.fin_responder);
 }

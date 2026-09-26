@@ -573,6 +573,10 @@ pub struct FlowStats {
     /// label on this flow) reflects the SYN sender, not the
     /// arrival-order first-seen endpoint.
     pub direction_flipped: bool,
+    /// A TCP FIN was seen from the initiator. New in 0.25.0.
+    pub fin_initiator: bool,
+    /// A TCP FIN was seen from the responder. New in 0.25.0.
+    pub fin_responder: bool,
 }
 
 impl FlowStats {

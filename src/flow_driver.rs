@@ -221,6 +221,8 @@ where
     /// (issue #26), for [`FlowTrackerConfig::reassembly_memcap`].
     global_memcap_bytes: u64,
     last_packet: Option<PacketInfo<E::Key>>,
+    /// Packet time of the last scan for due [`FlowEvent::Tick`]s.
+    last_tick_scan: Option<Timestamp>,
 }
 
 // Common path — `S = ()`.
@@ -306,6 +308,7 @@ where
             monotonic_ts: None,
             global_memcap_bytes: 0,
             last_packet: None,
+            last_tick_scan: None,
         }
     }
 
@@ -672,7 +675,17 @@ where
     /// Walk live flows; for any whose `last_tick_at` is past-due,
     /// emit a [`FlowEvent::Tick`] carrying a live [`FlowStats`]
     /// snapshot and mark the flow as ticked.
+    ///
+    /// The scan walks every flow, so it runs at most every quarter
+    /// interval of packet time (a tick is at most 1.25 intervals
+    /// late) instead of on every packet.
     fn emit_ticks(&mut self, events: &mut FlowEvents<E::Key>, now: Timestamp, interval: Duration) {
+        if let Some(last) = self.last_tick_scan
+            && now.saturating_sub(last) < interval / 4
+        {
+            return;
+        }
+        self.last_tick_scan = Some(now);
         let mut to_tick: Vec<(E::Key, FlowStats)> = Vec::new();
         for (key, entry) in self.tracker.flows() {
             let due = match entry.last_tick_at {
