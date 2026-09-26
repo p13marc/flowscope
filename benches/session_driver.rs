@@ -1,8 +1,8 @@
 //! Typed `Driver<E>` session-slot end-to-end throughput.
 //!
-//! Benchmarks the same TCP session-dispatch path that the (now
-//! crate-private) `FlowSessionDriver` engine drives, via the
-//! public typed [`flowscope::driver::Driver`] with a single
+//! Benchmarks the TCP session-dispatch path of the shared session
+//! engine (the one `flowscope::session::SessionDriver` also runs),
+//! via the public typed [`flowscope::driver::Driver`] with a single
 //! session slot.
 //!
 //! Run with:

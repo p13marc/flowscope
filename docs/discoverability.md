@@ -102,6 +102,17 @@ For the conceptual layer-by-layer reference, see
 | `FlowStats::source_idx_for(orientation)` / `capture_leg_inconsistent` | Physical capture leg (NIC) bound per direction on a merged flow + tap-miswire IOC. (0.20, #120.) |
 | `FlowTrackerConfig::infer_tcp_initiator` + `FlowStats::direction_flipped` | SYN-based initiator inference: keep `FlowSide` correct under a tap-merge race. (0.20, #122.) |
 
+## "I want L7 parsing that survives capture loss"
+
+| Primitive | Pitch |
+|---|---|
+| `SessionParser::on_gap` → `GapResponse` | Told where bytes are missing. `StopSide` (default) stops only that direction; `Continue` resynchronises; `Stop` closes the parser. **0.25.** |
+| `Event::ParserSideStopped` / `ParserClosed` | Which parser (`SlotId`, `ParserKind`) stopped reading which side, and why (`StreamGap`, `BufferOverflow`, …). The flow itself always ends on its transport reason. **0.25.** |
+| [`session::SessionDriver`](https://docs.rs/flowscope/latest/flowscope/session/struct.SessionDriver.html) / `DatagramDriver` | One parser, one ordered `SessionEvent` stream (lifecycle + messages + parser stops + anomalies). **0.25.** |
+| `FlowDriver::drain_stream` → `StreamChunks` | Reassembled bytes with explicit `Chunk::Gap` markers, for custom loops. **0.25.** |
+| `FlowStats::reassembly_gaps_*` / `reassembly_gap_bytes_*` / `reassembly_stop_*` / `reassembly_out_of_window_*` | Per-side record of what reassembly skipped, refused or stopped on. **0.25.** |
+| `SlotMessage::lifecycle_pos` / `seq` + `Driver::lifecycle_seq` | Merge slot messages and the lifecycle stream back into the engine's exact order (e.g. a flow's last messages before its `Ended`). **0.25.** |
+
 ## "I want a stable per-direction label across sensors"
 
 `FlowSide` (`Initiator`/`Responder`) is arrival-order-relative — a
@@ -216,9 +227,11 @@ first cleartext bytes, before anything has been parsed at all.
 **`session`:** `DatagramParser`, `SessionParser`.
 
 **`extractors` + `reassembler` + `session`:** `Driver`,
-`DriverBuilder`, `Event`, `SlotHandle`, `SlotMessage`. (Register one
-session/datagram slot per protocol; this replaced the per-parser
-`FlowSessionDriver` / `FlowDatagramDriver` in 0.20.)
+`DriverBuilder`, `Event`, `SlotHandle`, `SlotMessage`,
+`BroadcastSlotHandle`, `SlotDrain`. (Register one session/datagram
+slot per protocol. The single-parser `session::SessionDriver` /
+`DatagramDriver` — public again in 0.25, running the same engine —
+are not in the prelude; import them from `flowscope::session`.)
 
 **`http2`:** `Http2Event` *(0.23)*, `Http2Parser` *(0.23)*,
 `Http2Session` *(0.23)*, `StreamHead` *(0.23)*. Not in the prelude,

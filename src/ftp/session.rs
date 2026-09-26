@@ -38,6 +38,8 @@ pub struct FtpParser {
 #[derive(Debug, Clone, Default)]
 struct SideState {
     buffer: BytesMut,
+    /// Bytes went missing: skip to the next line.
+    resync: bool,
 }
 
 impl FtpParser {
@@ -140,6 +142,7 @@ impl SessionParser for FtpParser {
         if self.encrypted {
             return;
         }
+        let bytes = crate::session::skip_partial_line(&mut self.init.resync, bytes);
         self.init.buffer.extend_from_slice(bytes);
         self.drain_initiator(out);
     }
@@ -148,8 +151,27 @@ impl SessionParser for FtpParser {
         if self.encrypted {
             return;
         }
+        let bytes = crate::session::skip_partial_line(&mut self.resp.resync, bytes);
         self.resp.buffer.extend_from_slice(bytes);
         self.drain_responder(out);
+    }
+
+    /// Commands and replies are lines: drop the partial line and
+    /// resume at the next one.
+    fn on_gap(
+        &mut self,
+        side: crate::FlowSide,
+        _missing: u64,
+        _ts: Timestamp,
+        _out: &mut Vec<FtpMessage>,
+    ) -> crate::GapResponse {
+        let state = match side {
+            crate::FlowSide::Initiator => &mut self.init,
+            crate::FlowSide::Responder => &mut self.resp,
+        };
+        state.buffer.clear();
+        state.resync = true;
+        crate::GapResponse::Continue
     }
 }
 
@@ -305,5 +327,27 @@ mod tests {
             .expect("command");
         assert!(matches!(cmd.0, FtpCommand::User));
         assert_eq!(cmd.1, "alice");
+    }
+
+    #[test]
+    fn a_gap_resyncs_on_the_next_line() {
+        let mut p = FtpParser::new();
+        let mut out = Vec::new();
+        p.feed_initiator(b"USER alice\r\nPA", ts(), &mut out);
+        let r = p.on_gap(crate::FlowSide::Initiator, 40, ts(), &mut out);
+        assert_eq!(r, crate::GapResponse::Continue);
+        p.feed_initiator(b"SS lost\r\nLIST\r\n", ts(), &mut out);
+        assert!(out.iter().any(|m| matches!(
+            m,
+            FtpMessage::Command {
+                verb: FtpCommand::List,
+                ..
+            }
+        )));
+        assert!(
+            !out.iter()
+                .any(|m| matches!(m, FtpMessage::Credentials { .. })),
+            "the spliced PASS line is not parsed"
+        );
     }
 }

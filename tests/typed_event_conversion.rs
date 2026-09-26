@@ -128,12 +128,11 @@ fn state_change_maps_to_flow_state_change() {
 
 #[test]
 fn parser_closed_has_no_flow_event_projection() {
-    let ev: Event<FiveTupleKey> = Event::ParserClosed {
-        key: key(),
-        parser_kind: flowscope::ParserKind::Other("http"),
-        reason: EndReason::ParserDone,
-        ts: Timestamp::new(1, 0),
-    };
+    let ev: Event<FiveTupleKey> = flowscope::test_helpers::events::driver::parser_closed(
+        key(),
+        flowscope::ParserKind::Other("http"),
+        Timestamp::new(1, 0),
+    );
     assert!(ev.to_flow_event().is_none());
 }
 
@@ -169,12 +168,11 @@ fn event_serializes_with_type_tag() {
         serde_json::to_value(&started).unwrap()["type"],
         serde_json::json!("started")
     );
-    let pc: Event<FiveTupleKey> = Event::ParserClosed {
-        key: key(),
-        parser_kind: flowscope::ParserKind::Other("http"),
-        reason: EndReason::ParserDone,
-        ts: Timestamp::new(1, 0),
-    };
+    let pc: Event<FiveTupleKey> = flowscope::test_helpers::events::driver::parser_closed(
+        key(),
+        flowscope::ParserKind::Other("http"),
+        Timestamp::new(1, 0),
+    );
     let pc_json = serde_json::to_value(&pc).unwrap();
     assert_eq!(pc_json["type"], serde_json::json!("parser_closed"));
     assert_eq!(pc_json["parser_kind"], serde_json::json!("http"));
@@ -218,12 +216,11 @@ fn write_lifecycle_matches_write_event_for_ended() {
 fn write_lifecycle_skips_parser_closed() {
     use flowscope::emit::FlowEventCsvWriter;
 
-    let ev: Event<FiveTupleKey> = Event::ParserClosed {
-        key: key(),
-        parser_kind: flowscope::ParserKind::Other("http"),
-        reason: EndReason::ParserDone,
-        ts: Timestamp::new(1, 0),
-    };
+    let ev: Event<FiveTupleKey> = flowscope::test_helpers::events::driver::parser_closed(
+        key(),
+        flowscope::ParserKind::Other("http"),
+        Timestamp::new(1, 0),
+    );
 
     let mut got = Vec::new();
     {

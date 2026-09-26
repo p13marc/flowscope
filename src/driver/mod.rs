@@ -19,9 +19,11 @@
 //!
 //! ## Architecture
 //!
-//! - [`Driver<E>`] owns a central [`crate::FlowTracker`] for flow
-//!   lifecycle + per-parser slots that own their inner
-//!   session/datagram drivers.
+//! - [`Driver<E>`] owns **one** flow table and one reassembler per
+//!   flow side (the engine shared with
+//!   [`crate::session::SessionDriver`]); registered parsers are slots
+//!   fed from it, so every parser sees the flows, timeouts, dedup and
+//!   bytes the lifecycle events describe.
 //! - Each `.session_*` / `.datagram_*` builder call returns a
 //!   typed [`SlotHandle<M, K>`]; the slot's typed messages flow
 //!   into the handle's internal buffer via a shared
@@ -29,8 +31,13 @@
 //! - Per-packet: `driver.track_into(view, &mut events)` emits
 //!   flow-lifecycle events; `slot.drain(&mut msgs)` drains the
 //!   typed messages produced this packet.
-//! - Zero-allocation in steady state across the full dispatch
-//!   path including registered slots.
+//! - No allocation per packet in steady state: in-order TCP payload
+//!   is handed to parsers straight from the frame, scratch buffers
+//!   are reused, and a sweep that ends nothing allocates nothing
+//!   (measured by `tests/alloc_steady_state.rs`). Allocations remain
+//!   per new flow (flow table entry, parser), per out-of-order
+//!   segment held, and for whatever the parsers and slot queues
+//!   themselves allocate.
 //!
 //! Plan 122 (0.12): `SlotHandle<M, K>` is `Send + Sync` (backed
 //! by `Arc<crossbeam_queue::SegQueue>`). Move the handle to a
@@ -51,9 +58,8 @@ mod broadcast;
 mod slot;
 mod typed;
 mod typed_slot;
-mod typed_slot_heuristic;
 
+pub use crate::session::core::{DEFAULT_PROBE_PACKETS, PROBE_BUFFER_CAP};
 pub use broadcast::BroadcastSlotHandle;
 pub use slot::{SlotDrain, SlotHandle, SlotMessage};
 pub use typed::{Driver, DriverBuilder, Event};
-pub use typed_slot_heuristic::{DEFAULT_PROBE_PACKETS, PROBE_BUFFER_CAP};

@@ -72,7 +72,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut flow_ends = 0usize;
     let mut first_messages: Vec<String> = Vec::new();
 
-    // Persistent scratch buffers reused per packet (zero-alloc).
+    // Persistent scratch buffers reused per packet (no per-packet Vec).
     let mut events: Vec<Event<FiveTupleKey>> = Vec::new();
     let mut http_msgs: Vec<SlotMessage<HttpMessage, FiveTupleKey>> = Vec::new();
     let mut dns_msgs: Vec<SlotMessage<DnsMessage, FiveTupleKey>> = Vec::new();

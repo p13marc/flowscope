@@ -214,7 +214,7 @@ fn ignore_policy_emits_anomaly_but_keeps_flow_alive() {
 // ─── DropFlow policy ────────────────────────────────────────
 
 #[test]
-fn drop_flow_policy_emits_anomaly_and_ends_flow() {
+fn drop_flow_policy_emits_anomaly_and_stops_reassembly() {
     let mut d = driver_with_memcap(50, MemcapPolicy::DropFlow);
     let payload = vec![b'A'; 200];
     let frames = handshake_plus_data([10, 0, 0, 1], [10, 0, 0, 2], 1234, 80, 1000, 5000, &payload);
@@ -240,41 +240,38 @@ fn drop_flow_policy_emits_anomaly_and_ends_flow() {
     assert_eq!(memcap_hits.len(), 1, "one anomaly per tick");
     let (bytes, cap) = memcap_hits[0];
     assert!(bytes > cap, "trip happened above cap: {bytes} > {cap}");
-    let bufoverflow_ends: Vec<_> = all_events
-        .iter()
-        .filter(|e| {
-            matches!(
-                e,
-                FlowEvent::Ended {
-                    reason: EndReason::BufferOverflow,
-                    ..
-                }
-            )
-        })
-        .collect();
-    assert_eq!(
-        bufoverflow_ends.len(),
-        1,
-        "DropFlow synthesizes exactly one BufferOverflow end"
+    // The flow is not ended by the memcap: it ends with its
+    // transport reason, and records that reassembly stopped.
+    assert!(
+        !all_events.iter().any(|e| matches!(
+            e,
+            FlowEvent::Ended {
+                reason: EndReason::BufferOverflow,
+                ..
+            }
+        )),
+        "memcap DropFlow no longer ends the flow"
     );
     assert_eq!(
         d.reassembly_memcap_bytes(),
         0,
-        "DropFlow refund leaves pool empty"
+        "DropFlow releases both sides, leaving the pool empty"
+    );
+    let stats: Vec<_> = d.snapshot_flow_stats().map(|(_, s)| s).collect();
+    assert_eq!(stats.len(), 1, "the flow is still tracked");
+    assert_eq!(
+        stats[0].reassembly_stop_initiator,
+        Some(flowscope::ReassemblyStop::Memcap)
     );
 }
 
 // ─── PassThrough policy ─────────────────────────────────────
 
 #[test]
-fn pass_through_policy_kills_flow_like_dropflow_for_memcap() {
-    // PassThrough is documented as "poison the reassembler but
-    // keep the flow alive in the tracker". The driver-side
-    // memcap implementation treats both PassThrough and DropFlow
-    // the same: poison + synthesize Ended. (The distinction
-    // is meaningful for per-flow overflow, not for global
-    // memcap — once we're over the global pool, *the
-    // reassembler* must release bytes either way.)
+fn pass_through_policy_reports_the_memcap_hit() {
+    // PassThrough releases the offending side and keeps the flow;
+    // `pass_through_frees_the_bytes_and_keeps_the_flow` covers the
+    // release itself.
     let mut d = driver_with_memcap(50, MemcapPolicy::PassThrough);
     let payload = vec![b'A'; 200];
     let frames = handshake_plus_data([10, 0, 0, 1], [10, 0, 0, 2], 1234, 80, 1000, 5000, &payload);

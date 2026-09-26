@@ -154,7 +154,7 @@ the categories sort logically in `ls`.
 | **`layer_fast_path`** | `pcap,extractors` | Wall-clock comparison of `Layers::parse_ethernet` (ergonomic, per-frame alloc) vs `LayerParser` + `LayerStack` (zero-allocation fast path). Run with `--release` to see the real numbers. |
 | **`threaded_slot_drain`** | `pcap,http` | Cross-thread slot drain — `SlotHandle: Send + Sync` since 0.12, `Driver<E>` `Send + Sync` since 0.13. Worker thread drains an HTTP slot while the capture loop runs on main. |
 | **`sharded_capture`** | `pcap,http` | N-thread sharded driver pattern with cross-shard aggregation via `AtomicU64` counters (0.13, plan 155). Built on `Driver<E>: Send + Sync` — each shard owns its own dispatcher. See [`docs/sharded.md`](../docs/sharded.md) for the recipe. |
-| **`allocations_per_packet`** *(0.18)* | `pcap,extractors,tracker` | Counting global allocator wrapping `System` — warms up a bare driver, then measures steady-state allocs/packet to verify the zero-allocation claim. Run `--release`. |
+| **`allocations_per_packet`** *(0.18)* | `pcap,extractors,tracker` | Counting global allocator wrapping `System` — warms up a bare driver, then prints allocs/packet over a replayed capture (the steady-state gate itself is `tests/alloc_steady_state.rs`). Run `--release`. |
 
 ## 09 — reassembly / low-level
 
@@ -197,8 +197,9 @@ so the generation logic stays close to the fixtures.
   pipelines; the
   [`00-getting-started/unified_driver_demo.rs`](./00-getting-started/unified_driver_demo.rs)
   example showcases it. Register one session/datagram slot per
-  protocol. The per-parser `FlowSessionDriver` / `FlowDatagramDriver`
-  types were removed in 0.20 (#99); the legacy closed-`M`
+  protocol. For one parser with an ordered event stream use
+  `flowscope::session::SessionDriver` / `DatagramDriver` (public again
+  since 0.25; both run the same engine); the legacy closed-`M`
   `Driver<E, M>` and `FlowMultiSessionDriver` types were removed in
   plan 121 (0.11.0).
 - For the highest-level common-case demos (TLS / QUIC / SMB

@@ -19,8 +19,16 @@ pub struct Transition {
     pub became_established: bool,
 }
 
-/// Compute the next state.
-pub fn transition(state: FlowState, flags: TcpFlags, side: FlowSide) -> Transition {
+/// Compute the next state. `other_side_fin` says whether the *other*
+/// side has already sent a FIN: a FIN only moves `FinWait` on to
+/// `ClosingTcp` when both sides have sent one, so a retransmitted FIN
+/// from the side that closed first no longer ends the flow early.
+pub fn transition(
+    state: FlowState,
+    flags: TcpFlags,
+    side: FlowSide,
+    other_side_fin: bool,
+) -> Transition {
     // RST forces immediate Reset regardless of state.
     if flags.contains(TcpFlags::RST) {
         return Transition {
@@ -49,7 +57,9 @@ pub fn transition(state: FlowState, flags: TcpFlags, side: FlowSide) -> Transiti
 
         // FIN from either side starts the close sequence.
         (FlowState::Established, _, f) if f.contains(TcpFlags::FIN) => FlowState::FinWait,
-        (FlowState::FinWait, _, f) if f.contains(TcpFlags::FIN) => FlowState::ClosingTcp,
+        (FlowState::FinWait, _, f) if f.contains(TcpFlags::FIN) && other_side_fin => {
+            FlowState::ClosingTcp
+        }
 
         // Final ACK closes the connection.
         (FlowState::ClosingTcp, _, f) if f.contains(TcpFlags::ACK) => FlowState::Closed,
@@ -84,58 +94,78 @@ mod tests {
 
     #[test]
     fn three_way_handshake() {
-        let t1 = transition(FlowState::Active, syn(), FlowSide::Initiator);
+        let t1 = transition(FlowState::Active, syn(), FlowSide::Initiator, false);
         assert_eq!(t1.state, FlowState::SynSent);
         assert!(!t1.became_established);
 
-        let t2 = transition(t1.state, syn_ack(), FlowSide::Responder);
+        let t2 = transition(t1.state, syn_ack(), FlowSide::Responder, false);
         assert_eq!(t2.state, FlowState::SynReceived);
         assert!(!t2.became_established);
 
-        let t3 = transition(t2.state, ack(), FlowSide::Initiator);
+        let t3 = transition(t2.state, ack(), FlowSide::Initiator, false);
         assert_eq!(t3.state, FlowState::Established);
         assert!(t3.became_established);
     }
 
     #[test]
     fn graceful_close() {
-        let t1 = transition(FlowState::Established, fin_ack(), FlowSide::Initiator);
+        let t1 = transition(
+            FlowState::Established,
+            fin_ack(),
+            FlowSide::Initiator,
+            false,
+        );
         assert_eq!(t1.state, FlowState::FinWait);
 
-        let t2 = transition(t1.state, fin_ack(), FlowSide::Responder);
+        let t2 = transition(t1.state, fin_ack(), FlowSide::Responder, true);
         assert_eq!(t2.state, FlowState::ClosingTcp);
 
-        let t3 = transition(t2.state, ack(), FlowSide::Initiator);
+        let t3 = transition(t2.state, ack(), FlowSide::Initiator, false);
         assert_eq!(t3.state, FlowState::Closed);
+    }
+
+    /// Issue #196: a retransmitted FIN from the side that closed first
+    /// must not advance the close.
+    #[test]
+    fn retransmitted_fin_does_not_close() {
+        let t1 = transition(
+            FlowState::Established,
+            fin_ack(),
+            FlowSide::Initiator,
+            false,
+        );
+        assert_eq!(t1.state, FlowState::FinWait);
+        let t2 = transition(t1.state, fin_ack(), FlowSide::Initiator, false);
+        assert_eq!(t2.state, FlowState::FinWait);
     }
 
     #[test]
     fn rst_in_any_state() {
         let rst = TcpFlags::RST;
-        let t1 = transition(FlowState::Established, rst, FlowSide::Initiator);
+        let t1 = transition(FlowState::Established, rst, FlowSide::Initiator, false);
         assert_eq!(t1.state, FlowState::Reset);
 
-        let t2 = transition(FlowState::SynSent, rst, FlowSide::Responder);
+        let t2 = transition(FlowState::SynSent, rst, FlowSide::Responder, false);
         assert_eq!(t2.state, FlowState::Reset);
     }
 
     #[test]
     fn unknown_packet_in_active_no_transition() {
         // Pure ACK on a non-TCP-tracked flow — stay in Active.
-        let t = transition(FlowState::Active, ack(), FlowSide::Responder);
+        let t = transition(FlowState::Active, ack(), FlowSide::Responder, false);
         assert_eq!(t.state, FlowState::Active);
     }
 
     #[test]
     fn syn_retransmit_doesnt_advance() {
-        let t = transition(FlowState::SynSent, syn(), FlowSide::Initiator);
+        let t = transition(FlowState::SynSent, syn(), FlowSide::Initiator, false);
         assert_eq!(t.state, FlowState::SynSent);
     }
 
     #[test]
     fn established_data_stays_established() {
         let psh_ack = TcpFlags::PSH | TcpFlags::ACK;
-        let t = transition(FlowState::Established, psh_ack, FlowSide::Initiator);
+        let t = transition(FlowState::Established, psh_ack, FlowSide::Initiator, false);
         assert_eq!(t.state, FlowState::Established);
         assert!(!t.became_established);
     }

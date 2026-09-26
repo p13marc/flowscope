@@ -4,7 +4,7 @@ use std::net::SocketAddr;
 
 use super::parse::{self, ParsedL4};
 use crate::{
-    extractor::{Extracted, FlowExtractor, L4Proto, Orientation, TcpInfo},
+    extractor::{Extracted, FlowExtractor, L4Meta, L4Proto, Orientation, TcpInfo},
     view::PacketView,
 };
 
@@ -357,7 +357,7 @@ pub(crate) fn extract_from_parsed(
     bidirectional: bool,
 ) -> Option<Extracted<FiveTupleKey>> {
     let ip = parsed.ip?;
-    let (src_port, dst_port, l4, tcp_info) = match parsed.l4 {
+    let (src_port, dst_port, l4, tcp_info, meta) = match parsed.l4 {
         Some(ParsedL4::Tcp(t)) => (
             t.src_port,
             t.dst_port,
@@ -370,18 +370,35 @@ pub(crate) fn extract_from_parsed(
                 payload_len: t.payload_len,
                 window: t.window,
             }),
+            L4Meta::new(
+                Some((t.src_port, t.dst_port)),
+                t.payload_offset,
+                t.payload_len,
+            ),
         ),
-        Some(ParsedL4::Udp(u)) => (u.src_port, u.dst_port, L4Proto::Udp, None),
+        Some(ParsedL4::Udp(u)) => (
+            u.src_port,
+            u.dst_port,
+            L4Proto::Udp,
+            None,
+            L4Meta::new(
+                Some((u.src_port, u.dst_port)),
+                u.payload_offset,
+                u.payload_len,
+            ),
+        ),
         Some(ParsedL4::Other) | None => {
             // ICMP / ICMPv6 / SCTP / unknown — keep the flow but
-            // ports are unavailable.
+            // ports are unavailable. The "payload" is the whole L4
+            // message (what ICMP datagram parsers read).
             let l4 = match ip.proto {
                 1 => L4Proto::Icmp,
                 58 => L4Proto::IcmpV6,
                 132 => L4Proto::Sctp,
                 p => L4Proto::Other(p),
             };
-            (0u16, 0u16, l4, None)
+            let meta = L4Meta::new(None, ip.l4_offset, ip.l4_payload.len());
+            (0u16, 0u16, l4, None, meta)
         }
     };
 
@@ -399,6 +416,7 @@ pub(crate) fn extract_from_parsed(
         orientation,
         l4: Some(l4),
         tcp: tcp_info,
+        l4_meta: Some(meta),
     })
 }
 

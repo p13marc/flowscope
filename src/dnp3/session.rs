@@ -128,6 +128,22 @@ impl SessionParser for DnpParser {
         self.resp.extend_from_slice(bytes);
         Self::drain(&mut self.resp, out);
     }
+
+    /// Frames start with `0x05 0x64`: drop the partial frame; the
+    /// drain loop scans for the next start bytes.
+    fn on_gap(
+        &mut self,
+        side: crate::FlowSide,
+        _missing: u64,
+        _ts: Timestamp,
+        _out: &mut Vec<DnpMessage>,
+    ) -> crate::GapResponse {
+        match side {
+            crate::FlowSide::Initiator => self.init.clear(),
+            crate::FlowSide::Responder => self.resp.clear(),
+        }
+        crate::GapResponse::Continue
+    }
 }
 
 #[cfg(test)]
@@ -204,5 +220,24 @@ mod tests {
         p.feed_initiator(&buf, ts(), &mut out);
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].dst_addr, 7);
+    }
+
+    #[test]
+    fn a_gap_resyncs_on_the_next_frame() {
+        let mut p = DnpParser::new();
+        let mut out = Vec::new();
+        let f = build_reset_link_frame(1, 2);
+        p.feed_initiator(&f[..5], Timestamp::default(), &mut out);
+        let r = p.on_gap(
+            crate::FlowSide::Initiator,
+            3,
+            Timestamp::default(),
+            &mut out,
+        );
+        assert_eq!(r, crate::GapResponse::Continue);
+        let mut tail = f[8..].to_vec();
+        tail.extend_from_slice(&f);
+        p.feed_initiator(&tail, Timestamp::default(), &mut out);
+        assert_eq!(out.len(), 1);
     }
 }

@@ -1,30 +1,22 @@
 use std::fs::File;
-use std::io::{BufReader, Read};
+use std::io::{BufRead, BufReader, Read};
 use std::path::Path;
 
-#[cfg(all(feature = "session", feature = "reassembler", feature = "extractors"))]
-use crate::DatagramParser;
-#[cfg(all(feature = "session", feature = "reassembler"))]
-use crate::SessionParser;
-#[cfg(all(feature = "session", feature = "reassembler", feature = "extractors"))]
-use crate::datagram_driver::FlowDatagramDriver;
 #[cfg(all(feature = "session", feature = "reassembler"))]
 use crate::session::SessionEvent;
-#[cfg(all(feature = "session", feature = "reassembler", feature = "extractors"))]
-use crate::session_driver::FlowSessionDriver;
+#[cfg(all(feature = "session", feature = "reassembler"))]
+use crate::session::{DatagramDriver, SessionDriver, TemplateFactory};
 use crate::tracker::FlowEvents;
+#[cfg(all(feature = "session", feature = "reassembler"))]
+use crate::{DatagramParser, SessionParser};
 use crate::{FlowEvent, FlowExtractor, FlowTracker, Timestamp};
 
-use pcap_file::pcap::PcapReader;
+use super::reader::{CaptureFormat, CaptureReader};
 
-use crate::error::{Error, Module};
-
-/// A pcap-backed source of [`crate::PacketView`]s.
-///
-/// Wraps [`PcapReader`] from `pcap-file` and exposes ergonomic
-/// iterators that hand off to `netring-flow`.
+/// A capture-file source of [`crate::PacketView`]s — classic pcap
+/// or pcapng, detected automatically (see [`CaptureReader`]).
 pub struct PcapFlowSource<R: Read> {
-    reader: PcapReader<R>,
+    reader: CaptureReader<R>,
     /// Pace replay at `speed_factor × real-time` between
     /// consecutive packets. `None` (default) = as-fast-as-possible.
     /// Plan 152 (0.13).
@@ -32,26 +24,29 @@ pub struct PcapFlowSource<R: Read> {
 }
 
 impl PcapFlowSource<BufReader<File>> {
-    /// Open a pcap file from disk.
+    /// Open a pcap or pcapng file from disk.
     pub fn open(path: impl AsRef<Path>) -> crate::Result<Self> {
-        let file = File::open(path).map_err(|e| Error::io(Module::Pcap, e))?;
-        let reader = PcapReader::new(BufReader::new(file))
-            .map_err(|e| Error::parse_with(Module::Pcap, "invalid pcap header", e))?;
         Ok(Self {
-            reader,
+            reader: CaptureReader::open(path)?,
+            speed_factor: None,
+        })
+    }
+}
+
+impl<R: BufRead> PcapFlowSource<R> {
+    /// Wrap any buffered reader (e.g. `Cursor<&[u8]>` for tests).
+    pub fn from_reader(reader: R) -> crate::Result<Self> {
+        Ok(Self {
+            reader: CaptureReader::new(reader)?,
             speed_factor: None,
         })
     }
 }
 
 impl<R: Read> PcapFlowSource<R> {
-    /// Wrap any `Read` (e.g., `Cursor<&[u8]>` for tests).
-    pub fn from_reader(reader: R) -> crate::Result<Self> {
-        Ok(Self {
-            reader: PcapReader::new(reader)
-                .map_err(|e| Error::parse_with(Module::Pcap, "invalid pcap header", e))?,
-            speed_factor: None,
-        })
+    /// The detected capture format.
+    pub fn format(&self) -> CaptureFormat {
+        self.reader.format()
     }
 
     /// Pace packet emission at `factor × real-time`.
@@ -99,6 +94,7 @@ impl<R: Read> PcapFlowSource<R> {
     pub fn views(self) -> ViewIter<R> {
         ViewIter {
             reader: self.reader,
+            unsupported: 0,
             speed_factor: self.speed_factor,
             prev_pcap_ts: None,
         }
@@ -144,15 +140,14 @@ impl<R: Read> PcapFlowSource<R> {
         }
     }
 
-    /// Crate-internal one-step offline TCP-session pipeline: every
-    /// packet flows through `extractor` + a per-flow `parser`,
-    /// yielding the engine's `SessionEvent`s. The end-of-input flush
-    /// is automatic. The per-parser `*_from_pcap` helpers and
-    /// [`crate::pcap::session_messages`] are built on this; the
-    /// public offline surfaces are those helpers and
-    /// [`crate::driver::Driver::run_pcap`] (#100, 0.20).
+    /// One-step offline TCP-session pipeline: every packet flows
+    /// through `extractor` + a per-flow clone of `parser`
+    /// ([`SessionDriver`]), yielding its [`SessionEvent`]s. The
+    /// end-of-input flush is automatic. The per-parser
+    /// `*_from_pcap` helpers and [`crate::pcap::session_messages`] are
+    /// built on this.
     #[cfg(all(feature = "session", feature = "reassembler"))]
-    pub(crate) fn sessions<E, P>(self, extractor: E, parser: P) -> SessionIter<R, E, P>
+    pub fn sessions<E, P>(self, extractor: E, parser: P) -> SessionIter<R, E, P>
     where
         E: FlowExtractor,
         E::Key: std::hash::Hash + Eq + Clone + Send + Sync + 'static,
@@ -160,18 +155,16 @@ impl<R: Read> PcapFlowSource<R> {
     {
         SessionIter {
             views: self.views(),
-            driver: FlowSessionDriver::new(extractor, parser),
+            driver: SessionDriver::new(extractor, TemplateFactory(parser)),
             pending: std::collections::VecDeque::new(),
             finished: false,
         }
     }
 
-    /// Crate-internal one-step offline UDP-datagram pipeline — the
-    /// [`DatagramParser`] mirror of [`Self::sessions`]. Backs
-    /// [`crate::pcap::datagram_messages`] and the per-parser
-    /// datagram `*_from_pcap` helpers.
-    #[cfg(all(feature = "session", feature = "reassembler", feature = "extractors"))]
-    pub(crate) fn datagrams<E, P>(self, extractor: E, parser: P) -> DatagramIter<R, E, P>
+    /// One-step offline UDP-datagram pipeline — the
+    /// [`DatagramParser`] mirror of [`Self::sessions`].
+    #[cfg(all(feature = "session", feature = "reassembler"))]
+    pub fn datagrams<E, P>(self, extractor: E, parser: P) -> DatagramIter<R, E, P>
     where
         E: FlowExtractor,
         E::Key: std::hash::Hash + Eq + Clone + Send + Sync + 'static,
@@ -179,7 +172,7 @@ impl<R: Read> PcapFlowSource<R> {
     {
         DatagramIter {
             views: self.views(),
-            driver: FlowDatagramDriver::new(extractor, parser),
+            driver: DatagramDriver::new(extractor, TemplateFactory(parser)),
             pending: std::collections::VecDeque::new(),
             finished: false,
         }
@@ -189,11 +182,18 @@ impl<R: Read> PcapFlowSource<R> {
 pub use crate::view::OwnedPacketView;
 
 /// Iterator yielding `crate::Result<OwnedPacketView>`.
+///
+/// Every packet is normalised to Ethernet
+/// ([`CapturedPacket::into_ethernet`](super::CapturedPacket::into_ethernet)):
+/// Linux cooked, raw-IP and loopback captures work like Ethernet
+/// ones. Packets of other link types are skipped and counted
+/// ([`Self::unsupported`]).
 pub struct ViewIter<R: Read> {
-    reader: PcapReader<R>,
+    reader: CaptureReader<R>,
+    unsupported: u64,
     /// `Some(factor)` paces replay; `None` = as-fast-as-possible.
     speed_factor: Option<f64>,
-    /// pcap timestamp of the previously-emitted packet, used to
+    /// Capture timestamp of the previously-emitted packet, used to
     /// compute inter-arrival sleeps when `speed_factor.is_some()`.
     prev_pcap_ts: Option<std::time::Duration>,
 }
@@ -202,34 +202,41 @@ impl<R: Read> Iterator for ViewIter<R> {
     type Item = crate::Result<OwnedPacketView>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let pkt = self.reader.next_packet()?;
-        match pkt {
-            Ok(p) => {
-                // Plan 152: pace emission via std::thread::sleep
-                // when speed_factor is set.
-                if let Some(factor) = self.speed_factor
-                    && factor.is_finite()
-                {
-                    if let Some(prev) = self.prev_pcap_ts {
-                        let dt = p.timestamp.saturating_sub(prev);
-                        // Divide by factor; INFINITY case is
-                        // excluded by .is_finite() above.
-                        let nanos = (dt.as_nanos() as f64 / factor) as u64;
-                        if nanos > 0 {
-                            std::thread::sleep(std::time::Duration::from_nanos(nanos));
-                        }
-                    }
-                    self.prev_pcap_ts = Some(p.timestamp);
-                }
-                let ts = Timestamp::new(p.timestamp.as_secs() as u32, p.timestamp.subsec_nanos());
-                Some(Ok(OwnedPacketView::new(p.data.into_owned(), ts)))
+        let (timestamp, frame) = loop {
+            let p = match self.reader.next_packet()? {
+                Ok(p) => p,
+                Err(e) => return Some(Err(e)),
+            };
+            let timestamp = p.timestamp;
+            match p.into_ethernet() {
+                Ok(frame) => break (timestamp, frame),
+                Err(_) => self.unsupported += 1,
             }
-            Err(e) => Some(Err(Error::parse_with(
-                Module::Pcap,
-                "malformed pcap record",
-                e,
-            ))),
+        };
+        // Plan 152: pace emission via std::thread::sleep when
+        // speed_factor is set.
+        if let Some(factor) = self.speed_factor
+            && factor.is_finite()
+        {
+            if let Some(prev) = self.prev_pcap_ts {
+                let dt = timestamp.saturating_sub(prev);
+                let nanos = (dt.as_nanos() as f64 / factor) as u64;
+                if nanos > 0 {
+                    std::thread::sleep(std::time::Duration::from_nanos(nanos));
+                }
+            }
+            self.prev_pcap_ts = Some(timestamp);
         }
+        let ts = Timestamp::new(timestamp.as_secs() as u32, timestamp.subsec_nanos());
+        Some(Ok(OwnedPacketView::new(frame, ts)))
+    }
+}
+
+impl<R: Read> ViewIter<R> {
+    /// Packets skipped so far because their link type cannot be
+    /// turned into Ethernet.
+    pub fn unsupported(&self) -> u64 {
+        self.unsupported
     }
 }
 
@@ -291,18 +298,18 @@ where
 
 /// Iterator yielding `crate::Result<SessionEvent<E::Key, P::Message>>`.
 ///
-/// Produced by [`PcapFlowSource::sessions`]. Drives an internal
-/// [`FlowSessionDriver`] over the pcap stream; after the pcap is
-/// exhausted, one `finish()` flushes every still-open flow.
+/// Produced by [`PcapFlowSource::sessions`]. Drives a
+/// [`SessionDriver`] over the capture; after the file is exhausted,
+/// one `finish()` flushes every still-open flow.
 #[cfg(all(feature = "session", feature = "reassembler"))]
-pub(crate) struct SessionIter<R: Read, E, P>
+pub struct SessionIter<R: Read, E, P>
 where
     E: FlowExtractor,
     E::Key: std::hash::Hash + Eq + Clone + Send + Sync + 'static,
     P: SessionParser + Clone + Send + Sync + 'static,
 {
     views: ViewIter<R>,
-    driver: FlowSessionDriver<E, P>,
+    driver: SessionDriver<E, TemplateFactory<P>>,
     pending: std::collections::VecDeque<SessionEvent<E::Key, P::Message>>,
     finished: bool,
 }
@@ -346,20 +353,20 @@ where
 ///
 /// Produced by [`PcapFlowSource::datagrams`] — the UDP mirror of
 /// [`SessionIter`].
-#[cfg(all(feature = "session", feature = "reassembler", feature = "extractors"))]
-pub(crate) struct DatagramIter<R: Read, E, P>
+#[cfg(all(feature = "session", feature = "reassembler"))]
+pub struct DatagramIter<R: Read, E, P>
 where
     E: FlowExtractor,
     E::Key: std::hash::Hash + Eq + Clone + Send + Sync + 'static,
     P: DatagramParser + Clone + Send + Sync + 'static,
 {
     views: ViewIter<R>,
-    driver: FlowDatagramDriver<E, P>,
+    driver: DatagramDriver<E, TemplateFactory<P>>,
     pending: std::collections::VecDeque<SessionEvent<E::Key, P::Message>>,
     finished: bool,
 }
 
-#[cfg(all(feature = "session", feature = "reassembler", feature = "extractors"))]
+#[cfg(all(feature = "session", feature = "reassembler"))]
 impl<R: Read, E, P> Iterator for DatagramIter<R, E, P>
 where
     E: FlowExtractor,

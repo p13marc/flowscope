@@ -1,0 +1,18 @@
+[package]
+name = "flowscope-compat"
+version = "0.0.0"
+edition = "2024"
+publish = false
+description = "Comparison harness: this tree's flowscope against the released 0.24.1"
+
+# Not a member of the flowscope package; run from this directory:
+#   CARGO_TARGET_DIR=... cargo test --release
+#   CARGO_TARGET_DIR=... cargo run --release --bin compat-bench
+[workspace]
+
+[dependencies]
+new = { package = "flowscope", path = "..", default-features = false, features = ["extractors", "tracker", "reassembler", "session"] }
+old = { package = "flowscope", version = "=0.24.1", default-features = false, features = ["extractors", "tracker", "reassembler", "session"] }
+
+[profile.release]
+debug = 1

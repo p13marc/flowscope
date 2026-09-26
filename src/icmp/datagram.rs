@@ -54,6 +54,11 @@ impl IcmpParser {
 impl DatagramParser for IcmpParser {
     type Message = IcmpMessage;
 
+    /// ICMPv4 and ICMPv6 messages only — never UDP payloads.
+    fn transports(&self) -> crate::session::Transports {
+        crate::session::Transports::ICMP_ANY
+    }
+
     fn parse(
         &mut self,
         payload: &[u8],

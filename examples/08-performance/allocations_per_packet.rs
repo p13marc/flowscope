@@ -1,30 +1,28 @@
-//! Verify the "0.000 allocs/packet in steady state" claim.
+//! Count allocations per packet on a bare [`Driver`].
 //!
 //! Wraps `std::alloc::System` with a counting allocator,
 //! warms up a [`Driver`]-based pipeline, then measures the
 //! incremental allocation count over a hot loop. Prints
 //! the warmup → steady-state delta.
 //!
-//! ## How the claim holds
+//! ## What is claimed, and where it is measured
 //!
-//! Plan 119 (0.11.0) moved `Driver<E>` to a typed-slot drain
-//! shape that avoids per-packet `Vec::new()`. Plan 122 (0.12.0)
-//! moved `SlotHandle` to a lock-free
-//! `Arc<crossbeam_queue::SegQueue>` for cross-thread fan-out.
-//! Together they make the **bare driver** steady-state path
-//! zero-allocation once the reassembly / hashmap structures
-//! are sized.
+//! The authoritative gate is `tests/alloc_steady_state.rs`: in-order
+//! request/response TCP through the typed `Driver` and
+//! `SessionDriver`, after warm-up, allocates **0 heap blocks per
+//! packet**, and a sweep that ends nothing allocates 0 too (in-order
+//! payload goes to parsers straight from the frame; scratch buffers
+//! are reused). The `compat/` harness compares whole scenarios
+//! against flowscope 0.24.1.
 //!
-//! L7 parsers (HTTP / TLS / DNS) intentionally allocate per
-//! message — they Arc-clone shared `Bytes` slices into the
-//! emitted typed messages so the parser-side owns them past
-//! the borrow window. So the "0 allocs/packet" applies to
-//! pure tracker / driver throughput, not to a full
-//! HTTP-parsed pipeline.
+//! Allocations remain per new flow (flow-table entry, parser), per
+//! out-of-order segment held, and for whatever L7 parsers and slot
+//! queues allocate (HTTP / TLS / DNS messages own their data). This
+//! example replays a real capture in a loop, so repeated packets are
+//! retransmits / new flows to the tracker and the number it prints is
+//! an upper bound for that capture, not the steady-state gate.
 //!
-//! See `docs/performance.md` and `benches/extractor.rs` for
-//! the criterion-gated numbers (`bench_extract_*` is the
-//! one-extractor steady-state measurement).
+//! See `docs/performance.md` for the numbers.
 //!
 //! ## Important
 //!

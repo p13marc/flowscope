@@ -108,36 +108,42 @@ The traits with every method explicit:
 pub trait SessionParser: Send + 'static {
     type Message: Send + std::fmt::Debug + 'static;
 
-    fn feed_initiator(&mut self, bytes: &[u8], ts: Timestamp) -> Vec<Self::Message>;
-    fn feed_responder(&mut self, bytes: &[u8], ts: Timestamp) -> Vec<Self::Message>;
+    fn feed_initiator(&mut self, bytes: &[u8], ts: Timestamp, out: &mut Vec<Self::Message>);
+    fn feed_responder(&mut self, bytes: &[u8], ts: Timestamp, out: &mut Vec<Self::Message>);
 
     // Defaulted hooks — implement only what you need:
-    fn fin_initiator(&mut self) -> Vec<Self::Message> { Vec::new() }
-    fn fin_responder(&mut self) -> Vec<Self::Message> { Vec::new() }
+    fn fin_initiator(&mut self, _out: &mut Vec<Self::Message>) {}
+    fn fin_responder(&mut self, _out: &mut Vec<Self::Message>) {}
     fn rst_initiator(&mut self) {}
     fn rst_responder(&mut self) {}
 
-    fn on_tick(&mut self, _now: Timestamp) -> Vec<Self::Message> { Vec::new() }
+    fn on_tick(&mut self, _now: Timestamp, _out: &mut Vec<Self::Message>) {}
+    fn on_gap(&mut self, _side: FlowSide, _missing: u64, _ts: Timestamp,
+              _out: &mut Vec<Self::Message>) -> GapResponse { GapResponse::StopSide }
 
     fn is_poisoned(&self) -> bool { false }
     fn poison_reason(&self) -> Option<&str> { None }
     fn is_done(&self) -> bool { false }
 
-    fn parser_kind(&self) -> &'static str { "" }
+    fn parser_kind(&self) -> ParserKind { ParserKind::Unspecified }
 }
 ```
 
 | Hook | When you need it |
 |------|------------------|
-| `fin_*` | Protocol with EOF-terminated messages (HTTP `Connection: close`) |
+| `fin_*` | Protocol with EOF-terminated messages (HTTP `Connection: close`). Called at flow end for each side still being read (graceful end, or that side sent a FIN); a side stopped after a gap gets no `fin_*` |
 | `rst_*` | Reset internal state on RST (most parsers ignore) |
 | `on_tick` | Time-driven messages (DNS query timeout, heartbeat detection) |
-| `is_poisoned` | Unrecoverable parse error; driver synthesises `ParseError` close |
-| `is_done` | Successful completion ahead of FIN (HTTP/1.0 body done, DNS-TCP pair complete) |
-| `parser_kind` | Stable slug surfaced on `Event::ParserClosed::parser_kind` (register one slot per parser to route by protocol) |
+| `is_poisoned` | Unrecoverable parse error; the engine closes the parser (`ParseError`) and never feeds it again for that flow |
+| `on_gap` | Bytes missing from the stream. Default `GapResponse::StopSide`: stop feeding that side (`ParserSideStopped`), keep parsing the other. Return `Continue` if you can resynchronise (drop the partial line / frame, resume at the next boundary — FTP, SMTP, HTTP/1, DNP3, SMB and Modbus do), or `Stop` to close the parser (`StreamGap`) when state spans both directions (HTTP/2) |
+| `is_done` | Successful completion ahead of FIN, for protocols that end after a known exchange (not connection-reused ones like DNS-over-TCP, whose later pairs would be lost) |
+| `parser_kind` | Stable `ParserKind` surfaced on `Event::ParserClosed` / `ParserSideStopped` and as a metric label (the events also carry the registering slot's `SlotId`, so two slots of the same kind stay distinguishable) |
 
 `DatagramParser` mirrors the same shape with `parse(payload,
-side, ts)` instead of `feed_initiator` / `feed_responder`.
+side, ts, out)` instead of `feed_initiator` / `feed_responder`, plus
+`transports()` — the L4 protocols it reads (`Transports::UDP` by
+default; `IcmpParser` declares `ICMP_ANY`). A UDP parser never sees
+ICMP messages and vice versa.
 
 ## Multi-protocol monitoring
 
@@ -183,13 +189,22 @@ vs `SlotHandle<TlsMessage, _>`) — no sum-type enum, no lift
 closures. Slots only see packets matching their port routing;
 `session_broadcast(p)` / `datagram_broadcast(p)` registers
 parsers that fire on every flow (use for ICMP or
-heuristic-routed parsers).
+heuristic-routed parsers). A datagram slot only receives the
+transports its parser declares (`DatagramParser::transports()`):
+a broadcast UDP parser never sees ICMP, and `IcmpParser` never sees
+UDP payloads. Parsers that need the flow key to be built register
+a factory instead of a `Clone` template:
+`session_factory_on_ports` / `session_factory_broadcast` /
+`datagram_factory_on_ports` / `datagram_factory_broadcast`.
 
 `session_heuristic(p, signature_fn)` / `datagram_heuristic` —
 introduced via `flowscope::detect::signatures` — runs the
-signature against each new flow's initial bytes; pins to the
-parser when it matches, gives up after the configured probe
-budget. Useful for non-standard ports.
+signature against each flow's initial reassembled bytes (a gap
+seals the prefix it judges; a flow's final bytes are probed too);
+pins to the parser when it matches and replays the probed bytes to
+it, gives up after the configured probe budget
+(`*_heuristic_with_budget`) or a `NoMatch`. Useful for non-standard
+ports.
 
 The typed `Driver` already does single-pass, port-routed
 dispatch: one pcap read, each parser only sees the flows matching
@@ -638,10 +653,13 @@ Two caveats specific to h2:
 - **HPACK is connection-wide.** The parser must be fed every field
   block in order; there is no skipping streams you do not care about.
   A decode failure is fatal to the connection, not to one stream.
-- **Reassembly holes desync HPACK.** With the default
-  `OverflowPolicy::SlidingWindow`, a dropped out-of-order segment
-  will corrupt the dynamic table. For h2 over an unreliable capture,
-  prefer `DropFlow` and treat the flow as lost.
+- **Reassembly holes desync HPACK.** A hole the capture never saw
+  would corrupt the dynamic table, so the engine reports it
+  (`SessionParser::on_gap`) and `Http2Session` answers
+  `GapResponse::Stop`: the parser is closed with `EndReason::StreamGap`
+  rather than decoding garbage (stopping one side would not help —
+  HPACK state spans both directions). Reordered segments are healed by the out-of-order
+  buffer before they become gaps.
 
 ## Buffer-cap pressure on the reassembler
 
@@ -1253,8 +1271,9 @@ for owned in source.views() {
     for ev in &events {
         match ev {
             Event::Started { key, .. } => /* lifecycle */ {}
-            Event::ParserClosed { parser_kind, .. } => /* per-parser close */ {}
-            Event::Ended { key, reason, stats, .. } => /* lifecycle */ {}
+            Event::ParserClosed { parser_kind, .. } => /* parser gave up / finished */ {}
+            Event::ParserSideStopped { side, .. } => /* one side stopped (gap) */ {}
+            Event::Ended { key, reason, stats, .. } => /* lifecycle (transport reason) */ {}
             _ => {}
         }
     }

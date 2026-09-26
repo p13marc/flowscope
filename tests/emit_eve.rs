@@ -163,6 +163,8 @@ fn eve_session_parse_error_classifies_as_applayer() {
         kind: AnomalyKind::SessionParseError {
             side: FlowSide::Responder,
             reason: Some("bad frame".to_string()),
+            parser_kind: flowscope::ParserKind::Unspecified,
+            slot: None,
         },
         ts: Timestamp::new(1_700_000_000, 0),
     };

@@ -192,6 +192,9 @@ enum DirState {
     Closed,
     /// Framing was lost; the direction yields nothing further.
     Desynced,
+    /// Bytes are missing (capture loss): skip ahead to the next
+    /// message head, then parse on.
+    Resync,
 }
 
 /// What the engine remembers about a request while its response is
@@ -305,7 +308,57 @@ impl Engine {
 
     /// Whether a direction will still parse what it is given.
     fn can_consume(&self, dir: Dir) -> bool {
-        matches!(self.dir(dir).state, DirState::Head | DirState::Body(_))
+        matches!(
+            self.dir(dir).state,
+            DirState::Head | DirState::Body(_) | DirState::Resync
+        )
+    }
+
+    /// Bytes are missing from `dir` (a capture gap): drop the message
+    /// in progress and resume at the next request line / status line.
+    /// A tunnelled or closed direction is left alone.
+    pub(crate) fn resync(&mut self, dir: Dir) {
+        let m = self.dir_mut(dir);
+        if matches!(m.state, DirState::Tunnel | DirState::Closed) {
+            return;
+        }
+        m.buf.clear();
+        m.scanned = 0;
+        m.poison = None;
+        m.close_after_message = false;
+        m.state = DirState::Resync;
+    }
+
+    /// In [`DirState::Resync`]: find the next plausible message head
+    /// and restart there. `false` when more bytes are needed.
+    fn find_head(&mut self, dir: Dir) -> bool {
+        let m = self.dir_mut(dir);
+        let buf = &m.buf;
+        let found = std::iter::once(0)
+            .chain(
+                buf.iter()
+                    .enumerate()
+                    .filter(|(_, b)| **b == b'\n')
+                    .map(|(i, _)| i + 1),
+            )
+            .find(|&i| looks_like_head(dir, &buf[i..]));
+        match found {
+            Some(i) => {
+                let _ = m.buf.split_to(i);
+                m.scanned = 0;
+                m.state = DirState::Head;
+                true
+            }
+            None => {
+                // Keep a possible partial line start; drop the rest.
+                let keep = buf.iter().rposition(|b| *b == b'\n').map_or(0, |p| p + 1);
+                let _ = m.buf.split_to(keep);
+                if m.buf.len() > 64 {
+                    m.buf.clear();
+                }
+                false
+            }
+        }
     }
 
     pub(crate) fn is_desynced(&self, dir: Dir) -> bool {
@@ -331,6 +384,12 @@ impl Engine {
             let state = self.dir(dir).state.clone();
             match state {
                 DirState::Desynced | DirState::Closed | DirState::Tunnel => return Ok(None),
+                DirState::Resync => {
+                    if self.find_head(dir) {
+                        continue;
+                    }
+                    return Ok(None);
+                }
                 DirState::Head => match self.poll_head(dir)? {
                     Some(ev) => return Ok(Some(ev)),
                     // Head not complete yet.
@@ -1325,6 +1384,26 @@ fn parse_hex(bytes: &[u8]) -> Option<u64> {
     }
     let s = std::str::from_utf8(bytes).ok()?;
     u64::from_str_radix(s, 16).ok()
+}
+
+/// Does `line` start like a message head in `dir`: a request line
+/// with a known method, or a status line?
+fn looks_like_head(dir: Dir, line: &[u8]) -> bool {
+    const METHODS: [&[u8]; 9] = [
+        b"GET ",
+        b"POST ",
+        b"PUT ",
+        b"DELETE ",
+        b"HEAD ",
+        b"OPTIONS ",
+        b"PATCH ",
+        b"CONNECT ",
+        b"TRACE ",
+    ];
+    match dir {
+        Dir::Request => METHODS.iter().any(|m| line.starts_with(m)),
+        Dir::Response => line.starts_with(b"HTTP/1."),
+    }
 }
 
 #[cfg(test)]

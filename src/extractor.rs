@@ -40,9 +40,15 @@ pub trait FlowExtractor: Send + Sync + 'static {
 /// Result of extracting one packet.
 ///
 /// `key` identifies the flow. `orientation` says whether `view` was
-/// in the canonical direction or reversed. `l4` and `tcp` carry
-/// pre-parsed protocol data that the tracker and reassembler reuse
-/// without re-parsing.
+/// in the canonical direction or reversed. `l4`, `tcp` and `l4_meta`
+/// carry pre-parsed protocol data that the tracker, the reassemblers
+/// and the session engines reuse without re-parsing.
+///
+/// Offsets in `tcp` and `l4_meta` are relative to the frame the
+/// **outermost** extractor was called with — decap combinators
+/// ([`crate::extract::InnerVxlan`], …) rebase the inner extractor's
+/// offsets with [`Extracted::rebased`], so the tracker can slice the
+/// original frame.
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct Extracted<K> {
@@ -70,10 +76,19 @@ pub struct Extracted<K> {
     /// Built-in extractors fill this for ~zero extra cost; custom
     /// extractors that don't care about TCP can leave it `None`.
     pub tcp: Option<TcpInfo>,
+
+    /// Ports and L4 payload location, when known. The session
+    /// engines use it for port-based slot selection and to hand
+    /// datagram parsers their payload without re-parsing the frame.
+    /// `None` makes them fall back to parsing the frame as plain
+    /// Ethernet (wrong for tunnelled traffic). Built-in extractors
+    /// fill it. New in 0.25.0.
+    pub l4_meta: Option<L4Meta>,
 }
 
 impl<K> Extracted<K> {
-    /// Construct an extraction result.
+    /// Construct an extraction result (no [`L4Meta`]; add it with
+    /// [`Self::with_l4_meta`]).
     pub fn new(
         key: K,
         orientation: Orientation,
@@ -85,7 +100,73 @@ impl<K> Extracted<K> {
             orientation,
             l4,
             tcp,
+            l4_meta: None,
         }
+    }
+
+    /// Attach ports / L4 payload location. New in 0.25.0.
+    pub fn with_l4_meta(mut self, meta: L4Meta) -> Self {
+        self.l4_meta = Some(meta);
+        self
+    }
+
+    /// Shift every frame offset (`tcp.payload_offset`,
+    /// `l4_meta.payload_offset`) by `delta` bytes. Decap combinators
+    /// call this to translate offsets from the inner (or synthetic)
+    /// frame they handed their inner extractor into offsets in the
+    /// frame they were given. An offset that would become negative
+    /// drops the TCP payload / L4 meta rather than pointing at the
+    /// wrong bytes. New in 0.25.0.
+    pub fn rebased(mut self, delta: isize) -> Self {
+        if delta == 0 {
+            return self;
+        }
+        if let Some(t) = self.tcp.as_mut() {
+            match t.payload_offset.checked_add_signed(delta) {
+                Some(o) => t.payload_offset = o,
+                None => t.payload_len = 0,
+            }
+        }
+        if let Some(m) = self.l4_meta.as_mut() {
+            match m.payload_offset.checked_add_signed(delta) {
+                Some(o) => m.payload_offset = o,
+                None => self.l4_meta = None,
+            }
+        }
+        self
+    }
+}
+
+/// Ports and L4 payload location of one packet (see
+/// [`Extracted::l4_meta`]). New in 0.25.0.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct L4Meta {
+    /// `(source, destination)` ports, for TCP / UDP / SCTP.
+    pub ports: Option<(u16, u16)>,
+    /// Offset of the L4 payload in the frame: after the TCP / UDP
+    /// header, or the start of the whole ICMP message.
+    pub payload_offset: usize,
+    /// L4 payload length.
+    pub payload_len: usize,
+}
+
+impl L4Meta {
+    /// Construct.
+    pub fn new(ports: Option<(u16, u16)>, payload_offset: usize, payload_len: usize) -> Self {
+        Self {
+            ports,
+            payload_offset,
+            payload_len,
+        }
+    }
+
+    /// The payload bytes inside `frame` (empty when out of range).
+    pub fn payload<'a>(&self, frame: &'a [u8]) -> &'a [u8] {
+        self.payload_offset
+            .checked_add(self.payload_len)
+            .and_then(|end| frame.get(self.payload_offset..end))
+            .unwrap_or(&[])
     }
 }
 
@@ -348,6 +429,7 @@ mod tests {
                 payload_len: 0,
                 window: 8192,
             }),
+            l4_meta: None,
         };
         let cloned = e.clone();
         assert_eq!(cloned.key, 42);

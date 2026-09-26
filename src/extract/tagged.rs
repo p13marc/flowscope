@@ -180,6 +180,7 @@ where
             orientation: inner.orientation,
             l4: inner.l4,
             tcp: inner.tcp,
+            l4_meta: inner.l4_meta,
         })
     }
 }

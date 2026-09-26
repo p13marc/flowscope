@@ -15,7 +15,7 @@ use smallvec::SmallVec;
 
 use crate::Timestamp;
 use crate::event::{EndReason, EventMask, FlowEvent, FlowSide, FlowState, FlowStats};
-use crate::extractor::{Extracted, FlowExtractor, L4Proto, Orientation, TcpFlags};
+use crate::extractor::{Extracted, FlowExtractor, L4Proto, Orientation, TcpFlags, TcpInfo};
 use crate::history::{HistoryString, push_for_flags};
 use crate::tcp_state;
 use crate::view::PacketView;
@@ -24,6 +24,41 @@ use crate::view::PacketView;
 /// Most packets emit 1–2 events; pathological cases (Started +
 /// Established + Packet) emit 3.
 pub type FlowEvents<K> = SmallVec<[FlowEvent<K>; 3]>;
+
+/// Per-packet context handed to [`FlowTracker::track_with`]'s
+/// callback. Borrowed from the packet being tracked.
+#[derive(Debug, Clone, Copy)]
+#[non_exhaustive]
+pub struct PacketContext<'a, K> {
+    /// The flow this packet belongs to.
+    pub key: &'a K,
+    /// Logical side of the flow that sent this packet.
+    pub side: FlowSide,
+    /// Canonical (address-sorted) direction of this packet.
+    pub orientation: Orientation,
+    /// L4 protocol, when the extractor identified one.
+    pub l4: Option<L4Proto>,
+    /// Parsed TCP header, for TCP packets.
+    pub tcp: Option<&'a TcpInfo>,
+    /// TCP payload bytes; empty for non-TCP or payload-less packets.
+    pub tcp_payload: &'a [u8],
+    /// `(source, destination)` ports, when the extractor reported
+    /// them ([`crate::Extracted::l4_meta`]). New in 0.25.0.
+    pub ports: Option<(u16, u16)>,
+    /// L4 payload (UDP payload, TCP payload, or the whole ICMP
+    /// message), when the extractor reported its location. New in
+    /// 0.25.0.
+    pub l4_payload: Option<&'a [u8]>,
+    /// Packet timestamp (after any driver-side clamping).
+    pub ts: Timestamp,
+    /// Frame length in bytes.
+    pub len: usize,
+    /// `true` when this packet created the flow.
+    pub is_new: bool,
+    /// The extractor's [`crate::L4Meta`], offsets into the tracked
+    /// frame. New in 0.25.0.
+    pub l4_meta: Option<crate::L4Meta>,
+}
 
 /// Snapshot of one live flow returned by [`FlowTracker::iter_active`].
 ///
@@ -80,6 +115,17 @@ impl<S> FlowEntry<S> {
     }
 }
 
+/// Default [`FlowTrackerConfig::reassembly_max_ahead`]: how far
+/// ahead of the expected sequence number a segment may start and
+/// still be believed.
+pub const DEFAULT_MAX_AHEAD: u64 = 1024 * 1024;
+
+/// Default [`FlowTrackerConfig::reassembly_ack_grace`]: how long a
+/// hole the peer has already acknowledged is still waited for
+/// (capture reordering between the two directions) before it is
+/// skipped.
+pub const DEFAULT_ACK_GRACE: Duration = Duration::from_millis(10);
+
 /// Tracker configuration. Defaults follow Suricata's normal-mode values.
 ///
 /// `#[non_exhaustive]` to keep future additions purely additive.
@@ -93,13 +139,19 @@ pub struct FlowTrackerConfig {
     pub idle_timeout_other: Duration,
     pub max_flows: usize,
     pub initial_capacity: usize,
-    /// Sweep interval used by async adapters (the sync API doesn't
-    /// auto-sweep — call [`FlowTracker::sweep`] yourself).
+    /// Timer cadence hint for async adapters that sweep on a
+    /// wall-clock interval (netring). Nothing in this crate reads it:
+    /// synchronous callers either call [`FlowTracker::sweep`]
+    /// themselves or set [`auto_sweep_interval`](Self::auto_sweep_interval),
+    /// which [`FlowTracker`], [`crate::FlowDriver`] and the session
+    /// engines (typed `Driver`, `SessionDriver`, `DatagramDriver`)
+    /// honour on packet time.
     pub sweep_interval: Duration,
-    /// Hint to the default [`crate::BufferedReassemblerFactory`] when
-    /// it's used via [`crate::FlowDriver`]. The tracker itself owns
-    /// no reassemblers; custom `ReassemblerFactory` impls must read
-    /// this and honour it themselves.
+    /// Per-side cap on bytes buffered in order but not yet drained.
+    /// The tracker itself owns no reassemblers: drivers hand this to
+    /// their factory through
+    /// [`crate::ReassemblerFactory::apply_config`] (the built-in
+    /// factories honour it; custom factories may).
     ///
     /// Default `Some(1 MiB)` per side. `None` means unbounded, which
     /// is only safe when you control the traffic: a single flow whose
@@ -110,7 +162,8 @@ pub struct FlowTrackerConfig {
     /// survives a breach — the oldest bytes are dropped and
     /// [`FlowStats::reassembly_bytes_dropped_oversize_initiator`] /
     /// `_responder` record how many, so truncation is visible rather
-    /// than silent.
+    /// than silent. The dropped bytes reach parsers as a gap
+    /// ([`crate::SessionParser::on_gap`]).
     ///
     /// Changed from `None` in 0.23 (issue #188).
     ///
@@ -162,6 +215,41 @@ pub struct FlowTrackerConfig {
     ///
     /// Issue #17 (0.18 close).
     pub tcp_overlap_policy: crate::event::TcpOverlapPolicy,
+    /// Per-side cap on bytes held out of order while waiting for a
+    /// hole to fill, used by the default session-engine reassembler
+    /// ([`crate::SegmentBufferReassembler`]). When the cap is hit the
+    /// oldest hole is skipped and reported as a gap — data is never
+    /// discarded to make room. `0` disables out-of-order buffering
+    /// (every hole is skipped immediately).
+    ///
+    /// Default 256 KiB. New in 0.25.0.
+    pub reassembly_ooo_buffer: usize,
+    /// How long a stream may make no progress (in packet time) with a
+    /// hole open before the hole is skipped and reported as a gap —
+    /// when at least two out-of-order segments or an ACK corroborate
+    /// the hole; four times as long otherwise. Checked on every
+    /// segment of the side and on every sweep.
+    ///
+    /// Default 1 s. New in 0.25.0.
+    pub reassembly_ooo_deadline: Duration,
+    /// How far (bytes) ahead of the expected sequence number a TCP
+    /// segment may start and still be believed on its own. A segment
+    /// further ahead — a stray from an earlier connection on the same
+    /// ports, an injected segment — is dropped
+    /// ([`crate::AnomalyKind::OutOfWindowSegment`]) unless a second
+    /// segment or an ACK corroborates it (massive capture loss), in
+    /// which case the stream resyncs with a gap.
+    ///
+    /// Default 1 MiB. New in 0.25.0.
+    pub reassembly_max_ahead: u64,
+    /// How long (packet time) a hole the peer has already
+    /// acknowledged is still waited for before it is skipped. The
+    /// receiver got those bytes, so the capture lost them; the grace
+    /// only covers reordering between the two directions in the
+    /// capture.
+    ///
+    /// Default 10 ms. New in 0.25.0.
+    pub reassembly_ack_grace: Duration,
     /// Tracker-wide reassembly memcap — total bytes of
     /// reassembly buffering across every live flow. When the
     /// running sum trips this cap on a `track` call, the
@@ -195,7 +283,10 @@ pub struct FlowTrackerConfig {
     /// is never *constructed* by the tracker (or by drivers that
     /// honour the mask) — most usefully [`EventMask::PACKET`], the
     /// highest-volume variant. Accounting keeps running, so flows
-    /// still finalize correctly; only emission is shed.
+    /// still finalize correctly; only emission is shed. Under a
+    /// [`crate::FlowDriver`] (and every engine built on it) masking
+    /// `ENDED` is safe too: the driver still builds each `Ended`
+    /// internally and releases the flow's reassemblers and parsers.
     ///
     /// Default [`EventMask::empty()`] — suppresses nothing. Set via
     /// [`Self::with_event_filter`]. For a *total*, episodic shed see
@@ -257,6 +348,10 @@ impl Default for FlowTrackerConfig {
             flow_tick_interval: None,
             auto_sweep_interval: None,
             tcp_overlap_policy: crate::event::TcpOverlapPolicy::First,
+            reassembly_ooo_buffer: 256 * 1024,
+            reassembly_ooo_deadline: Duration::from_secs(1),
+            reassembly_max_ahead: DEFAULT_MAX_AHEAD,
+            reassembly_ack_grace: DEFAULT_ACK_GRACE,
             reassembly_memcap: None,
             reassembly_memcap_policy: crate::event::MemcapPolicy::Ignore,
             active_idle_threshold: Some(Duration::from_secs(1)),
@@ -348,6 +443,14 @@ pub struct FlowTracker<E: FlowExtractor, S = ()> {
     /// [`Self::pause_events`] / [`Self::resume_events`]; orthogonal
     /// to the per-variant [`FlowTrackerConfig::suppress_events`] mask.
     events_paused: bool,
+    /// Owned by a driver ([`crate::FlowDriver`]): `Ended` is always
+    /// built (the driver needs it to release per-flow state; it
+    /// applies the mask / pause to its own output) and the driver
+    /// runs auto-sweeps itself.
+    driver_owned: bool,
+    /// Flows removed by [`Self::forget`] (no `Ended`), so a driver
+    /// can tell its per-flow state went stale.
+    forgotten: u64,
 }
 
 impl<E: FlowExtractor, S: Send + 'static> FlowTracker<E, S> {
@@ -376,7 +479,34 @@ impl<E: FlowExtractor, S: Send + 'static> FlowTracker<E, S> {
             idle_timeout_fn: None,
             last_sweep_ts: None,
             events_paused: false,
+            driver_owned: false,
+            forgotten: 0,
         }
+    }
+
+    /// Hand event gating and auto-sweeps to the owning driver (see
+    /// the `driver_owned` field).
+    #[cfg(feature = "reassembler")]
+    pub(crate) fn set_driver_owned(&mut self, owned: bool) {
+        self.driver_owned = owned;
+    }
+
+    /// Whether an auto-sweep is due at packet time `ts`
+    /// ([`FlowTrackerConfig::auto_sweep_interval`]).
+    pub(crate) fn auto_sweep_due(&self, ts: Timestamp) -> bool {
+        match (self.config.auto_sweep_interval, self.last_sweep_ts) {
+            (None, _) => false,
+            (Some(_), None) => true,
+            (Some(interval), Some(last)) => {
+                ts.to_duration().saturating_sub(last.to_duration()) >= interval
+            }
+        }
+    }
+
+    /// Flows removed by [`Self::forget`] so far.
+    #[cfg(feature = "reassembler")]
+    pub(crate) fn forgotten(&self) -> u64 {
+        self.forgotten
     }
 
     /// Enable packet-clock-driven implicit sweeps.
@@ -440,7 +570,8 @@ impl<E: FlowExtractor, S: Send + 'static> FlowTracker<E, S> {
     /// this so suppressed events are never constructed.
     #[inline]
     fn emits(&self, variant: EventMask) -> bool {
-        !self.events_paused && !self.config.suppress_events.contains(variant)
+        (self.driver_owned && variant == EventMask::ENDED)
+            || (!self.events_paused && !self.config.suppress_events.contains(variant))
     }
 
     /// Process a packet. Returns 0–3 events.
@@ -463,7 +594,8 @@ impl<E: FlowExtractor, S: Send + 'static> FlowTracker<E, S> {
     /// events are returned. Lets sync reassemblers (or any per-segment
     /// dispatch) run inline without a second extract pass.
     ///
-    /// `payload_cb` is called at most once per packet (TCP only).
+    /// `payload_cb` is called at most once per packet (TCP only). See
+    /// [`Self::track_with`] for a hook that fires for every packet.
     pub fn track_with_payload<'v, F>(
         &mut self,
         view: impl Into<PacketView<'v>>,
@@ -471,6 +603,33 @@ impl<E: FlowExtractor, S: Send + 'static> FlowTracker<E, S> {
     ) -> FlowEvents<E::Key>
     where
         F: FnMut(&E::Key, FlowSide, u32, &[u8]),
+    {
+        self.track_with(view, |p| {
+            if let Some(tcp) = p.tcp
+                && !p.tcp_payload.is_empty()
+            {
+                payload_cb(p.key, p.side, tcp.seq, p.tcp_payload);
+            }
+        })
+    }
+
+    /// Process a packet, calling `cb` exactly once for every packet
+    /// that maps to a flow, with the packet's [`PacketContext`]
+    /// (flow key, side, orientation, L4, TCP header, TCP payload).
+    ///
+    /// The callback runs after the flow entry is created or looked up
+    /// and before the flow's counters and TCP state are updated, and
+    /// it fires regardless of which events the tracker is configured
+    /// to emit — which is what makes it the right hook for
+    /// per-packet dispatch: `FlowEvent::Packet` can be shed by
+    /// [`FlowTrackerConfig::suppress_events`], this cannot.
+    pub fn track_with<'v, F>(
+        &mut self,
+        view: impl Into<PacketView<'v>>,
+        mut cb: F,
+    ) -> FlowEvents<E::Key>
+    where
+        F: FnMut(&PacketContext<'_, E::Key>),
     {
         let view: PacketView<'v> = view.into();
         let mut events: FlowEvents<E::Key> = SmallVec::new();
@@ -487,6 +646,7 @@ impl<E: FlowExtractor, S: Send + 'static> FlowTracker<E, S> {
             orientation,
             l4,
             tcp,
+            l4_meta,
         } = extracted;
         let len = view.frame.len();
         let ts = view.timestamp;
@@ -597,7 +757,11 @@ impl<E: FlowExtractor, S: Send + 'static> FlowTracker<E, S> {
         // are `Copy` and can't change within this call.
         let events_paused = self.events_paused;
         let suppress = self.config.suppress_events;
-        let should_emit = |variant: EventMask| !events_paused && !suppress.contains(variant);
+        let driver_owned = self.driver_owned;
+        let should_emit = |variant: EventMask| {
+            (driver_owned && variant == EventMask::ENDED)
+                || (!events_paused && !suppress.contains(variant))
+        };
         let emit_packet_source_idx = self.config.emit_packet_source_idx;
 
         // SAFETY-style invariant: we just ensured the entry exists.
@@ -631,20 +795,31 @@ impl<E: FlowExtractor, S: Send + 'static> FlowTracker<E, S> {
             }
         }
 
-        // ── reassembler dispatch hook ────────────────────────────
-        // Called inline before any events are queued. The callback
-        // sees the same `key` and the current `side`, plus the TCP
-        // sequence number and payload slice. Non-TCP / no-payload
-        // packets skip the call.
-        if let Some(tcp_info) = &tcp
-            && tcp_info.payload_len > 0
-        {
-            let start = tcp_info.payload_offset;
-            let end = start + tcp_info.payload_len;
-            if end <= view.frame.len() {
-                payload_cb(&key, side, tcp_info.seq, &view.frame[start..end]);
+        // ── per-packet hook ──────────────────────────────────────
+        // Called inline before any events are queued, for every
+        // packet that maps to a flow (reassemblers, parser dispatch).
+        let tcp_payload: &[u8] = match &tcp {
+            Some(t) if t.payload_len > 0 => {
+                let start = t.payload_offset;
+                let end = start + t.payload_len;
+                view.frame.get(start..end).unwrap_or(&[])
             }
-        }
+            _ => &[],
+        };
+        cb(&PacketContext {
+            key: &key,
+            side,
+            orientation,
+            l4,
+            tcp: tcp.as_ref(),
+            tcp_payload,
+            ports: l4_meta.and_then(|m| m.ports),
+            l4_payload: l4_meta.map(|m| m.payload(view.frame)),
+            l4_meta,
+            ts,
+            len,
+            is_new,
+        });
 
         // ── update stats ─────────────────────────────────────────
         // Per-direction IAT observation must run BEFORE the
@@ -718,7 +893,17 @@ impl<E: FlowExtractor, S: Send + 'static> FlowTracker<E, S> {
                 tcp_info.payload_len > 0,
             );
             let prev_state = entry.state;
-            let trans = tcp_state::transition(prev_state, tcp_info.flags, side);
+            let other_side_fin = match side {
+                FlowSide::Initiator => entry.stats.fin_responder,
+                FlowSide::Responder => entry.stats.fin_initiator,
+            };
+            if tcp_info.flags.contains(TcpFlags::FIN) {
+                match side {
+                    FlowSide::Initiator => entry.stats.fin_initiator = true,
+                    FlowSide::Responder => entry.stats.fin_responder = true,
+                }
+            }
+            let trans = tcp_state::transition(prev_state, tcp_info.flags, side, other_side_fin);
             if trans.state != prev_state {
                 entry.state = trans.state;
                 if trans.became_established {
@@ -795,15 +980,11 @@ impl<E: FlowExtractor, S: Send + 'static> FlowTracker<E, S> {
         // time has elapsed since the last sweep, run one now and
         // merge its events. Saturating arithmetic guards against
         // out-of-order timestamps.
-        if let Some(interval) = self.config.auto_sweep_interval {
-            let should_sweep = match self.last_sweep_ts {
-                None => true,
-                Some(last) => ts.to_duration().saturating_sub(last.to_duration()) >= interval,
-            };
-            if should_sweep {
-                let swept = self.sweep(ts);
-                events.extend(swept);
-            }
+        // A driver-owned tracker leaves this to the driver, which
+        // must also advance its reassemblers and parsers.
+        if !self.driver_owned && self.auto_sweep_due(ts) {
+            let swept = self.sweep(ts);
+            events.extend(swept);
         }
 
         events
@@ -1038,10 +1219,7 @@ impl<E: FlowExtractor, S: Send + 'static> FlowTracker<E, S> {
     }
 
     /// Snapshot the [`FlowStats`] of a live flow without ending it.
-    /// Returns `None` when the key is unknown. Used by
-    /// [`crate::FlowDriver`] to synthesise an
-    /// `Ended { reason: BufferOverflow }` event when a reassembler
-    /// poisons mid-flow.
+    /// Returns `None` when the key is unknown.
     pub fn snapshot_stats(&self, key: &E::Key) -> Option<FlowStats> {
         self.flows.peek(key).map(|e| e.stats.clone())
     }
@@ -1111,25 +1289,29 @@ impl<E: FlowExtractor, S: Send + 'static> FlowTracker<E, S> {
     }
 
     /// Snapshot the L4 protocol of a live flow without ending it.
-    /// Returns `None` when the key is unknown. New in 0.7.0; used
-    /// by [`crate::FlowDriver`] to populate
-    /// [`FlowEvent::Ended::l4`] (and the internal session engine's
-    /// `Closed.l4`) on driver-synthesised Ended events
-    /// (`BufferOverflow` / `ParseError` / `ParserDone`) where the
-    /// tracker hasn't yet observed the natural `Ended` and so
-    /// hasn't pushed the field through itself.
+    /// Returns `None` when the key is unknown (or no packet of the
+    /// flow has revealed its L4 protocol yet). New in 0.7.0.
     pub fn snapshot_l4(&self, key: &E::Key) -> Option<L4Proto> {
         self.flows.peek(key).and_then(|e| e.l4)
     }
 
     /// Remove a flow from the tracker without emitting an event.
-    /// Used by [`crate::FlowDriver`] after a synthesised
-    /// `BufferOverflow` end event so subsequent packets start a fresh
-    /// flow. Returns `true` if a flow was removed.
+    /// Returns `true` if a flow was removed.
+    ///
+    /// Nothing in the crate calls this (since 0.25 parser closes and
+    /// reassembly limits never end a flow). The flow's next packet
+    /// starts a **new** flow mid-stream, so use it only when that is
+    /// what you want. On a tracker owned by a [`crate::FlowDriver`]
+    /// (via [`crate::FlowDriver::tracker_mut`]) the driver drops the
+    /// flow's stream state, unflushed, at its next sweep (a new flow
+    /// with the same key never inherits it).
     pub fn forget(&mut self, key: &E::Key) -> bool {
         let removed = self.flows.pop(key).is_some();
-        if removed && self.hot.as_ref() == Some(key) {
-            self.hot = None;
+        if removed {
+            self.forgotten += 1;
+            if self.hot.as_ref() == Some(key) {
+                self.hot = None;
+            }
         }
         removed
     }

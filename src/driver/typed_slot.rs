@@ -1,537 +1,386 @@
-//! Internal slot impls for [`super::typed::Driver`].
+//! Slots of the typed [`super::Driver`].
 //!
-//! Each slot owns its inner [`crate::session_driver::FlowSessionDriver`]
-//! / [`crate::datagram_driver::FlowDatagramDriver`] engine, a
-//! persistent `SessionEvent`
-//! scratch buffer (for zero-alloc dispatch), and an
-//! `Arc<SegQueue<SlotMessage<M, K>>>` that the matching
-//! [`super::SlotHandle`] drains. The slot writes typed
-//! `SlotMessage<M, K>` into the queue and flow-lifecycle /
-//! parser-close events into the caller's `Event<K>` Vec.
+//! A slot is one parser core ([`crate::session::core`]) plus the
+//! place its messages go (a [`super::SlotHandle`] queue or a
+//! [`super::BroadcastSlotHandle`] fan-out). Slots own **no flow
+//! table**: the driver's single engine feeds them, so every slot sees
+//! the same flows, the same idle timeouts, the same dedup and the
+//! same reassembled bytes as the lifecycle events report.
 
 use std::hash::Hash;
-use std::marker::PhantomData;
 use std::sync::Arc;
 
 use crossbeam_queue::SegQueue;
 
-use crate::PacketView;
-use crate::Timestamp;
-use crate::datagram_driver::FlowDatagramDriver;
-use crate::extractor::FlowExtractor;
-use crate::parser_kind::ParserKind;
-use crate::session::{DatagramParser, SessionEvent, SessionParser};
-use crate::session_driver::FlowSessionDriver;
-use crate::tracker::FlowTrackerConfig;
-
-use super::slot::{SlotHandle, SlotMessage};
+use super::broadcast::BroadcastInner;
+use super::slot::SlotMessage;
 use super::typed::Event;
+use crate::Timestamp;
+use crate::event::{AnomalyKind, EndReason, FlowSide, FlowStats};
+use crate::extractor::Orientation;
+use crate::parser_kind::ParserKind;
+use crate::parser_kind::SlotId;
+use crate::reassembler::StreamChunks;
+use crate::session::core::{Ctx, DatagramCore, Output, Ports, SessionCore, Stream};
+use crate::session::{DatagramParser, DatagramParserFactory, SessionParser, SessionParserFactory};
 
-/// Type-erased slot trait used by the typed driver. The slot
-/// emits flow-lifecycle / parser-close events into the
-/// caller's `&mut Vec<Event<K>>`; typed parser messages flow
-/// into the slot's private `SegQueue` shared with the
-/// [`SlotHandle`] via `Arc`.
-///
-/// The driver itself remains single-threaded (the central
-/// `FlowTracker` is `!Send`); only the **handles** the builder
-/// returns are `Send + Sync` for cross-thread drain.
-pub(super) trait ErasedSlot<K> {
-    fn track_into(
-        &mut self,
-        view: PacketView<'_>,
-        ts: Timestamp,
-        lifecycle_out: &mut Vec<Event<K>>,
-    );
-    fn sweep_into(&mut self, now: Timestamp, lifecycle_out: &mut Vec<Event<K>>);
-    fn finish_into(&mut self, lifecycle_out: &mut Vec<Event<K>>);
-    /// Tear down the slot's per-flow state, draining any
-    /// buffered bytes through the parser before removal.
-    /// Typed messages flushed by the parser's `fin_*` land in
-    /// the slot queue; the slot's `ParserClosed` event lands in
-    /// `lifecycle_out`. No-op if the slot has no state for the
-    /// flow.
-    fn force_close_into(&mut self, key: &K, now: Timestamp, lifecycle_out: &mut Vec<Event<K>>);
+/// Where a slot's typed messages go.
+pub(super) trait MessageSink<M, K>: Send + Sync + 'static {
+    fn push(&self, msg: SlotMessage<M, K>);
 }
 
-/// Concrete session-parser slot.
-pub(super) struct TypedConcreteSlot<E, P>
+impl<M: Send + 'static, K: Send + 'static> MessageSink<M, K> for Arc<SegQueue<SlotMessage<M, K>>> {
+    fn push(&self, msg: SlotMessage<M, K>) {
+        SegQueue::push(self, msg);
+    }
+}
+
+impl<M, K> MessageSink<M, K> for Arc<BroadcastInner<M, K>>
 where
-    E: FlowExtractor,
-    P: SessionParser + Sync,
-    P::Message: Send + Sync + 'static,
-    E::Key: Send + Sync + 'static,
-{
-    driver: FlowSessionDriver<E, P, ()>,
-    parser_kind: ParserKind,
-    ports: Option<smallvec::SmallVec<[u16; 4]>>,
-    msg_buf: Arc<SegQueue<SlotMessage<P::Message, E::Key>>>,
-    session_scratch: Vec<SessionEvent<E::Key, P::Message>>,
-}
-
-impl<E, P> TypedConcreteSlot<E, P>
-where
-    E: FlowExtractor + Clone,
-    P: SessionParser + Clone + Sync,
-    P::Message: Send + Sync + 'static,
-    E::Key: Send + Sync + 'static,
-{
-    pub(super) fn new(
-        extractor: E,
-        parser: P,
-        config: FlowTrackerConfig,
-        ports: Option<smallvec::SmallVec<[u16; 4]>>,
-        monotonic_timestamps: bool,
-    ) -> (Self, SlotHandle<P::Message, E::Key>)
-    where
-        E::Key: Send + Sync + 'static,
-        P::Message: Send + Sync + 'static,
-    {
-        let parser_kind = parser.parser_kind();
-        let msg_buf = Arc::new(SegQueue::new());
-        let handle = SlotHandle {
-            inner: Arc::clone(&msg_buf),
-            parser_kind,
-        };
-        let slot = Self::with_queue(
-            extractor,
-            parser,
-            config,
-            ports,
-            monotonic_timestamps,
-            msg_buf,
-        );
-        (slot, handle)
-    }
-
-    /// Construct the slot around a pre-allocated queue, sharing it
-    /// with the returned handle via `Arc::clone`. The shared
-    /// constructor [`Self::new`] delegates here.
-    pub(super) fn with_queue(
-        extractor: E,
-        parser: P,
-        config: FlowTrackerConfig,
-        ports: Option<smallvec::SmallVec<[u16; 4]>>,
-        monotonic_timestamps: bool,
-        msg_buf: Arc<SegQueue<SlotMessage<P::Message, E::Key>>>,
-    ) -> Self
-    where
-        E::Key: Send + Sync + 'static,
-        P::Message: Send + Sync + 'static,
-    {
-        let parser_kind = parser.parser_kind();
-        Self {
-            driver: FlowSessionDriver::with_config(extractor, parser, config)
-                .with_monotonic_timestamps(monotonic_timestamps),
-            parser_kind,
-            ports,
-            msg_buf,
-            session_scratch: Vec::new(),
-        }
-    }
-}
-
-impl<E, P> ErasedSlot<E::Key> for TypedConcreteSlot<E, P>
-where
-    E: FlowExtractor + Send,
-    E::Key: Hash + Eq + Clone + Send + Sync + 'static,
-    P: SessionParser + Send + Sync + 'static,
-    P::Message: Send + Sync + 'static,
-{
-    fn track_into(
-        &mut self,
-        view: PacketView<'_>,
-        _ts: Timestamp,
-        lifecycle_out: &mut Vec<Event<E::Key>>,
-    ) {
-        if let Some(ports) = &self.ports
-            && !view_matches_ports(view, ports)
-        {
-            return;
-        }
-        let parser_kind = self.parser_kind;
-        self.session_scratch.clear();
-        self.driver.track_into(view, &mut self.session_scratch);
-        for ev in self.session_scratch.drain(..) {
-            route_session_event(ev, parser_kind, &self.msg_buf, lifecycle_out);
-        }
-    }
-
-    fn sweep_into(&mut self, now: Timestamp, lifecycle_out: &mut Vec<Event<E::Key>>) {
-        let parser_kind = self.parser_kind;
-        for ev in self.driver.sweep(now) {
-            route_session_event(ev, parser_kind, &self.msg_buf, lifecycle_out);
-        }
-    }
-
-    fn finish_into(&mut self, lifecycle_out: &mut Vec<Event<E::Key>>) {
-        let parser_kind = self.parser_kind;
-        for ev in self.driver.finish() {
-            route_session_event(ev, parser_kind, &self.msg_buf, lifecycle_out);
-        }
-    }
-
-    fn force_close_into(
-        &mut self,
-        key: &E::Key,
-        now: Timestamp,
-        lifecycle_out: &mut Vec<Event<E::Key>>,
-    ) {
-        let parser_kind = self.parser_kind;
-        for ev in self.driver.force_close(key, now) {
-            route_session_event(ev, parser_kind, &self.msg_buf, lifecycle_out);
-        }
-    }
-}
-
-/// Concrete datagram-parser slot.
-pub(super) struct TypedConcreteDatagramSlot<E, D>
-where
-    E: FlowExtractor,
-    D: DatagramParser + Sync,
-    D::Message: Send + Sync + 'static,
-    E::Key: Send + Sync + 'static,
-{
-    driver: FlowDatagramDriver<E, D, ()>,
-    parser_kind: ParserKind,
-    ports: Option<smallvec::SmallVec<[u16; 4]>>,
-    msg_buf: Arc<SegQueue<SlotMessage<D::Message, E::Key>>>,
-    session_scratch: Vec<SessionEvent<E::Key, D::Message>>,
-    _marker: PhantomData<D>,
-}
-
-impl<E, D> TypedConcreteDatagramSlot<E, D>
-where
-    E: FlowExtractor + Clone,
-    D: DatagramParser + Clone + Sync,
-    D::Message: Send + Sync + 'static,
-    E::Key: Send + Sync + 'static,
-{
-    pub(super) fn new(
-        extractor: E,
-        parser: D,
-        config: FlowTrackerConfig,
-        ports: Option<smallvec::SmallVec<[u16; 4]>>,
-        monotonic_timestamps: bool,
-    ) -> (Self, SlotHandle<D::Message, E::Key>)
-    where
-        E::Key: Send + Sync + 'static,
-        D::Message: Send + Sync + 'static,
-    {
-        let parser_kind = parser.parser_kind();
-        let msg_buf = Arc::new(SegQueue::new());
-        let handle = SlotHandle {
-            inner: Arc::clone(&msg_buf),
-            parser_kind,
-        };
-        let slot = Self::with_queue(
-            extractor,
-            parser,
-            config,
-            ports,
-            monotonic_timestamps,
-            msg_buf,
-        );
-        (slot, handle)
-    }
-
-    pub(super) fn with_queue(
-        extractor: E,
-        parser: D,
-        config: FlowTrackerConfig,
-        ports: Option<smallvec::SmallVec<[u16; 4]>>,
-        monotonic_timestamps: bool,
-        msg_buf: Arc<SegQueue<SlotMessage<D::Message, E::Key>>>,
-    ) -> Self
-    where
-        E::Key: Send + Sync + 'static,
-        D::Message: Send + Sync + 'static,
-    {
-        let parser_kind = parser.parser_kind();
-        Self {
-            driver: FlowDatagramDriver::with_config(extractor, parser, config)
-                .with_monotonic_timestamps(monotonic_timestamps),
-            parser_kind,
-            ports,
-            msg_buf,
-            session_scratch: Vec::new(),
-            _marker: PhantomData,
-        }
-    }
-}
-
-impl<E, D> ErasedSlot<E::Key> for TypedConcreteDatagramSlot<E, D>
-where
-    E: FlowExtractor + Send,
-    E::Key: Hash + Eq + Clone + Send + Sync + 'static,
-    D: DatagramParser + Send + Sync + 'static,
-    D::Message: Send + Sync + 'static,
-{
-    fn track_into(
-        &mut self,
-        view: PacketView<'_>,
-        _ts: Timestamp,
-        lifecycle_out: &mut Vec<Event<E::Key>>,
-    ) {
-        if let Some(ports) = &self.ports
-            && !view_matches_ports(view, ports)
-        {
-            return;
-        }
-        let parser_kind = self.parser_kind;
-        self.session_scratch.clear();
-        self.driver.track_into(view, &mut self.session_scratch);
-        for ev in self.session_scratch.drain(..) {
-            route_session_event(ev, parser_kind, &self.msg_buf, lifecycle_out);
-        }
-    }
-
-    fn sweep_into(&mut self, now: Timestamp, lifecycle_out: &mut Vec<Event<E::Key>>) {
-        let parser_kind = self.parser_kind;
-        for ev in self.driver.sweep(now) {
-            route_session_event(ev, parser_kind, &self.msg_buf, lifecycle_out);
-        }
-    }
-
-    fn finish_into(&mut self, lifecycle_out: &mut Vec<Event<E::Key>>) {
-        let parser_kind = self.parser_kind;
-        for ev in self.driver.finish() {
-            route_session_event(ev, parser_kind, &self.msg_buf, lifecycle_out);
-        }
-    }
-
-    fn force_close_into(
-        &mut self,
-        key: &E::Key,
-        now: Timestamp,
-        lifecycle_out: &mut Vec<Event<E::Key>>,
-    ) {
-        let parser_kind = self.parser_kind;
-        for ev in self.driver.force_close(key, now) {
-            route_session_event(ev, parser_kind, &self.msg_buf, lifecycle_out);
-        }
-    }
-}
-
-/// Dispatch one inner-driver `SessionEvent`:
-/// - `Application` → typed message pushed onto the slot queue.
-/// - `Closed` → `ParserClosed` lifecycle event.
-/// - `Started` / `Tick` / anomalies → suppressed (the
-///   central tracker is the source of truth for those at the
-///   `Driver<E>` layer; per-slot duplicates would confuse
-///   consumers).
-fn route_session_event<K, M>(
-    ev: SessionEvent<K, M>,
-    parser_kind: ParserKind,
-    buf: &SegQueue<SlotMessage<M, K>>,
-    lifecycle_out: &mut Vec<Event<K>>,
-) {
-    match ev {
-        SessionEvent::Application {
-            key,
-            side,
-            message,
-            ts,
-            parser_kind: _,
-        } => {
-            buf.push(SlotMessage {
-                key,
-                side,
-                message,
-                ts,
-            });
-        }
-        SessionEvent::Closed {
-            key, reason, stats, ..
-        } => {
-            lifecycle_out.push(Event::ParserClosed {
-                key,
-                parser_kind,
-                reason,
-                ts: stats.last_seen,
-            });
-        }
-        SessionEvent::Started { .. }
-        | SessionEvent::FlowAnomaly { .. }
-        | SessionEvent::TrackerAnomaly { .. }
-        | SessionEvent::Tick { .. } => {
-            // Suppressed; the central tracker is authoritative.
-        }
-    }
-}
-
-/// Crude port-filter (shared with the legacy slot impls in
-/// `erased.rs`).
-fn view_matches_ports(view: PacketView<'_>, ports: &[u16]) -> bool {
-    use crate::extract::parse::{self, ParsedL4};
-    let Some(parsed) = parse::parse_eth(view.frame) else {
-        return false;
-    };
-    let (sport, dport) = match parsed.l4 {
-        Some(ParsedL4::Tcp(t)) => (t.src_port, t.dst_port),
-        Some(ParsedL4::Udp(u)) => (u.src_port, u.dst_port),
-        _ => return false,
-    };
-    ports.contains(&sport) || ports.contains(&dport)
-}
-
-/// Crate-internal re-export used by the heuristic slots (so
-/// they don't have to re-implement the routing logic).
-pub(super) fn route_session_event_pub<K, M>(
-    ev: SessionEvent<K, M>,
-    parser_kind: ParserKind,
-    buf: &SegQueue<SlotMessage<M, K>>,
-    lifecycle_out: &mut Vec<Event<K>>,
-) {
-    route_session_event(ev, parser_kind, buf, lifecycle_out);
-}
-
-// ── Broadcast variant — Plan 150 (0.13) ──────────────────────
-
-/// Broadcast-routed session-parser slot. Fan-outs every typed
-/// message to every clone of the returned [`super::BroadcastSlotHandle`].
-///
-/// Used by [`super::DriverBuilder::session_on_ports_broadcast_each`].
-pub(super) struct TypedBroadcastSlot<E, P>
-where
-    E: FlowExtractor,
-    P: SessionParser + Sync,
-    P::Message: Send + Sync + Clone + 'static,
-    E::Key: Send + Sync + Clone + 'static,
-{
-    driver: FlowSessionDriver<E, P, ()>,
-    parser_kind: ParserKind,
-    ports: Option<smallvec::SmallVec<[u16; 4]>>,
-    broadcast: std::sync::Arc<super::broadcast::BroadcastInner<P::Message, E::Key>>,
-    session_scratch: Vec<SessionEvent<E::Key, P::Message>>,
-}
-
-impl<E, P> TypedBroadcastSlot<E, P>
-where
-    E: FlowExtractor + Clone,
-    P: SessionParser + Clone + Sync,
-    P::Message: Send + Sync + Clone + 'static,
-    E::Key: Send + Sync + Clone + 'static,
-{
-    pub(super) fn new(
-        extractor: E,
-        parser: P,
-        config: FlowTrackerConfig,
-        ports: Option<smallvec::SmallVec<[u16; 4]>>,
-        monotonic_timestamps: bool,
-    ) -> (Self, super::BroadcastSlotHandle<P::Message, E::Key>) {
-        let parser_kind = parser.parser_kind();
-        let broadcast = super::broadcast::BroadcastInner::new();
-        let handle =
-            super::BroadcastSlotHandle::new(std::sync::Arc::clone(&broadcast), parser_kind);
-        let driver = FlowSessionDriver::with_config(extractor, parser, config)
-            .with_monotonic_timestamps(monotonic_timestamps);
-        let slot = Self {
-            driver,
-            parser_kind,
-            ports,
-            broadcast,
-            session_scratch: Vec::new(),
-        };
-        (slot, handle)
-    }
-}
-
-impl<E, P> ErasedSlot<E::Key> for TypedBroadcastSlot<E, P>
-where
-    E: FlowExtractor + Send,
-    E::Key: Hash + Eq + Clone + Send + Sync + 'static,
-    P: SessionParser + Send + Sync + 'static,
-    P::Message: Send + Sync + Clone + 'static,
-{
-    fn track_into(
-        &mut self,
-        view: PacketView<'_>,
-        _ts: Timestamp,
-        lifecycle_out: &mut Vec<Event<E::Key>>,
-    ) {
-        if let Some(ports) = &self.ports
-            && !view_matches_ports(view, ports)
-        {
-            return;
-        }
-        let parser_kind = self.parser_kind;
-        self.session_scratch.clear();
-        self.driver.track_into(view, &mut self.session_scratch);
-        for ev in self.session_scratch.drain(..) {
-            route_broadcast_event(ev, parser_kind, &self.broadcast, lifecycle_out);
-        }
-    }
-
-    fn sweep_into(&mut self, now: Timestamp, lifecycle_out: &mut Vec<Event<E::Key>>) {
-        let parser_kind = self.parser_kind;
-        for ev in self.driver.sweep(now) {
-            route_broadcast_event(ev, parser_kind, &self.broadcast, lifecycle_out);
-        }
-    }
-
-    fn finish_into(&mut self, lifecycle_out: &mut Vec<Event<E::Key>>) {
-        let parser_kind = self.parser_kind;
-        for ev in self.driver.finish() {
-            route_broadcast_event(ev, parser_kind, &self.broadcast, lifecycle_out);
-        }
-    }
-
-    fn force_close_into(
-        &mut self,
-        key: &E::Key,
-        now: Timestamp,
-        lifecycle_out: &mut Vec<Event<E::Key>>,
-    ) {
-        let parser_kind = self.parser_kind;
-        for ev in self.driver.force_close(key, now) {
-            route_broadcast_event(ev, parser_kind, &self.broadcast, lifecycle_out);
-        }
-    }
-}
-
-/// Broadcast-variant route — fans out to every subscriber via
-/// `BroadcastInner::push` instead of pushing to a single
-/// `SegQueue`.
-fn route_broadcast_event<K, M>(
-    ev: SessionEvent<K, M>,
-    parser_kind: ParserKind,
-    broadcast: &super::broadcast::BroadcastInner<M, K>,
-    lifecycle_out: &mut Vec<Event<K>>,
-) where
     M: Send + Sync + Clone + 'static,
     K: Send + Sync + Clone + 'static,
 {
-    match ev {
-        SessionEvent::Application {
-            key,
-            side,
-            message,
+    fn push(&self, msg: SlotMessage<M, K>) {
+        BroadcastInner::push(self, msg);
+    }
+}
+
+/// Ordering marks for slot messages (see
+/// [`SlotMessage::lifecycle_pos`]): lifecycle events emitted before
+/// this call (`base`), where this call's events start in the output
+/// buffer (`start`), and the driver-wide message sequence (`seq`).
+#[derive(Debug, Default)]
+pub(super) struct Order {
+    pub(super) base: u64,
+    pub(super) start: usize,
+    pub(super) seq: u64,
+}
+
+/// Per-call output of a slot: messages to its sink, parser closes
+/// and anomalies to the driver's lifecycle buffer.
+struct SlotOut<'a, K, Q> {
+    sink: &'a Q,
+    events: &'a mut Vec<Event<K>>,
+    slot: SlotId,
+    order: &'a mut Order,
+}
+
+impl<K, M, Q> Output<K, M> for SlotOut<'_, K, Q>
+where
+    K: Clone,
+    M: std::fmt::Debug,
+    Q: MessageSink<M, K>,
+{
+    fn message(
+        &mut self,
+        key: &K,
+        side: FlowSide,
+        orientation: Orientation,
+        message: M,
+        ts: Timestamp,
+        _parser_kind: ParserKind,
+    ) {
+        crate::obs::trace_session_message(side, &message);
+        let pos = self.order.base + (self.events.len() - self.order.start) as u64;
+        let seq = self.order.seq;
+        self.order.seq += 1;
+        self.sink.push(
+            SlotMessage::new(key.clone(), side, orientation, message, ts).with_order(pos, seq),
+        );
+    }
+
+    fn parser_closed(
+        &mut self,
+        key: &K,
+        parser_kind: ParserKind,
+        reason: EndReason,
+        detail: Option<String>,
+        ts: Timestamp,
+        _at_flow_end: bool,
+    ) {
+        self.events.push(Event::ParserClosed {
+            key: key.clone(),
+            slot: self.slot,
+            parser_kind,
+            reason,
+            detail,
             ts,
-            parser_kind: _,
-        } => {
-            broadcast.push(SlotMessage {
-                key,
-                side,
-                message,
-                ts,
-            });
+        });
+    }
+
+    fn parser_side_stopped(
+        &mut self,
+        key: &K,
+        parser_kind: ParserKind,
+        side: FlowSide,
+        reason: EndReason,
+        detail: Option<String>,
+        ts: Timestamp,
+    ) {
+        self.events.push(Event::ParserSideStopped {
+            key: key.clone(),
+            slot: self.slot,
+            parser_kind,
+            side,
+            reason,
+            detail,
+            ts,
+        });
+    }
+
+    fn anomaly(&mut self, key: &K, mut kind: AnomalyKind, ts: Timestamp) {
+        if let AnomalyKind::SessionParseError { slot, .. } = &mut kind {
+            *slot = Some(self.slot);
         }
-        SessionEvent::Closed {
-            key, reason, stats, ..
-        } => {
-            lifecycle_out.push(Event::ParserClosed {
-                key,
-                parser_kind,
-                reason,
-                ts: stats.last_seen,
-            });
-        }
-        SessionEvent::Started { .. }
-        | SessionEvent::FlowAnomaly { .. }
-        | SessionEvent::TrackerAnomaly { .. }
-        | SessionEvent::Tick { .. } => {
-            // Suppressed; the central tracker is authoritative.
-        }
+        crate::obs::record_anomaly(&kind);
+        crate::obs::trace_anomaly(&kind);
+        self.events.push(Event::FlowAnomaly {
+            key: key.clone(),
+            kind,
+            ts,
+        });
+    }
+}
+
+/// Object-safe view of a slot, for the driver's slot list.
+pub(super) trait ErasedSlot<K>: Send + Sync {
+    fn needs_ports(&self) -> bool;
+    fn wants_stream(&self, ports: Ports) -> bool;
+    fn wants_datagram(&self, ports: Ports, l4: Option<crate::L4Proto>) -> bool;
+    fn on_stream(
+        &mut self,
+        cx: &Ctx<'_, K>,
+        ports: Ports,
+        chunks: &Stream<'_>,
+        events: &mut Vec<Event<K>>,
+        order: &mut Order,
+    );
+    /// Per side: `true` when this slot will never use that side's
+    /// stream again.
+    fn streams_done(&self, key: &K, ports: Ports) -> [bool; 2];
+    fn on_datagram(
+        &mut self,
+        cx: &Ctx<'_, K>,
+        ports: Ports,
+        payload: &[u8],
+        events: &mut Vec<Event<K>>,
+        order: &mut Order,
+    );
+    #[allow(clippy::too_many_arguments)]
+    fn on_flow_end(
+        &mut self,
+        key: &K,
+        reason: EndReason,
+        stats: &FlowStats,
+        finals: [&StreamChunks; 2],
+        ports: Ports,
+        anomalies: bool,
+        events: &mut Vec<Event<K>>,
+        order: &mut Order,
+    );
+    fn on_tick(
+        &mut self,
+        now: Timestamp,
+        stamp: Timestamp,
+        orientation_of: &dyn Fn(&K) -> Orientation,
+        anomalies: bool,
+        events: &mut Vec<Event<K>>,
+        order: &mut Order,
+    );
+    fn retain(&mut self, alive: &dyn Fn(&K) -> bool);
+}
+
+/// A session-parser slot.
+pub(super) struct SessionSlot<K, F, Q>
+where
+    F: SessionParserFactory<K>,
+{
+    pub(super) core: SessionCore<K, F>,
+    pub(super) sink: Q,
+    pub(super) id: SlotId,
+}
+
+impl<K, F, Q> ErasedSlot<K> for SessionSlot<K, F, Q>
+where
+    K: Hash + Eq + Clone + Send + Sync + 'static,
+    F: SessionParserFactory<K> + Sync,
+    F::Parser: Sync,
+    <F::Parser as SessionParser>::Message: Sync,
+    Q: MessageSink<<F::Parser as SessionParser>::Message, K>,
+{
+    fn needs_ports(&self) -> bool {
+        self.core.selector().needs_ports()
+    }
+    fn wants_stream(&self, ports: Ports) -> bool {
+        self.core.wants(ports)
+    }
+    fn wants_datagram(&self, _ports: Ports, _l4: Option<crate::L4Proto>) -> bool {
+        false
+    }
+    fn on_stream(
+        &mut self,
+        cx: &Ctx<'_, K>,
+        ports: Ports,
+        chunks: &Stream<'_>,
+        events: &mut Vec<Event<K>>,
+        order: &mut Order,
+    ) {
+        let mut out = SlotOut {
+            sink: &self.sink,
+            events,
+            slot: self.id,
+            order,
+        };
+        self.core.on_stream(cx, ports, chunks, &mut out);
+    }
+    fn streams_done(&self, key: &K, ports: Ports) -> [bool; 2] {
+        self.core.streams_done(key, ports)
+    }
+    fn on_datagram(
+        &mut self,
+        _cx: &Ctx<'_, K>,
+        _ports: Ports,
+        _payload: &[u8],
+        _events: &mut Vec<Event<K>>,
+        _order: &mut Order,
+    ) {
+    }
+    fn on_flow_end(
+        &mut self,
+        key: &K,
+        reason: EndReason,
+        stats: &FlowStats,
+        finals: [&StreamChunks; 2],
+        ports: Ports,
+        anomalies: bool,
+        events: &mut Vec<Event<K>>,
+        order: &mut Order,
+    ) {
+        let mut out = SlotOut {
+            sink: &self.sink,
+            events,
+            slot: self.id,
+            order,
+        };
+        self.core
+            .on_flow_end(key, reason, stats, finals, ports, anomalies, &mut out);
+    }
+    fn on_tick(
+        &mut self,
+        now: Timestamp,
+        stamp: Timestamp,
+        orientation_of: &dyn Fn(&K) -> Orientation,
+        anomalies: bool,
+        events: &mut Vec<Event<K>>,
+        order: &mut Order,
+    ) {
+        let mut out = SlotOut {
+            sink: &self.sink,
+            events,
+            slot: self.id,
+            order,
+        };
+        self.core
+            .on_tick(now, stamp, orientation_of, anomalies, &mut out);
+    }
+    fn retain(&mut self, alive: &dyn Fn(&K) -> bool) {
+        self.core.retain(alive);
+    }
+}
+
+/// A datagram-parser slot.
+pub(super) struct DatagramSlot<K, F, Q>
+where
+    F: DatagramParserFactory<K>,
+{
+    pub(super) core: DatagramCore<K, F>,
+    pub(super) sink: Q,
+    pub(super) id: SlotId,
+}
+
+impl<K, F, Q> ErasedSlot<K> for DatagramSlot<K, F, Q>
+where
+    K: Hash + Eq + Clone + Send + Sync + 'static,
+    F: DatagramParserFactory<K> + Sync,
+    F::Parser: Sync,
+    <F::Parser as DatagramParser>::Message: Sync,
+    Q: MessageSink<<F::Parser as DatagramParser>::Message, K>,
+{
+    fn needs_ports(&self) -> bool {
+        self.core.selector().needs_ports()
+    }
+    fn wants_stream(&self, _ports: Ports) -> bool {
+        false
+    }
+    fn wants_datagram(&self, ports: Ports, l4: Option<crate::L4Proto>) -> bool {
+        self.core.wants(ports, l4)
+    }
+    fn on_stream(
+        &mut self,
+        _cx: &Ctx<'_, K>,
+        _ports: Ports,
+        _chunks: &Stream<'_>,
+        _events: &mut Vec<Event<K>>,
+        _order: &mut Order,
+    ) {
+    }
+    fn streams_done(&self, _key: &K, _ports: Ports) -> [bool; 2] {
+        [true, true]
+    }
+    fn on_datagram(
+        &mut self,
+        cx: &Ctx<'_, K>,
+        ports: Ports,
+        payload: &[u8],
+        events: &mut Vec<Event<K>>,
+        order: &mut Order,
+    ) {
+        let mut out = SlotOut {
+            sink: &self.sink,
+            events,
+            slot: self.id,
+            order,
+        };
+        self.core.on_datagram(cx, ports, payload, &mut out);
+    }
+    fn on_flow_end(
+        &mut self,
+        key: &K,
+        reason: EndReason,
+        stats: &FlowStats,
+        _finals: [&StreamChunks; 2],
+        _ports: Ports,
+        _anomalies: bool,
+        events: &mut Vec<Event<K>>,
+        order: &mut Order,
+    ) {
+        let mut out = SlotOut {
+            sink: &self.sink,
+            events,
+            slot: self.id,
+            order,
+        };
+        self.core.on_flow_end(key, reason, stats, &mut out);
+    }
+    fn on_tick(
+        &mut self,
+        now: Timestamp,
+        stamp: Timestamp,
+        orientation_of: &dyn Fn(&K) -> Orientation,
+        anomalies: bool,
+        events: &mut Vec<Event<K>>,
+        order: &mut Order,
+    ) {
+        let mut out = SlotOut {
+            sink: &self.sink,
+            events,
+            slot: self.id,
+            order,
+        };
+        self.core
+            .on_tick(now, stamp, orientation_of, anomalies, &mut out);
+    }
+    fn retain(&mut self, alive: &dyn Fn(&K) -> bool) {
+        self.core.retain(alive);
     }
 }

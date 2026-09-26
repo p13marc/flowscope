@@ -5,7 +5,7 @@
 //!     cargo bench --bench reassembler --features reassembler
 
 use criterion::{Criterion, black_box, criterion_group, criterion_main};
-use flowscope::{BufferedReassembler, OverflowPolicy, Reassembler, Timestamp};
+use flowscope::{BufferedReassembler, OverflowPolicy, Reassembler, StreamChunks, Timestamp};
 
 fn bench_in_order_1500_uncapped(c: &mut Criterion) {
     let payload = vec![0u8; 1500];
@@ -53,16 +53,21 @@ fn bench_sliding_window_overflow(c: &mut Criterion) {
     });
 }
 
-fn bench_ooo_drops(c: &mut Criterion) {
+fn bench_gap_skips(c: &mut Criterion) {
+    // Every segment lands ahead of the expected sequence number: the
+    // hole is skipped, a gap recorded, and the segment delivered.
+    // Drained each iteration, as a session engine would.
     let payload = vec![0u8; 1500];
-    c.bench_function("reassembler/ooo_drops", |b| {
+    c.bench_function("reassembler/gap_skips", |b| {
         let mut r = BufferedReassembler::new();
-        // Prime with one in-order segment to set expected_seq.
-        r.segment(0, &payload, Timestamp::default());
+        let mut out = StreamChunks::new();
+        let mut seq = 0u32;
         b.iter(|| {
-            // Always OOO — seq is far from expected.
-            r.segment(1_000_000, &payload, Timestamp::default());
-            black_box(r.dropped_segments());
+            r.segment(seq, &payload, Timestamp::default());
+            seq = seq.wrapping_add(2 * payload.len() as u32);
+            out.clear();
+            r.drain_into(&mut out);
+            black_box(out.gap_count());
         })
     });
 }
@@ -77,7 +82,7 @@ fn bench_drop_flow_idle(c: &mut Criterion) {
             .with_overflow_policy(OverflowPolicy::DropFlow);
         // Trigger the poison once up-front.
         r.segment(0, &payload, Timestamp::default());
-        assert!(r.is_poisoned());
+        assert!(r.is_stopped());
         let mut seq = 1500u32;
         b.iter(|| {
             r.segment(seq, &payload, Timestamp::default());
@@ -91,7 +96,7 @@ criterion_group!(
     bench_in_order_1500_uncapped,
     bench_in_order_1500_capped_1m,
     bench_sliding_window_overflow,
-    bench_ooo_drops,
+    bench_gap_skips,
     bench_drop_flow_idle,
 );
 criterion_main!(benches);

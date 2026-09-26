@@ -45,16 +45,33 @@ where
     inner: Arc<BroadcastInner<M, K>>,
     my_queue: SubscriberQueue<M, K>,
     parser_kind: ParserKind,
+    slot: crate::SlotId,
+}
+
+/// One subscriber's private queue plus the waker of a task waiting
+/// on it ([`BroadcastSlotHandle::poll_recv`]).
+pub(crate) struct Subscriber<M, K> {
+    queue: SegQueue<SlotMessage<M, K>>,
+    waker: Mutex<Option<std::task::Waker>>,
+}
+
+impl<M, K> Subscriber<M, K> {
+    fn push(&self, msg: SlotMessage<M, K>) {
+        self.queue.push(msg);
+        if let Some(w) = self.waker.lock().ok().and_then(|mut w| w.take()) {
+            w.wake();
+        }
+    }
 }
 
 /// Per-subscriber queue handle held in the broadcast list.
 /// Strong-owned by each [`BroadcastSlotHandle`]; downgraded to
 /// `Weak` in the shared subscriber registry.
-pub(crate) type SubscriberQueue<M, K> = Arc<SegQueue<SlotMessage<M, K>>>;
+pub(crate) type SubscriberQueue<M, K> = Arc<Subscriber<M, K>>;
 
 /// Weak handle to a subscriber's queue. Kept in the registry so
 /// dropped subscribers prune lazily on next push.
-pub(crate) type SubscriberWeak<M, K> = Weak<SegQueue<SlotMessage<M, K>>>;
+pub(crate) type SubscriberWeak<M, K> = Weak<Subscriber<M, K>>;
 
 /// Shared state between all `BroadcastSlotHandle` clones + the
 /// owning slot. The slot pushes by upgrading `Weak`s; subscribers
@@ -101,7 +118,10 @@ where
     /// queue; caller stores the `Arc` in their handle and pushes
     /// a `Weak` into the subscriber list.
     pub(crate) fn subscribe(self: &Arc<Self>) -> SubscriberQueue<M, K> {
-        let q = Arc::new(SegQueue::new());
+        let q = Arc::new(Subscriber {
+            queue: SegQueue::new(),
+            waker: Mutex::new(None),
+        });
         self.subscribers
             .lock()
             .expect("broadcast lock poisoned")
@@ -117,12 +137,17 @@ where
 {
     /// Internal constructor for the typed slot. Public only via
     /// the broadcast registration builders.
-    pub(crate) fn new(inner: Arc<BroadcastInner<M, K>>, parser_kind: ParserKind) -> Self {
+    pub(crate) fn new(
+        inner: Arc<BroadcastInner<M, K>>,
+        parser_kind: ParserKind,
+        slot: crate::SlotId,
+    ) -> Self {
         let my_queue = inner.subscribe();
         Self {
             inner,
             my_queue,
             parser_kind,
+            slot,
         }
     }
 
@@ -130,7 +155,7 @@ where
     /// the last call, into `out`. Returns the count.
     pub fn drain(&mut self, out: &mut Vec<SlotMessage<M, K>>) -> usize {
         let mut n = 0;
-        while let Some(msg) = self.my_queue.pop() {
+        while let Some(msg) = self.my_queue.queue.pop() {
             out.push(msg);
             n += 1;
         }
@@ -141,7 +166,7 @@ where
     pub fn drain_n(&mut self, out: &mut Vec<SlotMessage<M, K>>, max: usize) -> usize {
         let mut n = 0;
         while n < max
-            && let Some(msg) = self.my_queue.pop()
+            && let Some(msg) = self.my_queue.queue.pop()
         {
             out.push(msg);
             n += 1;
@@ -149,9 +174,36 @@ where
         n
     }
 
+    /// Next message for this subscriber, if one is queued.
+    pub fn try_recv(&mut self) -> Option<SlotMessage<M, K>> {
+        self.my_queue.queue.pop()
+    }
+
+    /// Async receive: `Ready(msg)` when a message is queued,
+    /// otherwise `Pending` with `cx`'s waker registered — the next
+    /// push to this subscriber wakes it. The building block of a
+    /// `Stream` over the handle. New in 0.25.0.
+    pub fn poll_recv(
+        &mut self,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<SlotMessage<M, K>> {
+        if let Some(msg) = self.my_queue.queue.pop() {
+            return std::task::Poll::Ready(msg);
+        }
+        if let Ok(mut w) = self.my_queue.waker.lock() {
+            *w = Some(cx.waker().clone());
+        }
+        // A push between the pop and the registration would
+        // otherwise be missed.
+        match self.my_queue.queue.pop() {
+            Some(msg) => std::task::Poll::Ready(msg),
+            None => std::task::Poll::Pending,
+        }
+    }
+
     /// Pending message count for this subscriber.
     pub fn pending(&self) -> usize {
-        self.my_queue.len()
+        self.my_queue.queue.len()
     }
 
     /// Active subscriber count across the broadcast set
@@ -167,6 +219,12 @@ where
     /// Parser-kind identity from registration.
     pub fn parser_kind(&self) -> ParserKind {
         self.parser_kind
+    }
+
+    /// This parser's registration identity (see
+    /// [`crate::driver::SlotHandle::slot_id`]). New in 0.25.0.
+    pub fn slot_id(&self) -> crate::SlotId {
+        self.slot
     }
 }
 
@@ -199,7 +257,7 @@ where
     /// subscriber sees only messages pushed AFTER this clone
     /// call (no replay of earlier pushes).
     fn clone(&self) -> Self {
-        Self::new(Arc::clone(&self.inner), self.parser_kind)
+        Self::new(Arc::clone(&self.inner), self.parser_kind, self.slot)
     }
 }
 

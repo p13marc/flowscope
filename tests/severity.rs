@@ -84,6 +84,8 @@ fn session_parse_error_defaults_error() {
     let kind = AnomalyKind::SessionParseError {
         side: FlowSide::Initiator,
         reason: Some("bad frame".into()),
+        parser_kind: flowscope::ParserKind::Unspecified,
+        slot: None,
     };
     assert_eq!(kind.severity(), Severity::Error);
 }
@@ -116,6 +118,8 @@ fn short_kind_matches_display() {
         AnomalyKind::SessionParseError {
             side: FlowSide::Initiator,
             reason: None,
+            parser_kind: flowscope::ParserKind::Unspecified,
+            slot: None,
         },
         AnomalyKind::RetransmittedSegment {
             side: FlowSide::Initiator,
@@ -159,6 +163,8 @@ fn severity_filter_threshold_works() {
         AnomalyKind::SessionParseError {
             side: FlowSide::Initiator,
             reason: None,
+            parser_kind: flowscope::ParserKind::Unspecified,
+            slot: None,
         },
     ];
     let high_sev: Vec<_> = kinds

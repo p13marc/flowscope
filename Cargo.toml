@@ -1,6 +1,6 @@
 [package]
 name = "flowscope"
-version = "0.24.1"
+version = "0.25.0"
 edition = "2024"
 rust-version = "1.97"
 license = "MIT OR Apache-2.0"
@@ -410,7 +410,10 @@ nsm = ["fingerprint", "tls-fingerprints", "analysis"]
 l7 = ["parsers-core", "parsers-l2l3", "parsers-tier2", "tls-fingerprints"]
 
 # pcap source adapter (offline replay).
-pcap = ["extractors", "tracker", "dep:pcap-file"]
+pcap = ["pcap-reader", "extractors", "tracker"]
+# Just the capture-file reader (`pcap::CaptureReader`: pcap + pcapng,
+# link-type normalisation) — no tracker, no extractors.
+pcap-reader = ["dep:pcap-file"]
 
 # Observability hooks (zero-cost when off).
 metrics = ["tracker", "dep:metrics"]

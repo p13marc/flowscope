@@ -38,6 +38,8 @@ fn anomaly_kind_session_parse_error_classifies_as_applayer() {
     let k = AnomalyKind::SessionParseError {
         side: FlowSide::Responder,
         reason: Some("bad frame".to_string()),
+        parser_kind: flowscope::ParserKind::Unspecified,
+        slot: None,
     };
     assert_eq!(k.anomaly_type(), Some("applayer"));
     assert_eq!(k.anomaly_event(), Some("parse_error"));

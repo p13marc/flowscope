@@ -17,7 +17,7 @@
 //!
 //! It is deliberately **not** a driver — wire it to whatever
 //! source you already run (`Driver<E>` slots + the `Event` stream,
-//! a `FlowSessionDriver`, a pcap loop). See
+//! a `SessionDriver`, a pcap loop). See
 //! `examples/03-detection/flow_analysis.rs`.
 
 use std::hash::Hash;

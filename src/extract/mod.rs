@@ -47,6 +47,32 @@ pub mod flow_label;
 pub mod tagged;
 
 pub use auto_detect::{AutoDetectEncap, AutoEncapVariants};
+
+/// Translate an inner extraction back to the outer frame's offsets.
+///
+/// `inner` is the slice of `outer` the decapsulated packet starts at;
+/// the inner extractor saw it behind `synthetic_prefix` bytes of
+/// synthetic header (0 when it was handed `inner` itself).
+pub(crate) fn rebase<K>(
+    e: crate::Extracted<K>,
+    outer: &[u8],
+    inner: &[u8],
+    synthetic_prefix: usize,
+) -> crate::Extracted<K> {
+    match parse::byte_offset(outer, inner) {
+        Some(at) => e.rebased(at as isize - synthetic_prefix as isize),
+        // Not a sub-slice (cannot happen for the built-in
+        // combinators): no offset can be trusted.
+        None => {
+            let mut e = e;
+            if let Some(t) = e.tcp.as_mut() {
+                t.payload_len = 0;
+            }
+            e.l4_meta = None;
+            e
+        }
+    }
+}
 pub use encap_gre::InnerGre;
 pub use encap_gtp::InnerGtpU;
 pub use encap_mpls::StripMpls;

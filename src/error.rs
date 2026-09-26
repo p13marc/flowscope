@@ -248,7 +248,7 @@ impl Error {
         }
     }
 
-    #[cfg(any(feature = "extractors", feature = "pcap", feature = "http"))]
+    #[cfg(any(feature = "extractors", feature = "pcap-reader", feature = "http"))]
     pub(crate) fn parse_with<E>(module: Module, message: impl Into<String>, source: E) -> Self
     where
         E: StdError + Send + Sync + 'static,
@@ -275,7 +275,7 @@ impl Error {
         }
     }
 
-    #[cfg(feature = "pcap")]
+    #[cfg(feature = "pcap-reader")]
     pub(crate) fn io(module: Module, source: std::io::Error) -> Self {
         Self {
             kind: ErrorKind {

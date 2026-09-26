@@ -20,20 +20,67 @@ use crossbeam_queue::SegQueue;
 
 use crate::Timestamp;
 use crate::event::FlowSide;
+use crate::extractor::Orientation;
 use crate::parser_kind::ParserKind;
 
 /// One typed message emitted by a registered parser.
 ///
-/// The queue behind the `SlotHandle` holds these directly; the
-/// `key` and `side` are the flow's metadata at the moment the
+/// The queue behind the `SlotHandle` holds these directly; `key`,
+/// `side` and `orientation` are the flow's metadata at the moment the
 /// parser produced the message.
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct SlotMessage<M, K> {
     pub key: K,
+    /// Logical side whose bytes produced the message (`on_tick`
+    /// output is attributed to the initiator).
     pub side: FlowSide,
+    /// Canonical (address-sorted) direction matching `side` — tells
+    /// whether the message travelled `key.a → key.b` or the reverse
+    /// without tracking `Event::Started` per key. New in 0.25.0.
+    pub orientation: Orientation,
     pub message: M,
     pub ts: Timestamp,
+    /// Where the message falls in the driver's lifecycle stream: the
+    /// number of lifecycle [`Event`](super::Event)s the driver had
+    /// emitted (across every `track_into` / `sweep_into` /
+    /// `finish_into` call) when the parser produced it. The message
+    /// comes **before** lifecycle event number `lifecycle_pos`
+    /// (0-based) and after every earlier one. New in 0.25.0.
+    pub lifecycle_pos: u64,
+    /// Driver-wide message sequence number, across all slots: orders
+    /// messages with the same `lifecycle_pos` from different slots.
+    /// New in 0.25.0.
+    pub seq: u64,
+}
+
+impl<M, K> SlotMessage<M, K> {
+    /// Build a message (for tests and custom slot pipelines);
+    /// `lifecycle_pos` and `seq` are 0.
+    pub fn new(
+        key: K,
+        side: FlowSide,
+        orientation: Orientation,
+        message: M,
+        ts: Timestamp,
+    ) -> Self {
+        Self {
+            key,
+            side,
+            orientation,
+            message,
+            ts,
+            lifecycle_pos: 0,
+            seq: 0,
+        }
+    }
+
+    /// Set the ordering marks (see the fields).
+    pub fn with_order(mut self, lifecycle_pos: u64, seq: u64) -> Self {
+        self.lifecycle_pos = lifecycle_pos;
+        self.seq = seq;
+        self
+    }
 }
 
 /// Typed drain handle returned by the builder for each
@@ -62,6 +109,7 @@ where
 {
     pub(super) inner: Arc<SegQueue<SlotMessage<M, K>>>,
     pub(super) parser_kind: ParserKind,
+    pub(super) slot: crate::SlotId,
 }
 
 impl<M, K> SlotHandle<M, K>
@@ -147,6 +195,14 @@ where
         self.parser_kind
     }
 
+    /// This parser's registration identity — the `slot` carried by
+    /// its [`Event::ParserClosed`](super::Event::ParserClosed) /
+    /// [`Event::ParserSideStopped`](super::Event::ParserSideStopped)
+    /// events and `SessionParseError` anomalies. New in 0.25.0.
+    pub fn slot_id(&self) -> crate::SlotId {
+        self.slot
+    }
+
     /// Discard any buffered messages without draining them.
     /// Useful between test runs.
     pub fn clear(&mut self) {
@@ -210,6 +266,7 @@ where
         Self {
             inner: Arc::clone(&self.inner),
             parser_kind: self.parser_kind,
+            slot: self.slot,
         }
     }
 }
@@ -245,19 +302,26 @@ mod tests {
         let mut handle = SlotHandle::<u32, u8> {
             inner: Arc::clone(&queue),
             parser_kind: crate::ParserKind::Other("test"),
+            slot: crate::SlotId(0),
         };
         assert_eq!(handle.pending(), 0);
         queue.push(SlotMessage {
             key: 1,
             side: FlowSide::Initiator,
+            orientation: Orientation::Forward,
             message: 100,
             ts: Timestamp::default(),
+            lifecycle_pos: 0,
+            seq: 0,
         });
         queue.push(SlotMessage {
             key: 2,
             side: FlowSide::Responder,
+            orientation: Orientation::Forward,
             message: 200,
             ts: Timestamp::default(),
+            lifecycle_pos: 0,
+            seq: 0,
         });
         assert_eq!(handle.pending(), 2);
 
@@ -281,12 +345,16 @@ mod tests {
         let mut handle = SlotHandle::<&'static str, u8> {
             inner: Arc::clone(&queue),
             parser_kind: crate::ParserKind::Other("test"),
+            slot: crate::SlotId(0),
         };
         queue.push(SlotMessage {
             key: 1,
             side: FlowSide::Initiator,
+            orientation: Orientation::Forward,
             message: "x",
             ts: Timestamp::default(),
+            lifecycle_pos: 0,
+            seq: 0,
         });
         assert_eq!(handle.pending(), 1);
         handle.clear();
@@ -299,14 +367,18 @@ mod tests {
         let mut h1 = SlotHandle::<u32, u8> {
             inner: Arc::clone(&queue),
             parser_kind: crate::ParserKind::Other("test"),
+            slot: crate::SlotId(0),
         };
         let mut h2 = h1.clone();
         for i in 0..10 {
             queue.push(SlotMessage {
                 key: 1,
                 side: FlowSide::Initiator,
+                orientation: Orientation::Forward,
                 message: i,
                 ts: Timestamp::default(),
+                lifecycle_pos: 0,
+                seq: 0,
             });
         }
         let mut a = Vec::new();

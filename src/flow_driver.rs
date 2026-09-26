@@ -3,61 +3,363 @@
 //! reassembler.
 //!
 //! The async equivalent lives in `netring`'s `FlowStream::with_async_reassembler`.
+//!
+//! # Reassembly failures never end a flow
+//!
+//! A flow's lifecycle ([`FlowEvent::Started`] … [`FlowEvent::Ended`])
+//! reflects the transport: `Ended.reason` is always one of `Fin`,
+//! `Rst`, `IdleTimeout`, `Evicted` or `ForceClosed`. When reassembly
+//! of a side stops (per-side cap under
+//! [`OverflowPolicy::DropFlow`], or
+//! the tracker-wide memcap), the flow **stays tracked** — its later
+//! packets are still recognised as the same connection — and the
+//! stop is reported through the [`AnomalyKind::BufferOverflow`] /
+//! [`AnomalyKind::GlobalMemcapHit`] anomalies, the drained
+//! [`StreamChunks::stop`], and [`crate::FlowStats`]. (Before 0.25 the
+//! driver synthesised `Ended { reason: BufferOverflow }` and forgot
+//! the flow, so its next packet started a new flow mid-stream.)
+//!
+//! # What the driver feeds its reassemblers
+//!
+//! Besides each data segment, a reassembler learns the stream origin
+//! from the SYN / SYN-ACK ([`Reassembler::set_origin`]; a SYN's own
+//! data — TCP Fast Open — starts one past its sequence number), the
+//! peer's acknowledgements ([`Reassembler::peer_ack`]) and its own FIN
+//! ([`Reassembler::fin_seen`]). RST payloads (diagnostic text) are not
+//! stream data and are ignored.
+//!
+//! # Event gating
+//!
+//! The driver owns its tracker's `Ended` events: they are always
+//! produced internally so per-flow state is released, and the
+//! [`FlowTrackerConfig::suppress_events`] mask /
+//! [`FlowTracker::pause_events`] only decide what reaches the caller
+//! (including the driver's own `FlowAnomaly` / `TrackerAnomaly` /
+//! `Tick`). [`FlowTrackerConfig::auto_sweep_interval`] runs the
+//! driver's full sweep, not just the tracker's.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::time::Duration;
 
 use ahash::RandomState;
 
 use crate::Timestamp;
 use crate::event::{
-    AnomalyKind, EndReason, EventMask, FlowEvent, FlowSide, MemcapPolicy, OverflowPolicy,
+    AnomalyKind, EventMask, FlowEvent, FlowSide, FlowStats, MemcapPolicy, OverflowPolicy,
+    ReassemblyStop,
 };
-use crate::extractor::FlowExtractor;
-use crate::reassembler::{Reassembler, ReassemblerFactory};
-use crate::tracker::{FlowEvents, FlowTracker, FlowTrackerConfig};
+use crate::extractor::{FlowExtractor, L4Meta, L4Proto, Orientation, TcpFlags, TcpInfo};
+use crate::reassembler::{Reassembler, ReassemblerFactory, SegmentOutcome, StreamChunks};
+use crate::tracker::{FlowEvents, FlowTracker, FlowTrackerConfig, PacketContext};
 use crate::view::PacketView;
+
+/// What the driver learned about the packet it just tracked. Returned
+/// by [`FlowDriver::last_packet`]; the session engines use it to
+/// dispatch per-packet work without depending on
+/// [`FlowEvent::Packet`] (which load-shedding can suppress).
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub struct PacketInfo<K> {
+    /// Flow the packet belongs to.
+    pub key: K,
+    /// Logical side that sent it.
+    pub side: FlowSide,
+    /// Canonical direction of the packet.
+    pub orientation: Orientation,
+    /// L4 protocol, when identified.
+    pub l4: Option<L4Proto>,
+    /// Parsed TCP header, for TCP packets.
+    pub tcp: Option<TcpInfo>,
+    /// Ports and L4 payload location reported by the extractor
+    /// (offsets into the tracked frame). New in 0.25.0.
+    pub l4_meta: Option<L4Meta>,
+    /// Packet timestamp (after dedup / monotonic clamping).
+    pub ts: Timestamp,
+    /// `true` when this packet created the flow.
+    pub is_new: bool,
+    /// Set when the reassembler let this packet's payload through
+    /// ([`SegmentOutcome::Passthrough`]): `payload[skip..]` are the
+    /// next in-order bytes and were **not** buffered.
+    #[cfg_attr(
+        not(all(feature = "session", feature = "extractors")),
+        allow(dead_code)
+    )]
+    pub(crate) passthrough: Option<usize>,
+}
+
+impl<K> PacketInfo<K> {
+    /// The in-order bytes the reassembler let through for this
+    /// packet (engine mode), sliced from `frame`.
+    #[cfg_attr(
+        not(all(feature = "session", feature = "extractors")),
+        allow(dead_code)
+    )]
+    pub(crate) fn passthrough_bytes<'a>(&self, frame: &'a [u8]) -> Option<&'a [u8]> {
+        let skip = self.passthrough?;
+        let tcp = self.tcp.as_ref()?;
+        let start = tcp.payload_offset.checked_add(skip)?;
+        let end = tcp.payload_offset.checked_add(tcp.payload_len)?;
+        frame.get(start..end)
+    }
+}
+
+/// Per-reassembler diagnostic counters, captured before a segment is
+/// fed (or a sweep runs) and diffed afterwards into anomaly events.
+#[derive(Clone, Copy, Default, Debug)]
+struct Counters {
+    dropped: u64,
+    oversize: u64,
+    crossings: u64,
+    retransmits: u64,
+    inconsistencies: u64,
+    gaps: u64,
+    gap_bytes: u64,
+    out_of_window: u64,
+    ack_gaps: u64,
+    origin_resets: u64,
+    high_watermark: u64,
+}
+
+impl Counters {
+    fn of<R: Reassembler>(r: &R) -> Self {
+        Self {
+            dropped: r.dropped_segments(),
+            oversize: r.bytes_dropped_oversize(),
+            crossings: r.high_watermark_crossings(),
+            retransmits: r.retransmits(),
+            inconsistencies: r.rexmit_inconsistencies(),
+            gaps: r.gaps(),
+            gap_bytes: r.gap_bytes(),
+            out_of_window: r.out_of_window_segments(),
+            ack_gaps: r.ack_confirmed_gaps(),
+            origin_resets: r.origin_resets(),
+            high_watermark: r.high_watermark(),
+        }
+    }
+
+    /// Anomaly kinds for everything that changed between `self`
+    /// (before) and `r` (after), for one side.
+    fn diff<R: Reassembler>(&self, r: &R, side: FlowSide, out: &mut Vec<AnomalyKind>) {
+        let now = Counters::of(r);
+        let oversize = now.oversize.saturating_sub(self.oversize);
+        if oversize > 0 {
+            let policy = if r.stop_reason() == Some(ReassemblyStop::Overflow) {
+                OverflowPolicy::DropFlow
+            } else {
+                OverflowPolicy::SlidingWindow
+            };
+            out.push(AnomalyKind::BufferOverflow {
+                side,
+                bytes: oversize,
+                policy,
+            });
+        }
+        let gaps = now.gaps.saturating_sub(self.gaps);
+        if gaps > 0 {
+            out.push(AnomalyKind::StreamGap {
+                side,
+                gaps,
+                bytes: now.gap_bytes.saturating_sub(self.gap_bytes),
+            });
+        }
+        let dropped = now.dropped.saturating_sub(self.dropped);
+        if dropped > 0 {
+            out.push(AnomalyKind::OutOfOrderSegment {
+                side,
+                count: dropped,
+            });
+        }
+        let oow = now.out_of_window.saturating_sub(self.out_of_window);
+        if oow > 0 {
+            out.push(AnomalyKind::OutOfWindowSegment { side, count: oow });
+        }
+        if now.crossings > self.crossings
+            && let Some((cap, threshold_pct)) = r.high_watermark_threshold()
+        {
+            out.push(AnomalyKind::ReassemblerHighWatermark {
+                side,
+                bytes: r.bytes_in_flight(),
+                cap,
+                threshold_pct,
+            });
+        }
+        let retransmits = now.retransmits.saturating_sub(self.retransmits);
+        if retransmits > 0 {
+            out.push(AnomalyKind::RetransmittedSegment {
+                side,
+                count: retransmits,
+            });
+        }
+        let inconsistencies = now.inconsistencies.saturating_sub(self.inconsistencies);
+        if inconsistencies > 0 {
+            out.push(AnomalyKind::TcpRexmitInconsistency {
+                side,
+                count: inconsistencies,
+            });
+        }
+    }
+}
+
+/// A live reassembler plus the bytes it last contributed to the
+/// tracker-wide memcap pool.
+struct Live<R> {
+    r: R,
+    accounted: u64,
+}
+
+/// Final diagnostics of a side whose reassembler was dropped.
+#[derive(Debug, Clone, Copy)]
+struct DoneStats {
+    counters: Counters,
+}
+
+/// Stream state of one side of a flow.
+enum SideSlot<R> {
+    /// No data seen yet.
+    Empty,
+    /// Reassembling.
+    Live(Box<Live<R>>),
+    /// No longer reassembled — discarded by the consumer or stopped
+    /// by the memcap. Later segments are ignored; the reassembler is
+    /// gone (no memory held). `stop` is reported to the next drain
+    /// once (`reported`); `stats` keeps the final counters (`None`
+    /// when all were zero).
+    Done {
+        stats: Option<Box<DoneStats>>,
+        stop: Option<ReassemblyStop>,
+        reported: bool,
+    },
+}
+
+/// Stream state of one flow.
+struct StreamFlow<R> {
+    sides: [SideSlot<R>; 2],
+    /// First data sequence number of each side, from its SYN /
+    /// SYN-ACK (ISN + 1).
+    origin: [Option<u32>; 2],
+    /// Ports of the packet that created the stream state (for data
+    /// released by a sweep).
+    ports: Option<(u16, u16)>,
+}
+
+impl<R> StreamFlow<R> {
+    fn new(ports: Option<(u16, u16)>) -> Self {
+        Self {
+            sides: [SideSlot::Empty, SideSlot::Empty],
+            origin: [None, None],
+            ports,
+        }
+    }
+}
+
+fn idx(side: FlowSide) -> usize {
+    match side {
+        FlowSide::Initiator => 0,
+        FlowSide::Responder => 1,
+    }
+}
+
+const SIDES: [FlowSide; 2] = [FlowSide::Initiator, FlowSide::Responder];
+
+/// Copy one side's diagnostics into the per-side fields of `stats`.
+fn fold_counters(
+    stats: &mut FlowStats,
+    side: FlowSide,
+    c: &Counters,
+    stop: Option<ReassemblyStop>,
+) {
+    match side {
+        FlowSide::Initiator => {
+            stats.reassembly_dropped_ooo_initiator = c.dropped;
+            stats.reassembly_bytes_dropped_oversize_initiator = c.oversize;
+            stats.reassembler_high_watermark_initiator = c.high_watermark;
+            stats.retransmits_initiator = c.retransmits;
+            stats.reassembly_gaps_initiator = c.gaps;
+            stats.reassembly_gap_bytes_initiator = c.gap_bytes;
+            stats.reassembly_stop_initiator = stop;
+            stats.reassembly_out_of_window_initiator = c.out_of_window;
+            stats.reassembly_ack_confirmed_gaps_initiator = c.ack_gaps;
+            stats.reassembly_origin_resets_initiator = c.origin_resets;
+        }
+        FlowSide::Responder => {
+            stats.reassembly_dropped_ooo_responder = c.dropped;
+            stats.reassembly_bytes_dropped_oversize_responder = c.oversize;
+            stats.reassembler_high_watermark_responder = c.high_watermark;
+            stats.retransmits_responder = c.retransmits;
+            stats.reassembly_gaps_responder = c.gaps;
+            stats.reassembly_gap_bytes_responder = c.gap_bytes;
+            stats.reassembly_stop_responder = stop;
+            stats.reassembly_out_of_window_responder = c.out_of_window;
+            stats.reassembly_ack_confirmed_gaps_responder = c.ack_gaps;
+            stats.reassembly_origin_resets_responder = c.origin_resets;
+        }
+    }
+}
+
+fn fold_slot<R: Reassembler>(stats: &mut FlowStats, side: FlowSide, slot: &SideSlot<R>) {
+    match slot {
+        SideSlot::Empty => {}
+        SideSlot::Live(l) => fold_counters(stats, side, &Counters::of(&l.r), l.r.stop_reason()),
+        SideSlot::Done {
+            stats: Some(d),
+            stop,
+            ..
+        } => fold_counters(stats, side, &d.counters, *stop),
+        SideSlot::Done {
+            stats: None, stop, ..
+        } => fold_counters(stats, side, &Counters::default(), *stop),
+    }
+}
+
+/// Drop a side's reassembler, keeping its final diagnostics. Returns
+/// the bytes it had contributed to the memcap pool.
+fn tombstone<R: Reassembler>(slot: &mut SideSlot<R>, stop: Option<ReassemblyStop>) -> u64 {
+    match std::mem::replace(slot, SideSlot::Empty) {
+        SideSlot::Live(l) => {
+            let counters = Counters::of(&l.r);
+            let stop = stop.or(l.r.stop_reason());
+            let nonzero = counters.gaps
+                | counters.dropped
+                | counters.oversize
+                | counters.retransmits
+                | counters.high_watermark
+                | counters.out_of_window
+                | counters.inconsistencies
+                != 0;
+            *slot = SideSlot::Done {
+                stats: nonzero.then(|| Box::new(DoneStats { counters })),
+                stop,
+                reported: stop.is_none(),
+            };
+            l.accounted
+        }
+        SideSlot::Empty => {
+            *slot = SideSlot::Done {
+                stats: None,
+                stop,
+                reported: stop.is_none(),
+            };
+            0
+        }
+        done @ SideSlot::Done { .. } => {
+            *slot = done;
+            0
+        }
+    }
+}
 
 /// Sync flow driver: tracker + per-(flow, side) reassembler dispatch.
 ///
 /// Use this when you want both flow events **and** TCP byte streams
 /// in one synchronous loop (typical for pcap replay, embedded use,
-/// non-tokio CLI tools).
+/// non-tokio CLI tools). For L7 parsing on top, use
+/// [`crate::session::SessionDriver`] or the typed
+/// [`crate::driver::Driver`], which are built on it.
 ///
-/// For tokio integration, see `netring::FlowStream::with_async_reassembler`.
-/// Snapshot of per-reassembler diagnostic counters + tracker
-/// eviction total at the start of a tick. Compared against the
-/// post-tick state to coalesce anomaly events.
-/// Per-reassembler diagnostic counters captured at snapshot time.
-/// Diff against post-tick values to derive per-tick anomaly events.
-#[derive(Clone, Copy, Default)]
-struct ReassemblerCounters {
-    dropped: u64,
-    oversize: u64,
-    crossings: u64,
-    retransmits: u64,
-}
-
-struct AnomalySnapshot<K>
-where
-    K: Eq + std::hash::Hash + Clone,
-{
-    per_side: HashMap<(K, FlowSide), ReassemblerCounters, RandomState>,
-    evicted_total: u64,
-}
-
-impl<K> Default for AnomalySnapshot<K>
-where
-    K: Eq + std::hash::Hash + Clone,
-{
-    fn default() -> Self {
-        Self {
-            per_side: HashMap::with_hasher(RandomState::new()),
-            evicted_total: 0,
-        }
-    }
-}
-
+/// The tracker config is the single source of truth for reassembly
+/// limits: the factory receives it through
+/// [`ReassemblerFactory::apply_config`] on construction and on
+/// [`Self::set_config`].
 pub struct FlowDriver<E, F, S = ()>
 where
     E: FlowExtractor,
@@ -66,43 +368,37 @@ where
 {
     tracker: FlowTracker<E, S>,
     factory: F,
-    reassemblers: HashMap<(E::Key, FlowSide), F::Reassembler, RandomState>,
+    streams: HashMap<E::Key, StreamFlow<F::Reassembler>, RandomState>,
     emit_anomalies: bool,
     dedup: Option<crate::dedup::Dedup>,
     /// When `Some`, the running max of all timestamps the driver
-    /// has emitted. Each incoming view's timestamp is clamped to
-    /// this max. `None` means monotonisation is off (raw NIC
-    /// timestamps flow through unmodified).
+    /// has emitted. `None` means monotonisation is off.
     monotonic_ts: Option<Timestamp>,
-    /// Cross-flow reassembly memcap accounting (issue #26).
-    /// Running total of bytes currently buffered across every
-    /// live reassembler. Updated inline on each
-    /// `Reassembler::segment` call (via the
-    /// [`crate::Reassembler::current_bytes`] hook) and on
-    /// reassembler drop in [`Self::finalize_ended_flows`].
+    /// Latest packet timestamp seen (stamps `finish()` output).
+    max_ts: Timestamp,
+    /// Running total of bytes buffered across every live reassembler
+    /// (issue #26), for [`FlowTrackerConfig::reassembly_memcap`].
     global_memcap_bytes: u64,
-    /// Driver-side "memcap killed me" markers, populated when
-    /// [`MemcapPolicy::DropFlow`] / `PassThrough` fires. The
-    /// `synthesise_buffer_overflow_ends` path picks these up
-    /// in addition to reassembler-internal poison flags.
-    memcap_killed: HashSet<(E::Key, FlowSide), RandomState>,
-    /// Sides released by [`MemcapPolicy::PassThrough`]. Their
-    /// reassemblers are poisoned so they stop buffering, but unlike a
-    /// genuine overflow poison that must NOT end the flow — keeping
-    /// the flow tracked is the whole difference between `PassThrough`
-    /// and `DropFlow` (issue #186).
-    memcap_released: HashSet<(E::Key, FlowSide), RandomState>,
-    /// Per-side byte occupancy as last folded into
-    /// [`Self::global_memcap_bytes`]. Lets the pool be re-synced when
-    /// a parser drains a reassembler between segments, which would
-    /// otherwise leave the pool over-reporting until flow end
-    /// (issue #186).
-    accounted_bytes: HashMap<(E::Key, FlowSide), u64, RandomState>,
+    last_packet: Option<PacketInfo<E::Key>>,
+    /// Packet time of the last scan for due [`FlowEvent::Tick`]s.
+    last_tick_scan: Option<Timestamp>,
+    /// Engine mode: in-order payloads are let through
+    /// ([`Reassembler::segment_into`]) instead of buffered.
+    #[cfg_attr(
+        not(all(feature = "session", feature = "extractors")),
+        allow(dead_code)
+    )]
+    passthrough: bool,
+    /// Flows ended / forgotten as far as this driver knows; when the
+    /// tracker's count differs, someone used the tracker directly
+    /// and stream state is reconciled.
+    seen_gone: u64,
+    /// Scratch for per-packet anomalies.
+    anomalies: Vec<(E::Key, AnomalyKind)>,
+    kinds: Vec<AnomalyKind>,
 }
 
-// Common path — `S = ()`. Constructors live on this pinned impl
-// block so call sites need no type annotation for the (vastly
-// common) "no per-flow user state" case.
+// Common path — `S = ()`.
 impl<E, F> FlowDriver<E, F, ()>
 where
     E: FlowExtractor,
@@ -116,23 +412,11 @@ where
 
     /// Construct with explicit config and `S = ()`.
     pub fn with_config(extractor: E, factory: F, config: FlowTrackerConfig) -> Self {
-        Self {
-            tracker: FlowTracker::with_config(extractor, config),
-            factory,
-            reassemblers: HashMap::with_hasher(RandomState::new()),
-            emit_anomalies: false,
-            dedup: None,
-            monotonic_ts: None,
-            global_memcap_bytes: 0,
-            memcap_killed: HashSet::with_hasher(RandomState::new()),
-            memcap_released: HashSet::with_hasher(RandomState::new()),
-            accounted_bytes: HashMap::with_hasher(RandomState::new()),
-        }
+        Self::from_tracker(FlowTracker::with_config(extractor, config), factory)
     }
 }
 
-// Stateful path — `S: Default`. Convenience for the common case
-// where per-flow state can be built without knowing the key.
+// Stateful path — `S: Default`.
 impl<E, F, S> FlowDriver<E, F, S>
 where
     E: FlowExtractor,
@@ -148,25 +432,10 @@ where
     /// Construct with explicit config and per-flow state initialised
     /// via `S::default()`.
     pub fn with_state_and_config(extractor: E, factory: F, config: FlowTrackerConfig) -> Self {
-        Self {
-            tracker: FlowTracker::with_config(extractor, config),
-            factory,
-            reassemblers: HashMap::with_hasher(RandomState::new()),
-            emit_anomalies: false,
-            dedup: None,
-            monotonic_ts: None,
-            global_memcap_bytes: 0,
-            memcap_killed: HashSet::with_hasher(RandomState::new()),
-            memcap_released: HashSet::with_hasher(RandomState::new()),
-            accounted_bytes: HashMap::with_hasher(RandomState::new()),
-        }
+        Self::from_tracker(FlowTracker::with_config(extractor, config), factory)
     }
 }
 
-// Generic path — `S: Send + 'static` only. Covers parsers whose
-// state isn't `Default` or that want to derive state from the flow
-// key. All non-construction methods live on this block so they
-// apply to every `S`.
 impl<E, F, S> FlowDriver<E, F, S>
 where
     E: FlowExtractor,
@@ -174,8 +443,7 @@ where
     S: Send + 'static,
 {
     /// Construct with default config and a custom per-flow state
-    /// initialiser. Use when `S` isn't `Default` or when state
-    /// should be derived from the flow key.
+    /// initialiser.
     pub fn with_state_init<G>(extractor: E, factory: F, init: G) -> Self
     where
         G: FnMut(&E::Key) -> S + Send + Sync + 'static,
@@ -194,37 +462,52 @@ where
     where
         G: FnMut(&E::Key) -> S + Send + Sync + 'static,
     {
-        Self {
-            tracker: FlowTracker::with_config_and_state(extractor, config, init),
+        Self::from_tracker(
+            FlowTracker::with_config_and_state(extractor, config, init),
             factory,
-            reassemblers: HashMap::with_hasher(RandomState::new()),
+        )
+    }
+
+    /// Wrap an existing tracker (keeps its config, idle-timeout
+    /// predicate and live flows).
+    pub fn from_tracker(mut tracker: FlowTracker<E, S>, mut factory: F) -> Self {
+        factory.apply_config(tracker.config());
+        tracker.set_driver_owned(true);
+        let seen_gone = tracker.stats().flows_ended + tracker.forgotten();
+        Self {
+            tracker,
+            factory,
+            streams: HashMap::with_hasher(RandomState::new()),
             emit_anomalies: false,
             dedup: None,
             monotonic_ts: None,
+            max_ts: Timestamp::default(),
             global_memcap_bytes: 0,
-            memcap_killed: HashSet::with_hasher(RandomState::new()),
-            memcap_released: HashSet::with_hasher(RandomState::new()),
-            accounted_bytes: HashMap::with_hasher(RandomState::new()),
+            last_packet: None,
+            last_tick_scan: None,
+            passthrough: false,
+            seen_gone,
+            anomalies: Vec::new(),
+            kinds: Vec::new(),
         }
     }
 
     /// Opt in to emitting [`FlowEvent::FlowAnomaly`] /
-    /// [`FlowEvent::TrackerAnomaly`] for buffer overflows,
-    /// out-of-order drops, and tracker eviction pressure. Default:
-    /// `false` — no anomaly events emitted; counters still accumulate
-    /// in [`crate::FlowStats`].
+    /// [`FlowEvent::TrackerAnomaly`] for buffer overflows, gaps,
+    /// late / stray segments, retransmits, overlap inconsistencies,
+    /// high-watermark crossings, memcap hits and tracker eviction
+    /// pressure. Default: `false` — no anomaly events emitted;
+    /// counters still accumulate in [`crate::FlowStats`].
     ///
-    /// Anomalies are coalesced per (flow, side, kind) per tick so a
-    /// pathological flow doesn't swamp the stream.
+    /// Anomalies are coalesced per (flow, side, kind) per packet /
+    /// sweep so a pathological flow doesn't swamp the stream.
     pub fn with_emit_anomalies(mut self, enable: bool) -> Self {
         self.emit_anomalies = enable;
         self
     }
 
     /// Set a per-key idle-timeout override on the underlying tracker
-    /// (see [`FlowTracker::set_idle_timeout_fn`]). Builder-style
-    /// passthrough — chains nicely with [`Self::new`] /
-    /// [`Self::with_config`] / [`Self::with_emit_anomalies`].
+    /// (see [`FlowTracker::set_idle_timeout_fn`]).
     pub fn with_idle_timeout_fn<G>(mut self, f: G) -> Self
     where
         G: Fn(&E::Key, Option<crate::L4Proto>) -> Option<std::time::Duration>
@@ -246,48 +529,112 @@ where
         self
     }
 
-    /// Borrow the dedup state (e.g. for `.dropped()` /
-    /// `.buffered()` stats). `None` when no dedup is configured.
+    /// Borrow the dedup state. `None` when no dedup is configured.
     pub fn dedup(&self) -> Option<&crate::dedup::Dedup> {
         self.dedup.as_ref()
     }
 
     /// Opt in to strictly non-decreasing timestamps across the
     /// stream. Each packet's `view.timestamp` is clamped to
-    /// `max(view.timestamp, last_emitted_timestamp)`.
-    ///
-    /// Useful for downstream consumers that build timelines
-    /// from `FlowEvent` and want a guarantee that successive
-    /// events never go backwards in time. Default: off (raw NIC
-    /// timestamps flow through unmodified). The clamp also
-    /// applies to [`Self::sweep`]'s `now` argument.
+    /// `max(view.timestamp, last_emitted_timestamp)`; the clamp also
+    /// applies to [`Self::sweep`]'s `now` argument. Default: off.
     pub fn with_monotonic_timestamps(mut self, enable: bool) -> Self {
-        self.monotonic_ts = if enable {
-            Some(Timestamp::default())
-        } else {
-            None
-        };
+        self.set_monotonic_timestamps(enable);
         self
     }
 
-    /// Clamp a view's timestamp against the running max if
-    /// monotonisation is on; otherwise return the view unchanged.
+    /// In-place variant of [`Self::with_monotonic_timestamps`].
+    pub fn set_monotonic_timestamps(&mut self, enable: bool) {
+        self.monotonic_ts = enable.then(Timestamp::default);
+    }
+
+    /// In-place variant of [`Self::with_emit_anomalies`].
+    pub fn set_emit_anomalies(&mut self, enable: bool) {
+        self.emit_anomalies = enable;
+    }
+
+    /// In-place variant of [`Self::with_dedup`]; `None` removes it.
+    pub fn set_dedup(&mut self, dedup: Option<crate::dedup::Dedup>) {
+        self.dedup = dedup;
+    }
+
+    /// Replace the config: the tracker adopts it and the factory
+    /// receives it through [`ReassemblerFactory::apply_config`].
+    /// Reassemblers already created keep their settings.
+    pub fn set_config(&mut self, config: FlowTrackerConfig) {
+        self.factory.apply_config(&config);
+        self.tracker.set_config(config);
+    }
+
+    /// Stop emitting events (the "shunt mode" of
+    /// [`FlowTracker::pause_events`]); per-flow state is still
+    /// released as flows end.
+    pub fn pause_events(&mut self) {
+        self.tracker.pause_events();
+    }
+
+    /// Resume emitting events after [`Self::pause_events`].
+    pub fn resume_events(&mut self) {
+        self.tracker.resume_events();
+    }
+
+    /// Engine mode (see [`PacketInfo::passthrough_bytes`]).
+    #[cfg_attr(
+        not(all(feature = "session", feature = "extractors")),
+        allow(dead_code)
+    )]
+    pub(crate) fn set_passthrough(&mut self, on: bool) {
+        self.passthrough = on;
+    }
+
     fn clamp_view<'a>(&mut self, view: PacketView<'a>) -> PacketView<'a> {
         let Some(last) = self.monotonic_ts.as_mut() else {
             return view;
         };
         *last = (*last).max(view.timestamp);
-        PacketView::new(view.frame, *last)
+        let mut clamped = view;
+        clamped.timestamp = *last;
+        clamped
     }
 
-    /// Clamp a `now` argument used by [`Self::sweep`] against the
-    /// running max.
-    fn clamp_now(&mut self, now: Timestamp) -> Timestamp {
+    /// Apply the monotonic clamp to a sweep's `now`.
+    pub(crate) fn clamp_now(&mut self, now: Timestamp) -> Timestamp {
         let Some(last) = self.monotonic_ts.as_mut() else {
             return now;
         };
         *last = (*last).max(now);
         *last
+    }
+
+    /// Latest packet timestamp seen — what [`Self::finish`] stamps
+    /// its output with.
+    pub fn max_timestamp(&self) -> Timestamp {
+        self.max_ts
+    }
+
+    /// Whether events of this kind reach the caller (see
+    /// [`Self::emits`]).
+    #[cfg_attr(
+        not(all(feature = "session", feature = "extractors")),
+        allow(dead_code)
+    )]
+    pub(crate) fn emits_mask(&self, bit: EventMask) -> bool {
+        !self.tracker.events_paused() && !self.tracker.config().suppress_events.contains(bit)
+    }
+
+    /// Whether `ev` reaches the caller: the tracker's
+    /// [`FlowTrackerConfig::suppress_events`] mask and
+    /// [`FlowTracker::pause_events`] apply to the driver's output.
+    pub(crate) fn emits(&self, ev: &FlowEvent<E::Key>) -> bool {
+        let bit = match ev {
+            FlowEvent::Ended { .. } => EventMask::ENDED,
+            FlowEvent::FlowAnomaly { .. } => EventMask::FLOW_ANOMALY,
+            FlowEvent::TrackerAnomaly { .. } => EventMask::TRACKER_ANOMALY,
+            FlowEvent::Tick { .. } => EventMask::TICK,
+            // Gated by the tracker itself.
+            _ => return true,
+        };
+        !self.tracker.events_paused() && !self.tracker.config().suppress_events.contains(bit)
     }
 
     /// Process one packet. Drives the tracker and dispatches TCP
@@ -296,184 +643,218 @@ where
     pub fn track<'v>(&mut self, view: impl Into<PacketView<'v>>) -> FlowEvents<E::Key> {
         let mut events = self.track_pending(view);
         self.finalize(events.as_mut_slice());
+        let ts = self.last_packet.as_ref().map(|p| p.ts);
+        if let Some(ts) = ts
+            && self.tracker.auto_sweep_due(ts)
+        {
+            events.extend(self.sweep(ts));
+        }
         events
     }
 
     /// Lower-level: process one packet and return events **without**
-    /// finalizing reassemblers. Reassemblers remain accessible (via
-    /// [`Self::reassembler`] / [`Self::drain_buffer`]) until
-    /// [`Self::finalize`] is called.
+    /// finalizing reassemblers. Reassemblers stay accessible (via
+    /// [`Self::reassembler`] / [`Self::drain_stream`]) until
+    /// [`Self::finalize`] is called — which is how a consumer
+    /// harvests the last bytes of a flow that ends on this packet.
+    ///
+    /// For every `Ended` event in the result, both sides'
+    /// reassemblers have already been flushed
+    /// ([`Reassembler::flush_pending`]) and their final diagnostics
+    /// folded into the event's `stats`. An `Ended` the event mask
+    /// suppresses is finalized internally.
     ///
     /// You MUST call [`Self::finalize`] before the next
-    /// `track_pending` / `sweep_pending` / `track` / `sweep` call —
-    /// otherwise reassemblers for ended flows are never cleaned up.
-    /// Typical use: the internal session engine calls
-    /// `track_pending`, drains buffered bytes from reassemblers, then
-    /// calls `finalize`.
+    /// `track_pending` / `sweep_pending` / `track` / `sweep` call.
+    /// Auto-sweeps ([`FlowTrackerConfig::auto_sweep_interval`]) only
+    /// run from [`Self::track`].
     pub fn track_pending<'v>(&mut self, view: impl Into<PacketView<'v>>) -> FlowEvents<E::Key> {
+        self.track_pending_with(view, |_| true)
+    }
+
+    /// Like [`Self::track_pending`], but a reassembler is only
+    /// **created** for a flow when `want` returns `true` for the
+    /// packet that would create it (flows that already have stream
+    /// state keep it). The session engines use it to buffer only
+    /// flows some parser is interested in; answer consistently for
+    /// every packet of a flow.
+    pub fn track_pending_with<'v, W>(
+        &mut self,
+        view: impl Into<PacketView<'v>>,
+        want: W,
+    ) -> FlowEvents<E::Key>
+    where
+        W: FnMut(&PacketContext<'_, E::Key>) -> bool,
+    {
+        let mut events = self.track_raw(view, want);
+        self.close_all(&mut events);
+        events
+    }
+
+    /// Flush, fold and (when masked) finalize every `Ended` in
+    /// `events`; drop output the mask suppresses.
+    fn close_all<B: EventBuf<E::Key>>(&mut self, events: &mut B) {
+        let mut i = 0;
+        while i < events.len() {
+            if let FlowEvent::Ended { .. } = events.get_mut(i) {
+                let mut flush: SmallAnoms<E::Key> = SmallAnoms::new();
+                let (key, reason) = {
+                    let FlowEvent::Ended {
+                        key, reason, stats, ..
+                    } = events.get_mut(i)
+                    else {
+                        unreachable!()
+                    };
+                    let key = key.clone();
+                    self.close_flow(&key, stats, &mut flush);
+                    (key, *reason)
+                };
+                for a in flush {
+                    if self.emits(&a) {
+                        events.insert(i, a);
+                        i += 1;
+                    }
+                }
+                if !self.emits(events.get_mut(i)) {
+                    self.finalize_flow(&key, reason);
+                    events.remove(i);
+                    continue;
+                }
+            } else if !self.emits(events.get_mut(i)) {
+                events.remove(i);
+                continue;
+            }
+            i += 1;
+        }
+    }
+
+    /// Track one packet: tracker events with this packet's anomalies
+    /// placed before the packet's own `Ended` (if any), ticks last.
+    /// Ended flows are neither flushed nor finalized, and nothing is
+    /// masked — the engine and [`Self::track_pending_with`] do that.
+    pub(crate) fn track_raw<'v, W>(
+        &mut self,
+        view: impl Into<PacketView<'v>>,
+        mut want: W,
+    ) -> FlowEvents<E::Key>
+    where
+        W: FnMut(&PacketContext<'_, E::Key>) -> bool,
+    {
+        self.last_packet = None;
         let view: PacketView<'v> = view.into();
-        // Dedup before extraction — duplicates produce no events.
         if let Some(d) = self.dedup.as_mut()
             && !d.keep(view)
         {
             return FlowEvents::new();
         }
-        // Monotonic timestamp clamp (Plan 48) — applied to the
-        // view's timestamp before tracker dispatch.
         let view = self.clamp_view(view);
         let ts = view.timestamp;
-        let snapshot = self.snapshot_anomaly_state();
+        self.max_ts = self.max_ts.max(ts);
+        let evicted_before = self.tracker.stats().flows_evicted;
         let memcap_cap = self.tracker.config().reassembly_memcap;
         let memcap_policy = self.tracker.config().reassembly_memcap_policy;
+        let emit_anomalies = self.emit_anomalies;
+        let passthrough = self.passthrough;
+
         let factory = &mut self.factory;
-        let reassemblers = &mut self.reassemblers;
-        let global_bytes = &mut self.global_memcap_bytes;
-        let memcap_killed = &mut self.memcap_killed;
-        let accounted_bytes = &mut self.accounted_bytes;
-        let memcap_released = &mut self.memcap_released;
-        // Per-tick latch: at most one `GlobalMemcapHit` anomaly
-        // per `track_pending` call regardless of how many segments
-        // cross the line. Captures the bytes-in-flight at the
-        // first crossing.
+        let streams = &mut self.streams;
+        let global = &mut self.global_memcap_bytes;
+        let anomalies = &mut self.anomalies;
+        let kinds = &mut self.kinds;
+        anomalies.clear();
+        let mut info: Option<PacketInfo<E::Key>> = None;
+        // At most one `GlobalMemcapHit` per packet; captures the
+        // bytes-in-flight at the trip.
         let mut memcap_tripped: Option<u64> = None;
-        let mut events = self
-            .tracker
-            .track_with_payload(view, |key, side, seq, payload| {
-                let r = reassemblers
-                    .entry((key.clone(), side))
-                    .or_insert_with(|| factory.new_reassembler(key, side));
 
-                // Re-sync this side's contribution before deciding.
-                // Bytes a parser drained via `take()` since the last
-                // segment are still counted in the pool otherwise, so
-                // a side that drains and goes quiet would trip the
-                // cap on stale accounting (issue #186).
-                let old_bytes = r.current_bytes();
-                let accounted = accounted_bytes.entry((key.clone(), side)).or_insert(0);
-                if old_bytes >= *accounted {
-                    *global_bytes = global_bytes.saturating_add(old_bytes - *accounted);
-                } else {
-                    *global_bytes = global_bytes.saturating_sub(*accounted - old_bytes);
-                }
-                *accounted = old_bytes;
-
-                // `DropPacket` is the one policy that can refuse a
-                // segment, and it has to decide *before* handing it
-                // over: `Reassembler::segment` returns `()`, so once
-                // the bytes are in there is no rollback. The check is
-                // deliberately conservative — a dedup reassembler
-                // might have grown by less than `payload.len()` — but
-                // erring toward refusing is the safe direction for a
-                // cap.
-                let would_exceed = memcap_cap
-                    .is_some_and(|cap| global_bytes.saturating_add(payload.len() as u64) > cap);
-                if would_exceed && memcap_policy == MemcapPolicy::DropPacket {
-                    // Latch the trip even though nothing was stored,
-                    // so the anomaly still fires for this tick.
-                    if memcap_tripped.is_none() {
-                        memcap_tripped = Some(*global_bytes);
-                    }
-                    return;
-                }
-
-                r.segment(seq, payload, ts);
-                let new_bytes = r.current_bytes();
-                if new_bytes >= *accounted {
-                    *global_bytes = global_bytes.saturating_add(new_bytes - *accounted);
-                } else {
-                    *global_bytes = global_bytes.saturating_sub(*accounted - new_bytes);
-                }
-                *accounted = new_bytes;
-
-                // Memcap enforcement (issue #26). When the cap is
-                // configured and we've exceeded it, apply the
-                // declared policy and latch the trip for anomaly
-                // emission outside the closure.
-                if let Some(cap) = memcap_cap
-                    && *global_bytes > cap
-                {
-                    if memcap_tripped.is_none() {
-                        memcap_tripped = Some(*global_bytes);
-                    }
-                    match memcap_policy {
-                        // Suricata's `ignore`: count the violation,
-                        // change nothing. The flow keeps buffering.
-                        MemcapPolicy::Ignore => {}
-                        // Handled by the pre-check above; reaching
-                        // here means the segment fit the cap on its
-                        // own but the pool was already over, which
-                        // the next segment's pre-check will catch.
-                        MemcapPolicy::DropPacket => {}
-                        MemcapPolicy::PassThrough => {
-                            // Stop reassembling this side and free
-                            // what it holds, but leave the flow in
-                            // the tracker so accounting continues.
-                            let residual = r.current_bytes();
-                            r.release();
-                            let freed = residual.saturating_sub(r.current_bytes());
-                            *global_bytes = global_bytes.saturating_sub(freed);
-                            *accounted = r.current_bytes();
-                            memcap_released.insert((key.clone(), side));
-                        }
-                        MemcapPolicy::DropFlow => {
-                            // Mark this side memcap-killed; the
-                            // `synthesise_buffer_overflow_ends`
-                            // path will emit the terminal
-                            // `Ended { reason: BufferOverflow }`.
-                            memcap_killed.insert((key.clone(), side));
-                        }
+        let mut events = self.tracker.track_with(view, |p| {
+            let mut pass = None;
+            // A new flow must not inherit stream state left behind by
+            // an earlier flow with the same key (forgotten behind the
+            // driver's back).
+            if p.is_new
+                && let Some(old) = streams.remove(p.key)
+            {
+                for slot in old.sides {
+                    if let SideSlot::Live(l) = slot {
+                        *global = global.saturating_sub(l.accounted);
                     }
                 }
-            });
-
-        // Emit anomaly events (per-tick coalesced) before synthesising
-        // BufferOverflow ends — the overflow that caused the
-        // BufferOverflow anomaly should appear before the Ended event.
-        if self.emit_anomalies {
-            let anomalies = Self::diff_anomaly_state(snapshot, reassemblers, &self.tracker, ts);
-            for a in anomalies {
-                if let Some(kind) = a.anomaly_kind() {
-                    crate::obs::record_anomaly(kind);
-                    crate::obs::trace_anomaly(kind);
-                }
-                events.push(a);
             }
-            // One `GlobalMemcapHit` per tick at the configured
-            // policy. Emitted regardless of which (or how many)
-            // flows tripped it — it is a tracker-global signal.
-            if let (Some(bytes_in_flight), Some(cap)) = (memcap_tripped, memcap_cap) {
-                let kind = AnomalyKind::GlobalMemcapHit {
-                    bytes_in_flight,
-                    cap,
-                    policy: memcap_policy,
-                };
+            if let Some(tcp) = p.tcp {
+                pass = feed_tcp(
+                    p,
+                    tcp,
+                    &mut want,
+                    factory,
+                    streams,
+                    global,
+                    TcpFeed {
+                        passthrough,
+                        emit_anomalies,
+                        memcap_cap,
+                        memcap_policy,
+                    },
+                    &mut memcap_tripped,
+                    anomalies,
+                    kinds,
+                );
+            }
+            info = Some(PacketInfo {
+                key: p.key.clone(),
+                side: p.side,
+                orientation: p.orientation,
+                l4: p.l4,
+                tcp: p.tcp.copied(),
+                l4_meta: p.l4_meta,
+                ts: p.ts,
+                is_new: p.is_new,
+                passthrough: pass,
+            });
+        });
+
+        // Anomalies of this packet go right before its own flow's
+        // `Ended` (a FIN / RST packet), else after the tracker's
+        // events.
+        let at = info
+            .as_ref()
+            .and_then(|p| {
+                events
+                    .iter()
+                    .position(|e| matches!(e, FlowEvent::Ended { key, .. } if key == &p.key))
+            })
+            .unwrap_or(events.len());
+        let mut extra: SmallAnoms<E::Key> = SmallAnoms::new();
+        if emit_anomalies {
+            for (key, kind) in self.anomalies.drain(..) {
                 crate::obs::record_anomaly(&kind);
                 crate::obs::trace_anomaly(&kind);
-                events.push(FlowEvent::TrackerAnomaly { kind, ts });
+                extra.push(FlowEvent::FlowAnomaly { key, kind, ts });
+            }
+            if let Some(bytes_in_flight) = memcap_tripped
+                && let Some(cap) = memcap_cap
+            {
+                extra.push(tracker_anomaly(
+                    AnomalyKind::GlobalMemcapHit {
+                        bytes_in_flight,
+                        cap,
+                        policy: memcap_policy,
+                    },
+                    ts,
+                ));
+            }
+            if let Some(a) = self.eviction_pressure(evicted_before, ts) {
+                extra.push(a);
             }
         }
-
-        // Synthesise `Ended { reason: BufferOverflow }` for any
-        // reassembler that just poisoned and isn't already ending.
-        let synthesised = Self::synthesise_buffer_overflow_ends(
-            &events,
-            reassemblers,
-            &mut self.tracker,
-            memcap_killed,
-            memcap_released,
-        );
-        for ev in synthesised {
-            events.push(ev);
+        for (n, a) in extra.into_iter().enumerate() {
+            events.insert(at + n, a);
         }
+        self.last_packet = info;
+        self.note_gone(events.iter());
 
-        // Periodic flow ticks (Plan 71). Opt-in via
-        // `FlowTrackerConfig::flow_tick_interval`. Emitted after
-        // anomaly + BufferOverflow synthesis so consumers see the
-        // tick AFTER any anomalies / ends for the same packet.
-        // Tick is the one driver-emitted variant that scales with live
-        // flow count, so honour the tracker's load-shed gates here too
-        // (issue #79): skip the whole stats-snapshot walk when paused or
-        // when `EventMask::TICK` is masked off.
+        // Periodic flow ticks (Plan 71), honouring the load-shed
+        // gates (issue #79).
         if let Some(interval) = self.tracker.config().flow_tick_interval
             && !self.tracker.events_paused()
             && !self
@@ -484,39 +865,93 @@ where
         {
             self.emit_ticks(&mut events, ts, interval);
         }
-
         events
     }
 
+    /// Count `Ended` events the driver has seen (reconcile guard).
+    fn note_gone<'a>(&mut self, events: impl Iterator<Item = &'a FlowEvent<E::Key>>)
+    where
+        E::Key: 'a,
+    {
+        self.seen_gone += events
+            .filter(|e| matches!(e, FlowEvent::Ended { .. }))
+            .count() as u64;
+    }
+
+    fn eviction_pressure(&self, evicted_before: u64, ts: Timestamp) -> Option<FlowEvent<E::Key>> {
+        let evicted_total = self.tracker.stats().flows_evicted;
+        let evicted_in_tick = evicted_total.saturating_sub(evicted_before);
+        (evicted_in_tick > 0).then(|| {
+            tracker_anomaly(
+                AnomalyKind::FlowTableEvictionPressure {
+                    evicted_in_tick,
+                    evicted_total,
+                },
+                ts,
+            )
+        })
+    }
+
+    /// Flush both sides of an ended flow (no hole will ever fill),
+    /// fold their final diagnostics into `stats`, and push the
+    /// anomalies the flush produced (when enabled) to `out`. Stream
+    /// state stays until [`Self::finalize_flow`], so the last bytes
+    /// can still be drained.
+    pub(crate) fn close_flow<X: Extend<FlowEvent<E::Key>>>(
+        &mut self,
+        key: &E::Key,
+        stats: &mut FlowStats,
+        out: &mut X,
+    ) {
+        let ts = stats.last_seen;
+        if let Some(flow) = self.streams.get_mut(key) {
+            for (i, side) in SIDES.into_iter().enumerate() {
+                if let SideSlot::Live(l) = &mut flow.sides[i] {
+                    let before = self.emit_anomalies.then(|| Counters::of(&l.r));
+                    l.r.flush_pending();
+                    if let Some(before) = before {
+                        self.kinds.clear();
+                        before.diff(&l.r, side, &mut self.kinds);
+                        out.extend(self.kinds.drain(..).map(|kind| {
+                            crate::obs::record_anomaly(&kind);
+                            crate::obs::trace_anomaly(&kind);
+                            FlowEvent::FlowAnomaly {
+                                key: key.clone(),
+                                kind,
+                                ts,
+                            }
+                        }));
+                    }
+                }
+                fold_slot(stats, side, &flow.sides[i]);
+            }
+        }
+        crate::obs::record_reassembly_diagnostics(stats);
+    }
+
     /// Walk live flows; for any whose `last_tick_at` is past-due,
-    /// emit a [`FlowEvent::Tick`] carrying a patched [`FlowStats`]
+    /// emit a [`FlowEvent::Tick`] carrying a live [`FlowStats`]
     /// snapshot and mark the flow as ticked.
+    ///
+    /// The scan walks every flow, so it runs at most every quarter
+    /// interval of packet time (a tick is at most 1.25 intervals
+    /// late) instead of on every packet.
     fn emit_ticks(&mut self, events: &mut FlowEvents<E::Key>, now: Timestamp, interval: Duration) {
-        // Collect (key, stats) pairs first to release the tracker
-        // borrow before calling mark_ticked.
-        let mut to_tick: Vec<(E::Key, crate::FlowStats)> = Vec::new();
+        if let Some(last) = self.last_tick_scan
+            && now.saturating_sub(last) < interval / 4
+        {
+            return;
+        }
+        self.last_tick_scan = Some(now);
+        let mut to_tick: Vec<(E::Key, FlowStats)> = Vec::new();
         for (key, entry) in self.tracker.flows() {
             let due = match entry.last_tick_at {
                 None => true,
                 Some(last) => now.saturating_sub(last) >= interval,
             };
-            if !due {
-                continue;
+            if due {
+                to_tick.push((key.clone(), self.live_stats(key, &entry.stats)));
             }
-            let mut stats = entry.stats.clone();
-            if let Some(r) = self.reassemblers.get(&(key.clone(), FlowSide::Initiator)) {
-                stats.reassembly_dropped_ooo_initiator = r.dropped_segments();
-                stats.reassembly_bytes_dropped_oversize_initiator = r.bytes_dropped_oversize();
-                stats.reassembler_high_watermark_initiator = r.high_watermark();
-                stats.retransmits_initiator = r.retransmits();
-            }
-            if let Some(r) = self.reassemblers.get(&(key.clone(), FlowSide::Responder)) {
-                stats.reassembly_dropped_ooo_responder = r.dropped_segments();
-                stats.reassembly_bytes_dropped_oversize_responder = r.bytes_dropped_oversize();
-                stats.reassembler_high_watermark_responder = r.high_watermark();
-                stats.retransmits_responder = r.retransmits();
-            }
-            to_tick.push((key.clone(), stats));
         }
         for (key, stats) in to_tick {
             self.tracker.mark_ticked(&key, now);
@@ -529,6 +964,16 @@ where
         }
     }
 
+    fn live_stats(&self, key: &E::Key, base: &FlowStats) -> FlowStats {
+        let mut stats = base.clone();
+        if let Some(flow) = self.streams.get(key) {
+            for (i, side) in SIDES.into_iter().enumerate() {
+                fold_slot(&mut stats, side, &flow.sides[i]);
+            }
+        }
+        stats
+    }
+
     /// Run the idle-timeout sweep and clean up reassemblers for
     /// ended flows.
     pub fn sweep(&mut self, now: Timestamp) -> Vec<FlowEvent<E::Key>> {
@@ -538,412 +983,364 @@ where
     }
 
     /// Sweep every remaining flow to its end. Call once after the
-    /// last [`track`](Self::track) when input is exhausted —
-    /// equivalent to `sweep(Timestamp::MAX)`. Every still-open flow
-    /// is emitted as [`FlowEvent::Ended`].
+    /// last [`track`](Self::track) when input is exhausted. Output is
+    /// stamped with the latest packet timestamp seen (never
+    /// `Timestamp::MAX`), and the monotonic clock is left alone.
     pub fn finish(&mut self) -> Vec<FlowEvent<E::Key>> {
-        self.sweep(Timestamp::MAX)
+        let mut events = self.finish_raw();
+        self.close_all(&mut events);
+        self.finalize(events.as_mut_slice());
+        events
     }
 
-    /// Force-end the flow with this key. Driver-level mirror of
-    /// [`FlowTracker::force_close`]. Tears down the per-(flow, side)
-    /// reassembler slots before emitting the terminal event. New in
-    /// 0.8.0.
-    ///
-    /// Returns the resulting `FlowEvent`s (one `Ended` for the closed
-    /// flow plus any pending anomalies — same shape as `track()`).
-    /// Empty if `key` was not active.
+    /// Tracker `finish` without flushing, folding or masking.
+    pub(crate) fn finish_raw(&mut self) -> Vec<FlowEvent<E::Key>> {
+        let evicted_before = self.tracker.stats().flows_evicted;
+        let mut events = self.tracker.sweep(Timestamp::MAX);
+        if self.emit_anomalies
+            && let Some(a) = self.eviction_pressure(evicted_before, self.max_ts)
+        {
+            events.push(a);
+        }
+        self.note_gone(events.iter());
+        events
+    }
+
+    /// Force-end the flow with this key. Returns the resulting
+    /// `FlowEvent`s (one `Ended` with
+    /// [`crate::EndReason::ForceClosed`]); empty if `key` was not
+    /// active.
     pub fn force_close(&mut self, key: &E::Key, now: Timestamp) -> Vec<FlowEvent<E::Key>> {
-        // Pop the reassembler slots BEFORE the tracker forgets the
-        // entry so we can record any per-tick anomaly deltas the
-        // existing snapshot machinery would surface on a normal end.
-        // Refund their residual bytes back to the global memcap
-        // pool (issue #26).
-        let gbytes = &mut self.global_memcap_bytes;
-        self.reassemblers.retain(|(k, _), r| {
-            if k == key {
-                let residual = r.current_bytes();
-                *gbytes = gbytes.saturating_sub(residual);
-                false
-            } else {
-                true
-            }
-        });
-        // Tracker emits the Ended event with ForceClosed reason.
+        let mut events = self.force_close_pending(key, now);
+        self.finalize(events.as_mut_slice());
+        events
+    }
+
+    /// Lower-level [`Self::force_close`] that leaves the flow's
+    /// reassemblers in place (flushed) so their last bytes can be
+    /// drained; call [`Self::finalize`] afterwards.
+    pub fn force_close_pending(&mut self, key: &E::Key, now: Timestamp) -> Vec<FlowEvent<E::Key>> {
+        let mut events = self.force_close_raw(key, now);
+        self.close_all(&mut events);
+        events
+    }
+
+    pub(crate) fn force_close_raw(
+        &mut self,
+        key: &E::Key,
+        now: Timestamp,
+    ) -> Vec<FlowEvent<E::Key>> {
+        let now = self.clamp_now(now);
         let Some(ended) = self.tracker.force_close(key, now) else {
             return Vec::new();
         };
-        // Finalize: patches reassembler diagnostic fields (now zero
-        // since the slots are gone) and emits metrics. We construct
-        // a one-element slice and run it through the standard
-        // finalize path so consumers see the same shape they get
-        // from natural ends.
-        let mut events = vec![ended];
-        self.finalize(events.as_mut_slice());
-        events
+        self.seen_gone += 1;
+        vec![ended]
     }
 
     /// Lower-level sweep variant. Like [`Self::sweep`] but does NOT
     /// finalize ended flows' reassemblers. See [`Self::track_pending`]
     /// for the contract.
+    ///
+    /// Before idling flows out, every live reassembler gets
+    /// [`Reassembler::advance_time`] so holes past their deadline are
+    /// skipped even on a side that went quiet (the released bytes
+    /// wait in the reassembler for [`Self::drain_stream`]).
     pub fn sweep_pending(&mut self, now: Timestamp) -> Vec<FlowEvent<E::Key>> {
-        // Plan 48: clamp `now` to the running max when
-        // monotonisation is on.
         let now = self.clamp_now(now);
-        let snapshot = self.snapshot_anomaly_state();
-        let mut events = self.tracker.sweep(now);
-        self.reconcile_with_tracker();
-        if self.emit_anomalies {
-            let anomalies =
-                Self::diff_anomaly_state(snapshot, &self.reassemblers, &self.tracker, now);
-            for a in &anomalies {
-                if let Some(kind) = a.anomaly_kind() {
-                    crate::obs::record_anomaly(kind);
-                    crate::obs::trace_anomaly(kind);
-                }
-            }
-            events.extend(anomalies);
-        }
-        let synthesised = Self::synthesise_buffer_overflow_ends(
-            &events,
-            &mut self.reassemblers,
-            &mut self.tracker,
-            &mut self.memcap_killed,
-            &self.memcap_released,
-        );
-        events.extend(synthesised);
+        let mut events = Vec::new();
+        self.advance_streams(now, None, |r| events.extend(r.anomalies.drain(..)));
+        events.extend(self.sweep_raw(now));
+        self.close_all(&mut events);
         events
     }
 
-    /// Patch reassembly diagnostics into every `Ended` event and
-    /// drop the corresponding reassemblers (calling `fin` / `rst`).
-    /// Called automatically by [`Self::track`] / [`Self::sweep`];
-    /// callers using [`Self::track_pending`] / [`Self::sweep_pending`]
-    /// must call this before the next `track*` / `sweep*` call.
-    pub fn finalize(&mut self, events: &mut [FlowEvent<E::Key>]) {
-        Self::finalize_ended_flows(
-            events,
-            &mut self.reassemblers,
-            &mut self.global_memcap_bytes,
-            &mut self.accounted_bytes,
-            &mut self.memcap_released,
-        );
+    /// [`Self::sweep_pending`] that also hands over the bytes the
+    /// sweep released: holes past their deadline are skipped by
+    /// [`Reassembler::advance_time`], and the data waiting behind them
+    /// (with the [`Chunk::Gap`](crate::Chunk::Gap) marking the hole) is
+    /// drained into `buf` and passed to `f(key, side, buf)` — once per
+    /// side with output, `buf` cleared before each. Without it, a side
+    /// that went quiet behind a hole only delivers at its next packet
+    /// or at flow end.
+    ///
+    /// Anomalies of the advanced sides are returned with the events
+    /// (after the data `f` already saw). Same contract as
+    /// [`Self::sweep_pending`]: call [`Self::finalize`] next.
+    pub fn sweep_pending_drain<G>(
+        &mut self,
+        now: Timestamp,
+        buf: &mut StreamChunks,
+        mut f: G,
+    ) -> Vec<FlowEvent<E::Key>>
+    where
+        G: FnMut(&E::Key, FlowSide, &mut StreamChunks),
+    {
+        let now = self.clamp_now(now);
+        let mut events = Vec::new();
+        self.advance_streams(now, Some(buf), |r| {
+            events.extend(r.anomalies.drain(..));
+            if let Some(data) = r.data.as_deref_mut()
+                && !data.is_empty()
+            {
+                f(r.key, r.side, data);
+            }
+        });
+        events.extend(self.sweep_raw(now));
+        self.close_all(&mut events);
+        events
     }
 
-    /// Drop per-flow resources whose flow the tracker no longer holds.
-    ///
-    /// Cleanup normally rides on `FlowEvent::Ended` — but that event
-    /// is gated on [`EventMask::ENDED`](crate::EventMask), while the
-    /// tracker removes the flow either way. With `Ended` suppressed
-    /// (load shedding, issue #79) the reassemblers and parsers for
-    /// reaped flows would otherwise be held for the life of the
-    /// driver, which is worst precisely when shedding is switched on.
-    ///
-    /// Reconciling against the tracker rather than tracking reaped
-    /// keys separately keeps this self-healing: it recovers state
-    /// stranded for *any* reason, and adds no accumulator of its own
-    /// that could become the next leak. Runs on sweep, which is
-    /// already the periodic maintenance point, and costs one hash
-    /// lookup per live reassembler.
-    fn reconcile_with_tracker(&mut self) {
+    /// Give every live reassembler of a still-tracked flow
+    /// `advance_time(now)`. For each side that produced anomalies or
+    /// (with `drain`) released output, `f` gets a [`Released`] —
+    /// the side's anomalies and drained output together, so a caller
+    /// can deliver them in order.
+    pub(crate) fn advance_streams<G>(
+        &mut self,
+        now: Timestamp,
+        mut drain: Option<&mut StreamChunks>,
+        mut f: G,
+    ) where
+        G: FnMut(&mut Released<'_, E::Key>),
+    {
+        self.reconcile();
+        let emit = self.emit_anomalies;
+        let mut anomalies = SmallAnoms::new();
+        for (key, flow) in self.streams.iter_mut() {
+            let Some(entry) = self.tracker.get(key) else {
+                continue;
+            };
+            let initiator = entry.initiator_orientation();
+            for (i, side) in SIDES.into_iter().enumerate() {
+                let SideSlot::Live(l) = &mut flow.sides[i] else {
+                    continue;
+                };
+                let before = emit.then(|| Counters::of(&l.r));
+                l.r.advance_time(now);
+                if let Some(before) = before {
+                    self.kinds.clear();
+                    before.diff(&l.r, side, &mut self.kinds);
+                    anomalies.extend(self.kinds.drain(..).map(|kind| {
+                        crate::obs::record_anomaly(&kind);
+                        crate::obs::trace_anomaly(&kind);
+                        FlowEvent::FlowAnomaly {
+                            key: key.clone(),
+                            kind,
+                            ts: now,
+                        }
+                    }));
+                }
+                let data = match drain.as_deref_mut() {
+                    Some(buf) => {
+                        buf.clear();
+                        l.r.drain_into(buf);
+                        resync(&mut self.global_memcap_bytes, l);
+                        Some(buf)
+                    }
+                    None => None,
+                };
+                if anomalies.is_empty() && data.as_ref().is_none_or(|d| d.is_empty()) {
+                    continue;
+                }
+                let mut released = Released {
+                    key,
+                    side,
+                    orientation: match side {
+                        FlowSide::Initiator => initiator,
+                        FlowSide::Responder => initiator.flipped(),
+                    },
+                    ports: flow.ports,
+                    anomalies: &mut anomalies,
+                    data,
+                };
+                f(&mut released);
+                anomalies.clear();
+            }
+        }
+    }
+
+    /// The tracker's idle sweep (driver-owned: every `Ended`),
+    /// without flushing, folding or masking.
+    pub(crate) fn sweep_raw(&mut self, now: Timestamp) -> Vec<FlowEvent<E::Key>> {
+        let evicted_before = self.tracker.stats().flows_evicted;
+        let mut events = self.tracker.sweep(now);
+        if self.emit_anomalies
+            && let Some(a) = self.eviction_pressure(evicted_before, now)
+        {
+            events.push(a);
+        }
+        self.note_gone(events.iter());
+        events
+    }
+
+    /// Whether an auto-sweep ([`FlowTrackerConfig::auto_sweep_interval`])
+    /// is due at `ts`.
+    #[cfg_attr(
+        not(all(feature = "session", feature = "extractors")),
+        allow(dead_code)
+    )]
+    pub(crate) fn auto_sweep_due(&self, ts: Timestamp) -> bool {
+        self.tracker.auto_sweep_due(ts)
+    }
+
+    /// Drop stream state of flows the tracker no longer holds, when
+    /// the tracker was driven directly ([`Self::tracker_mut`]).
+    fn reconcile(&mut self) {
+        let gone = self.tracker.stats().flows_ended + self.tracker.forgotten();
+        if gone == self.seen_gone {
+            return;
+        }
+        self.seen_gone = gone;
         let tracker = &self.tracker;
         let global = &mut self.global_memcap_bytes;
-        let accounted = &mut self.accounted_bytes;
-        let released = &mut self.memcap_released;
-        self.reassemblers.retain(|(key, side), r| {
+        self.streams.retain(|key, flow| {
             if tracker.get(key).is_some() {
                 return true;
             }
-            // The flow is gone; refund what this side still holds.
-            *global = global.saturating_sub(r.current_bytes());
-            accounted.remove(&(key.clone(), *side));
-            released.remove(&(key.clone(), *side));
+            for slot in &flow.sides {
+                if let SideSlot::Live(l) = slot {
+                    *global = global.saturating_sub(l.accounted);
+                }
+            }
             false
         });
     }
 
-    /// Inspector for the cross-flow reassembly memcap accounting
-    /// (issue #26). Returns the running total of bytes
-    /// currently buffered across every live reassembler. Useful
-    /// for dashboards and tests; the value mirrors what the
-    /// [`AnomalyKind::GlobalMemcapHit`] `bytes_in_flight` field
-    /// would report at the trip moment.
+    /// Drop the reassemblers of every flow that ended in `events`
+    /// (calling `fin` / `rst` on the way out) and refund their bytes
+    /// to the memcap pool. Called automatically by [`Self::track`] /
+    /// [`Self::sweep`]; callers of the `*_pending` variants must call
+    /// it before the next `track*` / `sweep*` call.
+    pub fn finalize(&mut self, events: &mut [FlowEvent<E::Key>]) {
+        for ev in events.iter() {
+            if let FlowEvent::Ended { key, reason, .. } = ev {
+                self.finalize_flow(key, *reason);
+            }
+        }
+    }
+
+    /// [`Self::finalize`] for one ended flow: drop its reassemblers
+    /// (`fin` for a graceful `reason`, `rst` otherwise) and refund
+    /// their bytes to the memcap pool. No-op for unknown keys.
+    pub fn finalize_flow(&mut self, key: &E::Key, reason: crate::EndReason) {
+        if let Some(flow) = self.streams.remove(key) {
+            for slot in flow.sides {
+                if let SideSlot::Live(mut l) = slot {
+                    self.global_memcap_bytes = self.global_memcap_bytes.saturating_sub(l.accounted);
+                    if reason.is_graceful() {
+                        l.r.fin();
+                    } else {
+                        l.r.rst();
+                    }
+                }
+            }
+        }
+    }
+
+    /// The packet most recently accepted by `track*` — `None` before
+    /// the first packet, and after a packet that was deduplicated or
+    /// matched no flow.
+    pub fn last_packet(&self) -> Option<&PacketInfo<E::Key>> {
+        self.last_packet.as_ref()
+    }
+
+    /// Running total of bytes currently buffered across every live
+    /// reassembler (issue #26) — what the tracker-wide memcap is
+    /// compared against.
     pub fn reassembly_memcap_bytes(&self) -> u64 {
         self.global_memcap_bytes
     }
 
-    /// Borrow the per-(flow, side) reassembler. Returns `None` when
-    /// no reassembler exists (no TCP payload has been seen on that
-    /// side, or the flow has already ended and been finalized).
-    ///
-    /// Most useful between [`Self::track_pending`] and
-    /// [`Self::finalize`], where reassemblers for ended flows
-    /// haven't been dropped yet.
+    /// Ports of the packet that created a flow's stream state.
+    #[cfg_attr(
+        not(all(feature = "session", feature = "extractors")),
+        allow(dead_code)
+    )]
+    pub(crate) fn stream_ports(&self, key: &E::Key) -> Option<(u16, u16)> {
+        self.streams.get(key).and_then(|f| f.ports)
+    }
+
+    /// Flows with stream state (live or tombstoned sides).
+    pub fn stream_count(&self) -> usize {
+        self.streams.len()
+    }
+
+    /// Borrow the per-(flow, side) reassembler. `None` when no
+    /// reassembler exists (no TCP payload seen on that side, the
+    /// side was discarded / released, or the flow ended and was
+    /// finalized).
     pub fn reassembler(&mut self, key: &E::Key, side: FlowSide) -> Option<&mut F::Reassembler> {
-        self.reassemblers.get_mut(&(key.clone(), side))
-    }
-
-    /// Snapshot the per-reassembler diagnostic counters and the
-    /// tracker's eviction total ahead of a `track`/`sweep` call so
-    /// the post-call diff can be coalesced into anomaly events.
-    fn snapshot_anomaly_state(&self) -> AnomalySnapshot<E::Key> {
-        if !self.emit_anomalies {
-            return AnomalySnapshot::default();
-        }
-        let mut per_side: HashMap<(E::Key, FlowSide), ReassemblerCounters, RandomState> =
-            HashMap::with_hasher(RandomState::new());
-        for ((key, side), r) in &self.reassemblers {
-            per_side.insert(
-                (key.clone(), *side),
-                ReassemblerCounters {
-                    dropped: r.dropped_segments(),
-                    oversize: r.bytes_dropped_oversize(),
-                    crossings: r.high_watermark_crossings(),
-                    retransmits: r.retransmits(),
-                },
-            );
-        }
-        AnomalySnapshot {
-            per_side,
-            evicted_total: self.tracker.stats().flows_evicted,
+        match self.streams.get_mut(key)?.sides.get_mut(idx(side))? {
+            SideSlot::Live(l) => Some(&mut l.r),
+            _ => None,
         }
     }
 
-    /// Diff the snapshot against current state and synthesise one
-    /// anomaly event per (flow, side, kind) with non-zero delta plus
-    /// at most one `FlowTableEvictionPressure` event for the tick.
-    fn diff_anomaly_state(
-        snapshot: AnomalySnapshot<E::Key>,
-        reassemblers: &HashMap<(E::Key, FlowSide), F::Reassembler, RandomState>,
-        tracker: &FlowTracker<E, S>,
-        ts: Timestamp,
-    ) -> Vec<FlowEvent<E::Key>> {
-        let mut out = Vec::new();
-        // Per-flow / per-side counter deltas.
-        for ((key, side), r) in reassemblers {
-            let prev = snapshot
-                .per_side
-                .get(&(key.clone(), *side))
-                .copied()
-                .unwrap_or_default();
-            let cur = ReassemblerCounters {
-                dropped: r.dropped_segments(),
-                oversize: r.bytes_dropped_oversize(),
-                crossings: r.high_watermark_crossings(),
-                retransmits: r.retransmits(),
-            };
-            let dropped_delta = cur.dropped.saturating_sub(prev.dropped);
-            let oversize_delta = cur.oversize.saturating_sub(prev.oversize);
-            let crossing_delta = cur.crossings.saturating_sub(prev.crossings);
-            let retransmit_delta = cur.retransmits.saturating_sub(prev.retransmits);
-            if oversize_delta > 0 {
-                // Look up the policy via the tracker config; falls
-                // back to the default (SlidingWindow) when unset.
-                let policy = if r.is_poisoned() {
-                    OverflowPolicy::DropFlow
-                } else {
-                    OverflowPolicy::SlidingWindow
-                };
-                out.push(FlowEvent::FlowAnomaly {
-                    key: key.clone(),
-                    kind: AnomalyKind::BufferOverflow {
-                        side: *side,
-                        bytes: oversize_delta,
-                        policy,
-                    },
-                    ts,
-                });
+    /// Move the reassembled output of one flow side (bytes, gaps,
+    /// stop) onto the end of `out` — see [`Reassembler::drain_into`].
+    /// A side stopped by the memcap reports its stop once. Returns
+    /// `false` when there is nothing to report for the side. The
+    /// memcap pool is re-synced immediately.
+    pub fn drain_stream(&mut self, key: &E::Key, side: FlowSide, out: &mut StreamChunks) -> bool {
+        let Some(flow) = self.streams.get_mut(key) else {
+            return false;
+        };
+        match &mut flow.sides[idx(side)] {
+            SideSlot::Empty => false,
+            SideSlot::Live(l) => {
+                l.r.drain_into(out);
+                let current = l.r.current_bytes();
+                self.global_memcap_bytes = self
+                    .global_memcap_bytes
+                    .saturating_sub(l.accounted)
+                    .saturating_add(current);
+                l.accounted = current;
+                true
             }
-            if dropped_delta > 0 {
-                out.push(FlowEvent::FlowAnomaly {
-                    key: key.clone(),
-                    kind: AnomalyKind::OutOfOrderSegment {
-                        side: *side,
-                        count: dropped_delta,
-                    },
-                    ts,
-                });
-            }
-            if crossing_delta > 0 {
-                // Threshold must be configured for crossings to
-                // ever increment. Pull cap + pct from the
-                // reassembler to enrich the anomaly payload.
-                if let Some((cap, threshold_pct)) = r.high_watermark_threshold() {
-                    out.push(FlowEvent::FlowAnomaly {
-                        key: key.clone(),
-                        kind: AnomalyKind::ReassemblerHighWatermark {
-                            side: *side,
-                            bytes: r.bytes_in_flight(),
-                            cap,
-                            threshold_pct,
-                        },
-                        ts,
-                    });
+            SideSlot::Done { stop, reported, .. } => {
+                if *reported {
+                    return false;
                 }
-            }
-            if retransmit_delta > 0 {
-                out.push(FlowEvent::FlowAnomaly {
-                    key: key.clone(),
-                    kind: AnomalyKind::RetransmittedSegment {
-                        side: *side,
-                        count: retransmit_delta,
-                    },
-                    ts,
-                });
-            }
-        }
-        // Tracker-global eviction pressure.
-        let evicted_total = tracker.stats().flows_evicted;
-        let evicted_delta = evicted_total.saturating_sub(snapshot.evicted_total);
-        if evicted_delta > 0 {
-            out.push(FlowEvent::TrackerAnomaly {
-                kind: AnomalyKind::FlowTableEvictionPressure {
-                    evicted_in_tick: evicted_delta,
-                    evicted_total,
-                },
-                ts,
-            });
-        }
-        out
-    }
-
-    /// Build a list of `Ended { reason: BufferOverflow }` events for
-    /// any reassembler that's poisoned but whose flow hasn't already
-    /// ended in `existing`.
-    fn synthesise_buffer_overflow_ends(
-        existing: &[FlowEvent<E::Key>],
-        reassemblers: &mut HashMap<(E::Key, FlowSide), F::Reassembler, RandomState>,
-        tracker: &mut FlowTracker<E, S>,
-        memcap_killed: &mut HashSet<(E::Key, FlowSide), RandomState>,
-        memcap_released: &HashSet<(E::Key, FlowSide), RandomState>,
-    ) -> Vec<FlowEvent<E::Key>> {
-        // Collect keys whose reassembler is poisoned.
-        //
-        // A side released by `MemcapPolicy::PassThrough` is poisoned
-        // on purpose — it stopped buffering so its memory could be
-        // reclaimed — and must not be read as a reason to end the
-        // flow. That distinction is the entire difference between
-        // `PassThrough` and `DropFlow`.
-        let mut poisoned_keys: Vec<E::Key> = Vec::new();
-        for ((key, side), r) in reassemblers.iter() {
-            if r.is_poisoned()
-                && !memcap_released.contains(&(key.clone(), *side))
-                && !poisoned_keys.contains(key)
-            {
-                poisoned_keys.push(key.clone());
-            }
-        }
-        // Plus any key the driver itself memcap-killed this
-        // tick — they may not have set the reassembler-internal
-        // poison flag (issue #26 lets us terminate the flow
-        // via the configured `MemcapPolicy::DropFlow` /
-        // `PassThrough` without touching the reassembler's own
-        // overflow path).
-        for (key, _side) in memcap_killed.drain() {
-            if !poisoned_keys.contains(&key) {
-                poisoned_keys.push(key);
-            }
-        }
-        if poisoned_keys.is_empty() {
-            return Vec::new();
-        }
-        // Skip keys already ending in this tick.
-        let already_ending: std::collections::HashSet<E::Key> = existing
-            .iter()
-            .filter_map(|ev| match ev {
-                FlowEvent::Ended { key, .. } => Some(key.clone()),
-                _ => None,
-            })
-            .collect();
-        let mut out = Vec::new();
-        for key in poisoned_keys {
-            if already_ending.contains(&key) {
-                continue;
-            }
-            let Some(stats) = tracker.snapshot_stats(&key) else {
-                continue;
-            };
-            let history = tracker.snapshot_history(&key).unwrap_or_default();
-            let l4 = tracker.snapshot_l4(&key);
-            tracker.forget(&key);
-            crate::obs::record_flow_ended(EndReason::BufferOverflow, &stats);
-            crate::obs::trace_flow_ended(EndReason::BufferOverflow, &stats);
-            out.push(FlowEvent::Ended {
-                key,
-                reason: EndReason::BufferOverflow,
-                stats,
-                history,
-                l4,
-            });
-        }
-        out
-    }
-
-    /// Patch reassembly diagnostics into the `FlowStats` of every
-    /// `Ended` event in `events`, then drop the corresponding
-    /// reassemblers (calling `fin` / `rst` on the way out).
-    fn finalize_ended_flows(
-        events: &mut [FlowEvent<E::Key>],
-        reassemblers: &mut HashMap<(E::Key, FlowSide), F::Reassembler, RandomState>,
-        global_memcap_bytes: &mut u64,
-        accounted_bytes: &mut HashMap<(E::Key, FlowSide), u64, RandomState>,
-        memcap_released: &mut HashSet<(E::Key, FlowSide), RandomState>,
-    ) {
-        for ev in events.iter_mut() {
-            // Patch in reassembly diagnostics + drop reassemblers.
-            if let FlowEvent::Ended {
-                key, reason, stats, ..
-            } = ev
-            {
-                for side in [FlowSide::Initiator, FlowSide::Responder] {
-                    // Per-side bookkeeping dies with the flow.
-                    accounted_bytes.remove(&(key.clone(), side));
-                    memcap_released.remove(&(key.clone(), side));
-                    if let Some(mut r) = reassemblers.remove(&(key.clone(), side)) {
-                        // Issue #26: decrement the running
-                        // cross-flow memcap pool by this
-                        // reassembler's residual byte occupancy
-                        // before dropping it.
-                        let residual = r.current_bytes();
-                        *global_memcap_bytes = global_memcap_bytes.saturating_sub(residual);
-                        let dropped = r.dropped_segments();
-                        let oversize = r.bytes_dropped_oversize();
-                        let watermark = r.high_watermark();
-                        let retransmits = r.retransmits();
-                        match side {
-                            FlowSide::Initiator => {
-                                stats.reassembly_dropped_ooo_initiator = dropped;
-                                stats.reassembly_bytes_dropped_oversize_initiator = oversize;
-                                stats.reassembler_high_watermark_initiator = watermark;
-                                stats.retransmits_initiator = retransmits;
-                            }
-                            FlowSide::Responder => {
-                                stats.reassembly_dropped_ooo_responder = dropped;
-                                stats.reassembly_bytes_dropped_oversize_responder = oversize;
-                                stats.reassembler_high_watermark_responder = watermark;
-                                stats.retransmits_responder = retransmits;
-                            }
-                        }
-                        match reason {
-                            EndReason::Fin
-                            | EndReason::IdleTimeout
-                            | EndReason::ParserDone
-                            | EndReason::ForceClosed => r.fin(),
-                            EndReason::Rst
-                            | EndReason::Evicted
-                            | EndReason::BufferOverflow
-                            | EndReason::ParseError => r.rst(),
-                        }
-                    }
+                *reported = true;
+                if let Some(stop) = stop {
+                    out.set_stop(*stop);
                 }
-                // Emit reassembly-diagnostic metrics post-patch.
-                // `record_flow_ended` already fired from inside the
-                // tracker (or from `synthesise_buffer_overflow_ends`)
-                // with unpatched stats; this pass surfaces the
-                // reassembler-derived fields once they're filled in.
-                crate::obs::record_reassembly_diagnostics(stats);
+                true
             }
         }
+    }
+
+    /// Stop reassembling a flow because no consumer needs its bytes
+    /// any more (e.g. every parser on it has closed). Both sides drop
+    /// their reassembler — including a side that has not sent data
+    /// yet — and later segments are ignored. Unlike a reassembly
+    /// *stop*, this is not reported anywhere: it is the consumer's
+    /// decision. Final counters are kept for the flow's stats.
+    pub fn discard_stream(&mut self, key: &E::Key) {
+        for side in SIDES {
+            self.discard_side(key, side);
+        }
+    }
+
+    /// [`Self::discard_stream`] for one side.
+    pub fn discard_side(&mut self, key: &E::Key, side: FlowSide) {
+        let flow = self
+            .streams
+            .entry(key.clone())
+            .or_insert_with(|| StreamFlow::new(None));
+        let slot = &mut flow.sides[idx(side)];
+        if let SideSlot::Done { reported, .. } = slot {
+            *reported = true;
+            return;
+        }
+        let refund = tombstone(slot, None);
+        if let SideSlot::Done { reported, .. } = slot {
+            // A real stop the reassembler had stays in the stats, but
+            // the consumer that discarded the side needs no report.
+            *reported = true;
+        }
+        self.global_memcap_bytes = self.global_memcap_bytes.saturating_sub(refund);
     }
 
     /// Borrow the inner tracker (for stats, introspection).
@@ -951,69 +1348,259 @@ where
         &self.tracker
     }
 
-    /// Borrow the inner tracker mutably.
+    /// Borrow the inner tracker mutably. Prefer the driver's own
+    /// methods: only [`Self::set_config`] keeps the reassembler
+    /// factory in sync, and flows ended or forgotten directly on the
+    /// tracker skip the driver's end-of-flow flush (their stream
+    /// state is dropped at the next sweep).
     pub fn tracker_mut(&mut self) -> &mut FlowTracker<E, S> {
         &mut self.tracker
     }
 
-    /// True when [`Self::with_emit_anomalies`] was called with
-    /// `true`. Used by wrappers (e.g. the internal `FlowSessionDriver`
-    /// engine) that need to mirror the same anomaly-emission policy.
+    /// True when anomaly emission is on.
     pub fn emits_anomalies(&self) -> bool {
         self.emit_anomalies
     }
 
-    /// Iterate `(key, FlowStats)` for every live flow. Unlike
-    /// [`crate::FlowTracker::all_flow_stats`], this combines the
-    /// tracker's per-flow stats with **live** reassembler
-    /// diagnostics (OOO drops, oversize-byte drops, peak
-    /// watermark) so consumers get an up-to-date picture mid-flow.
-    ///
-    /// Returns a lazy iterator. Each item clones the underlying
-    /// [`crate::FlowStats`] (cheap — owned `u64`s + two
-    /// `Timestamp`s) and patches in the reassembler-derived
-    /// fields. Collect with `.collect::<Vec<_>>()` if you need to
-    /// hold the snapshot past further `track()` calls.
-    pub fn snapshot_flow_stats(&self) -> impl Iterator<Item = (E::Key, crate::FlowStats)> + '_ {
-        self.tracker.flows().map(move |(key, entry)| {
-            let mut stats = entry.stats.clone();
-            if let Some(r) = self.reassemblers.get(&(key.clone(), FlowSide::Initiator)) {
-                stats.reassembly_dropped_ooo_initiator = r.dropped_segments();
-                stats.reassembly_bytes_dropped_oversize_initiator = r.bytes_dropped_oversize();
-                stats.reassembler_high_watermark_initiator = r.high_watermark();
-                stats.retransmits_initiator = r.retransmits();
-            }
-            if let Some(r) = self.reassemblers.get(&(key.clone(), FlowSide::Responder)) {
-                stats.reassembly_dropped_ooo_responder = r.dropped_segments();
-                stats.reassembly_bytes_dropped_oversize_responder = r.bytes_dropped_oversize();
-                stats.reassembler_high_watermark_responder = r.high_watermark();
-                stats.retransmits_responder = r.retransmits();
-            }
-            (key.clone(), stats)
-        })
+    /// Iterate `(key, FlowStats)` for every live flow, combining the
+    /// tracker's per-flow stats with **live** reassembler diagnostics
+    /// (gaps, late / stray drops, oversize drops, peak watermark,
+    /// retransmits, stop) so consumers get an up-to-date picture
+    /// mid-flow. Lazy; each item clones the stats.
+    pub fn snapshot_flow_stats(&self) -> impl Iterator<Item = (E::Key, FlowStats)> + '_ {
+        self.tracker
+            .flows()
+            .map(move |(key, entry)| (key.clone(), self.live_stats(key, &entry.stats)))
+    }
+
+    /// Live stats of one flow (see [`Self::snapshot_flow_stats`]).
+    pub fn flow_stats(&self, key: &E::Key) -> Option<FlowStats> {
+        let entry = self.tracker.get(key)?;
+        Some(self.live_stats(key, &entry.stats))
     }
 }
 
-impl<E, S> FlowDriver<E, crate::reassembler::BufferedReassemblerFactory, S>
+pub(crate) type SmallAnoms<K> = smallvec::SmallVec<[FlowEvent<K>; 2]>;
+
+/// One side's output of a sweep ([`FlowDriver::advance_streams`]).
+#[cfg_attr(
+    not(all(feature = "session", feature = "extractors")),
+    allow(dead_code)
+)]
+pub(crate) struct Released<'a, K> {
+    pub(crate) key: &'a K,
+    pub(crate) side: FlowSide,
+    pub(crate) orientation: Orientation,
+    pub(crate) ports: Option<(u16, u16)>,
+    /// Anomalies of this side (deliver before `data`).
+    pub(crate) anomalies: &'a mut SmallAnoms<K>,
+    /// Drained output, when draining.
+    pub(crate) data: Option<&'a mut StreamChunks>,
+}
+
+fn tracker_anomaly<K>(kind: AnomalyKind, ts: Timestamp) -> FlowEvent<K> {
+    crate::obs::record_anomaly(&kind);
+    crate::obs::trace_anomaly(&kind);
+    FlowEvent::TrackerAnomaly { kind, ts }
+}
+
+/// Settings [`feed_tcp`] reads.
+#[derive(Clone, Copy)]
+struct TcpFeed {
+    passthrough: bool,
+    emit_anomalies: bool,
+    memcap_cap: Option<u64>,
+    memcap_policy: MemcapPolicy,
+}
+
+/// Feed one TCP packet to its flow's stream state. Returns the
+/// passthrough skip when the payload was let through.
+#[allow(clippy::too_many_arguments)]
+fn feed_tcp<K, F, W>(
+    p: &PacketContext<'_, K>,
+    tcp: &TcpInfo,
+    want: &mut W,
+    factory: &mut F,
+    streams: &mut HashMap<K, StreamFlow<F::Reassembler>, RandomState>,
+    global: &mut u64,
+    cfg: TcpFeed,
+    memcap_tripped: &mut Option<u64>,
+    anomalies: &mut Vec<(K, AnomalyKind)>,
+    kinds: &mut Vec<AnomalyKind>,
+) -> Option<usize>
 where
-    E: FlowExtractor,
-    S: Send + 'static,
+    K: std::hash::Hash + Eq + Clone,
+    F: ReassemblerFactory<K>,
+    W: FnMut(&PacketContext<'_, K>) -> bool,
 {
-    /// Drain buffered bytes for the given (key, side) and return
-    /// them as a `Vec<u8>`. Returns an empty `Vec` when no
-    /// reassembler exists for that key/side or the buffer is empty.
-    ///
-    /// Specialisation of [`Self::reassembler`] for the
-    /// [`crate::BufferedReassemblerFactory`] case — calls
-    /// [`crate::BufferedReassembler::take`] on the reassembler.
-    /// Used by the internal session engine between `track_pending`
-    /// and `finalize` to harvest payload bytes before ended-flow
-    /// reassemblers are dropped.
-    pub fn drain_buffer(&mut self, key: &E::Key, side: FlowSide) -> Vec<u8> {
-        self.reassemblers
-            .get_mut(&(key.clone(), side))
-            .map(|r| r.take())
-            .unwrap_or_default()
+    let flags = tcp.flags;
+    let syn = flags.contains(TcpFlags::SYN);
+    // A SYN's own data (TCP Fast Open) starts one past its sequence
+    // number; an RST's payload is diagnostic text, not stream data.
+    let data_seq = if syn {
+        tcp.seq.wrapping_add(1)
+    } else {
+        tcp.seq
+    };
+    let payload: &[u8] = if flags.contains(TcpFlags::RST) {
+        &[]
+    } else {
+        p.tcp_payload
+    };
+    let flow = match streams.get_mut(p.key) {
+        Some(f) => f,
+        None => {
+            if !(syn || !payload.is_empty()) || !want(p) {
+                return None;
+            }
+            streams
+                .entry(p.key.clone())
+                .or_insert_with(|| StreamFlow::new(p.ports))
+        }
+    };
+    let si = idx(p.side);
+    let pi = 1 - si;
+    if syn {
+        flow.origin[si] = Some(data_seq);
+    }
+
+    // The peer's ACK tells the other direction's reassembler which
+    // of its bytes were delivered.
+    if flags.contains(TcpFlags::ACK)
+        && let SideSlot::Live(l) = &mut flow.sides[pi]
+    {
+        let before = cfg.emit_anomalies.then(|| Counters::of(&l.r));
+        l.r.peer_ack(tcp.ack, p.ts);
+        resync(global, l);
+        if let Some(before) = before {
+            kinds.clear();
+            before.diff(&l.r, p.side.opposite(), kinds);
+            anomalies.extend(kinds.drain(..).map(|k| (p.key.clone(), k)));
+        }
+    }
+
+    let fin_end = flags
+        .contains(TcpFlags::FIN)
+        .then(|| data_seq.wrapping_add(payload.len() as u32));
+    if payload.is_empty() {
+        if let (Some(end), SideSlot::Live(l)) = (fin_end, &mut flow.sides[si]) {
+            l.r.fin_seen(end, p.ts);
+            resync(global, l);
+        }
+        return None;
+    }
+
+    if matches!(flow.sides[si], SideSlot::Empty) {
+        let mut r = factory.new_reassembler(p.key, p.side);
+        if let Some(origin) = flow.origin[si] {
+            r.set_origin(origin);
+        }
+        flow.sides[si] = SideSlot::Live(Box::new(Live { r, accounted: 0 }));
+    }
+    let SideSlot::Live(l) = &mut flow.sides[si] else {
+        // Discarded or released: later segments are ignored.
+        return None;
+    };
+
+    // Re-sync this side's pool contribution: a consumer may have
+    // drained it since the last segment (issue #186).
+    resync(global, l);
+
+    // `DropPacket` is the one policy that refuses a segment, so it
+    // decides before handing it over.
+    if cfg.memcap_policy == MemcapPolicy::DropPacket
+        && cfg
+            .memcap_cap
+            .is_some_and(|cap| global.saturating_add(payload.len() as u64) > cap)
+    {
+        memcap_tripped.get_or_insert(*global);
+        return None;
+    }
+
+    let before = cfg.emit_anomalies.then(|| Counters::of(&l.r));
+    let outcome = if cfg.passthrough {
+        l.r.segment_into(data_seq, payload, p.ts)
+    } else {
+        l.r.segment(data_seq, payload, p.ts);
+        SegmentOutcome::Buffered
+    };
+    if let Some(end) = fin_end {
+        l.r.fin_seen(end, p.ts);
+    }
+    resync(global, l);
+    if let Some(before) = before {
+        kinds.clear();
+        before.diff(&l.r, p.side, kinds);
+        anomalies.extend(kinds.drain(..).map(|k| (p.key.clone(), k)));
+    }
+    let pass = match outcome {
+        SegmentOutcome::Passthrough { skip } => Some(skip),
+        SegmentOutcome::Buffered => None,
+    };
+
+    if let Some(cap) = cfg.memcap_cap
+        && *global > cap
+    {
+        memcap_tripped.get_or_insert(*global);
+        match cfg.memcap_policy {
+            MemcapPolicy::Ignore | MemcapPolicy::DropPacket => {}
+            MemcapPolicy::PassThrough | MemcapPolicy::DropFlow => {
+                // Drop the reassembler (whatever its `release` does):
+                // the memory is freed and the side reports the stop.
+                let refund = tombstone(&mut flow.sides[si], Some(ReassemblyStop::Memcap));
+                *global = global.saturating_sub(refund);
+                if cfg.memcap_policy == MemcapPolicy::DropFlow {
+                    let refund = tombstone(&mut flow.sides[pi], Some(ReassemblyStop::Memcap));
+                    *global = global.saturating_sub(refund);
+                }
+            }
+        }
+    }
+    pass
+}
+
+fn resync<R: Reassembler>(global: &mut u64, l: &mut Live<R>) {
+    let current = l.r.current_bytes();
+    *global = global.saturating_sub(l.accounted).saturating_add(current);
+    l.accounted = current;
+}
+
+/// The two event containers the driver produces (`FlowEvents` for
+/// `track`, `Vec` for `sweep`), for helpers that edit them in place.
+trait EventBuf<K> {
+    fn len(&self) -> usize;
+    fn get_mut(&mut self, i: usize) -> &mut FlowEvent<K>;
+    fn insert(&mut self, i: usize, ev: FlowEvent<K>);
+    fn remove(&mut self, i: usize) -> FlowEvent<K>;
+}
+
+impl<K> EventBuf<K> for Vec<FlowEvent<K>> {
+    fn len(&self) -> usize {
+        Vec::len(self)
+    }
+    fn get_mut(&mut self, i: usize) -> &mut FlowEvent<K> {
+        &mut self[i]
+    }
+    fn insert(&mut self, i: usize, ev: FlowEvent<K>) {
+        Vec::insert(self, i, ev);
+    }
+    fn remove(&mut self, i: usize) -> FlowEvent<K> {
+        Vec::remove(self, i)
+    }
+}
+
+impl<K> EventBuf<K> for FlowEvents<K> {
+    fn len(&self) -> usize {
+        smallvec::SmallVec::len(self)
+    }
+    fn get_mut(&mut self, i: usize) -> &mut FlowEvent<K> {
+        &mut self[i]
+    }
+    fn insert(&mut self, i: usize, ev: FlowEvent<K>) {
+        smallvec::SmallVec::insert(self, i, ev);
+    }
+    fn remove(&mut self, i: usize) -> FlowEvent<K> {
+        smallvec::SmallVec::remove(self, i)
     }
 }
 
@@ -1023,7 +1610,7 @@ mod tests {
     use crate::extract::FiveTuple;
     use crate::extract::parse::test_frames::*;
     use crate::reassembler::{BufferedReassembler, BufferedReassemblerFactory};
-    use crate::{FlowEvent, Timestamp};
+    use crate::{EndReason, FlowEvent, Timestamp};
 
     fn view(frame: &[u8], sec: u32) -> PacketView<'_> {
         PacketView::new(frame, Timestamp::new(sec, 0))
@@ -1323,30 +1910,40 @@ mod tests {
         assert_eq!(ended.reassembly_bytes_dropped_oversize_responder, 0);
     }
 
+    /// Pre-0.25 a DropFlow overflow synthesised `Ended {
+    /// BufferOverflow }` and forgot the flow, so its next packet
+    /// started a *new* flow mid-stream. Now the flow stays tracked
+    /// until its transport end and the stop is recorded in its stats.
     #[test]
-    fn ended_event_with_buffer_overflow_reason_drop_flow_policy() {
-        // Cap = 64; initiator pushes 200 bytes — should poison and
-        // synthesise Ended { reason: BufferOverflow }.
+    fn drop_flow_overflow_stops_reassembly_but_keeps_the_flow() {
         let factory = BufferedReassemblerFactory::default()
             .with_max_buffer(64)
             .with_overflow_policy(crate::OverflowPolicy::DropFlow);
         let mut d = FlowDriver::<_, _>::new(FiveTuple::bidirectional(), factory);
         let events = drive_simple_tcp_with_data(&mut d);
-        let ended = events
+        let started = events
             .iter()
-            .find_map(|e| match e {
+            .filter(|e| matches!(e, FlowEvent::Started { .. }))
+            .count();
+        assert_eq!(started, 1, "the flow must not be re-created");
+        let ended: Vec<_> = events
+            .iter()
+            .filter_map(|e| match e {
                 FlowEvent::Ended { reason, stats, .. } => Some((*reason, stats.clone())),
                 _ => None,
             })
-            .expect("an Ended event");
-        // The first end-of-life event for this flow should be BufferOverflow
-        // (the data segment poisons the reassembler before the RST arrives).
-        assert_eq!(ended.0, EndReason::BufferOverflow);
-        // Diagnostic counters surface the dropped bytes.
-        assert!(
-            ended.1.reassembly_bytes_dropped_oversize_initiator > 0,
-            "expected oversize bytes recorded, got {}",
-            ended.1.reassembly_bytes_dropped_oversize_initiator
+            .collect();
+        assert_eq!(ended.len(), 1);
+        let (reason, stats) = &ended[0];
+        assert_eq!(
+            *reason,
+            EndReason::Rst,
+            "the transport reason, not BufferOverflow"
+        );
+        assert_eq!(stats.reassembly_bytes_dropped_oversize_initiator, 200);
+        assert_eq!(
+            stats.reassembly_stop_initiator,
+            Some(crate::ReassemblyStop::Overflow)
         );
     }
 

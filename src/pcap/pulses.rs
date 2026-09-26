@@ -29,7 +29,7 @@
 use std::path::Path;
 
 use crate::driver::SlotMessage;
-use crate::event::{EndReason, FlowStats};
+use crate::event::{EndReason, FlowSide, FlowStats};
 use crate::extract::{FiveTuple, FiveTupleKey};
 use crate::extractor::L4Proto;
 use crate::pcap::PcapFlowSource;
@@ -63,6 +63,37 @@ pub enum Pulse<K, M> {
     ///
     /// [`SlotHandle`]: crate::driver::SlotHandle
     Message(SlotMessage<M, K>),
+    /// The parser gave up on this flow before it ended (poisoned,
+    /// done, a gap answered with `GapResponse::Stop`, or both sides
+    /// stopped — see `ParserSideStopped`); no further `Message` pulses
+    /// follow for the flow. The flow itself goes on until its `Ended`.
+    /// New in 0.25.0.
+    ParserClosed {
+        /// Flow key.
+        key: K,
+        /// [`EndReason::ParseError`], [`EndReason::ParserDone`],
+        /// [`EndReason::StreamGap`] or [`EndReason::BufferOverflow`].
+        reason: EndReason,
+        /// Why, in words (poison reason, gap size, …).
+        detail: Option<String>,
+        /// When.
+        ts: Timestamp,
+    },
+    /// The parser stopped reading one side of the flow (a gap it
+    /// cannot bridge, or a reassembly limit); the other side keeps
+    /// producing `Message` pulses. New in 0.25.0.
+    ParserSideStopped {
+        /// Flow key.
+        key: K,
+        /// The side that stopped.
+        side: FlowSide,
+        /// [`EndReason::StreamGap`] or [`EndReason::BufferOverflow`].
+        reason: EndReason,
+        /// Why, in words (gap size, stop reason).
+        detail: Option<String>,
+        /// When.
+        ts: Timestamp,
+    },
     /// Flow ended (FIN / RST / idle / eviction). Any messages the
     /// parser flushed on close arrive as `Message` pulses *before* this.
     Ended {
@@ -90,24 +121,53 @@ pub enum Pulse<K, M> {
 
 fn pulse_from_event<K, M>(ev: SessionEvent<K, M>) -> Option<Pulse<K, M>> {
     match ev {
-        SessionEvent::Started { key, ts } => Some(Pulse::Started { key, ts }),
+        SessionEvent::Started { key, ts, .. } => Some(Pulse::Started { key, ts }),
         SessionEvent::Application {
             key,
             side,
+            orientation,
             message,
             ts,
-            parser_kind: _,
-        } => Some(Pulse::Message(SlotMessage {
+            ..
+        } => Some(Pulse::Message(SlotMessage::new(
             key,
             side,
+            orientation,
             message,
             ts,
-        })),
+        ))),
+        SessionEvent::ParserClosed {
+            key,
+            reason,
+            detail,
+            ts,
+            ..
+        } => Some(Pulse::ParserClosed {
+            key,
+            reason,
+            detail,
+            ts,
+        }),
+        SessionEvent::ParserSideStopped {
+            key,
+            side,
+            reason,
+            detail,
+            ts,
+            ..
+        } => Some(Pulse::ParserSideStopped {
+            key,
+            side,
+            reason,
+            detail,
+            ts,
+        }),
         SessionEvent::Closed {
             key,
             reason,
             stats,
             l4,
+            ..
         } => Some(Pulse::Ended {
             key,
             reason,

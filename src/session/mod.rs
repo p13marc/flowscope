@@ -20,8 +20,9 @@
 //! # SessionParser vs `Reassembler`
 //!
 //! [`crate::Reassembler`] is the lower-level hook: one instance per
-//! `(flow, side)`, receives raw TCP segments, callback-driven via
-//! a user-supplied handler. `SessionParser` is the higher-level
+//! `(flow, side)`, receives raw TCP segments and yields the ordered
+//! byte stream as [`crate::StreamChunks`] (data interleaved with gap
+//! marks). `SessionParser` is the higher-level
 //! abstraction: one instance per flow, two `feed_*` methods,
 //! returns typed messages directly. Pick whichever fits your
 //! integration:
@@ -29,9 +30,52 @@
 //! | Concern                       | `Reassembler`           | `SessionParser`             |
 //! |-------------------------------|-------------------------|------------------------------|
 //! | Granularity                   | per (flow, side)        | per flow                     |
-//! | Output                        | callback (Handler)      | iterator/`Stream` of messages|
+//! | Output                        | `StreamChunks` (bytes + gaps) | typed messages         |
 //! | Cross-direction state         | painful                 | natural                      |
 //! | UDP support                   | no                      | use [`DatagramParser`]       |
+//!
+//! # Running parsers
+//!
+//! - [`SessionDriver`] / [`DatagramDriver`] — one parser type over a
+//!   whole capture, yielding an ordered stream of [`SessionEvent`]s
+//!   (lifecycle, messages, parser closes, anomalies). What
+//!   `netring`'s `SessionStream` / `DatagramStream` wrap.
+//! - [`crate::driver::Driver`] — several parsers (by port, by
+//!   signature, or on every flow) sharing one flow table, with typed
+//!   per-parser drain handles.
+//!
+//! Both are built on the same engine, so they behave identically:
+//! one flow table, one reassembler per flow side (shared by every
+//! parser), and these per-parser rules:
+//!
+//! - A parser that reports [`SessionParser::is_poisoned`] or
+//!   [`SessionParser::is_done`] after a call is **closed** (a parser
+//!   close event with [`EndReason::ParseError`] /
+//!   [`EndReason::ParserDone`], plus an
+//!   [`AnomalyKind::SessionParseError`] for poison when anomalies are
+//!   on). It is never fed again for that flow — and never re-created:
+//!   the flow itself stays tracked until its transport end. A parser
+//!   close never ends the flow; `Ended` / `Closed` always carries a
+//!   transport reason (`Fin`, `Rst`, `IdleTimeout`, `Evicted`,
+//!   `ForceClosed`).
+//! - Missing bytes are reported through [`SessionParser::on_gap`].
+//!   The default answer, [`GapResponse::StopSide`], stops feeding
+//!   **that side** only (a parser side-stopped event with
+//!   [`EndReason::StreamGap`]); the other side keeps being parsed.
+//!   [`GapResponse::Continue`] resynchronises, [`GapResponse::Stop`]
+//!   closes the whole parser.
+//! - A reassembly stop on one side (per-side cap under
+//!   [`crate::OverflowPolicy::DropFlow`], memcap) stops that side
+//!   with [`EndReason::BufferOverflow`].
+//! - When both sides are stopped the parser closes once (detail
+//!   `"both sides stopped"`).
+//! - At flow end each side still being read gets
+//!   [`SessionParser::fin_initiator`] / [`SessionParser::fin_responder`]
+//!   (graceful end, or that side sent a FIN) or `rst_*`; a stopped
+//!   side gets neither.
+//! - Datagram parsers only see the transports they declare
+//!   ([`DatagramParser::transports`], default [`Transports::UDP`]):
+//!   a UDP parser never gets ICMP messages and vice versa.
 //!
 //! # Example
 //!
@@ -67,9 +111,20 @@
 
 use crate::{
     event::{AnomalyKind, EndReason, FlowSide, FlowStats},
+    extractor::{L4Proto, Orientation},
     parser_kind::ParserKind,
     timestamp::Timestamp,
 };
+
+#[cfg(all(feature = "extractors", feature = "reassembler"))]
+pub(crate) mod core;
+#[cfg(all(feature = "extractors", feature = "reassembler"))]
+mod driver;
+#[cfg(all(feature = "extractors", feature = "reassembler"))]
+pub(crate) mod engine;
+
+#[cfg(all(feature = "extractors", feature = "reassembler"))]
+pub use driver::{DatagramDriver, SessionDriver};
 
 /// Default per-side buffer cap for [`BufferedFrameDrain`] /
 /// [`AccumulatingSessionParser`]. 64 KiB matches the TCP
@@ -520,16 +575,26 @@ pub trait SessionParser: Send + 'static {
     /// Feed the next chunk of bytes from the **responder** side.
     fn feed_responder(&mut self, bytes: &[u8], ts: Timestamp, out: &mut Vec<Self::Message>);
 
-    /// Initiator side has FIN'd. Default: no-op.
+    /// The initiator side ended cleanly: called once at flow end when
+    /// the flow ended gracefully ([`EndReason::is_graceful`]: FIN,
+    /// idle timeout, force close) or the initiator sent a FIN — after
+    /// its final bytes were fed. Not called for a side the parser
+    /// stopped reading ([`GapResponse::StopSide`], reassembly stop).
+    /// Default: no-op.
     fn fin_initiator(&mut self, _out: &mut Vec<Self::Message>) {}
 
-    /// Responder side has FIN'd.
+    /// The responder side ended cleanly; see
+    /// [`fin_initiator`](Self::fin_initiator).
     fn fin_responder(&mut self, _out: &mut Vec<Self::Message>) {}
 
-    /// Initiator side observed a RST. Default: no-op.
+    /// The initiator side ended abruptly: called once at flow end
+    /// instead of [`fin_initiator`](Self::fin_initiator) when the flow
+    /// was not ended gracefully (RST, eviction) and this side sent no
+    /// FIN. Not called for a stopped side. Default: no-op.
     fn rst_initiator(&mut self) {}
 
-    /// Responder side observed a RST.
+    /// The responder side ended abruptly; see
+    /// [`rst_initiator`](Self::rst_initiator).
     fn rst_responder(&mut self) {}
 
     /// Periodic time hook. The driver calls this on every `sweep` /
@@ -539,10 +604,41 @@ pub trait SessionParser: Send + 'static {
     /// [`FlowSide::Initiator`]. Default: no-op.
     fn on_tick(&mut self, _now: Timestamp, _out: &mut Vec<Self::Message>) {}
 
+    /// Bytes are missing from `side`'s stream: `missing` bytes the
+    /// reassembler never saw (capture loss, asymmetric routing, an
+    /// out-of-order hole that expired, or bytes dropped by the
+    /// sliding-window buffer cap). The next `feed_*` call for that
+    /// side resumes **after** the hole.
+    ///
+    /// Return [`GapResponse::Continue`] if the parser can cope (it
+    /// resynchronises on message boundaries, or only counts bytes).
+    /// The default, [`GapResponse::StopSide`], stops feeding **this
+    /// side** (a framed parser fed a spliced stream would otherwise
+    /// mis-parse silently, as in Suricata, where app-layer parsers
+    /// that don't declare gap support stop on a gap) while the other
+    /// side keeps being parsed and still gets its `fin_*` / `rst_*`.
+    /// [`GapResponse::Stop`] closes the whole parser
+    /// ([`EndReason::StreamGap`]) — for protocols whose state spans
+    /// both directions (HTTP/2's HPACK).
+    ///
+    /// A stopped side gets no further `feed_*`, `on_gap` or
+    /// `fin_*` / `rst_*` call: flush anything worth keeping here.
+    /// Messages pushed into `out` are emitted before the stop.
+    fn on_gap(
+        &mut self,
+        _side: FlowSide,
+        _missing: u64,
+        _ts: Timestamp,
+        _out: &mut Vec<Self::Message>,
+    ) -> GapResponse {
+        GapResponse::StopSide
+    }
+
     /// True after the parser has hit an unrecoverable error and
-    /// can no longer make progress. The driver checks this after
-    /// every `feed_*` / `fin_*` call and tears the flow down on
-    /// `true`. Default: `false` (parser never poisons).
+    /// can no longer make progress. The engines check this after
+    /// every `feed_*` / `on_gap` / `on_tick` call and close the parser
+    /// on `true` — it is not fed again for that flow, and the flow
+    /// itself stays tracked. Default: `false` (parser never poisons).
     ///
     /// Parsers that want to drop a malformed message and keep
     /// going should NOT use this — just don't push the message
@@ -550,8 +646,8 @@ pub trait SessionParser: Send + 'static {
     /// internal state is corrupted past recovery (desynced framing,
     /// invalid magic bytes that won't appear later, etc.).
     ///
-    /// Mirrors [`crate::Reassembler::is_poisoned`] — same wiring
-    /// shape, same operator mental model.
+    /// The reassembly-side counterpart is
+    /// [`crate::Reassembler::stop_reason`].
     fn is_poisoned(&self) -> bool {
         false
     }
@@ -569,19 +665,22 @@ pub trait SessionParser: Send + 'static {
     /// Symmetric "I'm done — close this flow cleanly" signal.
     /// Default: `false` (parser never self-terminates).
     ///
-    /// Returning `true` tells the driver this parser has no more
-    /// useful work to extract — the flow can close ahead of FIN
-    /// / idle-timeout. The driver responds by closing the flow with
-    /// [`crate::EndReason::ParserDone`] on the next check, after
-    /// flushing any pending messages from the same `feed_*` /
-    /// `on_tick` call.
+    /// Returning `true` tells the engine this parser has no more
+    /// useful work to extract. The engine closes the parser with
+    /// [`crate::EndReason::ParserDone`] right after emitting the
+    /// messages of the same `feed_*` / `on_tick` call and stops
+    /// feeding it; the flow itself stays tracked until its transport
+    /// end.
     ///
-    /// Reserve for protocols with intrinsic completion semantics:
-    /// HTTP/1.0 `Connection: close` after body fully received;
-    /// DNS-over-TCP after a query/response pair; framed protocols
-    /// with a session-end sentinel. Do **not** use this to give
-    /// up on bad input — that's [`is_poisoned`](Self::is_poisoned),
-    /// which routes through [`crate::EndReason::ParseError`].
+    /// Reserve for protocols where **nothing** further on the
+    /// connection can matter: a session-end sentinel after which the
+    /// peers only close (e.g. an SMTP `QUIT` / `221` exchange), or a
+    /// protocol switch to something this parser cannot read. Not for
+    /// "one exchange complete" — DNS-over-TCP and HTTP/1.1 reuse the
+    /// connection, and a parser done after the first pair would lose
+    /// every later one. Do **not** use this to give up on bad input —
+    /// that's [`is_poisoned`](Self::is_poisoned), which routes through
+    /// [`crate::EndReason::ParseError`].
     ///
     /// Should be idempotent: once `is_done()` returns `true`, it
     /// should keep returning `true` for the lifetime of the parser.
@@ -680,12 +779,65 @@ pub trait DatagramParser: Send + 'static {
     fn parser_kind(&self) -> ParserKind {
         ParserKind::Unspecified
     }
+
+    /// Which transports this parser reads. The engines hand it only
+    /// datagrams of these transports: a UDP parser never sees an
+    /// ICMP message and an ICMP parser never sees a UDP payload.
+    /// Default [`Transports::UDP`]. New in 0.25.0.
+    fn transports(&self) -> Transports {
+        Transports::UDP
+    }
+}
+
+bitflags::bitflags! {
+    /// Transports a [`DatagramParser`] reads (see
+    /// [`DatagramParser::transports`]). New in 0.25.0.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+    pub struct Transports: u8 {
+        /// UDP payloads.
+        const UDP = 1;
+        /// Whole ICMPv4 messages.
+        const ICMP = 1 << 1;
+        /// Whole ICMPv6 messages.
+        const ICMPV6 = 1 << 2;
+        /// SCTP packets (the whole SCTP packet: common header and chunks).
+        const SCTP = 1 << 3;
+        /// Any other non-TCP IP protocol (the whole L4 payload).
+        const OTHER = 1 << 4;
+    }
+}
+
+impl Transports {
+    /// ICMPv4 and ICMPv6.
+    pub const ICMP_ANY: Transports = Transports::ICMP.union(Transports::ICMPV6);
+
+    /// Whether a datagram of this L4 protocol is admitted. Unknown
+    /// L4 (`None`) counts as [`Transports::OTHER`].
+    pub fn admits(self, l4: Option<crate::L4Proto>) -> bool {
+        use crate::L4Proto;
+        let bit = match l4 {
+            Some(L4Proto::Udp) => Transports::UDP,
+            Some(L4Proto::Icmp) => Transports::ICMP,
+            Some(L4Proto::IcmpV6) => Transports::ICMPV6,
+            Some(L4Proto::Sctp) => Transports::SCTP,
+            Some(L4Proto::Tcp) => return false,
+            _ => Transports::OTHER,
+        };
+        self.contains(bit)
+    }
 }
 
 /// Builds a fresh [`DatagramParser`] per session.
 pub trait DatagramParserFactory<K>: Send + 'static {
     type Parser: DatagramParser;
     fn new_parser(&mut self, key: &K) -> Self::Parser;
+
+    /// Transports the parsers read (see
+    /// [`DatagramParser::transports`]). Default [`Transports::UDP`];
+    /// factories that clone a template delegate to it.
+    fn transports(&self) -> Transports {
+        Transports::UDP
+    }
 }
 
 impl<K, P> DatagramParserFactory<K> for P
@@ -696,19 +848,37 @@ where
     fn new_parser(&mut self, _key: &K) -> P {
         self.clone()
     }
+    fn transports(&self) -> Transports {
+        DatagramParser::transports(self)
+    }
 }
 
-/// Crate-internal output of the session/datagram parser-dispatch
-/// engines. `K` is the flow key, `M` is the parser's message type.
+/// Answer to [`SessionParser::on_gap`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
+pub enum GapResponse {
+    /// Keep feeding this parser; bytes after the gap follow.
+    Continue,
+    /// **Default.** Stop feeding the side with the gap; the other
+    /// side keeps being parsed. Reported as a parser side stop
+    /// ([`SessionEvent::ParserSideStopped`] /
+    /// [`crate::driver::Event::ParserSideStopped`]). When both sides
+    /// are stopped the parser is closed. New in 0.25.0.
+    #[default]
+    StopSide,
+    /// Close the parser for this flow ([`EndReason::StreamGap`]).
+    Stop,
+}
+
+/// Output of [`SessionDriver`] / [`DatagramDriver`]: flow lifecycle,
+/// parser messages, parser closes and anomalies, in the order they
+/// happened. `K` is the flow key, `M` the parser's message type.
 ///
-/// This was the public output of `FlowSessionDriver` /
-/// `FlowDatagramDriver` through 0.19. With those drivers removed
-/// (#99) and the typed [`crate::driver::Driver`] (`Event<K>` +
-/// `SlotHandle` messages) as the supported surface, `SessionEvent`
-/// was demoted to a private engine type in 0.20 (#100) — the
-/// two-enum end state keeps only `FlowEvent<K>` and `Event<K>`
-/// public. It survives as the currency between the engines and the
-/// typed slots / offline pcap helpers.
+/// For one flow the order is: `Started`, then any number of
+/// `Application` / `FlowAnomaly` / `Tick` / `ParserSideStopped`,
+/// possibly one `ParserClosed` (the parser gave up or finished early
+/// — the flow goes on), then `Closed`. Messages a parser flushes at
+/// flow end (`fin_*`) come before `Closed`.
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(tag = "type", rename_all = "snake_case"))]
@@ -720,60 +890,86 @@ where
     ))
 )]
 #[non_exhaustive]
-// Internal carrier between the parser-dispatch engines and their
-// sinks. Different sinks read different subsets — the typed-driver
-// slots suppress `Started`/anomaly/tick events and ignore
-// `parser_kind` / `l4`, while the pcap-iter / serde sinks read more.
-// The fields are meaningful engine state, not dead, so allow the
-// per-field dead-code lint that fires in non-serde feature combos.
-#[allow(dead_code)]
-pub(crate) enum SessionEvent<K, M> {
-    /// First packet of a new session.
-    Started { key: K, ts: Timestamp },
-    /// Parser emitted a complete L7 message.
+pub enum SessionEvent<K, M> {
+    /// First packet of a new flow.
+    Started {
+        key: K,
+        /// Logical role of the side that sent the first packet
+        /// (arrival-order relative; see `orientation` for the
+        /// race-stable axis).
+        side: FlowSide,
+        /// Canonical, address-sorted direction of the first packet.
+        orientation: Orientation,
+        ts: Timestamp,
+        l4: Option<L4Proto>,
+    },
+    /// The parser emitted a message.
     Application {
         key: K,
+        /// Side whose bytes produced the message (`on_tick` output is
+        /// attributed to the initiator).
         side: FlowSide,
+        /// Canonical direction matching `side`.
+        orientation: Orientation,
         message: M,
+        /// Timestamp of the packet (or sweep) that produced it.
         ts: Timestamp,
-        /// Identifier of the parser that produced this message —
-        /// the value returned by [`SessionParser::parser_kind`] (or
-        /// [`DatagramParser::parser_kind`] for UDP). New in 0.5.0;
-        /// lifted to [`ParserKind`] in 0.20 (#109).
-        /// [`ParserKind::Unspecified`] when the parser doesn't
-        /// override the default.
+        /// [`SessionParser::parser_kind`] of the producing parser.
         parser_kind: ParserKind,
     },
-    /// Session ended (FIN/RST/idle/eviction). Any messages the
-    /// parser flushed on close arrive as `Application` events
-    /// before the corresponding `Closed`.
+    /// The parser was closed before its flow ended — poisoned
+    /// ([`EndReason::ParseError`]), done ([`EndReason::ParserDone`]),
+    /// a gap answered with [`GapResponse::Stop`]
+    /// ([`EndReason::StreamGap`]), or both sides stopped (detail
+    /// `"both sides stopped"`, reason of the last side stop). The flow
+    /// stays tracked and ends later with `Closed`; the parser is not
+    /// fed again for it. (A parser still open when its flow ends gets
+    /// no `ParserClosed`: `Closed` says so.)
+    ParserClosed {
+        key: K,
+        parser_kind: ParserKind,
+        reason: EndReason,
+        /// Human-readable detail: the parser's `poison_reason()`
+        /// (truncated to 256 bytes), the gap size, or the stop reason.
+        detail: Option<String>,
+        ts: Timestamp,
+    },
+    /// The parser stopped reading one side of the flow — a gap it
+    /// cannot bridge ([`EndReason::StreamGap`],
+    /// [`GapResponse::StopSide`]) or a reassembly limit on that side
+    /// ([`EndReason::BufferOverflow`]). The other side keeps being
+    /// parsed; when both sides are stopped a `ParserClosed` follows.
+    /// New in 0.25.0.
+    ParserSideStopped {
+        key: K,
+        parser_kind: ParserKind,
+        side: FlowSide,
+        reason: EndReason,
+        /// The gap size or the reassembly stop reason.
+        detail: Option<String>,
+        ts: Timestamp,
+    },
+    /// The flow ended (transport reason: FIN / RST / idle / eviction /
+    /// force-close). `stats` includes the reassembly diagnostics.
     Closed {
         key: K,
         reason: EndReason,
         stats: FlowStats,
-        /// L4 protocol of the flow this session was tracked over.
-        /// New in 0.7.0; mirrors [`crate::FlowEvent::Ended::l4`].
-        l4: Option<crate::extractor::L4Proto>,
+        l4: Option<L4Proto>,
+        ts: Timestamp,
     },
-    /// Live, in-flight per-flow anomaly forwarded from
-    /// [`crate::FlowEvent::FlowAnomaly`]. Emitted only when the
-    /// owning driver has `with_emit_anomalies(true)` set.
+    /// Per-flow anomaly (reassembly, parser poison). Only when the
+    /// driver was built with anomalies enabled.
     FlowAnomaly {
         key: K,
         kind: AnomalyKind,
         ts: Timestamp,
     },
-
-    /// Live, in-flight tracker-global anomaly forwarded from
-    /// [`crate::FlowEvent::TrackerAnomaly`] (e.g.
-    /// [`AnomalyKind::FlowTableEvictionPressure`]). Opt-in like
-    /// [`Self::FlowAnomaly`].
+    /// Tracker-global anomaly (eviction pressure, memcap). Only when
+    /// anomalies are enabled.
     TrackerAnomaly { kind: AnomalyKind, ts: Timestamp },
-
-    /// Periodic [`FlowStats`] snapshot forwarded from
-    /// [`crate::FlowEvent::Tick`]. Emitted when the underlying
-    /// [`crate::FlowTrackerConfig::flow_tick_interval`] is `Some`.
-    /// New in 0.5.0.
+    /// Periodic stats snapshot, when
+    /// [`crate::FlowTrackerConfig::flow_tick_interval`] is set.
     Tick {
         key: K,
         stats: FlowStats,
@@ -782,12 +978,83 @@ pub(crate) enum SessionEvent<K, M> {
 }
 
 impl<K, M> SessionEvent<K, M> {
-    /// Borrow the anomaly kind if this event is an anomaly (either
-    /// per-flow or tracker-global). Returns `None` for the
-    /// non-anomaly variants. Used by the engines' unit tests; the
-    /// production anomaly path goes through `FlowEvent` / `Event`.
-    #[cfg(test)]
-    pub(crate) fn anomaly_kind(&self) -> Option<&AnomalyKind> {
+    /// The session form of a flow-tracker event, as the session
+    /// engines emit it: `Started` and anomalies / ticks map 1:1,
+    /// `Ended` becomes `Closed` (stamped with the flow's last packet).
+    /// Per-packet `Packet` / `Established` / `StateChange` have no
+    /// session form (`None`). Lets a caller moving from a flow stream to
+    /// a session stream keep the flow events it already queued.
+    pub fn from_flow_event(ev: crate::event::FlowEvent<K>) -> Option<Self> {
+        use crate::event::FlowEvent;
+        Some(match ev {
+            FlowEvent::Started {
+                key,
+                side,
+                orientation,
+                ts,
+                l4,
+            } => SessionEvent::Started {
+                key,
+                side,
+                orientation,
+                ts,
+                l4,
+            },
+            FlowEvent::Ended {
+                key,
+                reason,
+                stats,
+                l4,
+                ..
+            } => {
+                let ts = stats.last_seen;
+                SessionEvent::Closed {
+                    key,
+                    reason,
+                    stats,
+                    l4,
+                    ts,
+                }
+            }
+            FlowEvent::FlowAnomaly { key, kind, ts } => SessionEvent::FlowAnomaly { key, kind, ts },
+            FlowEvent::TrackerAnomaly { kind, ts } => SessionEvent::TrackerAnomaly { kind, ts },
+            FlowEvent::Tick { key, stats, ts } => SessionEvent::Tick { key, stats, ts },
+            FlowEvent::Packet { .. }
+            | FlowEvent::Established { .. }
+            | FlowEvent::StateChange { .. } => return None,
+        })
+    }
+
+    /// The flow key, when the variant has one.
+    pub fn key(&self) -> Option<&K> {
+        match self {
+            SessionEvent::Started { key, .. }
+            | SessionEvent::Application { key, .. }
+            | SessionEvent::ParserClosed { key, .. }
+            | SessionEvent::ParserSideStopped { key, .. }
+            | SessionEvent::Closed { key, .. }
+            | SessionEvent::FlowAnomaly { key, .. }
+            | SessionEvent::Tick { key, .. } => Some(key),
+            SessionEvent::TrackerAnomaly { .. } => None,
+        }
+    }
+
+    /// The event's timestamp.
+    pub fn timestamp(&self) -> Timestamp {
+        match self {
+            SessionEvent::Started { ts, .. }
+            | SessionEvent::Application { ts, .. }
+            | SessionEvent::ParserClosed { ts, .. }
+            | SessionEvent::ParserSideStopped { ts, .. }
+            | SessionEvent::Closed { ts, .. }
+            | SessionEvent::FlowAnomaly { ts, .. }
+            | SessionEvent::TrackerAnomaly { ts, .. }
+            | SessionEvent::Tick { ts, .. } => *ts,
+        }
+    }
+
+    /// The anomaly kind, for the two anomaly variants.
+    pub fn anomaly_kind(&self) -> Option<&AnomalyKind> {
         match self {
             SessionEvent::FlowAnomaly { kind, .. } | SessionEvent::TrackerAnomaly { kind, .. } => {
                 Some(kind)
@@ -797,9 +1064,109 @@ impl<K, M> SessionEvent<K, M> {
     }
 }
 
+/// A [`SessionParserFactory`] / [`DatagramParserFactory`] that clones
+/// a template parser for every flow. The blanket factory impls need
+/// `Default + Clone`; this one only needs `Clone`, for parsers built
+/// from configuration.
+#[derive(Debug, Clone)]
+pub struct TemplateFactory<P>(pub P);
+
+impl<K, P> SessionParserFactory<K> for TemplateFactory<P>
+where
+    P: SessionParser + Clone,
+{
+    type Parser = P;
+    fn new_parser(&mut self, _key: &K) -> P {
+        self.0.clone()
+    }
+}
+
+impl<K, P> DatagramParserFactory<K> for TemplateFactory<P>
+where
+    P: DatagramParser + Clone,
+{
+    type Parser = P;
+    fn new_parser(&mut self, _key: &K) -> P {
+        self.0.clone()
+    }
+    fn transports(&self) -> Transports {
+        self.0.transports()
+    }
+}
+
+#[cfg(any(feature = "ftp", feature = "smtp"))]
+/// Gap recovery for line-oriented protocols: the bytes right after a
+/// gap start mid-line, so they are discarded up to and including the
+/// next `\n`. Feed each new chunk through this while `pending` is
+/// set; returns the part of `bytes` to parse.
+pub(crate) fn skip_partial_line<'a>(pending: &mut bool, bytes: &'a [u8]) -> &'a [u8] {
+    if !*pending {
+        return bytes;
+    }
+    match bytes.iter().position(|&b| b == b'\n') {
+        Some(p) => {
+            *pending = false;
+            &bytes[p + 1..]
+        }
+        None => &[],
+    }
+}
+
+#[cfg(any(feature = "smb", feature = "modbus"))]
+/// Gap recovery for framed binary protocols: when `pending`, drop
+/// buffered bytes up to the first offset `find` accepts as a frame
+/// start (keeping at most `keep` trailing bytes while none is found).
+pub(crate) fn resync_frames(
+    pending: &mut bool,
+    buf: &mut bytes::BytesMut,
+    keep: usize,
+    find: impl Fn(&[u8]) -> Option<usize>,
+) {
+    if !*pending {
+        return;
+    }
+    match find(buf) {
+        Some(at) => {
+            let _ = buf.split_to(at);
+            *pending = false;
+        }
+        None => {
+            let drop = buf.len().saturating_sub(keep);
+            let _ = buf.split_to(drop);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn flow_events_map_to_their_session_form() {
+        use crate::event::FlowEvent;
+        let stats = FlowStats {
+            last_seen: Timestamp::new(7, 0),
+            ..Default::default()
+        };
+        let closed: Option<SessionEvent<u8, ()>> =
+            SessionEvent::from_flow_event(FlowEvent::Ended {
+                key: 1u8,
+                reason: EndReason::Fin,
+                stats,
+                history: Default::default(),
+                l4: None,
+            });
+        assert!(matches!(
+            closed,
+            Some(SessionEvent::Closed { key: 1, reason: EndReason::Fin, ts, .. }) if ts == Timestamp::new(7, 0)
+        ));
+        let tick: Option<SessionEvent<u8, ()>> = SessionEvent::from_flow_event(FlowEvent::Tick {
+            key: 2u8,
+            stats: FlowStats::default(),
+            ts: Timestamp::new(8, 0),
+        });
+        assert!(matches!(tick, Some(SessionEvent::Tick { key: 2, .. })));
+    }
 
     #[derive(Default, Clone)]
     struct CountParser {

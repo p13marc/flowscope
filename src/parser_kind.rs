@@ -296,3 +296,24 @@ mod tests {
         assert_eq!(unknown, ParserKind::Unspecified);
     }
 }
+
+/// Identity of one parser registered on a [`crate::driver::Driver`]:
+/// its registration index. Tells apart two slots with the same
+/// [`ParserKind`] in parser-close events and parse-error anomalies.
+/// New in 0.25.0.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct SlotId(pub u32);
+
+impl SlotId {
+    /// The registration index.
+    pub const fn index(self) -> u32 {
+        self.0
+    }
+}
+
+impl std::fmt::Display for SlotId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "slot#{}", self.0)
+    }
+}
