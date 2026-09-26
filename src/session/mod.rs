@@ -20,8 +20,9 @@
 //! # SessionParser vs `Reassembler`
 //!
 //! [`crate::Reassembler`] is the lower-level hook: one instance per
-//! `(flow, side)`, receives raw TCP segments, callback-driven via
-//! a user-supplied handler. `SessionParser` is the higher-level
+//! `(flow, side)`, receives raw TCP segments and yields the ordered
+//! byte stream as [`crate::StreamChunks`] (data interleaved with gap
+//! marks). `SessionParser` is the higher-level
 //! abstraction: one instance per flow, two `feed_*` methods,
 //! returns typed messages directly. Pick whichever fits your
 //! integration:
@@ -29,7 +30,7 @@
 //! | Concern                       | `Reassembler`           | `SessionParser`             |
 //! |-------------------------------|-------------------------|------------------------------|
 //! | Granularity                   | per (flow, side)        | per flow                     |
-//! | Output                        | callback (Handler)      | iterator/`Stream` of messages|
+//! | Output                        | `StreamChunks` (bytes + gaps) | typed messages         |
 //! | Cross-direction state         | painful                 | natural                      |
 //! | UDP support                   | no                      | use [`DatagramParser`]       |
 //!
@@ -53,12 +54,28 @@
 //!   [`EndReason::ParserDone`], plus an
 //!   [`AnomalyKind::SessionParseError`] for poison when anomalies are
 //!   on). It is never fed again for that flow — and never re-created:
-//!   the flow itself stays tracked until its transport end.
-//! - Missing bytes are reported through [`SessionParser::on_gap`];
-//!   the default answer closes the parser with
-//!   [`EndReason::StreamGap`].
-//! - A reassembly stop (per-side cap, memcap) closes the parser with
-//!   [`EndReason::BufferOverflow`].
+//!   the flow itself stays tracked until its transport end. A parser
+//!   close never ends the flow; `Ended` / `Closed` always carries a
+//!   transport reason (`Fin`, `Rst`, `IdleTimeout`, `Evicted`,
+//!   `ForceClosed`).
+//! - Missing bytes are reported through [`SessionParser::on_gap`].
+//!   The default answer, [`GapResponse::StopSide`], stops feeding
+//!   **that side** only (a parser side-stopped event with
+//!   [`EndReason::StreamGap`]); the other side keeps being parsed.
+//!   [`GapResponse::Continue`] resynchronises, [`GapResponse::Stop`]
+//!   closes the whole parser.
+//! - A reassembly stop on one side (per-side cap under
+//!   [`crate::OverflowPolicy::DropFlow`], memcap) stops that side
+//!   with [`EndReason::BufferOverflow`].
+//! - When both sides are stopped the parser closes once (detail
+//!   `"both sides stopped"`).
+//! - At flow end each side still being read gets
+//!   [`SessionParser::fin_initiator`] / [`SessionParser::fin_responder`]
+//!   (graceful end, or that side sent a FIN) or `rst_*`; a stopped
+//!   side gets neither.
+//! - Datagram parsers only see the transports they declare
+//!   ([`DatagramParser::transports`], default [`Transports::UDP`]):
+//!   a UDP parser never gets ICMP messages and vice versa.
 //!
 //! # Example
 //!
@@ -558,16 +575,26 @@ pub trait SessionParser: Send + 'static {
     /// Feed the next chunk of bytes from the **responder** side.
     fn feed_responder(&mut self, bytes: &[u8], ts: Timestamp, out: &mut Vec<Self::Message>);
 
-    /// Initiator side has FIN'd. Default: no-op.
+    /// The initiator side ended cleanly: called once at flow end when
+    /// the flow ended gracefully ([`EndReason::is_graceful`]: FIN,
+    /// idle timeout, force close) or the initiator sent a FIN — after
+    /// its final bytes were fed. Not called for a side the parser
+    /// stopped reading ([`GapResponse::StopSide`], reassembly stop).
+    /// Default: no-op.
     fn fin_initiator(&mut self, _out: &mut Vec<Self::Message>) {}
 
-    /// Responder side has FIN'd.
+    /// The responder side ended cleanly; see
+    /// [`fin_initiator`](Self::fin_initiator).
     fn fin_responder(&mut self, _out: &mut Vec<Self::Message>) {}
 
-    /// Initiator side observed a RST. Default: no-op.
+    /// The initiator side ended abruptly: called once at flow end
+    /// instead of [`fin_initiator`](Self::fin_initiator) when the flow
+    /// was not ended gracefully (RST, eviction) and this side sent no
+    /// FIN. Not called for a stopped side. Default: no-op.
     fn rst_initiator(&mut self) {}
 
-    /// Responder side observed a RST.
+    /// The responder side ended abruptly; see
+    /// [`rst_initiator`](Self::rst_initiator).
     fn rst_responder(&mut self) {}
 
     /// Periodic time hook. The driver calls this on every `sweep` /
@@ -892,10 +919,12 @@ pub enum SessionEvent<K, M> {
     },
     /// The parser was closed before its flow ended — poisoned
     /// ([`EndReason::ParseError`]), done ([`EndReason::ParserDone`]),
-    /// stopped at a gap ([`EndReason::StreamGap`]) or cut off by a
-    /// reassembly limit ([`EndReason::BufferOverflow`]). The flow
+    /// a gap answered with [`GapResponse::Stop`]
+    /// ([`EndReason::StreamGap`]), or both sides stopped (detail
+    /// `"both sides stopped"`, reason of the last side stop). The flow
     /// stays tracked and ends later with `Closed`; the parser is not
-    /// fed again for it.
+    /// fed again for it. (A parser still open when its flow ends gets
+    /// no `ParserClosed`: `Closed` says so.)
     ParserClosed {
         key: K,
         parser_kind: ParserKind,

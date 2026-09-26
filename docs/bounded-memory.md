@@ -22,8 +22,8 @@ Produced by the issue #169 audit; the assertions behind it live in
 | If you are… | Do this |
 |---|---|
 | building an inline proxy | use `HttpProxyParser` (or `Http2Parser` for h2). Every cap is on by default and `push` returns a short count as backpressure. |
-| running passive telemetry at scale | set `FlowTrackerConfig::max_reassembler_buffer` — it is `None` (unbounded per side) by default. |
-| using load-shedding (`EventMask`) | be aware resource cleanup is currently tied to `Ended` events; see the caveats. |
+| running passive telemetry at scale | per-side reassembly is bounded by default (1 MiB in order, 256 KiB out of order); set `FlowTrackerConfig::reassembly_memcap` with a bounding `MemcapPolicy` if you also need a cross-flow ceiling. |
+| using load-shedding (`EventMask`, `pause_events`) | nothing to do: the driver owns its tracker's `Ended` events and always releases a flow's state; the mask only filters what you see. |
 | using `correlate` primitives directly | prefer the bounded constructors; several types offer only `new_unbounded`. |
 
 ## HTTP — bounded by default
@@ -134,9 +134,18 @@ on the connection.
 
 | Buffer | Knob | Default | On exceed |
 |---|---|---|---|
-| in-order stream | `FlowTrackerConfig::max_reassembler_buffer` | 1 MiB per side | `SlidingWindow` (default) drops the oldest undelivered bytes (a gap for the parser), flow survives; `DropFlow` stops reassembling the side — the flow stays tracked, parsers close with `BufferOverflow` |
-| out-of-order segments | `FlowTrackerConfig::reassembly_ooo_buffer` / `reassembly_ooo_deadline` | 256 KiB / 1 s | skip the oldest hole (reported as a gap); no data is discarded to make room |
+| in-order stream | `FlowTrackerConfig::max_reassembler_buffer` | 1 MiB per side | `SlidingWindow` (default) drops the oldest undelivered bytes (a gap for the parser), flow survives; `DropFlow` stops reassembling the side — the flow stays tracked, parsers stop reading that side (`ParserSideStopped { reason: BufferOverflow }`) |
+| out-of-order segments | `FlowTrackerConfig::reassembly_ooo_buffer` | 256 KiB per side (`SegmentBufferReassembler`); one segment (`BufferedReassembler`) | skip the oldest hole (reported as a gap); held data is delivered, not discarded to make room. The budget is charged by allocated capacity plus 64 B per held piece and 32 B per overlap-provenance run, so it bounds memory at rest, not just payload bytes |
+| a hole that never fills | `reassembly_ooo_deadline` / `reassembly_ack_grace` | 1 s / 10 ms | skipped once the stream has made no progress for the deadline (corroborated by a second out-of-order segment or the peer's ACK; four deadlines otherwise), or once an ACK / FIN proves the bytes were sent and the grace passed |
+| segments far ahead of the stream | `reassembly_max_ahead` | 1 MiB | a lone segment further ahead is held aside as a suspected stray and dropped (`OutOfWindowSegment`) when the stream moves on without it or after four deadlines — it never occupies the out-of-order budget; a second segment or an ACK corroborating it resyncs the stream there with a gap |
 | cross-flow pool | `reassembly_memcap` + `MemcapPolicy` | **`None` — off** | per policy: `Ignore` (default) reports only; `DropPacket` refuses the segment (a gap later); `PassThrough` releases the side; `DropFlow` releases both sides. The flow stays tracked in every case |
+
+A released side (memcap `PassThrough` / `DropFlow`, or a side no
+parser reads any more) drops its reassembler outright; a small
+tombstone keeps only its final counters for `Ended.stats`. The memory
+comes back whatever the reassembler's own `release()` does, and
+`DropFlow` also stops the peer side even if it had no reassembler
+yet.
 
 `max_reassembler_buffer` defaulted to `None` before 0.23. It is now
 1 MiB per side, so the default configuration is bounded; raise it if
@@ -222,14 +231,15 @@ of them changed behaviour in ways worth knowing about:
   persisted forever — one per spoofed address. `with_capacity`
   (default 10 000) evicts the least-recently-touched source, which by
   the detector's own semantics simply restarts it at λ = 0.
-- **Cleanup no longer keys off `Ended`** ([#185]). Per-flow
+- **Cleanup no longer keys off *your* `Ended`** ([#185]). Per-flow
   reassemblers and parsers used to be torn down only when the flow's
   `Ended` event was seen — but that event is gated on
   `EventMask::ENDED` while the tracker reaps the flow either way, so
   a consumer shedding events under load leaked one set per flow.
-  Every sweep now reconciles against the tracker and releases
-  whatever belongs to a flow that is gone, refunding its memcap
-  bytes. Suppressing `Ended` is safe.
+  Since 0.25 `FlowDriver` owns its tracker's `Ended`: every flow end
+  releases the flow's stream state and parsers (refunding its memcap
+  bytes), and `suppress_events` / `pause_events` only filter the
+  caller's output. Suppressing `Ended` is safe.
 - **`max_reassembler_buffer` now defaults to 1 MiB** ([#188]), with
   the existing `SlidingWindow` policy. See
   [the migration guide](migration-0.22-to-0.23.md#5-reassembly-is-bounded-by-default-188)
@@ -253,8 +263,12 @@ decides whether it is a *report* or a *bound*:
 |---|---|---|
 | `Ignore` (default) | **No** — counts the violation, keeps buffering | yes |
 | `DropPacket` | Yes — refuses the segment that would cross the cap | yes |
-| `PassThrough` | Yes — releases the offending side's buffer | yes, still tracked |
-| `DropFlow` | Yes — ends the flow, freeing both sides | no |
+| `PassThrough` | Yes — releases the offending side's reassembler | yes, still tracked; parsers stop reading that side |
+| `DropFlow` | Yes — releases both sides' reassemblers | yes, still tracked; parsers on it are closed (`BufferOverflow`) |
+
+Before 0.25 `DropFlow` ended the flow (`Ended { BufferOverflow }`)
+and forgot it, so its next packet started a new flow mid-stream. Now
+only reassembly stops; `Ended.reason` is always the transport reason.
 
 `Ignore` matches Suricata's `memcap-policy: ignore` and is a reporting
 mode. If you configured a cap because you need one, pick one of the

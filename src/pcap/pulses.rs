@@ -64,8 +64,10 @@ pub enum Pulse<K, M> {
     /// [`SlotHandle`]: crate::driver::SlotHandle
     Message(SlotMessage<M, K>),
     /// The parser gave up on this flow before it ended (poisoned,
-    /// done, stopped at a gap, or cut off by a reassembly limit); no
-    /// further `Message` pulses follow for the flow. New in 0.25.0.
+    /// done, a gap answered with `GapResponse::Stop`, or both sides
+    /// stopped — see `ParserSideStopped`); no further `Message` pulses
+    /// follow for the flow. The flow itself goes on until its `Ended`.
+    /// New in 0.25.0.
     ParserClosed {
         /// Flow key.
         key: K,

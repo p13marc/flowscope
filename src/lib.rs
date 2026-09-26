@@ -29,6 +29,11 @@
 //!   register one session/datagram slot per protocol for typed L7
 //!   messages beside the flow-lifecycle event stream.
 //!
+//! The last two, and the [`pcap`] helpers, run one session engine:
+//! [`FlowTracker`] → [`FlowDriver`] (reassemblers, anomalies, memcap)
+//! → per-parser cores. Parser closes never end a flow, and gaps reach
+//! parsers explicitly ([`SessionParser::on_gap`]).
+//!
 //! Built-in extractors and decap combinators (`extractors` feature):
 //!
 //! - [`extract::FiveTuple`], [`extract::IpPair`], [`extract::MacPair`]
@@ -107,7 +112,8 @@
 //! | `file-hash` | [`detect::file`](detect) | streaming SHA-256/MD5 + MIME-class detection |
 //! | `community-id` | [`well_known`] | Corelight Community ID v1 flow hashing |
 //! | `chrono` | [`Timestamp`] | `chrono::DateTime<Utc>` interop |
-//! | `pcap` | [`pcap`] | pcap file source for offline replay |
+//! | `pcap` | [`pcap`] | pcap / pcapng source for offline replay (`PcapFlowSource`, `*_from_pcap` helpers) |
+//! | `pcap-reader` | [`pcap`] | just [`pcap::CaptureReader`] (pcap / pcapng, link-type normalisation, capture direction) — no extractors or tracker; `pcap` builds on it |
 //! | `serde` | — | `Serialize`/`Deserialize` on every public type (locks wire vocabulary) |
 //!
 //! **Always-on modules** (no feature gate):

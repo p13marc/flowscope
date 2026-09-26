@@ -23,37 +23,72 @@ the core.
 ## Implementation Status
 
 **0.25.0 cycle** (unreleased — session-engine redesign, breaking;
-`docs/migration-0.24-to-0.25.md`). Driven by a downstream report
-(des-capture) against 0.24.1 and the audit that followed.
+`docs/migration-0.24-to-0.25.md`, CHANGELOG `## 0.25.0`). Driven by a
+downstream report (des-capture) against 0.24.1 and the audit that
+followed (epic #199; engine first pass #166–#179, then #180–#198).
 
-- **One engine** (`src/session/engine.rs` + `src/session/core.rs`): one
-  `FlowDriver` (flow table + `SegmentBufferReassembler` per flow side)
-  feeding per-parser *cores*. The typed `Driver`, the public
-  `SessionDriver` / `DatagramDriver` (`src/session/driver.rs`, ordered
-  public `SessionEvent`) and the pcap helpers all run it. Driver slots
-  (`src/driver/typed_slot.rs`) own no tracker, so builder settings
-  apply to every slot in any order; heuristic slots probe the
-  reassembled stream and replay it. The private
-  `FlowSessionDriver` / `FlowDatagramDriver` and
-  `typed_slot_heuristic.rs` are gone.
-- **No flow resurrection**: parser poison / done / gap / reassembly
-  stop close the parser (`ParserClosed { detail }`, tombstoned until the
-  flow ends); overflow and memcap stop reassembly
-  (`ReassemblyStop`) — nothing calls `forget()` any more, `Ended.reason`
-  is always a transport reason.
-- **Explicit gaps**: `StreamChunks` (data + gap marks + stop),
-  `Reassembler::{drain_into, flush_pending, advance_time, gaps,
-  gap_bytes, stop_reason}`, `SessionParser::on_gap -> GapResponse`
-  (default `Stop`). `SegmentBufferReassembler` rewritten on 64-bit
-  stream offsets with deadline / cap / end-of-flow hole skipping.
-- Dispatch keys off `FlowDriver::last_packet` (tracker `track_with`
-  hook), not `FlowEvent::Packet`, so `EventMask::PACKET` no longer
-  stops parsing. Factories get the tracker config through
-  `ReassemblerFactory::apply_config` (explicit builders win).
-- pcapng in `pcap::CaptureReader` (honours `if_tsresol`);
-  `FlowSide`/`FlowState` `as_str` + `Display`.
-- Regression tests: `tests/session_engine.rs` (report scenarios F1/F2/
-  F3/X1 + gaps / ordering / shedding), `tests/capture_formats.rs`.
+- **One engine**: `FlowTracker` → `FlowDriver` (`src/flow_driver.rs`:
+  tracker + one reassembler per flow side + anomalies + memcap) →
+  parser cores (`src/session/core.rs`, driven by
+  `src/session/engine.rs`) → `SessionDriver` / `DatagramDriver`
+  (`src/session/driver.rs`, ordered public `SessionEvent`) and the
+  typed `driver::Driver` (`src/driver/typed.rs` +
+  `typed_slot.rs`). Slots own no tracker, so builder settings apply to
+  every slot in any order; heuristic slots probe the reassembled
+  stream (replay log 64 KiB, first chunk per side kept, a gap seals
+  the side's signature prefix; overflow keeps probing and a match
+  feeds a leading gap). The old private `session_driver.rs` /
+  `datagram_driver.rs` and `driver/typed_slot_heuristic.rs` are gone.
+- **No flow resurrection**: parser poison / done / `GapResponse::Stop`
+  close the parser once (`ParserClosed { slot, detail }`); nothing
+  calls `forget()`; `Ended.reason` is always a transport reason (Fin /
+  Rst / IdleTimeout / Evicted / ForceClosed) — no synthesised
+  `Ended { BufferOverflow }`.
+- **Explicit, per-side gaps** (#181): reassembly output is
+  `StreamChunks` (data + gap marks + stop). `SessionParser::on_gap ->
+  GapResponse { Continue, StopSide (default), Stop }`; StopSide and
+  reassembly stops (per-side `DropFlow` overflow, memcap) stop one
+  side (`ParserSideStopped`), both stopped → one `ParserClosed`
+  ("both sides stopped"). At flow end each side still read gets
+  `fin_*` / `rst_*` on its own terms. Built-in parsers resync where
+  their framing allows (#194).
+- **Reassemblers** (#182, #184): anchored at SYN / SYN-ACK
+  (`set_origin`), RST payload ignored, stray window
+  `reassembly_max_ahead` (1 MiB, `OutOfWindowSegment`), ACK / FIN
+  evidence (`peer_ack` / `fin_seen`, `reassembly_ack_grace` 10 ms),
+  corroborated stall deadline `reassembly_ooo_deadline` (1 s).
+  `SegmentBufferReassembler` (engine default): coalescing OOO pieces,
+  budget `reassembly_ooo_buffer` (256 KiB) charged by capacity +
+  `PIECE_OVERHEAD` / `RUN_OVERHEAD`, overlap policy on held and
+  in-order-overlapping bytes; checked against a per-byte model
+  (`tests/sbr_model.rs`). `BufferedReassembler` keeps one reordered
+  segment. `segment_into` → `SegmentOutcome::Passthrough` lets engines
+  deliver in-order bytes straight from the frame.
+- **FlowDriver owns its tracker's `Ended`** (#187): state always
+  released; `suppress_events` / `pause_events` only filter output;
+  discarded / memcap-released sides drop their reassembler (tombstone
+  keeps counters). Sweep order: ticks → deadline-released data → ending
+  flows (flush → finals → parser close → `Ended`) (#180, #188).
+- **Other fixes**: encapsulated TCP payload offsets (`Extracted::l4_meta`
+  / `rebased`, #190); datagram `transports()` so UDP and ICMP parsers no
+  longer cross-feed (#186); per-side FIN tracking (#196); pcap link-type
+  normalisation, capture direction, `pcap-reader` feature (#195).
+- **API** (#191, #193): `SlotId`, `SlotMessage { lifecycle_pos, seq }` +
+  `Driver::lifecycle_seq()`, `*_factory_*` builder methods,
+  `BroadcastSlotHandle::{try_recv, poll_recv}`; removed `tracker_mut`
+  from the engines (targeted setters instead), `FlowDriver::drain_buffer`,
+  `Reassembler::is_poisoned`, `holes_expired` / `evict_expired_ooo`.
+- **Measured allocations** (#192): `tests/alloc_steady_state.rs` — 0
+  allocations per in-order packet in steady state and per quiet sweep.
+- **`compat/`** (#198): workspace-excluded crate that runs identical
+  synthetic captures (S1–S8) through this tree and the released 0.24.1.
+  Gates in `compat/tests/gates.rs` (`cargo test --release` from
+  `compat/`), table via `cargo run --release --bin compat-bench`.
+  Currently 5–10× fewer allocations on S1–S7, 1.4–2.5× faster, S8
+  (adversarial one-byte OOO) bounded at ~262 KB resident.
+- Regression tests: `tests/session_engine.rs`, `tests/engine_lifecycle.rs`,
+  `tests/capture_formats.rs`, `tests/encap_payload.rs`,
+  `tests/icmp_datagram_routing.rs`.
 
 **0.23.0 cycle** (inline-proxy / sans-IO L7 core — milestone
 "Inline-grade: sans-IO L7 core for inline proxies", **published to
@@ -1117,9 +1152,8 @@ src/
 │   ├── broadcast.rs             # BroadcastSlotHandle<M, K> + BroadcastInner — fan-out delivery (plan 150, 0.13.0; impls SlotDrain #101)
 │   ├── slot.rs                  # SlotHandle<M, K> + SlotMessage<M, K> + SlotDrain trait — Arc<crossbeam_queue::SegQueue> backing (Send + Sync, plan 122, 0.12.0; .drain_n added plan 149, 0.13.0; SlotDrain added #101, 0.20)
 │   ├── typed.rs                 # Driver<E> + DriverBuilder<E> + Event<K> + map_flow_event + run_pcap (plan 124, 0.12.0; .session_on_ports_broadcast_each added plan 150, 0.13.0; DeferredDriverBuilder removed #98, 0.20)
-│   ├── typed_slot.rs            # TypedConcreteSlot + TypedConcreteDatagramSlot + TypedBroadcastSlot (plan 150 broadcast variant, 0.13.0)
-│   └── typed_slot_heuristic.rs  # TypedHeuristicSessionSlot + TypedHeuristicDatagramSlot (FlowDetection FSM)
-├── segment_reassembler.rs       # SegmentBufferReassembler OOO hole-fill (plan 74, 0.9.0)
+│   └── typed_slot.rs            # Driver slots = parser cores fed by the one session engine (0.25; concrete / broadcast / heuristic)
+├── segment_reassembler.rs       # SegmentBufferReassembler — coalescing OOO pieces, budget, overlap policy (rewritten 0.25, #184); engine default
 ├── extract/                     # built-in extractors (extractors feature)
 │   ├── parse.rs                 # internal etherparse wrappers
 │   ├── five_tuple.rs            # FiveTuple { proto, a, b }
@@ -1145,20 +1179,23 @@ src/
 ├── tcp_state.rs                 # TCP state machine (transitions + idle policy)
 ├── tracker.rs                   # FlowTracker<E, S>     (manual_tick alias added in 50.4)
 │                                # hot-cache fast path   (plan 41, 0.2.0)
-│                                # snapshot_stats / snapshot_history / forget (0.2.0)
+│                                # snapshot_stats / snapshot_history / forget (0.2.0; the engines never call forget since 0.25)
+│                                # track_with + PacketContext per-packet hook (0.25)
 │                                # specialised impl<S> FlowTracker<FiveTuple, S>: lookup_inner + stats_for_inner (plan 161, 0.14.0)
-├── reassembler.rs               # Reassembler trait + BufferedReassembler
+├── reassembler.rs               # Reassembler trait + BufferedReassembler + StreamChunks / Chunk
 │                                # buffer cap + OverflowPolicy (plan 42 §1, 0.2.0)
-├── driver.rs                    # FlowDriver<E, F, S = ()> (sync wrapper)
-│                                # diagnostics patch + BufferOverflow synthesis +
-│                                # with_emit_anomalies      (plan 42 §2/§3, 0.2.0)
-├── session.rs                   # SessionParser / DatagramParser traits + factories + SessionEvent (crate-private engine carrier since #100, 0.20)
-│                                # + AccumulatingSessionParser / PerDatagramParser /
-│                                #   BufferedFrameDrain / FrameDrainError (plan 106, 0.10)
-├── session_driver.rs            # FlowSessionDriver — crate-PRIVATE session-dispatch engine
-│                                # (was public through 0.19; demoted in #99, 0.20). Used by
-│                                # the typed driver slots + pcap source. Wraps FlowDriver.
-├── datagram_driver.rs           # FlowDatagramDriver — crate-PRIVATE UDP engine (private since #99, 0.20)
+│                                # gaps, stop_reason, segment_into, set_origin / peer_ack / fin_seen (0.25)
+├── flow_driver.rs               # FlowDriver<E, F, S = ()> — tracker + per-flow stream state
+│                                # (reassemblers, tombstones), anomalies, memcap; owns its
+│                                # tracker's Ended (0.25, #187)
+├── session/                     # `session` feature
+│   ├── mod.rs                   # SessionParser / DatagramParser traits + factories + GapResponse +
+│   │                            # Transports + SessionEvent (public again 0.25) + TemplateFactory
+│   │                            # + AccumulatingSessionParser / PerDatagramParser /
+│   │                            #   BufferedFrameDrain / FrameDrainError (plan 106, 0.10)
+│   ├── engine.rs                # THE session engine: FlowDriver → parser cores (0.25)
+│   ├── core.rs                  # per-parser cores: session / datagram / heuristic probing (0.25)
+│   └── driver.rs                # public SessionDriver / DatagramDriver (0.25)
 ├── dedup.rs                     # Dedup — content-hash + window dedup (plan 49, 0.3.0)
 ├── obs.rs                       # metrics / tracing hooks (plan 40, 0.2.0)
 │                                # (former tracing-messages sub-feature removed in 0.12, plan 131 — always-on under `tracing`)
@@ -1288,7 +1325,7 @@ The legacy `HttpFactory` / `TlsFactory` callback-handler shape
 - `tests/metrics_integration.rs` — DebuggingRecorder snapshot test
   for the `metrics` feature (0.2.0).
 - `tests/round_trip.rs` — synthesize→pcap→PcapFlowSource→
-  FlowSessionDriver→assert byte-equality regression test. Three
+  session engine→assert byte-equality regression test. Three
   hand-written variants plus a proptest (0.3.0).
 - `tests/driver.rs` — typed `Driver<E>` + `SlotHandle` /
   port routing / heuristic / broadcast / force_close
@@ -1370,10 +1407,22 @@ The legacy `HttpFactory` / `TlsFactory` callback-handler shape
   the full input (#165, 0.23).
 - `tests/driver_heuristic.rs` — probe replay, `NoMatch` fast-fail,
   and bounded probe state on heuristic slots (#166, 0.23).
-- `benches/{extractor,tracker,reassembler,session_driver,dedup}.rs`
+- `benches/{extractor,tracker,reassembler,session_driver,dedup,zero_alloc}.rs`
   — criterion benchmark harness (0.3.0). Run with
   `cargo bench --all-features`; baselines in
   `docs/performance.md`.
+- `tests/session_engine.rs` / `tests/engine_lifecycle.rs` — the 0.25
+  engine: report scenarios F1/F2/F3/X1, gaps and per-side stops,
+  ordering, shedding, sweep / finish (0.25).
+- `tests/sbr_model.rs` — `SegmentBufferReassembler` against a per-byte
+  model under all four overlap policies (#184, 0.25).
+- `tests/alloc_steady_state.rs` — counting-allocator gate: 0 blocks
+  per in-order packet and per quiet sweep (#192, 0.25).
+- `tests/capture_formats.rs`, `tests/encap_payload.rs`,
+  `tests/icmp_datagram_routing.rs` — pcapng / link types, tunnelled
+  TCP payload offsets, UDP-vs-ICMP routing (0.25).
+- `compat/tests/gates.rs` — comparison gates against 0.24.1 (run
+  `cargo test --release` from `compat/`) (#198, 0.25).
 
 ## Build & Test
 
@@ -1395,6 +1444,10 @@ PROPTEST_CASES=10000 cargo test --features http,tls,dns --test parser_proptest
 cargo clippy --all-features --all-targets -- -D warnings
 cargo fmt --all -- --check
 cargo doc --all-features --no-deps
+
+# Comparison against the released 0.24.1 (from compat/)
+(cd compat && cargo test --release)          # gates
+(cd compat && cargo run --release --bin compat-bench)   # table
 ```
 
 ## Architecture
@@ -1421,20 +1474,23 @@ Every shipped L7 parser exposes the typed-stream shape only
 was removed in 0.9.
 
 - **`SessionParser` / `DatagramParser`** — typed message stream.
-  `feed_initiator` / `feed_responder` / `parse` return
-  `Vec<Self::Message>`; both traits have a defaulted `on_tick`.
+  `feed_initiator` / `feed_responder` / `parse` push into a caller's
+  `&mut Vec<Self::Message>`; both traits have a defaulted `on_tick`;
+  `SessionParser::on_gap` (default `StopSide`) and
+  `DatagramParser::transports` (default UDP) since 0.25.
 - A consumer who wants callback ergonomics writes a
   `driver.track_into(view, &mut events)` + `slot.drain(&mut msgs)`
   loop and dispatches on the typed `SlotMessage`s + `Event<K>`.
 
-Two driver helpers:
+Driver helpers:
 
 - Sync, no runtime: the typed **`driver::Driver<E>`** with one
   session/datagram slot per parser
   (`builder.session_on_ports(parser, ports)` /
-  `datagram_on_ports`). This replaced the per-parser
-  `FlowSessionDriver` / `FlowDatagramDriver` in 0.20 (#99); the
-  parser-dispatch engine survives as a crate-private detail.
+  `datagram_on_ports`, `*_factory_*` for per-flow factories), or
+  **`session::SessionDriver` / `DatagramDriver`** for one parser type
+  with an ordered `SessionEvent` stream (public again in 0.25). All
+  run the same engine (`src/session/engine.rs`).
 - Async tokio: **`flow_stream(...).session_stream(parser)`** in
   netring.
 
@@ -1460,14 +1516,16 @@ plan 121 (0.11); the typed-driver shape replaced it.
 
 ### Reassembly observability (0.2.0)
 
-`BufferedReassembler` ships an optional per-side cap with two
-overflow policies:
+The built-in reassemblers have a per-side cap
+(`max_reassembler_buffer`, 1 MiB by default) with two overflow
+policies:
 
 - `OverflowPolicy::SlidingWindow` (default): drop oldest bytes;
-  flow stays alive; parser must resync.
-- `OverflowPolicy::DropFlow`: poison the reassembler; the driver
-  synthesises an `Ended { reason: BufferOverflow }` event for the
-  flow on the next tick.
+  the drop reaches the parser as a gap (`on_gap`).
+- `OverflowPolicy::DropFlow`: stop reassembling that side
+  (`ReassemblyStop::Overflow`); parsers get `ParserSideStopped`, the
+  flow stays tracked until its transport end. (Before 0.25 the driver
+  synthesised `Ended { reason: BufferOverflow }` and forgot the flow.)
 
 `FlowStats` carries per-side reassembly diagnostics
 (`reassembly_dropped_ooo_*`, `reassembly_bytes_dropped_oversize_*`)
@@ -1495,8 +1553,9 @@ into the standard observability ecosystem. Both zero-cost when off
   state. Every parser holds its state and returns messages
   synchronously.
 - **Bounded memory.** Tracker has `max_flows`; reassemblers have
-  optional `max_buffer`; correlator has `max_pending`. No unbounded
-  growth.
+  `max_buffer` (1 MiB default) and an out-of-order budget; the memcap
+  bounds the total; correlator has `max_pending`. No unbounded growth
+  (`docs/bounded-memory.md`).
 - **`#[non_exhaustive]` on every public struct/enum that may grow.**
   Added project-wide in 0.2.0. Construct via `::default()` and mutate;
   do not rely on struct-literal construction from outside the crate.
@@ -1509,8 +1568,10 @@ into the standard observability ecosystem. Both zero-cost when off
   `src/obs.rs::anomaly_label`.
 - **Trait stability lock.** `SessionParser` / `DatagramParser` shape
   was committed in 0.1.0. `Reassembler` grew default-zero diagnostic
-  methods in 0.2.0 (purely additive). Future additions stay additive;
-  breaking changes need a major bump.
+  methods in 0.2.0 (purely additive) and defaulted gap / window
+  methods in 0.25, which also removed `Reassembler::is_poisoned`
+  (`stop_reason()` replaces it). New trait methods get defaults;
+  removals are breaking and go in a migration guide.
 
 ## Documentation
 
@@ -1593,9 +1654,11 @@ non-optional dep. Specifically:
 - The 0.2.0 `FlowEvent::key()` signature change (`&K` → `Option<&K>`)
   needs a matching netring update if netring's adapters call
   `event.key()`.
-- `FlowEvent::FlowAnomaly` / `TrackerAnomaly` and
-  `EndReason::BufferOverflow` flow through
-  the async adapters verbatim — no netring changes needed for those.
+- `FlowEvent::FlowAnomaly` / `TrackerAnomaly` flow through the
+  async adapters verbatim. Since 0.25 netring's session / datagram
+  streams are async fronts over flowscope's engine; `Ended.reason` is
+  always a transport reason there too, and parser outcomes arrive as
+  `ParserClosed` / `ParserSideStopped`.
 
 If you add a new public API in flowscope, consider whether netring
 needs a corresponding re-export under `netring::flow::*`.
@@ -1609,14 +1672,17 @@ needs a corresponding re-export under `netring::flow::*`.
 - `Cargo.toml` — package manifest. `exclude` keeps `CLAUDE.md` and
   `fuzz/` out of the published package; `docs/` IS published.
 - `src/lib.rs` — top-level rustdoc + feature/module wiring.
-- `src/session.rs` — the strategic 1.0 abstraction
+- `src/session/mod.rs` — the strategic 1.0 abstraction
   (`SessionParser` / `DatagramParser`).
+- `src/session/{engine,core,driver}.rs` — the one session engine
+  (0.25) behind `SessionDriver` / `DatagramDriver`, the typed `Driver`
+  slots and the `pcap` helpers.
+- `src/flow_driver.rs` — `FlowDriver`: tracker + reassemblers +
+  anomalies + memcap, the engine's bottom layer.
 - `src/driver/` — the typed `Driver<E>` + per-parser slots; the
   public sync mirror of netring's `session_stream` / `datagram_stream`.
-- `src/session_driver.rs` / `src/datagram_driver.rs` — crate-private
-  session/datagram parser-dispatch engines (the public
-  `FlowSessionDriver` / `FlowDatagramDriver` were removed in 0.20, #99).
-  Retained because the typed driver slots + the `pcap` source need them.
+- `compat/` — workspace-excluded comparison harness against the
+  released 0.24.1 (allocation / throughput / output gates).
 - `src/dedup.rs` — content-hash dedup primitive.
 - `src/obs.rs` — metrics + tracing hooks; metric-name constants
   exported here.

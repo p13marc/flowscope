@@ -15,7 +15,7 @@ Both are **zero-cost when off**. Every entry point is an
 no runtime branches, no string formatting, no allocations.
 
 ```toml
-flowscope = { version = "0.23", features = ["metrics", "tracing"] }
+flowscope = { version = "0.25", features = ["metrics", "tracing"] }
 ```
 
 Pick one or both. Both depend on the `tracker` feature (already
@@ -26,19 +26,21 @@ on by default).
 | Metric | Type | Labels | Source |
 |--------|------|--------|--------|
 | `flowscope_flows_created_total` | counter | `l4` (`tcp` / `udp` / `other`) | First sight of a flow |
-| `flowscope_flows_ended_total` | counter | `reason` (`fin` / `rst` / `idle` / `evicted` / `buffer_overflow` / `parse_error` / `parser_done` / `force_closed`) | Every `FlowEvent::Ended` |
+| `flowscope_flows_ended_total` | counter | `reason` (`fin` / `rst` / `idle` / `evicted` / `force_closed`) — transport reasons only since 0.25 | Every `FlowEvent::Ended` |
 | `flowscope_flows_active` | gauge | — | Live entries in the tracker |
 | `flowscope_packets_unmatched_total` | counter | — | Extractor returned `None` |
 | `flowscope_bytes_total` | counter | `side` (`initiator` / `responder`) | Cumulative on `Ended`, summed across flows |
 | `flowscope_flow_duration_seconds` | histogram | — | Per-flow duration on `Ended` |
 | `flowscope_flow_packets` | histogram | — | Per-flow packet count on `Ended` |
 | `flowscope_flow_bytes` | histogram | — | Per-flow byte total on `Ended` |
-| `flowscope_anomalies_total` | counter | `kind` (`buffer_overflow` / `ooo_segment` / `flow_table_eviction` / `parse_error` / `retransmit` / `reassembler_high_watermark`) | Every per-flow / tracker-global anomaly |
+| `flowscope_anomalies_total` | counter | `kind` (`buffer_overflow` / `ooo_segment` / `out_of_window_segment` / `stream_gap` / `flow_table_eviction` / `parse_error` / `retransmit` / `reassembler_high_watermark` / `tcp_rexmit_inconsistency` / `global_memcap_hit`) | Every per-flow / tracker-global anomaly |
 | `flowscope_reassembly_dropped_ooo_total` | counter | `side` | Out-of-order TCP segment drops |
 | `flowscope_reassembly_bytes_dropped_oversize_total` | counter | `side` | Bytes dropped due to per-side buffer cap |
 | `flowscope_reassembler_high_watermark_bytes` | histogram | `side` | Peak per-side buffer occupancy at `Ended` |
 | `flowscope_retransmits_total` | counter | `side` | Classified TCP retransmits at `Ended` |
 | `flowscope_reassembly_gap_bytes_total` | counter | `side` | Bytes never seen, skipped as gaps (Zeek `missed_bytes`), at `Ended` |
+| `flowscope_parser_closed_total` | counter | `parser_kind`, `reason` (`parse_error` / `parser_done` / `stream_gap` / `buffer_overflow`, or the flow's transport reason for a parser closed at flow end) | Each session parser close (0.25) |
+| `flowscope_parser_side_stopped_total` | counter | `parser_kind`, `side`, `reason` (`stream_gap` / `buffer_overflow`) | One side of a session parser stopped, the other still parsed (0.25) |
 | `flowscope_flow_ticks_total` | counter | — | Per-flow periodic `Tick` events emitted |
 | `flowscope_http_messages_total` | counter | `direction` (`request` / `response`) | Each HTTP message framed by the streaming parser (`http`) |
 | `flowscope_http_poisoned_total` | counter | `reason` (an [`HttpPoison`] slug) | Each connection the streaming HTTP parser refused (`http`) |
@@ -46,6 +48,14 @@ on by default).
 Metric names are exported as `pub const` from `flowscope::obs`
 (`METRIC_FLOWS_CREATED`, …) so downstream config can reference
 them without typos.
+
+**Changed in 0.25.** A parser giving up no longer ends its flow, so
+`flowscope_flows_ended_total` lost its `parse_error` /
+`parser_done` / `buffer_overflow` values. Query
+`flowscope_parser_closed_total{reason=…}` instead (same `reason`
+values, plus `stream_gap`, now also split by `parser_kind`), and
+`flowscope_parser_side_stopped_total` for the common case where only
+one direction stopped (a gap, a per-side overflow or memcap).
 
 ## Cardinality discipline
 
@@ -63,6 +73,8 @@ up your storage backend. Stick to the coarse axes:
   metric never sees the other's values.
 - `kind` — anomaly classification.
 - `side` — `initiator` vs `responder`.
+- `parser_kind` — the parser's `ParserKind` slug (`http/1`, `tls`,
+  …) on the parser close / side-stop counters.
 - `direction` — `request` vs `response`, on the HTTP message counter.
 
 Every one of these is a small closed set, which is the property that
@@ -126,6 +138,10 @@ PrometheusBuilder::new()
   `rate(flowscope_flows_created_total[1m])`
 - **Flow-termination breakdown**:
   `sum by (reason) (rate(flowscope_flows_ended_total[1m]))`
+- **Parsers giving up early**, by protocol:
+  `sum by (parser_kind, reason) (rate(flowscope_parser_closed_total{reason=~"parse_error|stream_gap|buffer_overflow"}[5m]))`
+  plus `flowscope_parser_side_stopped_total` for one-sided stops
+  (capture loss usually shows up here as `stream_gap`).
 - **Buffer-cap pressure**:
   `rate(flowscope_anomalies_total{kind="buffer_overflow"}[1m])`
   — persistent non-zero means stuck parsers or undersized cap.
@@ -202,6 +218,7 @@ Default mapping:
 | `RetransmittedSegment` | `info` |
 | `BufferOverflow` (any policy) | `warning` |
 | `StreamGap` | `warning` |
+| `OutOfWindowSegment` | `warning` |
 | `ReassemblerHighWatermark` | `warning` |
 | `FlowTableEvictionPressure` | `warning` |
 | `SessionParseError` | `error` |

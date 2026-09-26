@@ -14,6 +14,13 @@
 //! - **Pull-based, single-threaded.** Drain happens at the
 //!   consumer's pace inside the event loop. For cross-task
 //!   delivery, users build a channel on top of the drain.
+//! - **One engine** (0.25). Slots own no flow table: they are parser
+//!   cores fed by the session engine's single `FlowDriver`, so every
+//!   builder setting (`config`, `idle_timeout_fn`, `dedup`,
+//!   `monotonic_timestamps`) applies to parsing and lifecycle alike,
+//!   in any order. Parser closes and side stops are lifecycle
+//!   markers ([`Event::ParserClosed`] / [`Event::ParserSideStopped`]);
+//!   they never end the flow.
 //!
 //! ```ignore
 //! use flowscope::driver::{Driver, Event};
@@ -171,7 +178,12 @@ pub enum Event<K> {
         source_idx: Option<u32>,
     },
 
-    /// Flow ended (FIN / RST / idle / eviction / parser close).
+    /// Flow ended. `reason` is always a transport reason — `Fin`,
+    /// `Rst`, `IdleTimeout`, `Evicted` or `ForceClosed`: a parser
+    /// closing ([`Self::ParserClosed`]) or a reassembly limit never
+    /// ends the flow. The flow's parser closes come right before it,
+    /// and its last slot messages precede it in engine order (see
+    /// [`SlotMessage::lifecycle_pos`](super::SlotMessage::lifecycle_pos)).
     Ended {
         key: K,
         reason: EndReason,
@@ -636,8 +648,13 @@ where
         self.lifecycle_seq += (out.len() - start) as u64;
     }
 
-    /// Periodic sweep: parsers' `on_tick`, out-of-order hole
-    /// deadlines, idle-timeout `Ended` events.
+    /// Periodic sweep, in this order: parsers' `on_tick`; data
+    /// released by out-of-order hole deadlines on flows still tracked;
+    /// then the flows the sweep ends (idle timeout), each with its
+    /// final bytes, `fin_*` / `rst_*`, parser closes and `Ended`.
+    ///
+    /// With [`crate::FlowTrackerConfig::auto_sweep_interval`] set the
+    /// same sweep runs on packet time from [`Self::track_into`].
     pub fn sweep(&mut self, now: Timestamp) -> Vec<Event<E::Key>> {
         let mut out = Vec::new();
         self.sweep_into(now, &mut out);
@@ -1055,6 +1072,16 @@ where
     /// over the first bytes of each flow's reassembled stream. Once
     /// the signature matches, the parser receives the stream from its
     /// first byte (the probed bytes are replayed).
+    ///
+    /// The signature reads each side's first
+    /// [`PROBE_BUFFER_CAP`](super::PROBE_BUFFER_CAP) contiguous bytes; a
+    /// gap seals that side's prefix (bytes after it are not spliced
+    /// onto it). Up to 64 KiB of probed stream is kept for replay
+    /// (each side's first chunk always); past that probing goes on,
+    /// and a later match hands the parser a leading gap for the bytes
+    /// not kept. Only the probe-packet budget and a definitive
+    /// `NoMatch` reject a flow. A flow still probing at its end is
+    /// probed on its final bytes.
     pub fn session_heuristic<P>(
         &mut self,
         parser: P,

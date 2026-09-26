@@ -38,7 +38,7 @@
 //!
 //! Out-of-order data is kept as disjoint, coalescing *pieces*.
 //! Everything held is charged against the out-of-order budget —
-//! payload plus [`PIECE_OVERHEAD`] per piece (and [`RUN_OVERHEAD`] per
+//! each piece's buffer capacity plus [`PIECE_OVERHEAD`] per piece (and [`RUN_OVERHEAD`] per
 //! provenance run under the sequence-based overlap policies) — so a
 //! peer sending one-byte segments cannot make the reassembler hold
 //! more than the budget. The out-of-order state is freed when empty.

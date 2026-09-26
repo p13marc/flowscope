@@ -139,8 +139,13 @@ pub struct FlowTrackerConfig {
     pub idle_timeout_other: Duration,
     pub max_flows: usize,
     pub initial_capacity: usize,
-    /// Sweep interval used by async adapters (the sync API doesn't
-    /// auto-sweep — call [`FlowTracker::sweep`] yourself).
+    /// Timer cadence hint for async adapters that sweep on a
+    /// wall-clock interval (netring). Nothing in this crate reads it:
+    /// synchronous callers either call [`FlowTracker::sweep`]
+    /// themselves or set [`auto_sweep_interval`](Self::auto_sweep_interval),
+    /// which [`FlowTracker`], [`crate::FlowDriver`] and the session
+    /// engines (typed `Driver`, `SessionDriver`, `DatagramDriver`)
+    /// honour on packet time.
     pub sweep_interval: Duration,
     /// Per-side cap on bytes buffered in order but not yet drained.
     /// The tracker itself owns no reassemblers: drivers hand this to
@@ -157,7 +162,8 @@ pub struct FlowTrackerConfig {
     /// survives a breach — the oldest bytes are dropped and
     /// [`FlowStats::reassembly_bytes_dropped_oversize_initiator`] /
     /// `_responder` record how many, so truncation is visible rather
-    /// than silent.
+    /// than silent. The dropped bytes reach parsers as a gap
+    /// ([`crate::SessionParser::on_gap`]).
     ///
     /// Changed from `None` in 0.23 (issue #188).
     ///
@@ -277,7 +283,10 @@ pub struct FlowTrackerConfig {
     /// is never *constructed* by the tracker (or by drivers that
     /// honour the mask) — most usefully [`EventMask::PACKET`], the
     /// highest-volume variant. Accounting keeps running, so flows
-    /// still finalize correctly; only emission is shed.
+    /// still finalize correctly; only emission is shed. Under a
+    /// [`crate::FlowDriver`] (and every engine built on it) masking
+    /// `ENDED` is safe too: the driver still builds each `Ended`
+    /// internally and releases the flow's reassemblers and parsers.
     ///
     /// Default [`EventMask::empty()`] — suppresses nothing. Set via
     /// [`Self::with_event_filter`]. For a *total*, episodic shed see
@@ -1210,10 +1219,7 @@ impl<E: FlowExtractor, S: Send + 'static> FlowTracker<E, S> {
     }
 
     /// Snapshot the [`FlowStats`] of a live flow without ending it.
-    /// Returns `None` when the key is unknown. Used by
-    /// [`crate::FlowDriver`] to synthesise an
-    /// `Ended { reason: BufferOverflow }` event when a reassembler
-    /// poisons mid-flow.
+    /// Returns `None` when the key is unknown.
     pub fn snapshot_stats(&self, key: &E::Key) -> Option<FlowStats> {
         self.flows.peek(key).map(|e| e.stats.clone())
     }
@@ -1283,21 +1289,22 @@ impl<E: FlowExtractor, S: Send + 'static> FlowTracker<E, S> {
     }
 
     /// Snapshot the L4 protocol of a live flow without ending it.
-    /// Returns `None` when the key is unknown. New in 0.7.0; used
-    /// by [`crate::FlowDriver`] to populate
-    /// [`FlowEvent::Ended::l4`] (and the internal session engine's
-    /// `Closed.l4`) on driver-synthesised Ended events
-    /// (`BufferOverflow` / `ParseError` / `ParserDone`) where the
-    /// tracker hasn't yet observed the natural `Ended` and so
-    /// hasn't pushed the field through itself.
+    /// Returns `None` when the key is unknown (or no packet of the
+    /// flow has revealed its L4 protocol yet). New in 0.7.0.
     pub fn snapshot_l4(&self, key: &E::Key) -> Option<L4Proto> {
         self.flows.peek(key).and_then(|e| e.l4)
     }
 
     /// Remove a flow from the tracker without emitting an event.
-    /// Used by [`crate::FlowDriver`] after a synthesised
-    /// `BufferOverflow` end event so subsequent packets start a fresh
-    /// flow. Returns `true` if a flow was removed.
+    /// Returns `true` if a flow was removed.
+    ///
+    /// Nothing in the crate calls this (since 0.25 parser closes and
+    /// reassembly limits never end a flow). The flow's next packet
+    /// starts a **new** flow mid-stream, so use it only when that is
+    /// what you want. On a tracker owned by a [`crate::FlowDriver`]
+    /// (via [`crate::FlowDriver::tracker_mut`]) the driver drops the
+    /// flow's stream state, unflushed, at its next sweep (a new flow
+    /// with the same key never inherits it).
     pub fn forget(&mut self, key: &E::Key) -> bool {
         let removed = self.flows.pop(key).is_some();
         if removed {

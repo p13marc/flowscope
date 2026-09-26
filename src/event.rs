@@ -94,11 +94,13 @@ pub enum EndReason {
     IdleTimeout,
     /// Tracker hit `max_flows` and evicted the oldest flow.
     Evicted,
-    /// **Parser-level reason** (reported on a parser close, never on
-    /// a flow end): the byte stream feeding the parser stopped because
-    /// a reassembly limit was hit — the per-side cap under
-    /// [`OverflowPolicy::DropFlow`], or the tracker-wide memcap. The
-    /// flow itself stays tracked.
+    /// **Parser-level reason** (reported when a parser stops reading a
+    /// side or closes, never on a flow end): the byte stream of one
+    /// side stopped because a reassembly limit was hit — the per-side
+    /// cap under [`OverflowPolicy::DropFlow`], or the tracker-wide
+    /// memcap. Only that side of the parser stops
+    /// (`ParserSideStopped`); the parser closes once both sides are
+    /// stopped. The flow itself stays tracked.
     ///
     /// Before 0.25 this also ended the flow (and the next packet
     /// re-created it mid-stream).
@@ -118,10 +120,12 @@ pub enum EndReason {
     /// flow ahead of FIN / idle / eviction.
     ForceClosed,
     /// **Parser-level reason**: bytes were missing from the stream
-    /// (capture loss, or an out-of-order hole that expired) and the
-    /// parser answered [`crate::SessionParser::on_gap`] with
-    /// [`crate::session::GapResponse::Stop`] (the default). New in
-    /// 0.25.0.
+    /// (capture loss, or an out-of-order hole that was skipped) and
+    /// the parser gave up on it in [`crate::SessionParser::on_gap`]:
+    /// with [`crate::session::GapResponse::StopSide`] (the default)
+    /// only that side stops (`ParserSideStopped`); with
+    /// [`crate::session::GapResponse::Stop`] the parser closes
+    /// (`ParserClosed`). New in 0.25.0.
     StreamGap,
 }
 
@@ -225,14 +229,19 @@ pub enum OverflowPolicy {
     ///
     /// Default. Best for stream-shaped / append-only protocols (HTTP
     /// body streams, plain TCP) where resync after a gap is well-defined.
+    /// The gap goes to the parser like any other: one that answers
+    /// [`crate::session::GapResponse::Continue`] keeps parsing; with the
+    /// default [`crate::session::GapResponse::StopSide`] that side
+    /// stops being parsed.
     #[default]
     SlidingWindow,
     /// Stop reassembling this side: the buffered in-order bytes are
     /// still delivered, then the stream ends with
     /// [`crate::ReassemblyStop::Overflow`]. The **flow keeps being
     /// tracked** (so its later packets are not mistaken for a new
-    /// connection); a session parser reading the side is closed with
-    /// [`EndReason::BufferOverflow`].
+    /// connection); a session parser reading the side stops reading
+    /// it (a side stop with [`EndReason::BufferOverflow`]) while the
+    /// other side goes on.
     ///
     /// Best for framed binary protocols (DES PSMSG, TLS records,
     /// length-prefixed wire formats) where a mid-frame gap would
@@ -250,7 +259,7 @@ pub enum OverflowPolicy {
 /// [`AnomalyKind::BufferOverflow`] anomaly, from
 /// [`FlowStats::reassembly_stop_initiator`] /
 /// [`FlowStats::reassembly_stop_responder`], and (for session
-/// parsers) from a parser close with [`EndReason::BufferOverflow`].
+/// parsers) from a parser side stop with [`EndReason::BufferOverflow`].
 ///
 /// New in 0.25.0.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -393,8 +402,13 @@ pub enum MemcapPolicy {
     /// Stop reassembling the violating flow — **both** sides are
     /// released ([`ReassemblyStop::Memcap`]) — while the flow stays
     /// tracked until its transport end (so its later packets are not
-    /// mistaken for a new connection). Session parsers on the flow are
-    /// closed with [`EndReason::BufferOverflow`]. Use when you'd
+    /// mistaken for a new connection). Session parsers on the flow
+    /// stop reading both sides (two side stops with
+    /// [`EndReason::BufferOverflow`]), then close once (detail
+    /// `"both sides stopped"`). Released whether or not a side had a reassembler yet,
+    /// and whatever the reassembler's
+    /// [`release`](crate::Reassembler::release) does: the driver drops
+    /// it and keeps only its final counters. Use when you'd
     /// rather lose one flow's L7 than corrupt analysis on it.
     ///
     /// Before 0.25 this ended the flow with
@@ -414,14 +428,13 @@ pub enum MemcapPolicy {
     /// Stop reassembling the offending side only
     /// ([`ReassemblyStop::Memcap`]) and release what it holds, but
     /// keep the flow in the tracker. Flow accounting continues;
-    /// session parsers on the flow are closed with
-    /// [`EndReason::BufferOverflow`].
+    /// session parsers stop reading that side
+    /// ([`EndReason::BufferOverflow`]); the other side goes on.
     ///
-    /// Reclaiming the memory needs
-    /// [`Reassembler::release`](crate::Reassembler::release),
-    /// whose default is a no-op. Both shipped reassemblers
-    /// implement it; a custom one that does not will keep the
-    /// flow alive but free nothing.
+    /// Since 0.25 [`crate::FlowDriver`] drops the side's reassembler
+    /// (keeping only its final counters), so the memory is freed
+    /// whatever [`Reassembler::release`](crate::Reassembler::release)
+    /// does.
     PassThrough,
 }
 
@@ -992,6 +1005,7 @@ impl AnomalyKind {
     /// |---------|------|
     /// | [`Self::BufferOverflow`] | `"buffer_overflow"` |
     /// | [`Self::OutOfOrderSegment`] | `"ooo_segment"` |
+    /// | [`Self::OutOfWindowSegment`] | `"out_of_window_segment"` |
     /// | [`Self::FlowTableEvictionPressure`] | `"flow_table_eviction"` |
     /// | [`Self::SessionParseError`] | `"parse_error"` |
     /// | [`Self::RetransmittedSegment`] | `"retransmit"` |
@@ -1073,10 +1087,9 @@ pub enum Severity {
     /// Default for cap-pressure / eviction-pressure kinds.
     Warning,
     /// Error-level — operator should investigate.
-    /// Default for `SessionParseError`.
+    /// Default for `SessionParseError` and `TcpRexmitInconsistency`.
     Error,
-    /// System-impact — page someone. Reserved for future use; no
-    /// [`AnomalyKind`] variant defaults to `Critical` today.
+    /// System-impact — page someone. Default for `GlobalMemcapHit`.
     Critical,
 }
 
@@ -1095,6 +1108,8 @@ impl AnomalyKind {
     /// | [`Self::OutOfWindowSegment`] | [`Severity::Warning`] | Stray / injected segments dropped. |
     /// | [`Self::FlowTableEvictionPressure`] | [`Severity::Warning`] | Tracker bottleneck; bump `max_flows` or shorten idle. |
     /// | [`Self::SessionParseError`] | [`Severity::Error`] | Parser is poisoned and closed. |
+    /// | [`Self::TcpRexmitInconsistency`] | [`Severity::Error`] | Overlapping bytes disagree — evasion IOC. |
+    /// | [`Self::GlobalMemcapHit`] | [`Severity::Critical`] | Tracker-wide reassembly memory exhausted. |
     pub fn severity(&self) -> Severity {
         match self {
             AnomalyKind::OutOfOrderSegment { .. } | AnomalyKind::RetransmittedSegment { .. } => {

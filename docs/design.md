@@ -138,9 +138,16 @@ for the two granularities consumers want.
 Every stateful component has an explicit memory cap:
 
 - `FlowTracker::max_flows` — LRU eviction at the limit.
-- `BufferedReassembler::with_max_buffer` — per-side byte cap with
-  configurable `OverflowPolicy` (`SlidingWindow` rotates;
-  `DropFlow` poisons).
+- `FlowTrackerConfig::max_reassembler_buffer` (and the factories'
+  `with_max_buffer`) — per-side in-order byte cap with configurable
+  `OverflowPolicy` (`SlidingWindow` rotates and reports a gap;
+  `DropFlow` stops reassembling that side — the flow stays tracked).
+- `FlowTrackerConfig::reassembly_ooo_buffer` /
+  `reassembly_max_ahead` — the out-of-order budget per side
+  (charged by capacity plus per-piece bookkeeping) and the window
+  beyond which a segment is treated as a stray.
+- `FlowTrackerConfig::reassembly_memcap` — optional cross-flow
+  ceiling, with a `MemcapPolicy`.
 - `dns::Correlator::max_pending` — bounded query/response
   correlation table.
 - `DnsResolutionCache::with_capacity` — LRU-bounded resolution

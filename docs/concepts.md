@@ -20,7 +20,7 @@ gives you out of the box:
 ```
 ┌─ Tier 1 — flowscope::driver::Driver<E> ─────────────────────┐
 │  One builder, one typed `SlotHandle<M, K>` per parser,      │
-│  allocation-free `track_into` per in-order packet.             │
+│  allocation-free `track_into` per in-order packet.          │
 │  90 % of users; offline + simple online pipelines.          │
 │  Slot handles are `Send + Sync` (0.12); the whole driver is │
 │  `Send + Sync` (0.13) — `tokio::spawn(driver_task)` on the  │
@@ -299,38 +299,64 @@ A per-`(flow, side)` byte-stream hook. The trait:
 ```rust,ignore
 pub trait Reassembler: Send + 'static {
     fn segment(&mut self, seq: u32, payload: &[u8], ts: Timestamp);
+    fn segment_into(&mut self, seq: u32, payload: &[u8], ts: Timestamp)
+        -> SegmentOutcome { .. }                          // in-order bytes may pass through
+    fn set_origin(&mut self, seq: u32) {}                 // stream start from SYN / SYN-ACK
+    fn peer_ack(&mut self, ack: u32, ts: Timestamp) {}    // the peer ACKed up to `ack`
+    fn fin_seen(&mut self, end: u32, ts: Timestamp) {}    // this side's FIN: the stream end
     fn drain_into(&mut self, out: &mut StreamChunks) {}   // pull-style output
     fn flush_pending(&mut self) {}                        // flow ended: give up on holes
     fn advance_time(&mut self, now: Timestamp) {}         // sweep: expire old holes
-    fn fin(&mut self);
-    fn rst(&mut self);
+    fn fin(&mut self) {}
+    fn rst(&mut self) {}
     // diagnostic accessors — see rustdoc
 }
 ```
 
 Two built-ins, both wrap-aware:
 
-- `SegmentBufferReassembler` — buffers out-of-order segments and
-  fills holes when the missing bytes arrive; overlapping segments
-  are resolved with a `TcpOverlapPolicy`. The session engines use
-  it.
-- `BufferedReassembler` — in-order only, no out-of-order buffer.
+- `SegmentBufferReassembler` — buffers out-of-order segments (as
+  coalescing pieces, charged against `reassembly_ooo_buffer`) and
+  fills holes when the missing bytes arrive; overlapping segments —
+  held or in-order — are resolved with a `TcpOverlapPolicy`. The
+  session engines use it.
+- `BufferedReassembler` — in-order, holding at most **one**
+  reordered segment while it waits for the hole in front of it.
+
+Both anchor the stream at the SYN / SYN-ACK (`set_origin`; a TCP
+Fast Open SYN's data starts at ISN + 1), ignore RST payloads, and
+let in-order bytes through without copying
+(`SegmentOutcome::Passthrough` — the engines deliver them straight
+from the frame). A segment more than
+`FlowTrackerConfig::reassembly_max_ahead` (1 MiB) past the stream
+position is a suspected stray (`AnomalyKind::OutOfWindowSegment`)
+and dropped, unless a second segment or an ACK corroborates it —
+then the stream resyncs there with a gap (`origin_resets`).
 
 ### Gaps
 
 A passive observer may never see some bytes (capture drops,
 asymmetric routing), so a hole can stay open forever. Neither
-reassembler waits for it forever: `SegmentBufferReassembler` skips
-a hole once the oldest segment behind it waited
-`reassembly_ooo_deadline` (1 s), when the out-of-order buffer
-reaches `reassembly_ooo_buffer` (256 KiB), or when the flow ends;
-`BufferedReassembler` skips it at once. Either way the hole is
-**reported**: the drained output is a `StreamChunks` — data
-interleaved with `Chunk::Gap(len)` markers — and a session parser
-hears about it through `SessionParser::on_gap` (default: stop
-parsing this flow, `EndReason::StreamGap`). Before 0.25 both
-reassemblers wedged on the first unfilled hole and silently dropped
-the rest of that direction.
+reassembler waits for it forever. A hole is skipped:
+
+- when the peer's ACK (or this side's FIN) proves the bytes were
+  sent and they still have not arrived `reassembly_ack_grace`
+  (10 ms) later — a lost final segment shows up as a trailing gap;
+- when the stream has made no progress for
+  `reassembly_ooo_deadline` (1 s of packet time) and the hole is
+  corroborated (two out-of-order segments, or ACK evidence) — four
+  deadlines otherwise;
+- when the out-of-order budget `reassembly_ooo_buffer` (256 KiB) is
+  full (`SegmentBufferReassembler`), or a second out-of-order
+  segment arrives (`BufferedReassembler`, which holds only one);
+- when the flow ends.
+
+Either way the hole is **reported**: the drained output is a
+`StreamChunks` — data interleaved with `Chunk::Gap(len)` markers —
+and a session parser hears about it through `SessionParser::on_gap`
+(default `GapResponse::StopSide`: stop feeding that side, keep
+parsing the other). Before 0.25 both reassemblers wedged on the
+first unfilled hole and silently dropped the rest of that direction.
 
 ### Bounded memory
 
@@ -342,9 +368,10 @@ the rest of that direction.
   they reach the parser as a gap.
 - `DropFlow` — stop reassembling that side. The **flow stays
   tracked** (its later packets are not mistaken for a new
-  connection); parsers on it are closed with
-  `EndReason::BufferOverflow`, and the stop is recorded in
-  `FlowStats::reassembly_stop_*`.
+  connection); parsers stop reading that side
+  (`ParserSideStopped { reason: BufferOverflow }`; the parser is
+  closed only once both sides are stopped), and the stop is
+  recorded in `FlowStats::reassembly_stop_*`.
 
 `reassembler_high_watermark_pct` fires a `ReassemblerHighWatermark`
 anomaly when occupancy crosses the threshold — operators see cap
@@ -359,6 +386,10 @@ per-side:
   and bytes never seen (Zeek's `missed_bytes`)
 - `reassembly_dropped_ooo_*` — segments that arrived after their
   hole had been skipped
+- `reassembly_out_of_window_*` — suspected strays dropped (more than
+  `reassembly_max_ahead` ahead, uncorroborated)
+- `reassembly_ack_confirmed_gaps_*` / `reassembly_origin_resets_*` —
+  holes skipped on ACK / FIN evidence, and stream resyncs
 - `reassembly_bytes_dropped_oversize_*` — cap drops
 - `reassembler_high_watermark_*` — peak occupancy
 - `retransmits_*` — classified TCP retransmits
@@ -372,29 +403,37 @@ Typed L7 messages on top of the bytes. Two trait shapes:
 pub trait SessionParser: Send + 'static {
     type Message: Send + Debug + 'static;
 
-    fn feed_initiator(&mut self, bytes: &[u8], ts: Timestamp) -> Vec<Self::Message>;
-    fn feed_responder(&mut self, bytes: &[u8], ts: Timestamp) -> Vec<Self::Message>;
+    fn feed_initiator(&mut self, bytes: &[u8], ts: Timestamp, out: &mut Vec<Self::Message>);
+    fn feed_responder(&mut self, bytes: &[u8], ts: Timestamp, out: &mut Vec<Self::Message>);
 
-    fn fin_initiator(&mut self) -> Vec<Self::Message> { Vec::new() }
-    fn fin_responder(&mut self) -> Vec<Self::Message> { Vec::new() }
+    fn fin_initiator(&mut self, _out: &mut Vec<Self::Message>) {}
+    fn fin_responder(&mut self, _out: &mut Vec<Self::Message>) {}
     fn rst_initiator(&mut self) {}
     fn rst_responder(&mut self) {}
 
-    fn on_tick(&mut self, _now: Timestamp) -> Vec<Self::Message> { Vec::new() }
+    fn on_tick(&mut self, _now: Timestamp, _out: &mut Vec<Self::Message>) {}
+    fn on_gap(&mut self, _side: FlowSide, _missing: u64, _ts: Timestamp,
+              _out: &mut Vec<Self::Message>) -> GapResponse { GapResponse::StopSide }
 
     fn is_poisoned(&self) -> bool { false }
     fn poison_reason(&self) -> Option<&str> { None }
     fn is_done(&self) -> bool { false }
 
-    fn parser_kind(&self) -> &'static str { "" }
+    fn parser_kind(&self) -> ParserKind { ParserKind::Unspecified }
 }
 
 pub trait DatagramParser: Send + 'static {
     type Message: Send + Debug + 'static;
-    fn parse(&mut self, payload: &[u8], side: FlowSide, ts: Timestamp) -> Vec<Self::Message>;
+    fn parse(&mut self, payload: &[u8], side: FlowSide, ts: Timestamp, out: &mut Vec<Self::Message>);
+    fn transports(&self) -> Transports { Transports::UDP }  // which L4 it reads
     // mirrors on_tick / is_poisoned / is_done / parser_kind
 }
 ```
+
+A datagram parser only sees the transports it declares: UDP
+payloads by default, whole ICMP / ICMPv6 messages for
+`IcmpParser` (`Transports::ICMP_ANY`). A UDP parser registered for
+every flow never receives ICMP, and vice versa.
 
 Stream-based protocols (HTTP/1.x, TLS, DNS-over-TCP) use
 `SessionParser`. Packet-based protocols (DNS-over-UDP, ICMP,
@@ -426,9 +465,20 @@ when:
 - `is_poisoned()` → parser close with `EndReason::ParseError`
   (+ `SessionParseError` anomaly, `poison_reason()` in `detail`)
 - `is_done()` → parser close with `EndReason::ParserDone`
-- `on_gap(..)` returns `GapResponse::Stop` (the default) →
+- `on_gap(..)` returns `GapResponse::Stop` → `EndReason::StreamGap`
+- both of its sides were stopped (see below) → `ParserClosed` with
+  detail "both sides stopped"
+
+A **side** of a parser is stopped — `ParserSideStopped { side,
+reason, .. }`, the other side keeps being parsed — when:
+
+- `on_gap(..)` returns `GapResponse::StopSide` (the default) →
   `EndReason::StreamGap`
-- its reassembly stopped → `EndReason::BufferOverflow`
+- that side's reassembly stopped (per-side `DropFlow` overflow,
+  memcap) → `EndReason::BufferOverflow`
+
+At flow end every side still being read gets `fin_*` (graceful end,
+or that side sent a FIN) or `rst_*`; a stopped side gets neither.
 
 The **flow** is not ended by any of these: it stays tracked and ends
 with its transport reason (FIN, RST, idle, eviction). Use `is_done()`
@@ -473,7 +523,11 @@ side, per-parser dispatch), so they agree on what a flow is:
   you want flow lifecycle events and byte streams without L7 parsing,
   or to build a custom loop. Supports per-flow user state via `S`,
   `force_close(key, now)`, `drain_stream(key, side, &mut chunks)`,
-  and the underlying tracker via `tracker()` / `tracker_mut()`.
+  and the underlying tracker via `tracker()` / `tracker_mut()` (the
+  `FlowDriver` owns its tracker's `Ended` events, so flow state is
+  released even when you shed them). The higher-level drivers do not
+  expose `tracker_mut()`; use `set_config` / `set_idle_timeout_fn` /
+  `pause_events` / `resume_events`.
 
 ## Events at the L7 layer
 
@@ -490,13 +544,14 @@ the typed parser messages drained from each protocol's `SlotHandle`.
 | `Packet { key, side, len, ts, tcp }` | Per-packet (opt-in) |
 | `Ended { key, reason, stats, history, l4, ts }` | Flow concluded |
 | `StateChange { key, from, to, ts }` | TCP state transition |
-| `ParserClosed { key, parser_kind, reason, detail, ts }` | A slot's parser was closed (early, or at flow end) |
+| `ParserClosed { key, slot, parser_kind, reason, detail, ts }` | A slot's parser was closed early (poison, done, gap `Stop`, both sides stopped) |
+| `ParserSideStopped { key, slot, parser_kind, side, reason, detail, ts }` | One side of a slot's parser stopped (gap, reassembly stop); the other side goes on |
 | `FlowAnomaly { key, kind, ts }` | Per-flow anomaly (opt-in) |
 | `TrackerAnomaly { kind, ts }` | Tracker-global anomaly (opt-in) |
 | `Tick { key, stats, ts }` | Periodic snapshot (opt-in) |
 
 Typed messages arrive as `SlotMessage { key, side, orientation,
-message, ts }` from the per-parser `SlotHandle` returned at
+message, ts, lifecycle_pos, seq }` from the per-parser `SlotHandle` returned at
 registration. Register HTTP on 80/8080, TLS on 443, DNS on 53; drain
 each independently.
 
@@ -549,9 +604,10 @@ they trip people up:
 
 - **Missing bytes are skipped, not recovered.** A hole the capture
   never saw is reported as a gap (see [Gaps](#gaps)); parsers that
-  can resynchronise opt in with `SessionParser::on_gap`. Holes are
-  detected from later data, the out-of-order deadline, or the flow
-  end — not yet from the peer's ACK running ahead.
+  can resynchronise opt in with `SessionParser::on_gap` (the
+  built-in line / frame-marker parsers do). Holes are detected from
+  later data, the peer's ACK or this side's FIN, the out-of-order
+  deadline, or the flow end.
 - **Fragmented IP needs an explicit reassembly pass.** The
   extractors key on what `etherparse` gives them, so non-first
   fragments land under their own fragment-header tuple rather
@@ -562,5 +618,8 @@ they trip people up:
   flows against real time; a pcap only reaches the sweep at EOF,
   so idle timeouts never fire mid-file. Either call `sweep(now)`
   yourself driven by packet timestamps (netring's pcap streams do),
-  or use `FlowTracker::with_auto_sweep(interval)`, which derives the
-  clock from the packets themselves and gives live/offline parity.
+  or set `FlowTrackerConfig::auto_sweep_interval` (or
+  `FlowTracker::with_auto_sweep(interval)`), which derives the clock
+  from the packets themselves and gives live/offline parity —
+  `FlowDriver` and the session engines run their full sweep on it
+  (parser ticks, released hole data, flow ends).

@@ -17,11 +17,14 @@
 //!   `BufferedReassemblerFactory::with_max_buffer(bytes)` +
 //!   `with_overflow_policy({SlidingWindow | DropFlow})`.
 //!   - `SlidingWindow` (default): drop the oldest undelivered
-//!     bytes; they reach a session parser as a gap. Right for
+//!     bytes; they reach a session parser as a gap (`on_gap`: a
+//!     parser that resyncs answers `Continue`, the default
+//!     `StopSide` stops reading that side). Right for
 //!     protocols where a chunk boundary is recoverable (HTTP
 //!     bodies, DNS message bodies).
-//!   - `DropFlow`: stop reassembling the side; session parsers on
-//!     it are closed with `EndReason::BufferOverflow`. Right for
+//!   - `DropFlow`: stop reassembling the side; session parsers
+//!     stop reading it (`ParserSideStopped`,
+//!     `EndReason::BufferOverflow`) while the other side goes on. Right for
 //!     strict binary protocols whose state machine can't resync
 //!     mid-frame (SMB, DCE-RPC, Modbus).
 //!

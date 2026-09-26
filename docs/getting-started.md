@@ -29,7 +29,7 @@ The default features cover the core stack (`extractors`,
 and observability piecemeal:
 
 ```toml
-flowscope = { version = "0.23", features = ["l7", "pcap", "metrics", "tracing", "emit-eve"] }
+flowscope = { version = "0.25", features = ["l7", "pcap", "metrics", "tracing", "emit-eve"] }
 ```
 
 | Feature | What it adds |
@@ -37,7 +37,8 @@ flowscope = { version = "0.23", features = ["l7", "pcap", "metrics", "tracing", 
 | `http`, `tls`, `dns`, `icmp` | L7 parsers, one feature each. `http` is HTTP/1.x. |
 | `http2` | HTTP/2 frame layer + HPACK + per-stream routing, and the gRPC call/status surface |
 | `l7` | Umbrella — every license-clean protocol parser (`parsers-core` + `parsers-l2l3` + `parsers-tier2` + `tls-fingerprints`) |
-| `pcap` | Offline pcap source |
+| `pcap` | Offline pcap / pcapng source (`PcapFlowSource` + helpers). Linux cooked (`tcpdump -i any`), raw-IP and BSD-loopback captures are normalised to Ethernet |
+| `pcap-reader` | Just `pcap::CaptureReader` (pcap + pcapng, link-type normalisation, capture direction) without extractors or the tracker — for your own replay loop |
 | `metrics`, `tracing` | Observability (zero-cost when off) |
 | `serde` | `Serialize` + `Deserialize` on every public event / message type |
 | `tls-fingerprints` | JA3 + JA4 TLS client fingerprinting (sub-feature of `tls`) |
@@ -100,9 +101,10 @@ message, not competitive-consumer), register through
 (0.13).
 
 For per-flow user state on the central tracker, drop to
-`FlowDriver`. The typed `Driver<E>` is the single supported
-single-parser surface — register one slot per protocol and drain
-it.
+`FlowDriver`. With a single parser type and a preference for one
+ordered event stream (lifecycle, messages and parser stops
+interleaved), `session::SessionDriver` / `DatagramDriver` run the
+same engine as the typed `Driver<E>`.
 
 **Read next:** [`concepts.md`](concepts.md) — the four-layer
 trait shape.

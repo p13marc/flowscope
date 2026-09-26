@@ -154,7 +154,7 @@ the categories sort logically in `ls`.
 | **`layer_fast_path`** | `pcap,extractors` | Wall-clock comparison of `Layers::parse_ethernet` (ergonomic, per-frame alloc) vs `LayerParser` + `LayerStack` (zero-allocation fast path). Run with `--release` to see the real numbers. |
 | **`threaded_slot_drain`** | `pcap,http` | Cross-thread slot drain — `SlotHandle: Send + Sync` since 0.12, `Driver<E>` `Send + Sync` since 0.13. Worker thread drains an HTTP slot while the capture loop runs on main. |
 | **`sharded_capture`** | `pcap,http` | N-thread sharded driver pattern with cross-shard aggregation via `AtomicU64` counters (0.13, plan 155). Built on `Driver<E>: Send + Sync` — each shard owns its own dispatcher. See [`docs/sharded.md`](../docs/sharded.md) for the recipe. |
-| **`allocations_per_packet`** *(0.18)* | `pcap,extractors,tracker` | Counting global allocator wrapping `System` — warms up a bare driver, then measures steady-state allocs/packet to verify the zero-allocation claim. Run `--release`. |
+| **`allocations_per_packet`** *(0.18)* | `pcap,extractors,tracker` | Counting global allocator wrapping `System` — warms up a bare driver, then prints allocs/packet over a replayed capture (the steady-state gate itself is `tests/alloc_steady_state.rs`). Run `--release`. |
 
 ## 09 — reassembly / low-level
 

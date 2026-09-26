@@ -1,10 +1,17 @@
 //! Capture-file source for offline replay — classic pcap and pcapng.
 //!
 //! Wraps [`pcap-file`](https://crates.io/crates/pcap-file);
-//! [`CaptureReader`] detects the format from the magic number and
-//! applies pcapng per-interface timestamp resolution. Removes
-//! the boilerplate every program needs to feed a pcap into a
-//! [`FlowTracker`](crate::FlowTracker).
+//! [`CaptureReader`] detects the format from the magic number, applies
+//! pcapng per-interface timestamp resolution and offset (saturating on
+//! hostile values), reports each packet's [`CaptureDirection`] when
+//! the capture records it, and normalises Linux cooked (`LINUX_SLL`,
+//! `LINUX_SLL2`), raw IP and BSD loopback link types to Ethernet
+//! ([`CapturedPacket::into_ethernet`]). With only the `pcap-reader`
+//! feature this module is just that reader; the `pcap` feature adds
+//! the sources and helpers that remove the boilerplate every program
+//! needs to feed a capture into a [`FlowTracker`](crate::FlowTracker)
+//! (other link types are skipped and counted, see
+//! `ViewIter::unsupported`).
 //!
 //! # Quick start
 //!

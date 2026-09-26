@@ -4,7 +4,7 @@
 
 One session engine, explicit gaps, and no more flow resurrection. A
 breaking release driven by a downstream report (des-capture) against
-0.24.1 plus the audit that followed; migration guide:
+0.24.1 plus the audit that followed (epic #199); migration guide:
 [`docs/migration-0.24-to-0.25.md`](docs/migration-0.24-to-0.25.md).
 
 ### The problems
@@ -27,88 +27,296 @@ breaking release driven by a downstream report (des-capture) against
   silently truncated a direction, with nothing telling the parser.
 - Parser dispatch keyed off `FlowEvent::Packet`, so shedding it with
   `EventMask::PACKET` stopped L7 parsing.
-- `PcapFlowSource` read classic pcap only.
+- `PcapFlowSource` read classic Ethernet pcap only.
+- The audit found more, several already present in 0.24.1: TCP
+  payloads of VXLAN / GRE / GTP-U / MPLS flows were sliced from the
+  wrong offset, UDP and ICMP parsers were fed each other's traffic, a
+  retransmitted FIN ended a flow early, one stray segment could end a
+  side's reassembly, and `SegmentBufferReassembler` was quadratic on
+  adversarial out-of-order input. All fixed below.
 
 ### Changed (breaking)
 
-- **One engine.** `Driver`, the new `SessionDriver` / `DatagramDriver`
-  and the pcap helpers share one implementation: one `FlowDriver` (flow
-  table + one reassembler per flow side) feeding per-parser *cores*.
-  Slots own no flow table; every builder setting applies to every
-  slot, in any order. Heuristic slots probe the reassembled byte
-  stream and replay the probed bytes to the parser (no frame replay,
-  no second tracker).
+- **One engine** (#166–#179). `Driver`, the new `SessionDriver` /
+  `DatagramDriver` and the pcap helpers share one implementation:
+  `FlowTracker` → `FlowDriver` (tracker + one reassembler per flow
+  side + anomalies + memcap) → per-parser *cores*
+  (`src/session/{engine,core,driver}.rs`). Slots own no flow table;
+  every builder setting (`config`, `idle_timeout_fn`, `dedup`,
+  `monotonic_timestamps`) applies to every slot, in any order.
+  Heuristic slots probe the reassembled byte stream and replay the
+  probed bytes to the parser (no frame replay, no second tracker).
+  The engines stop reassembling a side as soon as no parser reads it
+  (all closed, side stopped, or a heuristic rejected the flow), so such
+  flows cost only flow tracking.
 - **Parser closes never end or re-create a flow.** A parser that
-  poisons, finishes (`is_done`), declines a gap, or loses its stream to
-  a reassembly limit is closed once (`Event::ParserClosed` /
+  poisons, finishes (`is_done`) or answers a gap with
+  `GapResponse::Stop` is closed once (`Event::ParserClosed` /
   `SessionEvent::ParserClosed` with a `detail`), never fed again, and
   the flow ends later with its transport reason. `Ended.reason` is
   always `Fin` / `Rst` / `IdleTimeout` / `Evicted` / `ForceClosed`;
   `BufferOverflow` / `ParseError` / `ParserDone` / `StreamGap` are
-  parser-close reasons.
-- **`OverflowPolicy::DropFlow` / `MemcapPolicy::DropFlow`** stop
-  reassembly (one / both sides, `ReassemblyStop`) instead of ending the
-  flow; `FlowDriver` no longer synthesises `Ended { BufferOverflow }`.
-- **Gaps are explicit.** `Reassembler::drain_into(&mut StreamChunks)`
-  yields data interleaved with gap markers; `flush_pending` /
-  `advance_time` let holes be given up on at flow end / sweep.
-  `BufferedReassembler` skips a hole at once;
-  `SegmentBufferReassembler` waits up to `reassembly_ooo_deadline`
-  (1 s) / `reassembly_ooo_buffer` (256 KiB) then skips. Both deliver
-  the new tail of a partially-overlapping segment (it used to be
-  dropped). `SegmentBufferReassembler` keys segments by 64-bit stream
-  offset (the `u32` key mis-ordered segments across sequence wrap),
-  its `high_watermark` is a peak, and `rst()` no longer stops it.
-- **`SessionParser::on_gap(side, missing, ts, out) -> GapResponse`**
-  (default `Stop` — close the parser, like Suricata's parsers without
-  gap support).
-- `Event::ParserClosed` gains `detail: Option<String>` and is
-  `#[non_exhaustive]`; `SlotMessage` gains `orientation`.
-  A slot now emits `ParserClosed` for flows whose parser actually
-  received data (previously for every port-matching flow).
-- `ReassemblerFactory::apply_config` — `FlowDriver` hands the tracker
-  config to its factory on construction / `set_config`; explicit
-  factory builders still win. `FlowDriver::with_config(ext,
-  BufferedReassemblerFactory::default(), cfg)` now honours
-  `cfg.max_reassembler_buffer` (it was ignored).
-- `FlowTracker::track_with` (per-packet `PacketContext` hook, fires
-  for every packet regardless of the event mask);
-  `FlowDriver::last_packet`, `track_pending_with`, `drain_stream`,
-  `discard_stream`, `force_close_pending`, `finalize_flow`,
-  `flow_stats`, `set_config`. The engines discard a flow's stream as
-  soon as no parser can use it (all closed, or a heuristic rejected
-  it), so such flows cost only flow tracking — as in 0.24, where a
-  rejected heuristic flow was never reassembled.
-- `PcapFlowSource::from_reader` takes `R: BufRead`; `sessions()` /
-  `datagrams()` are public and return the public `SessionIter` /
-  `DatagramIter`.
+  parser-close (or parser-side-stop) reasons. Nothing calls
+  `FlowTracker::forget` any more and no `Ended { BufferOverflow }` is
+  synthesised.
+- **Gaps are explicit.** Reassembly output is `StreamChunks`: data
+  interleaved with gap marks and a stop reason
+  (`Reassembler::drain_into`). `SessionParser::on_gap(side, missing,
+  ts, out) -> GapResponse` decides what a hole means to the parser.
+- **A gap stops one side, not the parser** (#181).
+  `GapResponse { Continue, StopSide, Stop }`, default **`StopSide`**:
+  stop feeding the side with the gap, keep parsing the other one
+  (reported as `ParserSideStopped { key, slot, parser_kind, side,
+  reason, detail, ts }` on `driver::Event`, `SessionEvent` and
+  `pcap::Pulse`). `Stop` closes the parser (for protocols whose state
+  spans both directions). When both sides are stopped the parser is
+  closed once (`ParserClosed`, detail `"both sides stopped"`).
+- **Each side ends on its own terms** (#181). At flow end every side
+  still being read gets `fin_*` (graceful end, or that side sent a FIN
+  — `FlowStats::fin_initiator` / `fin_responder`) or `rst_*`,
+  independently; a stopped side gets neither.
+- **Reassembly limits stop one side** (#181, #185).
+  `OverflowPolicy::DropFlow` (per-side cap) stops that side;
+  `MemcapPolicy::PassThrough` releases the offending side and
+  `MemcapPolicy::DropFlow` both sides (even one that had no
+  reassembler yet), with `ReassemblyStop::{Overflow, Memcap}` in
+  `FlowStats::reassembly_stop_*`. Parsers see a side stop with
+  `EndReason::BufferOverflow`; the flow stays tracked until its
+  transport end.
+- **Reassemblers are anchored, windowed and ACK-aware** (#182).
+  Streams are anchored at the SYN / SYN-ACK
+  (`Reassembler::set_origin`; TCP Fast Open data starts at ISN + 1);
+  RST payloads are not stream data. A segment more than
+  `FlowTrackerConfig::reassembly_max_ahead` (1 MiB) past the stream
+  position is a suspected stray (`AnomalyKind::OutOfWindowSegment`)
+  and dropped unless a second segment or an ACK corroborates it, in
+  which case the stream resyncs with a gap. The peer's ACKs
+  (`Reassembler::peer_ack`) and this side's FIN (`fin_seen`) prove
+  bytes were sent: an acknowledged hole is skipped after
+  `reassembly_ack_grace` (10 ms), and a lost final segment surfaces as
+  a trailing gap. The out-of-order stall deadline
+  (`reassembly_ooo_deadline`, 1 s) is measured from the last progress
+  and needs corroboration (two out-of-order segments or ACK evidence);
+  without it a hole waits four deadlines.
+- **`SegmentBufferReassembler` rewritten** (#184) and the session
+  engines' default. 64-bit stream offsets (the `u32` key mis-ordered
+  segments across sequence wrap); out-of-order data held as disjoint,
+  coalescing pieces with O(log n + k) insertion; the budget
+  (`reassembly_ooo_buffer`, 256 KiB per side) is charged by piece
+  capacity plus `PIECE_OVERHEAD` (64 B) per piece and `RUN_OVERHEAD`
+  (32 B) per provenance run, so it bounds memory at rest; the overlap
+  policy is resolved per byte from segment provenance and applies to
+  in-order bytes overlapping held ones too; `holes_filled` counts only
+  real fills; `high_watermark` is a peak; `rst()` no longer stops it.
+- **`BufferedReassembler` keeps one reordered segment** instead of
+  dropping everything after a hole; the hole is skipped (as a gap) on
+  a second out-of-order segment, after the ACK grace, after its
+  reorder deadline (`with_reorder_deadline`, 1 s) or at flow end. A
+  partially-overlapping segment delivers its new tail (both built-ins).
+- **`Reassembler` trait.** New methods, all defaulted: `drain_into`,
+  `segment_into` (→ `SegmentOutcome::{Buffered, Passthrough { skip }}`
+  — the engines deliver in-order bytes straight from the frame),
+  `set_origin`, `peer_ack`, `fin_seen`, `flush_pending`,
+  `advance_time`, `gaps`, `gap_bytes`, `stop_reason`,
+  `out_of_window_segments`, `ack_confirmed_gaps`, `origin_resets`.
+  **Removed:** `Reassembler::is_poisoned` (use `stop_reason()`;
+  `BufferedReassembler::is_stopped` is the inherent check) (#193).
+  `ReassemblerFactory::apply_config` (default no-op) hands the tracker
+  config to the factory; explicit factory builders win.
+  `FlowDriver::with_config(ext, BufferedReassemblerFactory::default(),
+  cfg)` now honours `cfg.max_reassembler_buffer`, and
+  `FlowDriver::new(ext, BufferedReassemblerFactory::default())` is
+  capped at the default 1 MiB (`.unbounded()` opts out).
+- **`FlowDriver` owns its tracker's `Ended`** (#187). Flows always
+  release their state; `suppress_events` and `pause_events` (now also
+  covering `FLOW_ANOMALY`, `TRACKER_ANOMALY`, `TICK`) only filter what
+  the caller sees, so suppressing `Ended` is safe. A new flow never
+  inherits stale state from an earlier one with the same key.
+  `auto_sweep_interval` runs the driver's full sweep. Stream state is
+  one entry per flow; a discarded or memcap-released side drops its
+  reassembler (a tombstone keeps its final counters), so the memcap
+  frees memory whatever the reassembler's `release()` does.
+- **Output order and `finish()`** (#188). A packet's anomalies come
+  before its own flow's `Ended`; flush anomalies before the `Ended`
+  they belong to. A sweep runs parser ticks, then data released by
+  hole deadlines on flows still tracked, then the flows it ends
+  (flush → final bytes → parser close → `Ended`). `finish()` stamps
+  output with the latest packet time (never `Timestamp::MAX`) and
+  leaves the monotonic clock alone; `on_tick` sees `MAX` at end of
+  input, but its messages are stamped with packet time.
+- **Datagram parsers declare their transports** (#186).
+  `DatagramParser::transports()` / `DatagramParserFactory::transports()
+  -> Transports` (`UDP`, `ICMP`, `ICMPV6`, `SCTP`, `OTHER`, `ICMP_ANY`),
+  default `UDP`; `IcmpParser` reads `ICMP_ANY`. A UDP parser never
+  sees ICMP and vice versa — override `transports()` on a custom
+  non-UDP datagram parser.
+- **Extractors report L4 metadata** (#190). `Extracted::l4_meta:
+  Option<L4Meta { ports, payload_offset, payload_len }>`
+  (`Extracted::with_l4_meta`, `Extracted::rebased`); the engines take
+  ports and datagram payloads from it and fall back to parsing the
+  frame as plain Ethernet only when it is `None`. Custom decapsulating
+  extractors must rebase inner offsets onto the outer frame.
+  `PacketContext` carries `ports`, `l4_payload`, `l4_meta`.
+  `FlowDriver::track_pending_with` takes a per-packet `want`
+  predicate, evaluated only when a reassembler would be created.
+- **Targeted setters instead of `tracker_mut`** (#193).
+  `SessionDriver` / `DatagramDriver` / `Driver` lose `tracker_mut()`
+  (sweeping, force-closing or forgetting flows behind the engine
+  skipped its end-of-flow flush); use `set_idle_timeout_fn`,
+  `set_config`, `pause_events` / `resume_events`. `FlowDriver` keeps
+  `tracker_mut` (the driver reconciles).
+- **Retired API** (#193): `FlowDriver::drain_buffer` (dropped gap
+  markers — use `drain_stream`), `SegmentBufferReassembler::
+  holes_expired` / `evict_expired_ooo` (aliases of `gaps()` /
+  `advance_time()`), `Reassembler::is_poisoned` /
+  `BufferedReassembler::is_poisoned`.
+- **Parser identity and ordering** (#191). `Event::ParserClosed`
+  gains `slot: SlotId` and `detail: Option<String>` and is
+  `#[non_exhaustive]`; `AnomalyKind::SessionParseError` gains
+  `parser_kind` and `slot: Option<SlotId>`; `SlotMessage` gains
+  `orientation`, `lifecycle_pos` and `seq` (build it with
+  `SlotMessage::new`). A slot emits `ParserClosed` for flows whose
+  parser actually received data (previously for every port-matching
+  flow), before the flow's `Ended`.
+- **Metrics** (#191). `flowscope_flows_ended_total{reason}` carries
+  only transport reasons; parser outcomes moved to
+  `flowscope_parser_closed_total{parser_kind,reason}` and
+  `flowscope_parser_side_stopped_total{parser_kind,side,reason}`.
+- **`tcp_state::transition(state, flags, side, other_side_fin)`**
+  (#196): FINs are tracked per side.
+- **pcap** (#195). `PcapFlowSource::from_reader` takes `R: BufRead`;
+  `sessions()` / `datagrams()` are public and return the public
+  `SessionIter` / `DatagramIter`.
 
 ### Added
 
 - **`session::SessionDriver<E, F>` / `DatagramDriver<E, F>`** — public
   single-parser engines with an ordered `SessionEvent<K, M>` output
-  (public again, with `orientation`, `ParserClosed`, `Tick`).
-  `TemplateFactory<P>` builds a factory from a `Clone`-only parser.
-- **pcapng**: `pcap::CaptureReader` detects the format; pcapng
-  timestamps honour `if_tsresol` / `if_tsoffset` (pcap-file 2 returns
-  raw ticks as nanoseconds). `PcapFlowSource` and every `*_from_pcap`
-  helper read pcapng.
-- `AnomalyKind::StreamGap`, `EndReason::StreamGap`, `ReassemblyStop`,
-  `FlowStats::reassembly_gaps_*` / `reassembly_gap_bytes_*` /
-  `reassembly_stop_*`, metric `flowscope_reassembly_gap_bytes_total`,
-  `FlowTrackerConfig::reassembly_ooo_buffer` / `reassembly_ooo_deadline`,
+  (public again, with `orientation`, `ParserClosed`,
+  `ParserSideStopped`, `Tick`). `TemplateFactory<P>` builds a factory
+  from a `Clone`-only parser.
+- `DriverBuilder::{session_factory_on_ports, session_factory_broadcast,
+  datagram_factory_on_ports, datagram_factory_broadcast}` register a
+  per-flow `SessionParserFactory` / `DatagramParserFactory` (#193).
+- `SlotId` (`SlotHandle::slot_id`, `BroadcastSlotHandle::slot_id`),
+  `Driver::lifecycle_seq()`: a `SlotMessage` comes right before
+  lifecycle event number `lifecycle_pos` (ties by `seq`), so the slot
+  queues and the lifecycle stream merge into the engine's exact
+  order (#191).
+- `BroadcastSlotHandle::try_recv` / `poll_recv`: the next push wakes
+  the task polling the handle — the building block for a `Stream`
+  over it (netring#161).
+- `SessionParser::on_gap`, `GapResponse`, `StreamChunks` / `Chunk` /
+  `Chunks`, `ReassemblyStop`, `SegmentOutcome`, `Transports`,
+  `L4Meta`, `PacketContext`, `PacketInfo`,
   `SegmentBufferReassemblerFactory`.
+- `FlowTrackerConfig::{reassembly_ooo_buffer, reassembly_ooo_deadline,
+  reassembly_max_ahead, reassembly_ack_grace}` (defaults
+  `segment_reassembler::DEFAULT_OOO_BUFFER` / `DEFAULT_OOO_DEADLINE`,
+  `reassembler::DEFAULT_MAX_AHEAD` / `DEFAULT_ACK_GRACE` /
+  `DEFAULT_REORDER_DEADLINE`); builders `with_max_ahead` /
+  `with_ack_grace` on both built-in reassemblers,
+  `BufferedReassembler::with_reorder_deadline`,
+  `SegmentBufferReassemblerFactory::{with_ooo, with_window}`;
+  `SegmentBufferReassembler::ooo_pieces`,
+  `segment_reassembler::{PIECE_OVERHEAD, RUN_OVERHEAD}`.
+- `FlowStats::{reassembly_gaps_*, reassembly_gap_bytes_*,
+  reassembly_stop_*, reassembly_out_of_window_*,
+  reassembly_ack_confirmed_gaps_*, reassembly_origin_resets_*,
+  fin_initiator, fin_responder}`; `FlowStats` deserializes with
+  `#[serde(default)]`, so records written before fields were added
+  still parse.
+- `AnomalyKind::StreamGap`, `AnomalyKind::OutOfWindowSegment`,
+  `EndReason::StreamGap`, `EndReason::is_graceful`; metric
+  `flowscope_reassembly_gap_bytes_total`.
+- `FlowTracker::track_with` (per-packet `PacketContext` hook, fires
+  for every packet regardless of the event mask); `FlowDriver::
+  {last_packet, track_pending_with, drain_stream, discard_stream,
+  discard_side, force_close_pending, finalize_flow, flow_stats,
+  set_config, pause_events, resume_events}`.
+- **pcap** (#195): `pcap::CaptureReader` reads pcap and pcapng
+  (`if_tsresol` / `if_tsoffset` honoured); `CapturedPacket::
+  into_ethernet` normalises `LINUX_SLL` / `LINUX_SLL2` (`tcpdump -i
+  any`), `RAW` / `IPV4` / `IPV6` and `NULL` / `LOOP` to Ethernet, which
+  `PcapFlowSource` and every `*_from_pcap` helper use; other link types
+  are skipped and counted (`ViewIter::unsupported()`).
+  `CapturedPacket::direction` (`CaptureDirection`, from the pcapng EPB
+  flags or the cooked header). `Pulse::ParserClosed` /
+  `Pulse::ParserSideStopped`. New `pcap-reader` feature (just
+  `pcap-file`): `CaptureReader` without extractors or the tracker, for
+  downstreams with their own replay; `pcap` builds on it.
+- **Built-in parsers recover from gaps** (#194): FTP / SMTP resume at
+  the next line; `HttpParser` drops the message in progress and
+  resumes at the next request / status line; DNP3, SMB and Modbus/TCP
+  resync on their frame markers. HTTP/2 and `HttpExchangeParser`
+  answer `Stop` (state spans both directions); TLS, DNS-over-TCP,
+  LDAP, Kerberos, RDP and SSH keep the default `StopSide`, so a
+  responder-side gap no longer costs the ClientHello's SNI / ALPN /
+  JA3 / JA4.
 - `FlowSide::as_str` / `opposite` / `Display`, `FlowState::as_str` /
-  `Display`, `EndReason::is_graceful`.
-- `FlowDriver` now emits `TcpRexmitInconsistency` anomalies (the kind
-  existed but was never emitted).
+  `Display` (#171).
+- `tests/alloc_steady_state.rs` (allocation gate, #192),
+  `tests/sbr_model.rs` (per-byte model of the four overlap policies),
+  and `compat/`, a workspace-excluded crate comparing this tree with
+  the released 0.24.1 on eight synthetic scenarios (#198).
 
 ### Fixed
 
+- **Encapsulated TCP payloads** (#190, also in 0.24.1): the tracker
+  sliced the outer frame with the inner frame's payload offset, so
+  every reassembled byte of a VXLAN / GRE / GTP-U / MPLS TCP flow was
+  wrong; port selectors also saw the tunnel's ports, and each packet
+  was parsed twice.
+- **UDP / ICMP cross-feeding** (#186, also in 0.24.1): a UDP parser on
+  `datagram_broadcast` / `DatagramDriver` parsed ICMP messages, and
+  `IcmpParser` turned DNS / QUIC payloads into fake `IcmpMessage`s.
+- **Retransmitted FIN** (#196, also in 0.24.1): the side that closed
+  first retransmitting its FIN, then an ACK, ended the flow as `Fin`
+  before the other side closed.
+- **Sweep / finish data loss** (#180): data released by hole deadlines
+  on flows ending in the same sweep was drained and dropped, and
+  `finish()` lost every flow's out-of-order tail; port-selected
+  parsers now also get data first seen in a sweep.
+- Reordered first data segments were taken for retransmits; a stray
+  or injected far-ahead segment could end a side's reassembly (#182).
+- `SegmentBufferReassembler`: one-byte ascending out-of-order input
+  was O(n²); a third overlapping segment was misresolved; in-order
+  data overlapping held bytes ignored the overlap policy
+  (Ptacek–Newsham); `holes_filled` over-counted (#184).
+- The memcap freed nothing when a reassembler's `release()` was a
+  no-op, and `DropFlow` left a peer without a reassembler unaccounted
+  (#183, #185). `StreamChunks::append` moves buffers, so a drained
+  reassembler retains no memory.
+- Heuristic probing (#189): a gap now seals the side's signature
+  prefix (spliced bytes caused false matches / rejections); the replay
+  log is capped at 64 KiB with each side's first chunk kept, and a
+  flow needing more keeps probing — on a match the parser gets the
+  unreplayed bytes as a leading gap; the final bytes at flow end are
+  probed, and flows first seen in them are picked up.
+- Shedding `EventMask::PACKET` no longer stops L7 parsing.
+- `DriverBuilder::emit_packet_source_idx(true)` is no longer clobbered
+  by a later `config(..)` (#193).
+- With `flow_tick_interval` set, `FlowDriver` walked every flow on
+  every packet; the scan runs at most every quarter interval (#196).
 - `FlowDriver`'s per-packet anomaly diff walked every live reassembler
-  (O(flows) per packet); it now diffs only the one the packet touched.
-- `FlowDriver`'s monotonic clamp dropped the view's `rx_metadata`.
-- End-of-flow gaps surface as anomalies before the flow's `Ended`.
+  (O(flows) per packet); its monotonic clamp dropped the view's
+  `rx_metadata`; `TcpRexmitInconsistency` was never emitted.
+- pcapng timestamp arithmetic saturates instead of overflowing on a
+  hostile file (#195).
+- Every feature builds on its own again, warning-free.
+
+### Performance
+
+- Measured, not claimed (#192): `tests/alloc_steady_state.rs` counts
+  heap blocks on the real path — **0 allocations per in-order packet**
+  in steady state (typed `Driver` and `SessionDriver`) and 0 per sweep
+  that ends nothing. Allocations remain for new flows, held
+  out-of-order data, and parser / queue growth.
+- Against 0.24.1 (`compat/`, `cargo test --release` for the gates,
+  `cargo run --release --bin compat-bench` for the table):
+  5–10× fewer allocations on S1–S7, 1.4–2.5× the throughput, and S8
+  (300k one-byte out-of-order segments above a hole) bounded at
+  ~262 KB resident, 0.17 s (was quadratic).
 
 ## 0.24.1 (2026-08-04)
 

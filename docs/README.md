@@ -11,7 +11,7 @@ package. Forward-looking work lives in the issue tracker.
 | [`concepts.md`](concepts.md) | The four layers (`FlowExtractor` / `FlowTracker` / `Reassembler` / `SessionParser` / `DatagramParser`) and the event model. |
 | [`recipes.md`](recipes.md) | Named patterns: picking an API, writing your own parser, multi-protocol monitoring, cross-protocol correlation, structured output. |
 | [`observability.md`](observability.md) | Metric vocabulary, cardinality, tracing targets, severity routing. |
-| [`performance.md`](performance.md) | Criterion bench methodology, baseline numbers, regression workflow. |
+| [`performance.md`](performance.md) | Criterion bench methodology, baseline numbers, the measured allocation gate and the 0.24.1 comparison harness. |
 | [`design.md`](design.md) | Why the library is shaped the way it is — runtime-free, run-to-completion threading, layered traits, locked serde format. |
 
 ## Reference, by topic
@@ -34,6 +34,7 @@ forward.
 
 | File | Cycle |
 |------|-------|
+| [`migration-0.24-to-0.25.md`](migration-0.24-to-0.25.md) | Session-engine cycle: one engine behind every L7 API, explicit reassembly gaps and per-side parser stops, parser closes that never end a flow, `tracker_mut` / `drain_buffer` / `Reassembler::is_poisoned` removed. (0.23 → 0.24 needed no guide.) |
 | [`migration-0.22-to-0.23.md`](migration-0.22-to-0.23.md) | Inline-proxy cycle: one streaming HTTP engine, `BodyFraming::UntilClose`, and the framing behaviour that changed. |
 | [`migration-0.21-to-0.22.md`](migration-0.21-to-0.22.md) | Stateful `QuicUdpParser`, `parser_kinds` removal. |
 | [`migration-0.20-to-0.21.md`](migration-0.20-to-0.21.md) | Typed `DetectorKind`, detection architecture. |

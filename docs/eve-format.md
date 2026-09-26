@@ -106,13 +106,18 @@ lacks a full 5-tuple.
 }
 ```
 
-`anomaly.type` is `"stream"` for buffer / OOO / retransmit /
-watermark / eviction; `"applayer"` for parse errors. The
+`anomaly.type` is `"stream"` for buffer / OOO / out-of-window /
+gap / retransmit / overlap-inconsistency / watermark / eviction /
+memcap; `"applayer"` for parse errors. The
 classification table lives in
 `AnomalyFields for AnomalyKind` (see plan 126).
 
-`anomaly.event` is the stable `AnomalyKind::short_kind` slug
-(`"buffer_overflow"`, `"ooo_segment"`, `"retransmit"`, etc.).
+`anomaly.event` is the stable `AnomalyKind::short_kind` slug — the
+same vocabulary as the `flowscope_anomalies_total{kind}` metric:
+`"buffer_overflow"`, `"ooo_segment"`, `"out_of_window_segment"`
+(0.25), `"stream_gap"` (0.25), `"flow_table_eviction"`,
+`"parse_error"`, `"retransmit"`, `"reassembler_high_watermark"`,
+`"tcp_rexmit_inconsistency"`, `"global_memcap_hit"`.
 
 `severity` is numeric per Suricata convention (1 = high,
 4 = low):

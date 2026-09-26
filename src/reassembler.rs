@@ -5,13 +5,23 @@
 //! implementations ship:
 //!
 //! - [`BufferedReassembler`] — in-order accumulation into a buffer.
-//!   It holds no out-of-order data: a segment that arrives ahead of
-//!   the expected sequence number makes it skip the hole and report
-//!   a **gap**.
-//! - [`crate::SegmentBufferReassembler`] — buffers out-of-order
-//!   segments and fills holes when the missing bytes arrive; a hole
-//!   that cannot be filled (deadline, buffer cap, end of stream) is
-//!   skipped and reported as a gap.
+//!   It holds at most **one** reordered segment: the hole in front of
+//!   it is skipped and reported as a **gap** on a second out-of-order
+//!   segment, once the peer has acknowledged the missing bytes (ACK
+//!   grace), at the reorder deadline, or at flow end.
+//! - [`crate::SegmentBufferReassembler`] (the session engines'
+//!   default) — buffers out-of-order segments within a byte budget
+//!   and fills holes when the missing bytes arrive; a hole that
+//!   cannot be filled (acknowledged but never seen, stall deadline,
+//!   budget, end of stream) is skipped and reported as a gap.
+//!
+//! Both anchor the stream at the SYN / SYN-ACK
+//! ([`Reassembler::set_origin`]), learn from the peer's ACKs and this
+//! side's FIN ([`Reassembler::peer_ack`], [`Reassembler::fin_seen`]),
+//! and distrust a segment far beyond the stream position (see
+//! [`crate::FlowTrackerConfig::reassembly_max_ahead`]) until a second
+//! segment or an ACK corroborates it. In-order bytes can bypass the
+//! buffer entirely ([`Reassembler::segment_into`]).
 //!
 //! # Gaps
 //!
@@ -434,16 +444,16 @@ pub trait Reassembler: Send + 'static {
         0
     }
 
-    /// Stop reassembling and release whatever is buffered.
+    /// Stop reassembling and release whatever is buffered. After a
+    /// release, [`Self::stop_reason`] should report
+    /// [`ReassemblyStop::Memcap`].
     ///
-    /// Called by the driver when the tracker-wide reassembly memcap
-    /// reclaims this side. The flow stays tracked and keeps accruing
-    /// stats; only its L7 reassembly is abandoned. After a release,
-    /// [`Self::stop_reason`] should report [`ReassemblyStop::Memcap`].
-    ///
-    /// The default is a no-op — an implementation that does not
-    /// override it cannot honour the memcap, and the driver's byte
-    /// accounting will correctly observe that nothing was freed.
+    /// For callers driving a reassembler themselves. Since 0.25
+    /// [`crate::FlowDriver`] does not rely on it: when the
+    /// tracker-wide memcap reclaims a side, the driver drops that
+    /// side's reassembler (keeping only its final counters), so the
+    /// memory is freed whatever this method does. The default is a
+    /// no-op.
     fn release(&mut self) {}
 
     /// Current live byte occupancy (ready bytes plus any
