@@ -1055,6 +1055,42 @@ where
         events
     }
 
+    /// [`Self::sweep_pending`] that also hands over the bytes the
+    /// sweep released: holes past their deadline are skipped by
+    /// [`Reassembler::advance_time`], and the data waiting behind them
+    /// (with the [`Chunk::Gap`](crate::Chunk::Gap) marking the hole) is
+    /// drained into `buf` and passed to `f(key, side, buf)` — once per
+    /// side with output, `buf` cleared before each. Without it, a side
+    /// that went quiet behind a hole only delivers at its next packet
+    /// or at flow end.
+    ///
+    /// Anomalies of the advanced sides are returned with the events
+    /// (after the data `f` already saw). Same contract as
+    /// [`Self::sweep_pending`]: call [`Self::finalize`] next.
+    pub fn sweep_pending_drain<G>(
+        &mut self,
+        now: Timestamp,
+        buf: &mut StreamChunks,
+        mut f: G,
+    ) -> Vec<FlowEvent<E::Key>>
+    where
+        G: FnMut(&E::Key, FlowSide, &mut StreamChunks),
+    {
+        let now = self.clamp_now(now);
+        let mut events = Vec::new();
+        self.advance_streams(now, Some(buf), |r| {
+            events.extend(r.anomalies.drain(..));
+            if let Some(data) = r.data.as_deref_mut()
+                && !data.is_empty()
+            {
+                f(r.key, r.side, data);
+            }
+        });
+        events.extend(self.sweep_raw(now));
+        self.close_all(&mut events);
+        events
+    }
+
     /// Give every live reassembler of a still-tracked flow
     /// `advance_time(now)`. For each side that produced anomalies or
     /// (with `drain`) released output, `f` gets a [`Released`] —
