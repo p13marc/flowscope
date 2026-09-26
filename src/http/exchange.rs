@@ -207,6 +207,20 @@ impl SessionParser for HttpExchangeParser {
     fn poison_reason(&self) -> Option<&str> {
         self.inner.poison_reason()
     }
+
+    /// Pairing requests with responses relies on seeing every one of
+    /// them in order; after missing bytes on either side it cannot be
+    /// trusted, so the parser closes. [`HttpParser`] resynchronises
+    /// instead, for message-level output that survives capture loss.
+    fn on_gap(
+        &mut self,
+        _side: crate::FlowSide,
+        _missing: u64,
+        _ts: Timestamp,
+        _out: &mut Vec<HttpExchange>,
+    ) -> crate::GapResponse {
+        crate::GapResponse::Stop
+    }
 }
 
 impl HttpExchangeParser {

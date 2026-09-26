@@ -209,6 +209,27 @@ impl SessionParser for HttpParser {
         self.finish_at_eof(Dir::Response, out);
     }
 
+    /// Bytes are missing: drop the message in progress on that side
+    /// and resume at the next request / status line.
+    fn on_gap(
+        &mut self,
+        side: crate::FlowSide,
+        _missing: u64,
+        _ts: Timestamp,
+        _out: &mut Vec<HttpMessage>,
+    ) -> crate::GapResponse {
+        let dir = match side {
+            crate::FlowSide::Initiator => Dir::Request,
+            crate::FlowSide::Responder => Dir::Response,
+        };
+        if self.engine.is_tunnelled() {
+            return crate::GapResponse::StopSide;
+        }
+        self.engine.resync(dir);
+        *self.partial_mut(dir) = None;
+        crate::GapResponse::Continue
+    }
+
     fn rst_initiator(&mut self) {
         self.engine.reset(Dir::Request);
         self.request = None;
@@ -475,5 +496,60 @@ mod tests {
             HttpMessage::Request(r) => assert!(r.body.is_empty()),
             other => panic!("expected Request, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn a_gap_resyncs_at_the_next_request_head() {
+        let mut p = HttpParser::default();
+        let m = feed_init(
+            &mut p,
+            b"GET /a HTTP/1.1\r\nHost: x\r\n\r\nGET /b HTTP/1.1\r\nHo",
+        );
+        assert_eq!(m.len(), 1);
+        let mut out = Vec::new();
+        let r = p.on_gap(
+            crate::FlowSide::Initiator,
+            100,
+            Timestamp::default(),
+            &mut out,
+        );
+        assert_eq!(r, crate::GapResponse::Continue);
+        let m = feed_init(
+            &mut p,
+            b"st: lost\r\n\r\nGET /c HTTP/1.1\r\nHost: z\r\n\r\n",
+        );
+        let paths: Vec<_> = m
+            .iter()
+            .filter_map(|m| match m {
+                HttpMessage::Request(r) => Some(r.path.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(paths, vec!["/c".to_string()]);
+    }
+
+    #[test]
+    fn a_gap_resyncs_at_the_next_status_line() {
+        let mut p = HttpParser::default();
+        feed_init(&mut p, b"GET /a HTTP/1.1\r\n\r\nGET /b HTTP/1.1\r\n\r\n");
+        feed_resp(
+            &mut p,
+            b"HTTP/1.1 200 OK\r\nContent-Length: 10\r\n\r\n01234",
+        );
+        let mut out = Vec::new();
+        p.on_gap(
+            crate::FlowSide::Responder,
+            5,
+            Timestamp::default(),
+            &mut out,
+        );
+        let m = feed_resp(
+            &mut p,
+            b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n",
+        );
+        assert!(
+            m.iter()
+                .any(|m| matches!(m, HttpMessage::Response(r) if r.status == 404))
+        );
     }
 }

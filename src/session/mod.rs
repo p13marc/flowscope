@@ -645,12 +645,15 @@ pub trait SessionParser: Send + 'static {
     /// feeding it; the flow itself stays tracked until its transport
     /// end.
     ///
-    /// Reserve for protocols with intrinsic completion semantics:
-    /// HTTP/1.0 `Connection: close` after body fully received;
-    /// DNS-over-TCP after a query/response pair; framed protocols
-    /// with a session-end sentinel. Do **not** use this to give
-    /// up on bad input — that's [`is_poisoned`](Self::is_poisoned),
-    /// which routes through [`crate::EndReason::ParseError`].
+    /// Reserve for protocols where **nothing** further on the
+    /// connection can matter: a session-end sentinel after which the
+    /// peers only close (e.g. an SMTP `QUIT` / `221` exchange), or a
+    /// protocol switch to something this parser cannot read. Not for
+    /// "one exchange complete" — DNS-over-TCP and HTTP/1.1 reuse the
+    /// connection, and a parser done after the first pair would lose
+    /// every later one. Do **not** use this to give up on bad input —
+    /// that's [`is_poisoned`](Self::is_poisoned), which routes through
+    /// [`crate::EndReason::ParseError`].
     ///
     /// Should be idempotent: once `is_done()` returns `true`, it
     /// should keep returning `true` for the lifetime of the parser.
@@ -1012,6 +1015,47 @@ where
     }
     fn transports(&self) -> Transports {
         self.0.transports()
+    }
+}
+
+/// Gap recovery for line-oriented protocols: the bytes right after a
+/// gap start mid-line, so they are discarded up to and including the
+/// next `\n`. Feed each new chunk through this while `pending` is
+/// set; returns the part of `bytes` to parse.
+pub(crate) fn skip_partial_line<'a>(pending: &mut bool, bytes: &'a [u8]) -> &'a [u8] {
+    if !*pending {
+        return bytes;
+    }
+    match bytes.iter().position(|&b| b == b'\n') {
+        Some(p) => {
+            *pending = false;
+            &bytes[p + 1..]
+        }
+        None => &[],
+    }
+}
+
+/// Gap recovery for framed binary protocols: when `pending`, drop
+/// buffered bytes up to the first offset `find` accepts as a frame
+/// start (keeping at most `keep` trailing bytes while none is found).
+pub(crate) fn resync_frames(
+    pending: &mut bool,
+    buf: &mut bytes::BytesMut,
+    keep: usize,
+    find: impl Fn(&[u8]) -> Option<usize>,
+) {
+    if !*pending {
+        return;
+    }
+    match find(buf) {
+        Some(at) => {
+            let _ = buf.split_to(at);
+            *pending = false;
+        }
+        None => {
+            let drop = buf.len().saturating_sub(keep);
+            let _ = buf.split_to(drop);
+        }
     }
 }
 

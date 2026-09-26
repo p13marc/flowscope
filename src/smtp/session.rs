@@ -37,6 +37,9 @@ pub struct SmtpParser {
     /// accumulate until `\r\n.\r\n`.
     in_data: bool,
     data_bytes: u64,
+    /// Bytes went missing on (initiator, responder): skip to the
+    /// next line.
+    resync: [bool; 2],
 }
 
 #[derive(Debug, Clone)]
@@ -259,6 +262,7 @@ impl SessionParser for SmtpParser {
         if self.encrypted {
             return;
         }
+        let bytes = crate::session::skip_partial_line(&mut self.resync[0], bytes);
         self.init.extend_from_slice(bytes);
         self.drain_initiator(out);
     }
@@ -267,8 +271,31 @@ impl SessionParser for SmtpParser {
         if self.encrypted {
             return;
         }
+        let bytes = crate::session::skip_partial_line(&mut self.resync[1], bytes);
         self.resp.extend_from_slice(bytes);
         self.drain_responder(out);
+    }
+
+    /// Commands, replies and the message body are lines: drop the
+    /// partial line and resume at the next one.
+    fn on_gap(
+        &mut self,
+        side: crate::FlowSide,
+        _missing: u64,
+        _ts: Timestamp,
+        _out: &mut Vec<SmtpMessage>,
+    ) -> crate::GapResponse {
+        match side {
+            crate::FlowSide::Initiator => {
+                self.init.clear();
+                self.resync[0] = true;
+            }
+            crate::FlowSide::Responder => {
+                self.resp.clear();
+                self.resync[1] = true;
+            }
+        }
+        crate::GapResponse::Continue
     }
 }
 
@@ -434,5 +461,24 @@ mod tests {
             .filter(|m| matches!(m, SmtpMessage::Reply { .. }))
             .collect();
         assert_eq!(replies.len(), 1, "only the final-line is surfaced");
+    }
+
+    #[test]
+    fn a_gap_resyncs_on_the_next_line() {
+        let mut p = SmtpParser::new();
+        let mut out = Vec::new();
+        p.feed_initiator(b"HELO a\r\nMAIL FR", ts(), &mut out);
+        let r = p.on_gap(crate::FlowSide::Initiator, 10, ts(), &mut out);
+        assert_eq!(r, crate::GapResponse::Continue);
+        p.feed_initiator(
+            b"OM:<lost>\r\nRCPT TO:<bob@example.com>\r\n",
+            ts(),
+            &mut out,
+        );
+        assert!(
+            out.iter().any(
+                |m| matches!(m, SmtpMessage::RcptTo { address } if address == "bob@example.com")
+            )
+        );
     }
 }

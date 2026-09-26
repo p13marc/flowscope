@@ -28,6 +28,18 @@ const MAX_NBSS_LEN: usize = 0x1FFFF;
 pub struct SmbParser {
     init: BytesMut,
     resp: BytesMut,
+    /// Bytes went missing on (initiator, responder): resync on the
+    /// next NBSS + SMB header.
+    resync: [bool; 2],
+}
+
+/// Offset of the next plausible NBSS session message carrying SMB:
+/// a `0x00` type byte, then a 3-byte length, then `\xFESMB` (SMB2),
+/// `\xFFSMB` (SMB1) or `\xFDSMB` (SMB3 transform).
+fn find_nbss_smb(buf: &[u8]) -> Option<usize> {
+    buf.windows(8).position(|w| {
+        w[0] == NBSS_TYPE_SESSION_MESSAGE && matches!(w[4], 0xFD..=0xFF) && &w[5..8] == b"SMB"
+    })
 }
 
 impl SmbParser {
@@ -73,7 +85,10 @@ impl SessionParser for SmbParser {
             self.init.clear();
         }
         self.init.extend_from_slice(bytes);
-        Self::drain(&mut self.init, out);
+        crate::session::resync_frames(&mut self.resync[0], &mut self.init, 7, find_nbss_smb);
+        if !self.resync[0] {
+            Self::drain(&mut self.init, out);
+        }
     }
 
     fn feed_responder(&mut self, bytes: &[u8], _ts: Timestamp, out: &mut Vec<Self::Message>) {
@@ -81,7 +96,27 @@ impl SessionParser for SmbParser {
             self.resp.clear();
         }
         self.resp.extend_from_slice(bytes);
-        Self::drain(&mut self.resp, out);
+        crate::session::resync_frames(&mut self.resync[1], &mut self.resp, 7, find_nbss_smb);
+        if !self.resync[1] {
+            Self::drain(&mut self.resp, out);
+        }
+    }
+
+    /// Drop the partial PDU and resume at the next NBSS + SMB header.
+    fn on_gap(
+        &mut self,
+        side: crate::FlowSide,
+        _missing: u64,
+        _ts: Timestamp,
+        _out: &mut Vec<SmbMessage>,
+    ) -> crate::GapResponse {
+        let i = usize::from(side == crate::FlowSide::Responder);
+        match side {
+            crate::FlowSide::Initiator => self.init.clear(),
+            crate::FlowSide::Responder => self.resp.clear(),
+        }
+        self.resync[i] = true;
+        crate::GapResponse::Continue
     }
 }
 
@@ -153,5 +188,24 @@ mod tests {
         let mut out = Vec::new();
         p.feed_initiator(&nbss, Timestamp::default(), &mut out);
         assert!(out.is_empty());
+    }
+
+    #[test]
+    fn a_gap_resyncs_on_the_next_nbss_smb_header() {
+        let mut p = SmbParser::new();
+        let mut out = Vec::new();
+        let pdu = build_nbss(&build_smb2_negotiate());
+        p.feed_initiator(&pdu[..20], Timestamp::default(), &mut out);
+        let r = p.on_gap(
+            crate::FlowSide::Initiator,
+            10,
+            Timestamp::default(),
+            &mut out,
+        );
+        assert_eq!(r, crate::GapResponse::Continue);
+        let mut tail = pdu[30..].to_vec();
+        tail.extend_from_slice(&pdu);
+        p.feed_initiator(&tail, Timestamp::default(), &mut out);
+        assert_eq!(out.len(), 1);
     }
 }

@@ -195,6 +195,18 @@ impl crate::SessionParser for Http2Session {
     fn is_done(&self) -> bool {
         self.inner.is_done()
     }
+
+    /// HPACK header compression state spans the whole connection in
+    /// both directions: after a gap nothing can be decoded reliably.
+    fn on_gap(
+        &mut self,
+        _side: FlowSide,
+        _missing: u64,
+        _ts: Timestamp,
+        _out: &mut Vec<Http2Event>,
+    ) -> crate::GapResponse {
+        crate::GapResponse::Stop
+    }
 }
 
 #[cfg(test)]
