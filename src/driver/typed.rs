@@ -437,8 +437,8 @@ where
     fn wants_stream(&self, ports: Ports) -> bool {
         self.list.iter().any(|s| s.wants_stream(ports))
     }
-    fn wants_datagram(&self, ports: Ports) -> bool {
-        self.list.iter().any(|s| s.wants_datagram(ports))
+    fn wants_datagram(&self, ports: Ports, l4: Option<crate::L4Proto>) -> bool {
+        self.list.iter().any(|s| s.wants_datagram(ports, l4))
     }
     fn on_stream(
         &mut self,

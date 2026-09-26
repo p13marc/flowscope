@@ -508,7 +508,7 @@ pub use reassembler::{
 pub use session::{
     AccumulatingSessionParser, BufferedFrameDrain, DatagramParser, DatagramParserFactory,
     FrameDrainError, GapResponse, PerDatagramParser, SessionEvent, SessionParser,
-    SessionParserFactory, TemplateFactory,
+    SessionParserFactory, TemplateFactory, Transports,
 };
 #[cfg(all(feature = "session", feature = "extractors", feature = "reassembler"))]
 pub use session::{DatagramDriver, SessionDriver};

@@ -128,7 +128,7 @@ where
     fn wants_stream(&self, ports: Ports) -> bool {
         self.wants(ports)
     }
-    fn wants_datagram(&self, _ports: Ports) -> bool {
+    fn wants_datagram(&self, _ports: Ports, _l4: Option<crate::L4Proto>) -> bool {
         false
     }
     fn on_stream(
@@ -192,8 +192,8 @@ where
     fn wants_stream(&self, _ports: Ports) -> bool {
         false
     }
-    fn wants_datagram(&self, ports: Ports) -> bool {
-        self.wants(ports)
+    fn wants_datagram(&self, ports: Ports, l4: Option<crate::L4Proto>) -> bool {
+        self.wants(ports, l4)
     }
     fn on_stream(
         &mut self,

@@ -48,8 +48,9 @@ pub(crate) trait Dispatch<K> {
     /// packet has these ports (drives reassembler creation).
     fn wants_stream(&self, ports: Ports) -> bool;
 
-    /// Whether some core wants UDP datagrams with these ports.
-    fn wants_datagram(&self, ports: Ports) -> bool;
+    /// Whether some core wants datagrams of this transport with
+    /// these ports.
+    fn wants_datagram(&self, ports: Ports, l4: Option<L4Proto>) -> bool;
 
     fn on_stream(
         &mut self,
@@ -250,6 +251,7 @@ where
     ) {
         let cx = Ctx {
             key: &p.key,
+            l4: p.l4,
             side: p.side,
             orientation: p.orientation,
             ts: p.ts,
@@ -267,9 +269,7 @@ where
                     }
                 }
             }
-            Some(L4Proto::Udp | L4Proto::Icmp | L4Proto::IcmpV6) | None
-                if dispatch.wants_datagram(ports) =>
-            {
+            _ if dispatch.wants_datagram(ports, p.l4) => {
                 let payload = match p.l4_meta {
                     Some(m) => Some(m.payload(view.frame)),
                     None => datagram_payload(view.frame),
@@ -308,6 +308,7 @@ where
             };
             let cx = Ctx {
                 key: &key,
+                l4: Some(L4Proto::Tcp),
                 side,
                 orientation,
                 ts: entry.stats.last_seen,

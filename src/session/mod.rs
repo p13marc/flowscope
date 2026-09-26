@@ -744,12 +744,65 @@ pub trait DatagramParser: Send + 'static {
     fn parser_kind(&self) -> ParserKind {
         ParserKind::Unspecified
     }
+
+    /// Which transports this parser reads. The engines hand it only
+    /// datagrams of these transports: a UDP parser never sees an
+    /// ICMP message and an ICMP parser never sees a UDP payload.
+    /// Default [`Transports::UDP`]. New in 0.25.0.
+    fn transports(&self) -> Transports {
+        Transports::UDP
+    }
+}
+
+bitflags::bitflags! {
+    /// Transports a [`DatagramParser`] reads (see
+    /// [`DatagramParser::transports`]). New in 0.25.0.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+    pub struct Transports: u8 {
+        /// UDP payloads.
+        const UDP = 1;
+        /// Whole ICMPv4 messages.
+        const ICMP = 1 << 1;
+        /// Whole ICMPv6 messages.
+        const ICMPV6 = 1 << 2;
+        /// SCTP packets (the whole SCTP packet: common header and chunks).
+        const SCTP = 1 << 3;
+        /// Any other non-TCP IP protocol (the whole L4 payload).
+        const OTHER = 1 << 4;
+    }
+}
+
+impl Transports {
+    /// ICMPv4 and ICMPv6.
+    pub const ICMP_ANY: Transports = Transports::ICMP.union(Transports::ICMPV6);
+
+    /// Whether a datagram of this L4 protocol is admitted. Unknown
+    /// L4 (`None`) counts as [`Transports::OTHER`].
+    pub fn admits(self, l4: Option<crate::L4Proto>) -> bool {
+        use crate::L4Proto;
+        let bit = match l4 {
+            Some(L4Proto::Udp) => Transports::UDP,
+            Some(L4Proto::Icmp) => Transports::ICMP,
+            Some(L4Proto::IcmpV6) => Transports::ICMPV6,
+            Some(L4Proto::Sctp) => Transports::SCTP,
+            Some(L4Proto::Tcp) => return false,
+            _ => Transports::OTHER,
+        };
+        self.contains(bit)
+    }
 }
 
 /// Builds a fresh [`DatagramParser`] per session.
 pub trait DatagramParserFactory<K>: Send + 'static {
     type Parser: DatagramParser;
     fn new_parser(&mut self, key: &K) -> Self::Parser;
+
+    /// Transports the parsers read (see
+    /// [`DatagramParser::transports`]). Default [`Transports::UDP`];
+    /// factories that clone a template delegate to it.
+    fn transports(&self) -> Transports {
+        Transports::UDP
+    }
 }
 
 impl<K, P> DatagramParserFactory<K> for P
@@ -759,6 +812,9 @@ where
     type Parser = P;
     fn new_parser(&mut self, _key: &K) -> P {
         self.clone()
+    }
+    fn transports(&self) -> Transports {
+        DatagramParser::transports(self)
     }
 }
 
@@ -925,6 +981,9 @@ where
     type Parser = P;
     fn new_parser(&mut self, _key: &K) -> P {
         self.0.clone()
+    }
+    fn transports(&self) -> Transports {
+        self.0.transports()
     }
 }
 

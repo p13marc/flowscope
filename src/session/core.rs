@@ -27,6 +27,7 @@ use crate::parser_kind::ParserKind;
 use crate::reassembler::{Chunk, StreamChunks};
 use crate::session::{
     DatagramParser, DatagramParserFactory, GapResponse, SessionParser, SessionParserFactory,
+    Transports,
 };
 
 /// Cap on the size of `poison_reason()` strings carried through
@@ -123,6 +124,7 @@ pub(crate) trait Output<K, M> {
 /// Per-call context from the engine.
 pub(crate) struct Ctx<'a, K> {
     pub key: &'a K,
+    pub l4: Option<crate::L4Proto>,
     pub side: FlowSide,
     pub orientation: Orientation,
     pub ts: Timestamp,
@@ -300,6 +302,7 @@ where
                     for (side, orientation, ts, chunks) in &replay {
                         let rcx = Ctx {
                             key: cx.key,
+                            l4: cx.l4,
                             side: *side,
                             orientation: *orientation,
                             ts: *ts,
@@ -362,6 +365,7 @@ where
         {
             let cx = Ctx {
                 key,
+                l4: Some(crate::L4Proto::Tcp),
                 side,
                 orientation: stats.orientation_for(side),
                 ts,
@@ -417,6 +421,7 @@ where
                 *state = SessionFlow::Closed;
                 let cx = Ctx {
                     key,
+                    l4: None,
                     side: FlowSide::Initiator,
                     orientation,
                     ts: now,
@@ -519,6 +524,7 @@ where
 {
     factory: F,
     selector: Selector,
+    transports: Transports,
     flows: HashMap<K, DatagramFlow<F::Parser>, RandomState>,
     scratch: Vec<<F::Parser as DatagramParser>::Message>,
 }
@@ -529,9 +535,11 @@ where
     F: DatagramParserFactory<K>,
 {
     pub(crate) fn new(factory: F, selector: Selector) -> Self {
+        let transports = factory.transports();
         Self {
             factory,
             selector,
+            transports,
             flows: HashMap::with_hasher(RandomState::new()),
             scratch: Vec::new(),
         }
@@ -541,8 +549,9 @@ where
         &self.selector
     }
 
-    pub(crate) fn wants(&self, ports: Ports) -> bool {
-        self.selector.admits(ports)
+    /// Does this core want datagrams of this transport / ports?
+    pub(crate) fn wants(&self, ports: Ports, l4: Option<crate::L4Proto>) -> bool {
+        self.transports.admits(l4) && self.selector.admits(ports)
     }
 
     /// One datagram payload.
@@ -555,6 +564,9 @@ where
     ) where
         O: Output<K, <F::Parser as DatagramParser>::Message>,
     {
+        if !self.transports.admits(cx.l4) {
+            return;
+        }
         if !self.flows.contains_key(cx.key) {
             if !self.selector.admits(ports) {
                 return;
@@ -649,6 +661,7 @@ where
                 *state = DatagramFlow::Closed;
                 let cx = Ctx {
                     key,
+                    l4: None,
                     side: FlowSide::Initiator,
                     orientation,
                     ts: now,

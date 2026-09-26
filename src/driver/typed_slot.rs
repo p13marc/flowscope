@@ -109,7 +109,7 @@ where
 pub(super) trait ErasedSlot<K>: Send + Sync {
     fn needs_ports(&self) -> bool;
     fn wants_stream(&self, ports: Ports) -> bool;
-    fn wants_datagram(&self, ports: Ports) -> bool;
+    fn wants_datagram(&self, ports: Ports, l4: Option<crate::L4Proto>) -> bool;
     fn on_stream(
         &mut self,
         cx: &Ctx<'_, K>,
@@ -169,7 +169,7 @@ where
     fn wants_stream(&self, ports: Ports) -> bool {
         self.core.wants(ports)
     }
-    fn wants_datagram(&self, _ports: Ports) -> bool {
+    fn wants_datagram(&self, _ports: Ports, _l4: Option<crate::L4Proto>) -> bool {
         false
     }
     fn on_stream(
@@ -253,8 +253,8 @@ where
     fn wants_stream(&self, _ports: Ports) -> bool {
         false
     }
-    fn wants_datagram(&self, ports: Ports) -> bool {
-        self.core.wants(ports)
+    fn wants_datagram(&self, ports: Ports, l4: Option<crate::L4Proto>) -> bool {
+        self.core.wants(ports, l4)
     }
     fn on_stream(
         &mut self,
