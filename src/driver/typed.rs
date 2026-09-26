@@ -41,7 +41,7 @@ use super::{
     BroadcastSlotHandle,
     broadcast::BroadcastInner,
     slot::SlotHandle,
-    typed_slot::{DatagramSlot, ErasedSlot, SessionSlot},
+    typed_slot::{DatagramSlot, ErasedSlot, Order, SessionSlot},
 };
 use crate::{
     PacketView, Timestamp,
@@ -51,7 +51,7 @@ use crate::{
     extractor::{FlowExtractor, L4Proto, Orientation, TcpInfo},
     flow_driver::FlowDriver,
     history::HistoryString,
-    parser_kind::ParserKind,
+    parser_kind::{ParserKind, SlotId},
     reassembler::StreamChunks,
     segment_reassembler::SegmentBufferReassemblerFactory,
     session::{
@@ -202,6 +202,9 @@ pub enum Event<K> {
     #[non_exhaustive]
     ParserClosed {
         key: K,
+        /// Which registered parser (two slots can share a
+        /// `parser_kind`). New in 0.25.0.
+        slot: SlotId,
         parser_kind: ParserKind,
         reason: EndReason,
         /// The parser's `poison_reason()` (≤ 256 bytes), the gap
@@ -221,6 +224,8 @@ pub enum Event<K> {
     #[non_exhaustive]
     ParserSideStopped {
         key: K,
+        /// Which registered parser.
+        slot: SlotId,
         parser_kind: ParserKind,
         side: FlowSide,
         reason: EndReason,
@@ -445,6 +450,7 @@ struct Slots<K> {
     list: Vec<Box<dyn ErasedSlot<K> + Send + Sync>>,
     needs_ports: bool,
     emit_packet_details: bool,
+    order: Order,
 }
 
 impl<K> Dispatch<K> for Slots<K>
@@ -470,7 +476,7 @@ where
         out: &mut Self::Out,
     ) {
         for slot in &mut self.list {
-            slot.on_stream(cx, ports, chunks, out);
+            slot.on_stream(cx, ports, chunks, out, &mut self.order);
         }
     }
     fn streams_done(&self, key: &K, ports: Ports) -> [bool; 2] {
@@ -487,7 +493,7 @@ where
     }
     fn on_datagram(&mut self, cx: &Ctx<'_, K>, ports: Ports, payload: &[u8], out: &mut Self::Out) {
         for slot in &mut self.list {
-            slot.on_datagram(cx, ports, payload, out);
+            slot.on_datagram(cx, ports, payload, out, &mut self.order);
         }
     }
     fn on_flow_end(
@@ -501,7 +507,16 @@ where
         out: &mut Self::Out,
     ) {
         for slot in &mut self.list {
-            slot.on_flow_end(key, reason, stats, finals, ports, anomalies, out);
+            slot.on_flow_end(
+                key,
+                reason,
+                stats,
+                finals,
+                ports,
+                anomalies,
+                out,
+                &mut self.order,
+            );
         }
     }
     fn on_tick(
@@ -513,7 +528,7 @@ where
         out: &mut Self::Out,
     ) {
         for slot in &mut self.list {
-            slot.on_tick(now, stamp, orientation_of, anomalies, out);
+            slot.on_tick(now, stamp, orientation_of, anomalies, out, &mut self.order);
         }
     }
     fn retain(&mut self, alive: &dyn Fn(&K) -> bool) {
@@ -551,6 +566,9 @@ where
 {
     engine: Engine<E>,
     slots: Slots<E::Key>,
+    /// Lifecycle events emitted so far (see
+    /// [`SlotMessage::lifecycle_pos`](super::SlotMessage::lifecycle_pos)).
+    lifecycle_seq: u64,
 }
 
 impl<E> Driver<E>
@@ -591,7 +609,29 @@ where
         view: impl Into<PacketView<'v>>,
         out: &mut Vec<Event<E::Key>>,
     ) {
+        let start = self.begin(out);
         self.engine.track(view, &mut self.slots, out);
+        self.end(out, start);
+    }
+
+    /// Lifecycle events emitted so far, across every call. Merge the
+    /// slot queues into the lifecycle stream in engine order by
+    /// delivering a [`SlotMessage`](super::SlotMessage) right before
+    /// lifecycle event number
+    /// [`lifecycle_pos`](super::SlotMessage::lifecycle_pos) (ties by
+    /// [`seq`](super::SlotMessage::seq)).
+    pub fn lifecycle_seq(&self) -> u64 {
+        self.lifecycle_seq
+    }
+
+    fn begin(&mut self, out: &[Event<E::Key>]) -> usize {
+        self.slots.order.base = self.lifecycle_seq;
+        self.slots.order.start = out.len();
+        out.len()
+    }
+
+    fn end(&mut self, out: &[Event<E::Key>], start: usize) {
+        self.lifecycle_seq += (out.len() - start) as u64;
     }
 
     /// Periodic sweep: parsers' `on_tick`, out-of-order hole
@@ -604,7 +644,9 @@ where
 
     /// Append-only sweep.
     pub fn sweep_into(&mut self, now: Timestamp, out: &mut Vec<Event<E::Key>>) {
+        let start = self.begin(out);
         self.engine.sweep(now, &mut self.slots, out);
+        self.end(out, start);
     }
 
     /// End-of-input flush.
@@ -620,7 +662,9 @@ where
     /// output is stamped with the latest packet timestamp (never
     /// `Timestamp::MAX`) and the monotonic clock is left alone.
     pub fn finish_into(&mut self, out: &mut Vec<Event<E::Key>>) {
+        let start = self.begin(out);
         self.engine.finish(&mut self.slots, out);
+        self.end(out, start);
     }
 
     /// One-call iterator over a pcap file — drives every packet
@@ -670,7 +714,9 @@ where
 
     /// Append-only variant of [`Self::force_close`].
     pub fn force_close_into(&mut self, key: &E::Key, now: Timestamp, out: &mut Vec<Event<E::Key>>) {
+        let start = self.begin(out);
         self.engine.force_close(key, now, &mut self.slots, out);
+        self.end(out, start);
     }
 
     /// Borrow the underlying tracker for introspection.
@@ -773,20 +819,27 @@ where
         self
     }
 
+    fn next_slot_id(&self) -> SlotId {
+        SlotId(self.slots.len() as u32)
+    }
+
     fn add_session<P>(&mut self, parser: P, selector: Selector) -> SlotHandle<P::Message, E::Key>
     where
         P: SessionParser + Clone + Send + Sync + 'static,
         P::Message: Send + Sync + 'static,
     {
         let parser_kind = parser.parser_kind();
+        let id = self.next_slot_id();
         let queue = Arc::new(SegQueue::new());
         self.slots.push(Box::new(SessionSlot {
             core: SessionCore::new(TemplateFactory(parser), selector),
             sink: Arc::clone(&queue),
+            id,
         }));
         SlotHandle {
             inner: queue,
             parser_kind,
+            slot: id,
         }
     }
 
@@ -796,14 +849,17 @@ where
         D::Message: Send + Sync + 'static,
     {
         let parser_kind = parser.parser_kind();
+        let id = self.next_slot_id();
         let queue = Arc::new(SegQueue::new());
         self.slots.push(Box::new(DatagramSlot {
             core: DatagramCore::new(TemplateFactory(parser), selector),
             sink: Arc::clone(&queue),
+            id,
         }));
         SlotHandle {
             inner: queue,
             parser_kind,
+            slot: id,
         }
     }
 
@@ -837,14 +893,16 @@ where
         I: IntoIterator<Item = u16>,
     {
         let parser_kind = parser.parser_kind();
+        let id = self.next_slot_id();
         let inner = BroadcastInner::new();
-        let handle = BroadcastSlotHandle::new(Arc::clone(&inner), parser_kind);
+        let handle = BroadcastSlotHandle::new(Arc::clone(&inner), parser_kind, id);
         self.slots.push(Box::new(SessionSlot {
             core: SessionCore::new(
                 TemplateFactory(parser),
                 Selector::Ports(ports.into_iter().collect()),
             ),
             sink: inner,
+            id,
         }));
         handle
     }
@@ -968,7 +1026,9 @@ where
                 list: self.slots,
                 needs_ports,
                 emit_packet_details: self.emit_packet_details,
+                order: Order::default(),
             },
+            lifecycle_seq: 0,
         }
     }
 }

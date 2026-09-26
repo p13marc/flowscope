@@ -922,6 +922,12 @@ pub enum AnomalyKind {
     SessionParseError {
         side: FlowSide,
         reason: Option<String>,
+        /// The poisoned parser's kind. New in 0.25.0.
+        parser_kind: crate::ParserKind,
+        /// Which registered parser, on a multi-slot
+        /// [`crate::driver::Driver`] (`None` for the single-parser
+        /// drivers). New in 0.25.0.
+        slot: Option<crate::SlotId>,
     },
 
     /// New in 0.5.0. Reassembler classified one or more TCP

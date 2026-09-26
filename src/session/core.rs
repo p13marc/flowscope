@@ -765,6 +765,8 @@ fn emit_close<K, M, O: Output<K, M>>(cx: &Ctx<'_, K>, kind: ParserKind, close: C
             AnomalyKind::SessionParseError {
                 side: cx.side,
                 reason: detail.clone(),
+                parser_kind: kind,
+                slot: None,
             },
             cx.ts,
         );

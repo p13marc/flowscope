@@ -161,7 +161,7 @@ mod view;
 pub use detector_kind::DetectorKind;
 pub use error::{Error, ErrorCode, ErrorKind, Module, Result};
 pub use mac_addr::MacAddr;
-pub use parser_kind::ParserKind;
+pub use parser_kind::{ParserKind, SlotId};
 pub use rx_metadata::{ChecksumStatus, RssHashType, RxHash, RxMetadata, VlanProto, VlanTag};
 
 pub mod extractor;

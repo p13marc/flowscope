@@ -70,6 +70,8 @@ fn display_anomalykind_renders_every_variant() {
             AnomalyKind::SessionParseError {
                 side: FlowSide::Initiator,
                 reason: None,
+                parser_kind: flowscope::ParserKind::Unspecified,
+                slot: None,
             }
         ),
         "parse_error"

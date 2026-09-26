@@ -19,6 +19,7 @@ use crate::Timestamp;
 use crate::event::{AnomalyKind, EndReason, FlowSide, FlowStats};
 use crate::extractor::Orientation;
 use crate::parser_kind::ParserKind;
+use crate::parser_kind::SlotId;
 use crate::reassembler::StreamChunks;
 use crate::session::core::{Ctx, DatagramCore, Output, Ports, SessionCore, Stream};
 use crate::session::{DatagramParser, DatagramParserFactory, SessionParser, SessionParserFactory};
@@ -44,11 +45,24 @@ where
     }
 }
 
+/// Ordering marks for slot messages (see
+/// [`SlotMessage::lifecycle_pos`]): lifecycle events emitted before
+/// this call (`base`), where this call's events start in the output
+/// buffer (`start`), and the driver-wide message sequence (`seq`).
+#[derive(Debug, Default)]
+pub(super) struct Order {
+    pub(super) base: u64,
+    pub(super) start: usize,
+    pub(super) seq: u64,
+}
+
 /// Per-call output of a slot: messages to its sink, parser closes
 /// and anomalies to the driver's lifecycle buffer.
 struct SlotOut<'a, K, Q> {
     sink: &'a Q,
     events: &'a mut Vec<Event<K>>,
+    slot: SlotId,
+    order: &'a mut Order,
 }
 
 impl<K, M, Q> Output<K, M> for SlotOut<'_, K, Q>
@@ -67,13 +81,12 @@ where
         _parser_kind: ParserKind,
     ) {
         crate::obs::trace_session_message(side, &message);
-        self.sink.push(SlotMessage::new(
-            key.clone(),
-            side,
-            orientation,
-            message,
-            ts,
-        ));
+        let pos = self.order.base + (self.events.len() - self.order.start) as u64;
+        let seq = self.order.seq;
+        self.order.seq += 1;
+        self.sink.push(
+            SlotMessage::new(key.clone(), side, orientation, message, ts).with_order(pos, seq),
+        );
     }
 
     fn parser_closed(
@@ -87,6 +100,7 @@ where
     ) {
         self.events.push(Event::ParserClosed {
             key: key.clone(),
+            slot: self.slot,
             parser_kind,
             reason,
             detail,
@@ -105,6 +119,7 @@ where
     ) {
         self.events.push(Event::ParserSideStopped {
             key: key.clone(),
+            slot: self.slot,
             parser_kind,
             side,
             reason,
@@ -113,7 +128,10 @@ where
         });
     }
 
-    fn anomaly(&mut self, key: &K, kind: AnomalyKind, ts: Timestamp) {
+    fn anomaly(&mut self, key: &K, mut kind: AnomalyKind, ts: Timestamp) {
+        if let AnomalyKind::SessionParseError { slot, .. } = &mut kind {
+            *slot = Some(self.slot);
+        }
         crate::obs::record_anomaly(&kind);
         crate::obs::trace_anomaly(&kind);
         self.events.push(Event::FlowAnomaly {
@@ -135,6 +153,7 @@ pub(super) trait ErasedSlot<K>: Send + Sync {
         ports: Ports,
         chunks: &Stream<'_>,
         events: &mut Vec<Event<K>>,
+        order: &mut Order,
     );
     /// Per side: `true` when this slot will never use that side's
     /// stream again.
@@ -145,6 +164,7 @@ pub(super) trait ErasedSlot<K>: Send + Sync {
         ports: Ports,
         payload: &[u8],
         events: &mut Vec<Event<K>>,
+        order: &mut Order,
     );
     #[allow(clippy::too_many_arguments)]
     fn on_flow_end(
@@ -156,6 +176,7 @@ pub(super) trait ErasedSlot<K>: Send + Sync {
         ports: Ports,
         anomalies: bool,
         events: &mut Vec<Event<K>>,
+        order: &mut Order,
     );
     fn on_tick(
         &mut self,
@@ -164,6 +185,7 @@ pub(super) trait ErasedSlot<K>: Send + Sync {
         orientation_of: &dyn Fn(&K) -> Orientation,
         anomalies: bool,
         events: &mut Vec<Event<K>>,
+        order: &mut Order,
     );
     fn retain(&mut self, alive: &dyn Fn(&K) -> bool);
 }
@@ -175,6 +197,7 @@ where
 {
     pub(super) core: SessionCore<K, F>,
     pub(super) sink: Q,
+    pub(super) id: SlotId,
 }
 
 impl<K, F, Q> ErasedSlot<K> for SessionSlot<K, F, Q>
@@ -200,10 +223,13 @@ where
         ports: Ports,
         chunks: &Stream<'_>,
         events: &mut Vec<Event<K>>,
+        order: &mut Order,
     ) {
         let mut out = SlotOut {
             sink: &self.sink,
             events,
+            slot: self.id,
+            order,
         };
         self.core.on_stream(cx, ports, chunks, &mut out);
     }
@@ -216,6 +242,7 @@ where
         _ports: Ports,
         _payload: &[u8],
         _events: &mut Vec<Event<K>>,
+        _order: &mut Order,
     ) {
     }
     fn on_flow_end(
@@ -227,10 +254,13 @@ where
         ports: Ports,
         anomalies: bool,
         events: &mut Vec<Event<K>>,
+        order: &mut Order,
     ) {
         let mut out = SlotOut {
             sink: &self.sink,
             events,
+            slot: self.id,
+            order,
         };
         self.core
             .on_flow_end(key, reason, stats, finals, ports, anomalies, &mut out);
@@ -242,10 +272,13 @@ where
         orientation_of: &dyn Fn(&K) -> Orientation,
         anomalies: bool,
         events: &mut Vec<Event<K>>,
+        order: &mut Order,
     ) {
         let mut out = SlotOut {
             sink: &self.sink,
             events,
+            slot: self.id,
+            order,
         };
         self.core
             .on_tick(now, stamp, orientation_of, anomalies, &mut out);
@@ -262,6 +295,7 @@ where
 {
     pub(super) core: DatagramCore<K, F>,
     pub(super) sink: Q,
+    pub(super) id: SlotId,
 }
 
 impl<K, F, Q> ErasedSlot<K> for DatagramSlot<K, F, Q>
@@ -287,6 +321,7 @@ where
         _ports: Ports,
         _chunks: &Stream<'_>,
         _events: &mut Vec<Event<K>>,
+        _order: &mut Order,
     ) {
     }
     fn streams_done(&self, _key: &K, _ports: Ports) -> [bool; 2] {
@@ -298,10 +333,13 @@ where
         ports: Ports,
         payload: &[u8],
         events: &mut Vec<Event<K>>,
+        order: &mut Order,
     ) {
         let mut out = SlotOut {
             sink: &self.sink,
             events,
+            slot: self.id,
+            order,
         };
         self.core.on_datagram(cx, ports, payload, &mut out);
     }
@@ -314,10 +352,13 @@ where
         _ports: Ports,
         _anomalies: bool,
         events: &mut Vec<Event<K>>,
+        order: &mut Order,
     ) {
         let mut out = SlotOut {
             sink: &self.sink,
             events,
+            slot: self.id,
+            order,
         };
         self.core.on_flow_end(key, reason, stats, &mut out);
     }
@@ -328,10 +369,13 @@ where
         orientation_of: &dyn Fn(&K) -> Orientation,
         anomalies: bool,
         events: &mut Vec<Event<K>>,
+        order: &mut Order,
     ) {
         let mut out = SlotOut {
             sink: &self.sink,
             events,
+            slot: self.id,
+            order,
         };
         self.core
             .on_tick(now, stamp, orientation_of, anomalies, &mut out);

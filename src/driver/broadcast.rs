@@ -45,6 +45,7 @@ where
     inner: Arc<BroadcastInner<M, K>>,
     my_queue: SubscriberQueue<M, K>,
     parser_kind: ParserKind,
+    slot: crate::SlotId,
 }
 
 /// Per-subscriber queue handle held in the broadcast list.
@@ -117,12 +118,17 @@ where
 {
     /// Internal constructor for the typed slot. Public only via
     /// the broadcast registration builders.
-    pub(crate) fn new(inner: Arc<BroadcastInner<M, K>>, parser_kind: ParserKind) -> Self {
+    pub(crate) fn new(
+        inner: Arc<BroadcastInner<M, K>>,
+        parser_kind: ParserKind,
+        slot: crate::SlotId,
+    ) -> Self {
         let my_queue = inner.subscribe();
         Self {
             inner,
             my_queue,
             parser_kind,
+            slot,
         }
     }
 
@@ -168,6 +174,12 @@ where
     pub fn parser_kind(&self) -> ParserKind {
         self.parser_kind
     }
+
+    /// This parser's registration identity (see
+    /// [`crate::driver::SlotHandle::slot_id`]). New in 0.25.0.
+    pub fn slot_id(&self) -> crate::SlotId {
+        self.slot
+    }
 }
 
 impl<M, K> super::SlotDrain<M, K> for BroadcastSlotHandle<M, K>
@@ -199,7 +211,7 @@ where
     /// subscriber sees only messages pushed AFTER this clone
     /// call (no replay of earlier pushes).
     fn clone(&self) -> Self {
-        Self::new(Arc::clone(&self.inner), self.parser_kind)
+        Self::new(Arc::clone(&self.inner), self.parser_kind, self.slot)
     }
 }
 

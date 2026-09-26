@@ -347,14 +347,23 @@ pub mod events {
             }
         }
 
-        /// `Event::ParserClosed` with `EndReason::ParserDone`.
+        /// `Event::ParserClosed` with `EndReason::ParserDone`, slot 0.
         pub fn parser_closed<K>(key: K, parser_kind: crate::ParserKind, ts: Timestamp) -> Event<K> {
-            parser_closed_with(key, parser_kind, EndReason::ParserDone, None, ts)
+            parser_closed_with(
+                key,
+                crate::SlotId(0),
+                parser_kind,
+                EndReason::ParserDone,
+                None,
+                ts,
+            )
         }
 
-        /// `Event::ParserClosed` with an explicit reason and detail.
+        /// `Event::ParserClosed` with an explicit slot, reason and
+        /// detail.
         pub fn parser_closed_with<K>(
             key: K,
+            slot: crate::SlotId,
             parser_kind: crate::ParserKind,
             reason: EndReason,
             detail: Option<String>,
@@ -362,6 +371,7 @@ pub mod events {
         ) -> Event<K> {
             Event::ParserClosed {
                 key,
+                slot,
                 parser_kind,
                 reason,
                 detail,

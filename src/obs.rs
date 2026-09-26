@@ -17,14 +17,14 @@
 //! | Metric | Type | Labels |
 //! |--------|------|--------|
 //! | `flowscope_flows_created_total` | counter | `l4` (`tcp`/`udp`/`other`) |
-//! | `flowscope_flows_ended_total` | counter | `reason` (`fin`/`rst`/`idle`/`evicted`/`buffer_overflow`/`parse_error`/`parser_done`/`force_closed`) |
+//! | `flowscope_flows_ended_total` | counter | `reason` (`fin`/`rst`/`idle`/`evicted`/`force_closed`) |
 //! | `flowscope_flows_active` | gauge | — |
 //! | `flowscope_packets_unmatched_total` | counter | — |
 //! | `flowscope_bytes_total` | counter | `side` (`initiator`/`responder`) |
 //! | `flowscope_flow_duration_seconds` | histogram | — |
 //! | `flowscope_flow_packets` | histogram | — |
 //! | `flowscope_flow_bytes` | histogram | — |
-//! | `flowscope_anomalies_total` | counter | `kind` (`buffer_overflow`/`ooo_segment`/`flow_table_eviction`/`parse_error`/`retransmit`/`reassembler_high_watermark`) |
+//! | `flowscope_anomalies_total` | counter | `kind` (`buffer_overflow`/`ooo_segment`/`out_of_window_segment`/`stream_gap`/`flow_table_eviction`/`parse_error`/`retransmit`/`reassembler_high_watermark`/`tcp_rexmit_inconsistency`/`global_memcap_hit`) |
 //! | `flowscope_reassembly_dropped_ooo_total` | counter | `side` |
 //! | `flowscope_reassembly_bytes_dropped_oversize_total` | counter | `side` |
 //! | `flowscope_reassembler_high_watermark_bytes` | histogram | `side` |
@@ -34,6 +34,14 @@
 //! | `flowscope_flow_ticks_total` | counter | — |
 //! | `flowscope_http_messages_total` | counter | `direction` (`request`/`response`) |
 //! | `flowscope_http_poisoned_total` | counter | `reason` ([`HttpPoison`](crate::http::HttpPoison) slug) |
+//!
+//! Since 0.25 a parser giving up never ends its flow, so
+//! `flowscope_flows_ended_total` only carries transport reasons. What
+//! 0.24 counted there as `reason="parse_error"` / `"parser_done"` /
+//! `"buffer_overflow"` is now `flowscope_parser_closed_total` with the
+//! same `reason` (plus `stream_gap`, and the transport reason for
+//! parsers closed at their flow's end), or
+//! `flowscope_parser_side_stopped_total` when only one side stopped.
 //!
 //! # Cardinality
 //!

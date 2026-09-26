@@ -995,3 +995,94 @@ fn both_sides_stopped_close_the_parser_once() {
         )]
     );
 }
+
+// ── #191: slot identity and channel merge ────────────────────────
+
+#[test]
+fn session_parse_error_has_kind_and_slot() {
+    let frames = flow(&[(0, vec![b'a'; 10])]);
+    let mut b = Driver::builder(FiveTuple::bidirectional());
+    b.emit_anomalies(true);
+    let first = b.session_broadcast(PoisonAfterFirstFeed::default());
+    let second = b.session_broadcast(PoisonAfterFirstFeed::default());
+    assert_ne!(first.slot_id(), second.slot_id());
+    let mut d = b.build();
+    let mut events = Vec::new();
+    for (t, f) in &frames {
+        d.track_into(PacketView::new(f, *t), &mut events);
+    }
+    let mut slots: Vec<_> = events
+        .iter()
+        .filter_map(|e| match e {
+            Event::FlowAnomaly {
+                kind:
+                    AnomalyKind::SessionParseError {
+                        slot, parser_kind, ..
+                    },
+                ..
+            } => Some((*slot, *parser_kind)),
+            _ => None,
+        })
+        .collect();
+    slots.sort_by_key(|(slot, _)| *slot);
+    assert_eq!(
+        slots,
+        vec![
+            (Some(first.slot_id()), flowscope::ParserKind::Unspecified),
+            (Some(second.slot_id()), flowscope::ParserKind::Unspecified),
+        ]
+    );
+    let closed: Vec<_> = events
+        .iter()
+        .filter_map(|e| match e {
+            Event::ParserClosed { slot, .. } => Some(*slot),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(closed, vec![first.slot_id(), second.slot_id()]);
+}
+
+/// Merging the typed driver's two channels by `lifecycle_pos` / `seq`
+/// reproduces the single-parser driver's total order.
+#[test]
+fn merge_by_lifecycle_pos_reproduces_session_driver_order() {
+    let frames = flow(&[(0, b"one".to_vec()), (3, b"two".to_vec())]);
+    // Reference order.
+    let mut sd = SessionDriver::new(FiveTuple::bidirectional(), Collect::default());
+    let reference: Vec<String> = session_events(&mut sd, &frames)
+        .into_iter()
+        .filter_map(|e| match e {
+            SessionEvent::Started { .. } => Some("started".to_owned()),
+            SessionEvent::Application { message, .. } => Some(format!("{message:?}")),
+            SessionEvent::Closed { .. } => Some("ended".to_owned()),
+            _ => None,
+        })
+        .collect();
+
+    let mut b = Driver::builder(FiveTuple::bidirectional());
+    let mut slot = b.session_broadcast(Collect::default());
+    let mut d = b.build();
+    let mut events = Vec::new();
+    for (t, f) in &frames {
+        d.track_into(PacketView::new(f, *t), &mut events);
+    }
+    d.finish_into(&mut events);
+    assert_eq!(d.lifecycle_seq(), events.len() as u64);
+    let mut msgs = Vec::new();
+    slot.drain(&mut msgs);
+    msgs.sort_by_key(|m| (m.lifecycle_pos, m.seq));
+    let mut merged = Vec::new();
+    let mut next = msgs.into_iter().peekable();
+    for (i, e) in events.iter().enumerate() {
+        while next.peek().is_some_and(|m| m.lifecycle_pos <= i as u64) {
+            merged.push(format!("{:?}", next.next().unwrap().message));
+        }
+        match e {
+            Event::Started { .. } => merged.push("started".to_owned()),
+            Event::Ended { .. } => merged.push("ended".to_owned()),
+            _ => {}
+        }
+    }
+    merged.extend(next.map(|m| format!("{:?}", m.message)));
+    assert_eq!(merged, reference);
+}
