@@ -1192,6 +1192,11 @@ where
         self.global_memcap_bytes
     }
 
+    /// Ports of the packet that created a flow's stream state.
+    pub(crate) fn stream_ports(&self, key: &E::Key) -> Option<(u16, u16)> {
+        self.streams.get(key).and_then(|f| f.ports)
+    }
+
     /// Flows with stream state (live or tombstoned sides).
     pub fn stream_count(&self) -> usize {
         self.streams.len()

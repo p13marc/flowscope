@@ -496,11 +496,12 @@ where
         reason: EndReason,
         stats: &FlowStats,
         finals: [&StreamChunks; 2],
+        ports: Ports,
         anomalies: bool,
         out: &mut Self::Out,
     ) {
         for slot in &mut self.list {
-            slot.on_flow_end(key, reason, stats, finals, anomalies, out);
+            slot.on_flow_end(key, reason, stats, finals, ports, anomalies, out);
         }
     }
     fn on_tick(

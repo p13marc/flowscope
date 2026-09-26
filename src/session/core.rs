@@ -42,9 +42,10 @@ pub const DEFAULT_PROBE_PACKETS: u8 = 4;
 pub const PROBE_BUFFER_CAP: usize = 64;
 
 /// Cap on the stream bytes held for replay while a flow is probed.
-/// A flow that needs more before its signature decides is rejected
-/// rather than handed to the parser mid-stream.
-pub(crate) const PROBE_REPLAY_BYTE_CAP: usize = 16 * 1024;
+/// Past it, a side's further bytes are not kept; if the signature
+/// then matches, the parser gets them as a leading gap (it starts
+/// mid-stream on that side, and is told so).
+pub(crate) const PROBE_REPLAY_BYTE_CAP: usize = 64 * 1024;
 
 pub(crate) fn truncate_reason(s: &str) -> String {
     let mut owned = String::from(s);
@@ -308,10 +309,91 @@ impl<P: SessionParser> Active<P> {
 #[derive(Default)]
 struct Probe {
     packets: u8,
-    init: SmallVec<[u8; PROBE_BUFFER_CAP]>,
-    resp: SmallVec<[u8; PROBE_BUFFER_CAP]>,
+    /// Contiguous prefix of each side the signature reads.
+    prefix: [SmallVec<[u8; PROBE_BUFFER_CAP]>; 2],
+    /// A gap (or stop) ended that side's prefix: bytes after it are
+    /// not contiguous with it.
+    sealed: [bool; 2],
+    /// The stream seen so far, in arrival order, for the parser once
+    /// it pins.
     replay: Vec<(FlowSide, Orientation, Timestamp, StreamChunks)>,
     replay_bytes: usize,
+    /// Whether each side has a chunk in `replay` (the first one is
+    /// always kept).
+    kept: [bool; 2],
+    /// Bytes (data and gaps) of each side not kept in `replay` past
+    /// the cap.
+    lost: [u64; 2],
+}
+
+/// A signature verdict.
+enum Verdict {
+    Match,
+    Reject,
+    Undecided,
+}
+
+impl Probe {
+    /// Record one side's output and evaluate the signature.
+    fn step(
+        &mut self,
+        cx: &Ctx<'_, impl Sized>,
+        stream: &Stream<'_>,
+        signature: SignatureFn,
+        max_probe_packets: u8,
+    ) -> Verdict {
+        let si = side_idx(cx.side);
+        if !self.sealed[si] {
+            let prefix = &mut self.prefix[si];
+            for chunk in stream.iter() {
+                match chunk {
+                    Chunk::Data(d) => {
+                        let room = PROBE_BUFFER_CAP.saturating_sub(prefix.len());
+                        prefix.extend_from_slice(&d[..room.min(d.len())]);
+                    }
+                    Chunk::Gap(_) => {
+                        self.sealed[si] = true;
+                        break;
+                    }
+                }
+            }
+            if stream.stop().is_some() {
+                self.sealed[si] = true;
+            }
+        }
+        self.packets = self.packets.saturating_add(1);
+        let len = stream.len();
+        if !self.kept[si]
+            || (self.lost[si] == 0 && self.replay_bytes + len <= PROBE_REPLAY_BYTE_CAP)
+        {
+            self.kept[si] = true;
+            self.replay_bytes += len;
+            self.replay
+                .push((cx.side, cx.orientation, cx.ts, stream.to_chunks()));
+        } else {
+            let gaps: u64 = stream
+                .iter()
+                .map(|c| match c {
+                    Chunk::Gap(n) => n,
+                    Chunk::Data(_) => 0,
+                })
+                .sum();
+            self.lost[si] += len as u64 + gaps;
+        }
+        let verdicts = (signature(&self.prefix[0]), signature(&self.prefix[1]));
+        if matches!(verdicts.0, SignatureMatch::Match)
+            || matches!(verdicts.1, SignatureMatch::Match)
+        {
+            Verdict::Match
+        } else if (matches!(verdicts.0, SignatureMatch::NoMatch)
+            && matches!(verdicts.1, SignatureMatch::NoMatch))
+            || self.packets >= max_probe_packets
+        {
+            Verdict::Reject
+        } else {
+            Verdict::Undecided
+        }
+    }
 }
 
 enum SessionFlow<P> {
@@ -395,14 +477,7 @@ where
                     *state = SessionFlow::Closed;
                 }
             }
-            SessionFlow::Probing(probe_state) => {
-                let Probe {
-                    packets,
-                    init,
-                    resp,
-                    replay,
-                    replay_bytes,
-                } = &mut **probe_state;
+            SessionFlow::Probing(probe) => {
                 let Selector::Signature {
                     signature,
                     max_probe_packets,
@@ -410,58 +485,17 @@ where
                 else {
                     unreachable!("only signature cores probe")
                 };
-                // The signature reads the contiguous prefix of each
-                // side; a gap before the verdict ends that prefix.
-                let probe = match cx.side {
-                    FlowSide::Initiator => &mut *init,
-                    FlowSide::Responder => &mut *resp,
-                };
-                for chunk in chunks.iter() {
-                    match chunk {
-                        Chunk::Data(d) if probe.len() < PROBE_BUFFER_CAP => {
-                            let room = PROBE_BUFFER_CAP - probe.len();
-                            probe.extend_from_slice(&d[..room.min(d.len())]);
-                        }
-                        Chunk::Data(_) => {}
-                        Chunk::Gap(_) => break,
-                    }
-                }
-                *packets = packets.saturating_add(1);
-                *replay_bytes += chunks.len();
-                replay.push((cx.side, cx.orientation, cx.ts, chunks.to_chunks()));
-
-                let verdicts = (signature(init), signature(resp));
-                let matched = matches!(verdicts.0, SignatureMatch::Match)
-                    || matches!(verdicts.1, SignatureMatch::Match);
-                let rejected = (matches!(verdicts.0, SignatureMatch::NoMatch)
-                    && matches!(verdicts.1, SignatureMatch::NoMatch))
-                    || *packets >= max_probe_packets
-                    || *replay_bytes > PROBE_REPLAY_BYTE_CAP;
-                if matched {
-                    let replay = std::mem::take(replay);
-                    let mut active = Active::new(self.factory.new_parser(cx.key));
-                    let mut closed = false;
-                    for (side, orientation, ts, chunks) in &replay {
-                        let rcx = Ctx {
-                            key: cx.key,
-                            l4: cx.l4,
-                            side: *side,
-                            orientation: *orientation,
-                            ts: *ts,
-                            anomalies: cx.anomalies,
+                match probe.step(cx, chunks, signature, max_probe_packets) {
+                    Verdict::Undecided => {}
+                    Verdict::Reject => *state = SessionFlow::Closed,
+                    Verdict::Match => {
+                        let probe = std::mem::take(&mut **probe);
+                        let parser = self.factory.new_parser(cx.key);
+                        *state = match pin(parser, probe, cx, &mut self.scratch, out) {
+                            Some(active) => SessionFlow::Active(active),
+                            None => SessionFlow::Closed,
                         };
-                        if active.feed(&rcx, &Stream::Chunks(chunks), &mut self.scratch, out) {
-                            closed = true;
-                            break;
-                        }
                     }
-                    *state = if closed {
-                        SessionFlow::Closed
-                    } else {
-                        SessionFlow::Active(active)
-                    };
-                } else if rejected {
-                    *state = SessionFlow::Closed;
                 }
             }
         }
@@ -485,27 +519,31 @@ where
 
     /// The flow ended. `finals` are the last drained chunks of each
     /// side (initiator, responder) — usually empty, or out-of-order
-    /// data released by the end-of-flow flush.
+    /// data released by the end-of-flow flush. They go through the
+    /// same path as live data: a flow still probing is probed on
+    /// them, and a flow first seen in them is picked up (`ports` are
+    /// the flow's, for port selectors).
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn on_flow_end<O>(
         &mut self,
         key: &K,
         reason: EndReason,
         stats: &FlowStats,
         finals: [&StreamChunks; 2],
+        ports: Ports,
         anomalies: bool,
         out: &mut O,
     ) where
         O: Output<K, <F::Parser as SessionParser>::Message>,
     {
-        let Some(SessionFlow::Active(mut active)) = self.flows.remove(key) else {
-            return;
-        };
         let ts = stats.last_seen;
-        let kind = active.parser.parser_kind();
         for (side, chunks) in [FlowSide::Initiator, FlowSide::Responder]
             .into_iter()
             .zip(finals)
         {
+            if chunks.is_empty() {
+                continue;
+            }
             let cx = Ctx {
                 key,
                 l4: Some(crate::L4Proto::Tcp),
@@ -514,10 +552,12 @@ where
                 ts,
                 anomalies,
             };
-            if active.feed(&cx, &Stream::Chunks(chunks), &mut self.scratch, out) {
-                return;
-            }
+            self.on_stream(&cx, ports, &Stream::Chunks(chunks), out);
         }
+        let Some(SessionFlow::Active(mut active)) = self.flows.remove(key) else {
+            return;
+        };
+        let kind = active.parser.parser_kind();
         // Each side still read ends on its own terms: `fin_*` when the
         // flow ended gracefully or that side sent a FIN, `rst_*`
         // otherwise. A stopped side gets neither.
@@ -593,6 +633,62 @@ where
     pub(crate) fn retain(&mut self, alive: &dyn Fn(&K) -> bool) {
         self.flows.retain(|k, _| alive(k));
     }
+}
+
+/// A probed flow matched: feed the parser what was seen so far —
+/// the replay log in arrival order, then, for a side whose bytes did
+/// not all fit, a gap for the missing part. `None` when the parser
+/// closed during the replay.
+fn pin<K, P, O>(
+    parser: P,
+    probe: Probe,
+    cx: &Ctx<'_, K>,
+    scratch: &mut Vec<P::Message>,
+    out: &mut O,
+) -> Option<Active<P>>
+where
+    P: SessionParser,
+    O: Output<K, P::Message>,
+{
+    let mut active = Active::new(parser);
+    for (side, orientation, ts, chunks) in &probe.replay {
+        let rcx = Ctx {
+            key: cx.key,
+            l4: cx.l4,
+            side: *side,
+            orientation: *orientation,
+            ts: *ts,
+            anomalies: cx.anomalies,
+        };
+        if active.feed(&rcx, &Stream::Chunks(chunks), scratch, out) {
+            return None;
+        }
+    }
+    for (i, side) in [FlowSide::Initiator, FlowSide::Responder]
+        .into_iter()
+        .enumerate()
+    {
+        if probe.lost[i] == 0 {
+            continue;
+        }
+        let mut gap = StreamChunks::new();
+        gap.push_gap(probe.lost[i]);
+        let rcx = Ctx {
+            key: cx.key,
+            l4: cx.l4,
+            side,
+            orientation: match side == cx.side {
+                true => cx.orientation,
+                false => cx.orientation.flipped(),
+            },
+            ts: cx.ts,
+            anomalies: cx.anomalies,
+        };
+        if active.feed(&rcx, &Stream::Chunks(&gap), scratch, out) {
+            return None;
+        }
+    }
+    Some(active)
 }
 
 /// Feed one side's chunks into `parser`. Returns what ended the feed

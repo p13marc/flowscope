@@ -153,6 +153,7 @@ pub(super) trait ErasedSlot<K>: Send + Sync {
         reason: EndReason,
         stats: &FlowStats,
         finals: [&StreamChunks; 2],
+        ports: Ports,
         anomalies: bool,
         events: &mut Vec<Event<K>>,
     );
@@ -223,6 +224,7 @@ where
         reason: EndReason,
         stats: &FlowStats,
         finals: [&StreamChunks; 2],
+        ports: Ports,
         anomalies: bool,
         events: &mut Vec<Event<K>>,
     ) {
@@ -231,7 +233,7 @@ where
             events,
         };
         self.core
-            .on_flow_end(key, reason, stats, finals, anomalies, &mut out);
+            .on_flow_end(key, reason, stats, finals, ports, anomalies, &mut out);
     }
     fn on_tick(
         &mut self,
@@ -309,6 +311,7 @@ where
         reason: EndReason,
         stats: &FlowStats,
         _finals: [&StreamChunks; 2],
+        _ports: Ports,
         _anomalies: bool,
         events: &mut Vec<Event<K>>,
     ) {

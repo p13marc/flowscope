@@ -650,3 +650,142 @@ fn released_tail_precedes_parser_close_and_end() {
     assert!(last_message < closed);
     assert_eq!(seen.last(), Some(&"closed"));
 }
+
+// ── #189: probing ───────────────────────────────────────────────
+
+fn sig_get(b: &[u8]) -> flowscope::detect::signatures::SignatureMatch {
+    use flowscope::detect::signatures::SignatureMatch as M;
+    if b.len() < 4 {
+        if b"GET ".starts_with(b) {
+            M::NeedMoreData
+        } else {
+            M::NoMatch
+        }
+    } else if b.starts_with(b"GET ") {
+        M::Match
+    } else {
+        M::NoMatch
+    }
+}
+
+fn heuristic_messages(frames: Vec<Vec<u8>>, budget: u8, finish: bool) -> Vec<Piece> {
+    let mut b = Driver::builder(FiveTuple::bidirectional());
+    let mut slot = b.session_heuristic_with_budget(Collect, sig_get, budget);
+    let mut d = b.build();
+    let mut events = Vec::new();
+    for (ts, f) in timed(frames) {
+        d.track_into(PacketView::new(&f, ts), &mut events);
+    }
+    if finish {
+        d.finish_into(&mut events);
+    }
+    let mut msgs = Vec::new();
+    slot.drain(&mut msgs);
+    msgs.into_iter()
+        .map(|m| m.message)
+        .filter(|m| !matches!(m, Piece::Tick(_)))
+        .collect()
+}
+
+/// "GE" + gap + "T /": the signature must not see a spliced "GET /".
+#[test]
+fn probe_prefix_sealed_at_gap() {
+    let mut frames = handshake(40_000);
+    frames.push(data(40_000, 0, b"GE"));
+    frames.push(data(40_000, 10, b"T / HTTP/1.1\r\n"));
+    // Two more segments so the hole is corroborated and skipped.
+    frames.push(data(40_000, 30, b"x"));
+    let mut cfg_frames = frames;
+    cfg_frames.push(data(40_000, 40, b"y"));
+    let got = heuristic_messages(cfg_frames, 8, true);
+    assert!(got.is_empty(), "never pinned: {got:?}");
+}
+
+/// A flow still probing when it ends is probed on its final bytes —
+/// and bytes after a leading gap are not the start of the stream, so
+/// they never satisfy a signature.
+#[test]
+fn signature_never_matches_bytes_after_a_leading_gap() {
+    let mut frames = handshake(40_000);
+    frames.push(data(40_000, 3, b"GET / HTTP/1.1\r\n")); // hole 0..3
+    let got = heuristic_messages(frames, 4, true);
+    assert!(got.is_empty(), "{got:?}");
+}
+
+/// Probing continues into the final bytes: "GE" then (after the
+/// probe budget would have allowed more) the flow ends; the parser
+/// never pins on a partial prefix.
+#[test]
+fn undecided_probe_at_flow_end_is_dropped_quietly() {
+    let mut frames = handshake(40_000);
+    frames.push(data(40_000, 0, b"GE"));
+    frames.extend(fin_exchange(40_000, 2));
+    let mut b = Driver::builder(FiveTuple::bidirectional());
+    let _slot = b.session_heuristic(Collect, sig_get);
+    let mut d = b.build();
+    let mut events = Vec::new();
+    for (ts, f) in timed(frames) {
+        d.track_into(PacketView::new(&f, ts), &mut events);
+    }
+    assert!(
+        !events
+            .iter()
+            .any(|e| matches!(e, Event::ParserClosed { .. })),
+        "no parser was ever created"
+    );
+}
+
+/// The server talks first and a lot; the client's "GET " comes after
+/// the replay cap. The parser pins, starts with the server's first
+/// chunk, then a gap for what was not kept, then everything else.
+#[test]
+fn replay_overflow_continues_with_leading_gap() {
+    let mut frames = handshake(40_000);
+    let chunk = vec![b's'; 16 * 1024];
+    let mut soff = 0u32;
+    for _ in 0..6 {
+        frames.push(ipv4_tcp(
+            M,
+            M,
+            S,
+            C,
+            9000,
+            40_000,
+            SISN + 1 + soff,
+            CISN + 1,
+            PSH | ACK,
+            &chunk,
+        ));
+        soff += chunk.len() as u32;
+    }
+    frames.push(data(40_000, 0, b"GET / HTTP/1.1\r\n"));
+    let got = heuristic_messages(frames, 16, false);
+    let (bytes, gap) = joined(&got);
+    assert!(gap > 0, "the parser is told it starts mid-stream");
+    assert_eq!(bytes.len() as u64 + gap, 6 * 16 * 1024 + 16);
+    assert!(got.contains(&Piece::Data(b"GET / HTTP/1.1\r\n".to_vec())));
+}
+
+/// A port-selected parser picks up a flow whose only data is in the
+/// end-of-flow flush.
+#[test]
+fn first_data_only_in_finals_is_parsed() {
+    let mut frames = handshake(40_000);
+    frames.push(data(40_000, 3, b"late"));
+    let mut b = Driver::builder(FiveTuple::bidirectional());
+    let mut slot = b.session_on_ports(Collect, [9000]);
+    let mut d = b.build();
+    let mut events = Vec::new();
+    for (ts, f) in timed(frames) {
+        d.track_into(PacketView::new(&f, ts), &mut events);
+    }
+    d.finish_into(&mut events);
+    let mut msgs = Vec::new();
+    slot.drain(&mut msgs);
+    let got: Vec<_> = msgs
+        .into_iter()
+        .map(|m| m.message)
+        .filter(|m| !matches!(m, Piece::Tick(_)))
+        .collect();
+    assert_eq!(got, vec![Piece::Gap(3), Piece::Data(b"late".to_vec())]);
+}

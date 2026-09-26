@@ -83,6 +83,7 @@ pub(crate) trait Dispatch<K> {
         reason: EndReason,
         stats: &FlowStats,
         finals: [&StreamChunks; 2],
+        ports: Ports,
         anomalies: bool,
         out: &mut Self::Out,
     );
@@ -386,7 +387,8 @@ where
             resp.clear();
             self.flow.drain_stream(key, FlowSide::Initiator, init);
             self.flow.drain_stream(key, FlowSide::Responder, resp);
-            dispatch.on_flow_end(key, *reason, stats, [&*init, &*resp], anomalies, out);
+            let ports = self.flow.stream_ports(key);
+            dispatch.on_flow_end(key, *reason, stats, [&*init, &*resp], ports, anomalies, out);
             self.flow.finalize_flow(key, *reason);
         }
         if !self.flow.emits(&ev) {

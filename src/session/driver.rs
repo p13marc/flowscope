@@ -176,10 +176,11 @@ where
         reason: EndReason,
         stats: &FlowStats,
         finals: [&StreamChunks; 2],
+        ports: Ports,
         anomalies: bool,
         out: &mut Self::Out,
     ) {
-        SessionCore::on_flow_end(self, key, reason, stats, finals, anomalies, out);
+        SessionCore::on_flow_end(self, key, reason, stats, finals, ports, anomalies, out);
     }
     fn on_tick(
         &mut self,
@@ -235,6 +236,7 @@ where
         reason: EndReason,
         stats: &FlowStats,
         _finals: [&StreamChunks; 2],
+        _ports: Ports,
         _anomalies: bool,
         out: &mut Self::Out,
     ) {
