@@ -22,7 +22,7 @@ the core.
 
 ## Implementation Status
 
-**0.25.0 cycle** (unreleased — session-engine redesign, breaking;
+**0.25.0** (published to crates.io 2026-09-26, tag `0.25.0` — session-engine redesign, breaking;
 `docs/migration-0.24-to-0.25.md`, CHANGELOG `## 0.25.0`). Driven by a
 downstream report (des-capture) against 0.24.1 and the audit that
 followed (epic #199; engine first pass #166–#179, then #180–#198).

@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.25.0 (unreleased)
+## 0.25.0 (2026-09-26)
 
 One session engine, explicit gaps, and no more flow resurrection. A
 breaking release driven by a downstream report (des-capture) against
