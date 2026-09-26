@@ -24,25 +24,26 @@
 
 // Generic per-parser message iterators (issue #86) — need the
 // session pipeline to drive a SessionParser / DatagramParser.
-#[cfg(all(feature = "session", feature = "reassembler"))]
+#[cfg(all(feature = "pcap", feature = "session", feature = "reassembler"))]
 mod messages;
 // Unified lifecycle + message stream (issue #111).
-#[cfg(all(feature = "session", feature = "reassembler"))]
+#[cfg(all(feature = "pcap", feature = "session", feature = "reassembler"))]
 mod pulses;
+mod reader;
+#[cfg(feature = "pcap")]
 mod source;
-#[cfg(feature = "tracker")]
+#[cfg(all(feature = "pcap", feature = "tracker"))]
 mod summaries;
 
-#[cfg(all(feature = "session", feature = "reassembler"))]
+#[cfg(all(feature = "pcap", feature = "session", feature = "reassembler"))]
 pub use messages::{datagram_messages, session_messages};
-#[cfg(all(feature = "session", feature = "reassembler"))]
+#[cfg(all(feature = "pcap", feature = "session", feature = "reassembler"))]
 pub use pulses::{Pulse, datagram_pulses, session_pulses};
-pub use source::{
-    CaptureFormat, CaptureReader, CapturedPacket, EventIter, OwnedPacketView, PcapFlowSource,
-    ViewIter,
-};
-#[cfg(all(feature = "session", feature = "reassembler"))]
+pub use reader::{CaptureDirection, CaptureFormat, CaptureReader, CapturedPacket, DataLink};
+#[cfg(all(feature = "pcap", feature = "session", feature = "reassembler"))]
 pub use source::{DatagramIter, SessionIter};
-#[cfg(feature = "tracker")]
+#[cfg(feature = "pcap")]
+pub use source::{EventIter, OwnedPacketView, PcapFlowSource, ViewIter};
+#[cfg(all(feature = "pcap", feature = "tracker"))]
 #[allow(deprecated)]
 pub use summaries::{FlowSummary, flow_summaries, flow_summaries_from_pcap};

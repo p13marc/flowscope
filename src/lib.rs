@@ -468,7 +468,7 @@ pub use quic::{QUIC_PORT, QuicInitial, QuicUdpParser, QuicVersion};
 pub mod ssh;
 #[cfg(feature = "ssh")]
 pub use ssh::{SshKexInit, SshMessage, SshParser};
-#[cfg(feature = "pcap")]
+#[cfg(feature = "pcap-reader")]
 pub mod pcap;
 #[cfg(feature = "tls")]
 pub mod tls;

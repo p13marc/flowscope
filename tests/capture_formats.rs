@@ -97,3 +97,107 @@ fn flow_side_and_state_have_stable_labels() {
     assert_eq!(FlowState::SynSent.to_string(), "syn_sent");
     assert_eq!(FlowState::ClosingTcp.as_str(), "closing_tcp");
 }
+
+// ── #195: link types and direction ───────────────────────────────
+
+/// A classic pcap with `datalink` and the given records.
+fn pcap_with(datalink: DataLink, records: &[Vec<u8>]) -> Vec<u8> {
+    use pcap_file::pcap::{PcapHeader, PcapPacket, PcapWriter};
+    let header = PcapHeader {
+        datalink,
+        ..Default::default()
+    };
+    let mut w = PcapWriter::with_header(Vec::new(), header).unwrap();
+    for (i, r) in records.iter().enumerate() {
+        w.write_packet(&PcapPacket::new(
+            Duration::from_secs(1 + i as u64),
+            r.len() as u32,
+            r,
+        ))
+        .unwrap();
+    }
+    w.into_writer()
+}
+
+/// IPv4/UDP bytes of an Ethernet frame built by the test helpers.
+fn ip_of(frame: &[u8]) -> Vec<u8> {
+    frame[14..].to_vec()
+}
+
+fn flows_of(bytes: Vec<u8>) -> usize {
+    use flowscope::FlowEvent;
+    use flowscope::extract::FiveTuple;
+    PcapFlowSource::from_reader(Cursor::new(bytes))
+        .unwrap()
+        .with_extractor(FiveTuple::bidirectional())
+        .filter(|e| matches!(e, Ok(FlowEvent::Started { .. })))
+        .count()
+}
+
+#[test]
+fn linux_cooked_capture_is_tracked() {
+    let frame = ipv4_udp([10, 0, 0, 1], [10, 0, 0, 2], 1, 53, b"q");
+    // SLL: outgoing (4), ARPHRD_ETHER, 6-byte address, IPv4.
+    let mut sll = vec![0, 4, 0, 1, 0, 6, 2, 2, 2, 2, 2, 2, 0, 0, 0x08, 0x00];
+    sll.extend_from_slice(&ip_of(&frame));
+    let bytes = pcap_with(DataLink::LINUX_SLL, &[sll]);
+    let p = CaptureReader::new(Cursor::new(bytes.clone()))
+        .unwrap()
+        .next_packet()
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        p.direction,
+        Some(flowscope::pcap::CaptureDirection::Outbound)
+    );
+    assert_eq!(
+        flows_of(bytes),
+        1,
+        "tcpdump -i any captures are no longer unmatched"
+    );
+}
+
+#[test]
+fn raw_ip_capture_is_tracked() {
+    let frame = ipv4_udp([10, 0, 0, 1], [10, 0, 0, 2], 1, 53, b"q");
+    assert_eq!(flows_of(pcap_with(DataLink::RAW, &[ip_of(&frame)])), 1);
+}
+
+#[test]
+fn unsupported_link_types_are_skipped_and_counted() {
+    let bytes = pcap_with(DataLink::IEEE802_11, &[vec![0u8; 40]]);
+    let mut views = PcapFlowSource::from_reader(Cursor::new(bytes))
+        .unwrap()
+        .views();
+    assert!(views.next().is_none());
+    assert_eq!(views.unsupported(), 1);
+}
+
+#[test]
+fn pcapng_epb_flags_give_the_direction() {
+    use pcap_file::pcapng::blocks::enhanced_packet::EnhancedPacketOption;
+    let frame = ipv4_udp([10, 0, 0, 1], [10, 0, 0, 2], 1, 53, b"q");
+    let mut w = PcapNgWriter::new(Vec::new()).unwrap();
+    w.write_pcapng_block(InterfaceDescriptionBlock {
+        linktype: DataLink::ETHERNET,
+        snaplen: 65535,
+        options: vec![],
+    })
+    .unwrap();
+    for flags in [1u32, 2u32] {
+        w.write_pcapng_block(EnhancedPacketBlock {
+            interface_id: 0,
+            timestamp: Duration::from_nanos(1),
+            original_len: frame.len() as u32,
+            data: Cow::Borrowed(&frame),
+            options: vec![EnhancedPacketOption::Flags(flags)],
+        })
+        .unwrap();
+    }
+    let dirs: Vec<_> = CaptureReader::new(Cursor::new(w.into_inner()))
+        .unwrap()
+        .map(|p| p.unwrap().direction)
+        .collect();
+    use flowscope::pcap::CaptureDirection::{Inbound, Outbound};
+    assert_eq!(dirs, vec![Some(Inbound), Some(Outbound)]);
+}
