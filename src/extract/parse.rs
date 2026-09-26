@@ -21,6 +21,8 @@ pub(crate) struct ParsedIp<'a> {
     /// borrowed from the original frame. Consumed by the GRE
     /// decap combinator and any future inspection paths.
     pub l4_payload: &'a [u8],
+    /// Offset of `l4_payload` in the parsed frame.
+    pub l4_offset: usize,
 }
 
 pub(crate) enum ParsedL4 {
@@ -150,6 +152,7 @@ fn parse_from_sliced<'a>(
             dst,
             proto,
             l4_payload: l4_payload_slice,
+            l4_offset: l4_region_offset,
         }),
         l4,
     })
@@ -157,7 +160,7 @@ fn parse_from_sliced<'a>(
 
 /// Compute the byte offset of `inner` inside `outer`, if `inner` is
 /// fully contained within `outer`'s allocation. Returns None if not.
-fn byte_offset(outer: &[u8], inner: &[u8]) -> Option<usize> {
+pub(crate) fn byte_offset(outer: &[u8], inner: &[u8]) -> Option<usize> {
     let outer_start = outer.as_ptr() as usize;
     let inner_start = inner.as_ptr() as usize;
     let outer_end = outer_start.checked_add(outer.len())?;

@@ -98,7 +98,7 @@ pub(crate) trait Dispatch<K> {
 }
 
 /// Source/destination ports of an Ethernet frame, if it carries TCP
-/// or UDP.
+/// or UDP. Fallback for extractors that report no [`crate::L4Meta`].
 pub(crate) fn ports_of(frame: &[u8]) -> Ports {
     let parsed = parse::parse_eth(frame)?;
     match parsed.l4? {
@@ -110,7 +110,8 @@ pub(crate) fn ports_of(frame: &[u8]) -> Ports {
 
 /// The payload a datagram parser receives: the UDP payload, or the
 /// whole ICMPv4 / ICMPv6 message (0.14.1: ICMP parsers ride the
-/// datagram path).
+/// datagram path). Fallback for extractors that report no
+/// [`crate::L4Meta`].
 fn datagram_payload(frame: &[u8]) -> Option<&[u8]> {
     let sp = etherparse::SlicedPacket::from_ethernet(frame).ok()?;
     match sp.transport? {
@@ -155,16 +156,24 @@ where
         out: &mut D::Out,
     ) {
         let view: PacketView<'v> = view.into();
-        let ports = if dispatch.needs_ports() {
-            ports_of(view.frame)
-        } else {
-            None
-        };
-        let reassemble = dispatch.wants_stream(ports);
-        let mut events = self.flow.track_pending_with(view, reassemble);
+        let needs_ports = dispatch.needs_ports();
+        let frame = view.frame;
+        let mut events = self.flow.track_pending_with(view, |p| {
+            let ports = match p.l4_meta {
+                Some(m) => m.ports,
+                None if needs_ports => ports_of(frame),
+                None => None,
+            };
+            dispatch.wants_stream(ports)
+        });
         // `forward` finalizes each ended flow itself, right after its
         // last bytes are dispatched.
         let packet = self.flow.last_packet().cloned();
+        let ports = match packet.as_ref().and_then(|p| p.l4_meta) {
+            Some(m) => m.ports,
+            None if needs_ports && packet.is_some() => ports_of(frame),
+            None => None,
+        };
         let anomalies = self.flow.emits_anomalies();
 
         let mut data_pending = packet.is_some();
@@ -258,8 +267,14 @@ where
                     }
                 }
             }
-            _ if dispatch.wants_datagram(ports) => {
-                if let Some(payload) = datagram_payload(view.frame) {
+            Some(L4Proto::Udp | L4Proto::Icmp | L4Proto::IcmpV6) | None
+                if dispatch.wants_datagram(ports) =>
+            {
+                let payload = match p.l4_meta {
+                    Some(m) => Some(m.payload(view.frame)),
+                    None => datagram_payload(view.frame),
+                };
+                if let Some(payload) = payload {
                     dispatch.on_datagram(&cx, ports, payload, out);
                 }
             }

@@ -52,8 +52,10 @@ impl<E: FlowExtractor> FlowExtractor for InnerGtpU<E> {
     fn extract(&self, view: PacketView<'_>) -> Option<Extracted<E::Key>> {
         let inner_ip = peel_gtp_u(view.frame, self.udp_port)?;
         let synthetic = synthesize_eth_for_ip(inner_ip)?;
-        self.extractor
-            .extract(PacketView::new(&synthetic, view.timestamp).with_rx_metadata(view.rx_metadata))
+        let e = self.extractor.extract(
+            PacketView::new(&synthetic, view.timestamp).with_rx_metadata(view.rx_metadata),
+        )?;
+        Some(super::rebase(e, view.frame, inner_ip, 14))
     }
 }
 

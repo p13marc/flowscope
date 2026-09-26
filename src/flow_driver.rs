@@ -29,7 +29,7 @@ use crate::event::{
     AnomalyKind, EventMask, FlowEvent, FlowSide, FlowStats, MemcapPolicy, OverflowPolicy,
     ReassemblyStop,
 };
-use crate::extractor::{FlowExtractor, L4Proto, Orientation, TcpInfo};
+use crate::extractor::{FlowExtractor, L4Meta, L4Proto, Orientation, TcpInfo};
 use crate::reassembler::{Reassembler, ReassemblerFactory, StreamChunks};
 use crate::tracker::{FlowEvents, FlowTracker, FlowTrackerConfig};
 use crate::view::PacketView;
@@ -51,6 +51,9 @@ pub struct PacketInfo<K> {
     pub l4: Option<L4Proto>,
     /// Parsed TCP header, for TCP packets.
     pub tcp: Option<TcpInfo>,
+    /// Ports and L4 payload location reported by the extractor
+    /// (offsets into the tracked frame). New in 0.25.0.
+    pub l4_meta: Option<L4Meta>,
     /// Packet timestamp (after dedup / monotonic clamping).
     pub ts: Timestamp,
     /// `true` when this packet created the flow.
@@ -421,20 +424,23 @@ where
     /// You MUST call [`Self::finalize`] before the next
     /// `track_pending` / `sweep_pending` / `track` / `sweep` call.
     pub fn track_pending<'v>(&mut self, view: impl Into<PacketView<'v>>) -> FlowEvents<E::Key> {
-        self.track_pending_with(view, true)
+        self.track_pending_with(view, |_| true)
     }
 
-    /// Like [`Self::track_pending`], but `reassemble = false` stops
-    /// the driver from **creating** a reassembler for this packet's
-    /// flow side. Sides that already have one keep receiving
-    /// segments. The typed driver uses it to buffer only flows some
-    /// session parser is interested in; since interest is decided
-    /// per flow, pass the same answer for every packet of a flow.
-    pub fn track_pending_with<'v>(
+    /// Like [`Self::track_pending`], but a reassembler is only
+    /// **created** for a flow side when `want` returns `true` for the
+    /// packet that would create it (sides that already have one keep
+    /// receiving segments). The session engines use it to buffer
+    /// only flows some parser is interested in; answer consistently
+    /// for every packet of a flow.
+    pub fn track_pending_with<'v, W>(
         &mut self,
         view: impl Into<PacketView<'v>>,
-        reassemble: bool,
-    ) -> FlowEvents<E::Key> {
+        mut want: W,
+    ) -> FlowEvents<E::Key>
+    where
+        W: FnMut(&crate::tracker::PacketContext<'_, E::Key>) -> bool,
+    {
         self.last_packet = None;
         let view: PacketView<'v> = view.into();
         if let Some(d) = self.dedup.as_mut()
@@ -469,6 +475,7 @@ where
                 orientation: p.orientation,
                 l4: p.l4,
                 tcp: p.tcp.copied(),
+                l4_meta: p.l4_meta,
                 ts: p.ts,
                 is_new: p.is_new,
             });
@@ -476,7 +483,7 @@ where
                 return;
             };
             let slot_key = (p.key.clone(), p.side);
-            if !reassemble && !reassemblers.contains_key(&slot_key) {
+            if !reassemblers.contains_key(&slot_key) && !want(p) {
                 return;
             }
             let slot = reassemblers.entry(slot_key).or_insert_with(|| Slot {

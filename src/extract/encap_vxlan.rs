@@ -47,7 +47,8 @@ impl<E: FlowExtractor> FlowExtractor for InnerVxlan<E> {
 
     fn extract(&self, view: PacketView<'_>) -> Option<Extracted<E::Key>> {
         let inner = peel_vxlan(view.frame, self.udp_port)?;
-        self.extractor.extract(view.with_frame(inner))
+        let e = self.extractor.extract(view.with_frame(inner))?;
+        Some(super::rebase(e, view.frame, inner, 0))
     }
 }
 

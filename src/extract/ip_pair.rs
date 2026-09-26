@@ -4,7 +4,7 @@ use std::net::IpAddr;
 
 use super::parse;
 use crate::{
-    extractor::{Extracted, FlowExtractor, L4Proto, Orientation},
+    extractor::{Extracted, FlowExtractor, L4Meta, L4Proto, Orientation},
     view::PacketView,
 };
 
@@ -54,11 +54,25 @@ impl FlowExtractor for IpPair {
             132 => L4Proto::Sctp,
             p => L4Proto::Other(p),
         };
+        let l4_meta = Some(match parsed.l4 {
+            Some(parse::ParsedL4::Tcp(t)) => L4Meta::new(
+                Some((t.src_port, t.dst_port)),
+                t.payload_offset,
+                t.payload_len,
+            ),
+            Some(parse::ParsedL4::Udp(u)) => L4Meta::new(
+                Some((u.src_port, u.dst_port)),
+                u.payload_offset,
+                u.payload_len,
+            ),
+            _ => L4Meta::new(None, ip.l4_offset, ip.l4_payload.len()),
+        });
         Some(Extracted {
             key: IpPairKey { a, b },
             orientation,
             l4: Some(l4),
             tcp: None, // IpPair never populates TCP info
+            l4_meta,
         })
     }
 }

@@ -494,7 +494,7 @@ pub use event::{
     AnomalyKind, EndReason, EventMask, FlowEvent, FlowSide, FlowState, FlowStats, MemcapPolicy,
     OverflowPolicy, ReassemblyStop, TcpOverlapPolicy,
 };
-pub use extractor::{Extracted, FlowExtractor, L4Proto, Orientation, TcpFlags, TcpInfo};
+pub use extractor::{Extracted, FlowExtractor, L4Meta, L4Proto, Orientation, TcpFlags, TcpInfo};
 #[cfg(feature = "reassembler")]
 pub use flow_driver::{FlowDriver, PacketInfo};
 #[cfg(feature = "tracker")]

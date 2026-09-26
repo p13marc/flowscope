@@ -42,12 +42,22 @@ pub struct PacketContext<'a, K> {
     pub tcp: Option<&'a TcpInfo>,
     /// TCP payload bytes; empty for non-TCP or payload-less packets.
     pub tcp_payload: &'a [u8],
+    /// `(source, destination)` ports, when the extractor reported
+    /// them ([`crate::Extracted::l4_meta`]). New in 0.25.0.
+    pub ports: Option<(u16, u16)>,
+    /// L4 payload (UDP payload, TCP payload, or the whole ICMP
+    /// message), when the extractor reported its location. New in
+    /// 0.25.0.
+    pub l4_payload: Option<&'a [u8]>,
     /// Packet timestamp (after any driver-side clamping).
     pub ts: Timestamp,
     /// Frame length in bytes.
     pub len: usize,
     /// `true` when this packet created the flow.
     pub is_new: bool,
+    /// The extractor's [`crate::L4Meta`], offsets into the tracked
+    /// frame. New in 0.25.0.
+    pub l4_meta: Option<crate::L4Meta>,
 }
 
 /// Snapshot of one live flow returned by [`FlowTracker::iter_active`].
@@ -559,6 +569,7 @@ impl<E: FlowExtractor, S: Send + 'static> FlowTracker<E, S> {
             orientation,
             l4,
             tcp,
+            l4_meta,
         } = extracted;
         let len = view.frame.len();
         let ts = view.timestamp;
@@ -721,6 +732,9 @@ impl<E: FlowExtractor, S: Send + 'static> FlowTracker<E, S> {
             l4,
             tcp: tcp.as_ref(),
             tcp_payload,
+            ports: l4_meta.and_then(|m| m.ports),
+            l4_payload: l4_meta.map(|m| m.payload(view.frame)),
+            l4_meta,
             ts,
             len,
             is_new,

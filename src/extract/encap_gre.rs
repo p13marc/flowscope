@@ -74,8 +74,11 @@ impl<E: FlowExtractor> FlowExtractor for InnerGre<E> {
         }
         let (ethertype, after_gre) = peel_gre(ip.l4_payload)?;
         let synthetic = synthesize_eth(ethertype, after_gre)?;
-        self.extractor
-            .extract(PacketView::new(&synthetic, view.timestamp).with_rx_metadata(view.rx_metadata))
+        let prefix = if ethertype == ETH_TEB { 0 } else { 14 };
+        let e = self.extractor.extract(
+            PacketView::new(&synthetic, view.timestamp).with_rx_metadata(view.rx_metadata),
+        )?;
+        Some(super::rebase(e, view.frame, after_gre, prefix))
     }
 }
 
