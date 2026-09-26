@@ -197,8 +197,9 @@ so the generation logic stays close to the fixtures.
   pipelines; the
   [`00-getting-started/unified_driver_demo.rs`](./00-getting-started/unified_driver_demo.rs)
   example showcases it. Register one session/datagram slot per
-  protocol. The per-parser `FlowSessionDriver` / `FlowDatagramDriver`
-  types were removed in 0.20 (#99); the legacy closed-`M`
+  protocol. For one parser with an ordered event stream use
+  `flowscope::session::SessionDriver` / `DatagramDriver` (public again
+  since 0.25; both run the same engine); the legacy closed-`M`
   `Driver<E, M>` and `FlowMultiSessionDriver` types were removed in
   plan 121 (0.11.0).
 - For the highest-level common-case demos (TLS / QUIC / SMB

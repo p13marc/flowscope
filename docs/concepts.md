@@ -299,40 +299,70 @@ A per-`(flow, side)` byte-stream hook. The trait:
 ```rust,ignore
 pub trait Reassembler: Send + 'static {
     fn segment(&mut self, seq: u32, payload: &[u8], ts: Timestamp);
+    fn drain_into(&mut self, out: &mut StreamChunks) {}   // pull-style output
+    fn flush_pending(&mut self) {}                        // flow ended: give up on holes
+    fn advance_time(&mut self, now: Timestamp) {}         // sweep: expire old holes
     fn fin(&mut self);
     fn rst(&mut self);
     // diagnostic accessors — see rustdoc
 }
 ```
 
-The default `BufferedReassembler` accumulates in-order bytes and
-classifies retransmits vs out-of-order segments using wrap-aware
-sequence-space comparison. Custom reassemblers (gap-fill,
-hole-tolerant, anything else) implement the trait directly.
+Two built-ins, both wrap-aware:
+
+- `SegmentBufferReassembler` — buffers out-of-order segments and
+  fills holes when the missing bytes arrive; overlapping segments
+  are resolved with a `TcpOverlapPolicy`. The session engines use
+  it.
+- `BufferedReassembler` — in-order only, no out-of-order buffer.
+
+### Gaps
+
+A passive observer may never see some bytes (capture drops,
+asymmetric routing), so a hole can stay open forever. Neither
+reassembler waits for it forever: `SegmentBufferReassembler` skips
+a hole once the oldest segment behind it waited
+`reassembly_ooo_deadline` (1 s), when the out-of-order buffer
+reaches `reassembly_ooo_buffer` (256 KiB), or when the flow ends;
+`BufferedReassembler` skips it at once. Either way the hole is
+**reported**: the drained output is a `StreamChunks` — data
+interleaved with `Chunk::Gap(len)` markers — and a session parser
+hears about it through `SessionParser::on_gap` (default: stop
+parsing this flow, `EndReason::StreamGap`). Before 0.25 both
+reassemblers wedged on the first unfilled hole and silently dropped
+the rest of that direction.
 
 ### Bounded memory
 
-`BufferedReassembler::with_max_buffer(bytes)` caps per-side
-buffering. Pair with an `OverflowPolicy`:
+`FlowTrackerConfig::max_reassembler_buffer` caps per-side buffering
+(explicit factory builders override it). Pair with an
+`OverflowPolicy`:
 
-- `SlidingWindow` (default) — drop oldest bytes when full. Flow
-  stays alive; parser must resync. Stream-shaped protocols only.
-- `DropFlow` — poison the reassembler; the driver tears down the
-  flow on the next tick via `Ended { reason: BufferOverflow }`.
+- `SlidingWindow` (default) — drop the oldest undelivered bytes;
+  they reach the parser as a gap.
+- `DropFlow` — stop reassembling that side. The **flow stays
+  tracked** (its later packets are not mistaken for a new
+  connection); parsers on it are closed with
+  `EndReason::BufferOverflow`, and the stop is recorded in
+  `FlowStats::reassembly_stop_*`.
 
-`with_high_watermark_threshold(pct)` fires a
-`ReassemblerHighWatermark` anomaly when occupancy crosses the
-threshold — operators see cap pressure building before
-`BufferOverflow` bites.
+`reassembler_high_watermark_pct` fires a `ReassemblerHighWatermark`
+anomaly when occupancy crosses the threshold — operators see cap
+pressure building before `BufferOverflow` bites.
 
 ### Diagnostics
 
-`FlowStats` (on every `Ended` event) carries per-side:
+`FlowStats` (on `Ended`, `Tick` and the live snapshots) carries
+per-side:
 
-- `reassembly_dropped_ooo_*` — OOO segment count
-- `reassembly_bytes_dropped_oversize_*` — sliding-window drops
+- `reassembly_gaps_*` / `reassembly_gap_bytes_*` — holes skipped
+  and bytes never seen (Zeek's `missed_bytes`)
+- `reassembly_dropped_ooo_*` — segments that arrived after their
+  hole had been skipped
+- `reassembly_bytes_dropped_oversize_*` — cap drops
 - `reassembler_high_watermark_*` — peak occupancy
 - `retransmits_*` — classified TCP retransmits
+- `reassembly_stop_*` — why reassembly stopped, if it did
 
 ## Layer 4 — `SessionParser` / `DatagramParser`
 
@@ -390,12 +420,20 @@ removed in 0.22 — issue #139.)
 
 ### Lifecycle signals
 
-- `is_poisoned()` → driver synthesises `Ended { reason: ParseError }`
-- `is_done()` → driver synthesises `Ended { reason: ParserDone }`
+A parser is closed — once, and never re-created for the same flow —
+when:
 
-Use `is_done()` for protocols with intrinsic completion semantics
-(HTTP/1.0 after body, DNS-over-TCP query/response pair, framed
-sessions). `is_poisoned()` wins precedence if both fire.
+- `is_poisoned()` → parser close with `EndReason::ParseError`
+  (+ `SessionParseError` anomaly, `poison_reason()` in `detail`)
+- `is_done()` → parser close with `EndReason::ParserDone`
+- `on_gap(..)` returns `GapResponse::Stop` (the default) →
+  `EndReason::StreamGap`
+- its reassembly stopped → `EndReason::BufferOverflow`
+
+The **flow** is not ended by any of these: it stays tracked and ends
+with its transport reason (FIN, RST, idle, eviction). Use `is_done()`
+for protocols with intrinsic completion semantics; `is_poisoned()`
+wins precedence if both fire.
 
 ### Convenience accessors
 
@@ -415,25 +453,27 @@ lookups:
 
 ## Drivers
 
-Layers 2–4 stitch together. flowscope ships two sync surfaces:
+Layers 2–4 stitch together. flowscope ships three sync surfaces,
+all built on **one engine** (one flow table, one reassembler per flow
+side, per-parser dispatch), so they agree on what a flow is:
 
-- **`driver::Driver<E>`** (Tier 1) — the typed driver. Register one
-  session/datagram slot per protocol with
-  `builder.session_on_ports(parser, ports)` /
-  `builder.datagram_on_ports(parser, ports)`; the slot's
-  `SlotHandle<M, K>` yields typed L7 messages while the driver emits
-  the flow-lifecycle `Event<K>` stream. This is the supported
-  single-parser surface — it replaced the per-parser
-  `FlowSessionDriver` / `FlowDatagramDriver` in 0.20 (#99).
-- **`FlowDriver<E, F, S>`** (Tier 2) — tracker + reassembler factory.
-  Emits `FlowEvent`. The low-level building block — use it directly
-  when you want flow lifecycle events without per-flow L7 parsing, or
-  to build a custom run-to-completion loop. Supports per-flow user
-  state via `S`, `force_close(key, now)`, and the underlying tracker
-  via `tracker()` / `tracker_mut()`.
-
-The internal session/datagram parser-dispatch engine that the typed
-slots and the offline `pcap` source share is no longer a public type.
+- **`driver::Driver<E>`** — several parsers at once. Register
+  session/datagram slots by port (`session_on_ports`), by signature
+  (`session_heuristic`, probing the reassembled bytes) or for every
+  flow (`session_broadcast`); each slot's `SlotHandle<M, K>` yields
+  typed messages while the driver emits the flow-lifecycle
+  `Event<K>` stream. Builder settings (`config`, `idle_timeout_fn`,
+  `dedup`, `monotonic_timestamps`) apply to every slot, in any order.
+- **`session::SessionDriver<E, F>` / `DatagramDriver<E, F>`** — one
+  parser type, ordered `SessionEvent<K, M>` output (lifecycle,
+  messages, parser closes, anomalies interleaved). What netring's
+  `SessionStream` / `DatagramStream` wrap. New (public) in 0.25.
+- **`FlowDriver<E, F, S>`** — tracker + reassembler factory. Emits
+  `FlowEvent`. The low-level building block — use it directly when
+  you want flow lifecycle events and byte streams without L7 parsing,
+  or to build a custom loop. Supports per-flow user state via `S`,
+  `force_close(key, now)`, `drain_stream(key, side, &mut chunks)`,
+  and the underlying tracker via `tracker()` / `tracker_mut()`.
 
 ## Events at the L7 layer
 
@@ -450,18 +490,18 @@ the typed parser messages drained from each protocol's `SlotHandle`.
 | `Packet { key, side, len, ts, tcp }` | Per-packet (opt-in) |
 | `Ended { key, reason, stats, history, l4, ts }` | Flow concluded |
 | `StateChange { key, from, to, ts }` | TCP state transition |
-| `ParserClosed { key, parser_kind, reason, ts }` | A slot's parser finished/erred |
+| `ParserClosed { key, parser_kind, reason, detail, ts }` | A slot's parser was closed (early, or at flow end) |
 | `FlowAnomaly { key, kind, ts }` | Per-flow anomaly (opt-in) |
 | `TrackerAnomaly { kind, ts }` | Tracker-global anomaly (opt-in) |
 | `Tick { key, stats, ts }` | Periodic snapshot (opt-in) |
 
-Typed messages arrive as `SlotMessage { key, side, message }` from
-the per-parser `SlotHandle` returned at registration. Register HTTP
-on 80/8080, TLS on 443, DNS on 53; drain each independently.
+Typed messages arrive as `SlotMessage { key, side, orientation,
+message, ts }` from the per-parser `SlotHandle` returned at
+registration. Register HTTP on 80/8080, TLS on 443, DNS on 53; drain
+each independently.
 
-(The crate-private engine still uses a `SessionEvent` carrier between
-parser and slot, but it is not part of the public API since 0.20 —
-the two public event enums are `FlowEvent<K>` and `Event<K>`.)
+With a single parser, `SessionDriver` gives the same information as
+one ordered `SessionEvent<K, M>` stream instead.
 
 ## Async integration
 
@@ -507,14 +547,11 @@ they trip people up:
 
 ## Known limitations
 
-- **`BufferedReassembler` drops out-of-order segments.** Strict
-  drop is fine for most protocols (resync on the next message),
-  but HTTP/2 + HPACK is the classic case where a hole desyncs the
-  decoder for the rest of the connection. Use
-  [`SegmentBufferReassembler`](https://docs.rs/flowscope/latest/flowscope/struct.SegmentBufferReassembler.html)
-  when you need hole-fill: it queues out-of-order segments in a
-  `BTreeMap` and releases them once the gap arrives, with a
-  deadline past which the hole is abandoned.
+- **Missing bytes are skipped, not recovered.** A hole the capture
+  never saw is reported as a gap (see [Gaps](#gaps)); parsers that
+  can resynchronise opt in with `SessionParser::on_gap`. Holes are
+  detected from later data, the out-of-order deadline, or the flow
+  end — not yet from the peer's ACK running ahead.
 - **Fragmented IP needs an explicit reassembly pass.** The
   extractors key on what `etherparse` gives them, so non-first
   fragments land under their own fragment-header tuple rather
@@ -523,8 +560,7 @@ they trip people up:
   ahead of the tracker if your traffic is fragmented.
 - **Offline replay has no wall clock.** Live capture sweeps idle
   flows against real time; a pcap only reaches the sweep at EOF,
-  so idle timeouts never fire mid-file. Either call
-  `tracker.sweep(now)` yourself driven by packet timestamps, or
-  use `FlowTracker::with_auto_sweep(interval)`, which derives the
-  clock from the packets themselves and gives live/offline
-  parity.
+  so idle timeouts never fire mid-file. Either call `sweep(now)`
+  yourself driven by packet timestamps (netring's pcap streams do),
+  or use `FlowTracker::with_auto_sweep(interval)`, which derives the
+  clock from the packets themselves and gives live/offline parity.

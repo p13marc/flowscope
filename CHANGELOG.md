@@ -1,5 +1,115 @@
 # Changelog
 
+## 0.25.0 (unreleased)
+
+One session engine, explicit gaps, and no more flow resurrection. A
+breaking release driven by a downstream report (des-capture) against
+0.24.1 plus the audit that followed; migration guide:
+[`docs/migration-0.24-to-0.25.md`](docs/migration-0.24-to-0.25.md).
+
+### The problems
+
+- The typed `Driver` ran a **private flow table per parser slot**: the
+  builder's `idle_timeout_fn` and `dedup` only reached the lifecycle
+  tracker, and `config` / `monotonic_timestamps` were snapshotted when
+  each slot was *registered* — `builder.session_on_ports(..);
+  builder.config(cfg)` silently ignored `cfg` for parsing. Slot
+  anomalies (incl. `SessionParseError`) were suppressed and slot
+  reassembly counters never reached `Ended.stats`.
+- A poisoned / done parser, and a `DropFlow` overflow, ended the flow
+  with `forget()` — so the flow's **next packet started a new flow
+  mid-stream** with a fresh parser (once per packet for a flow that
+  was simply not the parser's protocol).
+- **Reassembly wedged on the first unfilled hole.**
+  `BufferedReassembler` dropped every segment after a gap for the rest
+  of the direction; `SegmentBufferReassembler` never advanced past an
+  expired hole (its expiry was also never called). One lost packet
+  silently truncated a direction, with nothing telling the parser.
+- Parser dispatch keyed off `FlowEvent::Packet`, so shedding it with
+  `EventMask::PACKET` stopped L7 parsing.
+- `PcapFlowSource` read classic pcap only.
+
+### Changed (breaking)
+
+- **One engine.** `Driver`, the new `SessionDriver` / `DatagramDriver`
+  and the pcap helpers share one implementation: one `FlowDriver` (flow
+  table + one reassembler per flow side) feeding per-parser *cores*.
+  Slots own no flow table; every builder setting applies to every
+  slot, in any order. Heuristic slots probe the reassembled byte
+  stream and replay the probed bytes to the parser (no frame replay,
+  no second tracker).
+- **Parser closes never end or re-create a flow.** A parser that
+  poisons, finishes (`is_done`), declines a gap, or loses its stream to
+  a reassembly limit is closed once (`Event::ParserClosed` /
+  `SessionEvent::ParserClosed` with a `detail`), never fed again, and
+  the flow ends later with its transport reason. `Ended.reason` is
+  always `Fin` / `Rst` / `IdleTimeout` / `Evicted` / `ForceClosed`;
+  `BufferOverflow` / `ParseError` / `ParserDone` / `StreamGap` are
+  parser-close reasons.
+- **`OverflowPolicy::DropFlow` / `MemcapPolicy::DropFlow`** stop
+  reassembly (one / both sides, `ReassemblyStop`) instead of ending the
+  flow; `FlowDriver` no longer synthesises `Ended { BufferOverflow }`.
+- **Gaps are explicit.** `Reassembler::drain_into(&mut StreamChunks)`
+  yields data interleaved with gap markers; `flush_pending` /
+  `advance_time` let holes be given up on at flow end / sweep.
+  `BufferedReassembler` skips a hole at once;
+  `SegmentBufferReassembler` waits up to `reassembly_ooo_deadline`
+  (1 s) / `reassembly_ooo_buffer` (256 KiB) then skips. Both deliver
+  the new tail of a partially-overlapping segment (it used to be
+  dropped). `SegmentBufferReassembler` keys segments by 64-bit stream
+  offset (the `u32` key mis-ordered segments across sequence wrap),
+  its `high_watermark` is a peak, and `rst()` no longer stops it.
+- **`SessionParser::on_gap(side, missing, ts, out) -> GapResponse`**
+  (default `Stop` — close the parser, like Suricata's parsers without
+  gap support).
+- `Event::ParserClosed` gains `detail: Option<String>` and is
+  `#[non_exhaustive]`; `SlotMessage` gains `orientation`.
+  A slot now emits `ParserClosed` for flows whose parser actually
+  received data (previously for every port-matching flow).
+- `ReassemblerFactory::apply_config` — `FlowDriver` hands the tracker
+  config to its factory on construction / `set_config`; explicit
+  factory builders still win. `FlowDriver::with_config(ext,
+  BufferedReassemblerFactory::default(), cfg)` now honours
+  `cfg.max_reassembler_buffer` (it was ignored).
+- `FlowTracker::track_with` (per-packet `PacketContext` hook, fires
+  for every packet regardless of the event mask);
+  `FlowDriver::last_packet`, `track_pending_with`, `drain_stream`,
+  `discard_stream`, `force_close_pending`, `finalize_flow`,
+  `flow_stats`, `set_config`. The engines discard a flow's stream as
+  soon as no parser can use it (all closed, or a heuristic rejected
+  it), so such flows cost only flow tracking — as in 0.24, where a
+  rejected heuristic flow was never reassembled.
+- `PcapFlowSource::from_reader` takes `R: BufRead`; `sessions()` /
+  `datagrams()` are public and return the public `SessionIter` /
+  `DatagramIter`.
+
+### Added
+
+- **`session::SessionDriver<E, F>` / `DatagramDriver<E, F>`** — public
+  single-parser engines with an ordered `SessionEvent<K, M>` output
+  (public again, with `orientation`, `ParserClosed`, `Tick`).
+  `TemplateFactory<P>` builds a factory from a `Clone`-only parser.
+- **pcapng**: `pcap::CaptureReader` detects the format; pcapng
+  timestamps honour `if_tsresol` / `if_tsoffset` (pcap-file 2 returns
+  raw ticks as nanoseconds). `PcapFlowSource` and every `*_from_pcap`
+  helper read pcapng.
+- `AnomalyKind::StreamGap`, `EndReason::StreamGap`, `ReassemblyStop`,
+  `FlowStats::reassembly_gaps_*` / `reassembly_gap_bytes_*` /
+  `reassembly_stop_*`, metric `flowscope_reassembly_gap_bytes_total`,
+  `FlowTrackerConfig::reassembly_ooo_buffer` / `reassembly_ooo_deadline`,
+  `SegmentBufferReassemblerFactory`.
+- `FlowSide::as_str` / `opposite` / `Display`, `FlowState::as_str` /
+  `Display`, `EndReason::is_graceful`.
+- `FlowDriver` now emits `TcpRexmitInconsistency` anomalies (the kind
+  existed but was never emitted).
+
+### Fixed
+
+- `FlowDriver`'s per-packet anomaly diff walked every live reassembler
+  (O(flows) per packet); it now diffs only the one the packet touched.
+- `FlowDriver`'s monotonic clamp dropped the view's `rx_metadata`.
+- End-of-flow gaps surface as anomalies before the flow's `Ended`.
+
 ## 0.24.1 (2026-08-04)
 
 Two defects in the 0.24.0 tunnel contract, found by an adversarial audit of

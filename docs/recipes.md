@@ -132,7 +132,8 @@ pub trait SessionParser: Send + 'static {
 | `fin_*` | Protocol with EOF-terminated messages (HTTP `Connection: close`) |
 | `rst_*` | Reset internal state on RST (most parsers ignore) |
 | `on_tick` | Time-driven messages (DNS query timeout, heartbeat detection) |
-| `is_poisoned` | Unrecoverable parse error; driver synthesises `ParseError` close |
+| `is_poisoned` | Unrecoverable parse error; the engine closes the parser (`ParseError`) and never feeds it again for that flow |
+| `on_gap` | Bytes missing from the stream; return `GapResponse::Continue` to keep parsing (default `Stop` closes the parser with `StreamGap`) |
 | `is_done` | Successful completion ahead of FIN (HTTP/1.0 body done, DNS-TCP pair complete) |
 | `parser_kind` | Stable slug surfaced on `Event::ParserClosed::parser_kind` (register one slot per parser to route by protocol) |
 
@@ -638,10 +639,12 @@ Two caveats specific to h2:
 - **HPACK is connection-wide.** The parser must be fed every field
   block in order; there is no skipping streams you do not care about.
   A decode failure is fatal to the connection, not to one stream.
-- **Reassembly holes desync HPACK.** With the default
-  `OverflowPolicy::SlidingWindow`, a dropped out-of-order segment
-  will corrupt the dynamic table. For h2 over an unreliable capture,
-  prefer `DropFlow` and treat the flow as lost.
+- **Reassembly holes desync HPACK.** A hole the capture never saw
+  would corrupt the dynamic table, so the engine reports it
+  (`SessionParser::on_gap`) and `Http2Session` keeps the default
+  answer: the parser is closed with `EndReason::StreamGap` rather than
+  decoding garbage. Reordered segments are healed by the out-of-order
+  buffer before they become gaps.
 
 ## Buffer-cap pressure on the reassembler
 

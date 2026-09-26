@@ -134,9 +134,9 @@ on the connection.
 
 | Buffer | Knob | Default | On exceed |
 |---|---|---|---|
-| in-order stream | `FlowTrackerConfig::max_reassembler_buffer` | 1 MiB per side | `SlidingWindow` (default) drops oldest bytes, flow survives; `DropFlow` poisons → `Ended { BufferOverflow }` |
-| out-of-order segments | `SegmentBufferReassembler::with_max_ooo_buffer` | 256 KiB | evict oldest hole, then drop the arriving segment; 1 s hole deadline |
-| cross-flow pool | `reassembly_memcap` + `MemcapPolicy` | **`None` — off** | per policy: `Ignore` (default) reports only; `DropPacket` refuses the segment; `PassThrough` releases the side and keeps the flow; `DropFlow` ends it |
+| in-order stream | `FlowTrackerConfig::max_reassembler_buffer` | 1 MiB per side | `SlidingWindow` (default) drops the oldest undelivered bytes (a gap for the parser), flow survives; `DropFlow` stops reassembling the side — the flow stays tracked, parsers close with `BufferOverflow` |
+| out-of-order segments | `FlowTrackerConfig::reassembly_ooo_buffer` / `reassembly_ooo_deadline` | 256 KiB / 1 s | skip the oldest hole (reported as a gap); no data is discarded to make room |
+| cross-flow pool | `reassembly_memcap` + `MemcapPolicy` | **`None` — off** | per policy: `Ignore` (default) reports only; `DropPacket` refuses the segment (a gap later); `PassThrough` releases the side; `DropFlow` releases both sides. The flow stays tracked in every case |
 
 `max_reassembler_buffer` defaulted to `None` before 0.23. It is now
 1 MiB per side, so the default configuration is bounded; raise it if
@@ -160,7 +160,7 @@ on it:
 
 | Parser | Cap | On exceed |
 |---|---|---|
-| LDAP | 256 KiB | poison → flow ends with `ParseError` |
+| LDAP | 256 KiB | poison → parser closed with `ParseError` |
 | SMB | 1 MiB | buffer cleared, parsing resynchronises |
 | Kerberos | 256 KiB | buffer cleared |
 | DNP3 | 64 KiB | buffer cleared |

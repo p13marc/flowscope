@@ -22,6 +22,39 @@ the core.
 
 ## Implementation Status
 
+**0.25.0 cycle** (unreleased — session-engine redesign, breaking;
+`docs/migration-0.24-to-0.25.md`). Driven by a downstream report
+(des-capture) against 0.24.1 and the audit that followed.
+
+- **One engine** (`src/session/engine.rs` + `src/session/core.rs`): one
+  `FlowDriver` (flow table + `SegmentBufferReassembler` per flow side)
+  feeding per-parser *cores*. The typed `Driver`, the public
+  `SessionDriver` / `DatagramDriver` (`src/session/driver.rs`, ordered
+  public `SessionEvent`) and the pcap helpers all run it. Driver slots
+  (`src/driver/typed_slot.rs`) own no tracker, so builder settings
+  apply to every slot in any order; heuristic slots probe the
+  reassembled stream and replay it. The private
+  `FlowSessionDriver` / `FlowDatagramDriver` and
+  `typed_slot_heuristic.rs` are gone.
+- **No flow resurrection**: parser poison / done / gap / reassembly
+  stop close the parser (`ParserClosed { detail }`, tombstoned until the
+  flow ends); overflow and memcap stop reassembly
+  (`ReassemblyStop`) — nothing calls `forget()` any more, `Ended.reason`
+  is always a transport reason.
+- **Explicit gaps**: `StreamChunks` (data + gap marks + stop),
+  `Reassembler::{drain_into, flush_pending, advance_time, gaps,
+  gap_bytes, stop_reason}`, `SessionParser::on_gap -> GapResponse`
+  (default `Stop`). `SegmentBufferReassembler` rewritten on 64-bit
+  stream offsets with deadline / cap / end-of-flow hole skipping.
+- Dispatch keys off `FlowDriver::last_packet` (tracker `track_with`
+  hook), not `FlowEvent::Packet`, so `EventMask::PACKET` no longer
+  stops parsing. Factories get the tracker config through
+  `ReassemblerFactory::apply_config` (explicit builders win).
+- pcapng in `pcap::CaptureReader` (honours `if_tsresol`);
+  `FlowSide`/`FlowState` `as_str` + `Display`.
+- Regression tests: `tests/session_engine.rs` (report scenarios F1/F2/
+  F3/X1 + gaps / ordering / shedding), `tests/capture_formats.rs`.
+
 **0.23.0 cycle** (inline-proxy / sans-IO L7 core — milestone
 "Inline-grade: sans-IO L7 core for inline proxies", **published to
 crates.io as 0.23.0 on 2026-08-03**).

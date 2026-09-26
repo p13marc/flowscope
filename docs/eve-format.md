@@ -161,10 +161,13 @@ Emitted on `FlowEvent::Ended`:
 | `Rst`              | `"rst"`              |
 | `IdleTimeout`      | `"idle"`             |
 | `Evicted`          | `"evicted"`          |
-| `BufferOverflow`   | `"buffer_overflow"`  |
-| `ParseError`       | `"parse_error"`      |
-| `ParserDone`       | `"parser_done"`      |
 | `ForceClosed`      | `"force_closed"`     |
+
+Since 0.25 a flow record's reason is always a transport reason (the
+rows above). `BufferOverflow`, `ParseError`, `ParserDone` and
+`StreamGap` (`"buffer_overflow"`, `"parse_error"`, `"parser_done"`,
+`"stream_gap"`) only describe **parser** closes; reassembly trouble on
+the flow shows in its stats and anomalies instead.
 
 ## `event_type: "stats"` (opt-in)
 

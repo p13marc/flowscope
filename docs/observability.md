@@ -38,6 +38,7 @@ on by default).
 | `flowscope_reassembly_bytes_dropped_oversize_total` | counter | `side` | Bytes dropped due to per-side buffer cap |
 | `flowscope_reassembler_high_watermark_bytes` | histogram | `side` | Peak per-side buffer occupancy at `Ended` |
 | `flowscope_retransmits_total` | counter | `side` | Classified TCP retransmits at `Ended` |
+| `flowscope_reassembly_gap_bytes_total` | counter | `side` | Bytes never seen, skipped as gaps (Zeek `missed_bytes`), at `Ended` |
 | `flowscope_flow_ticks_total` | counter | — | Per-flow periodic `Tick` events emitted |
 | `flowscope_http_messages_total` | counter | `direction` (`request` / `response`) | Each HTTP message framed by the streaming parser (`http`) |
 | `flowscope_http_poisoned_total` | counter | `reason` (an [`HttpPoison`] slug) | Each connection the streaming HTTP parser refused (`http`) |
@@ -200,12 +201,12 @@ Default mapping:
 | `OutOfOrderSegment` | `info` |
 | `RetransmittedSegment` | `info` |
 | `BufferOverflow` (any policy) | `warning` |
+| `StreamGap` | `warning` |
 | `ReassemblerHighWatermark` | `warning` |
 | `FlowTableEvictionPressure` | `warning` |
 | `SessionParseError` | `error` |
-
-`critical` is reserved for future use; no `AnomalyKind` variant
-defaults to it today.
+| `TcpRexmitInconsistency` | `error` |
+| `GlobalMemcapHit` | `critical` |
 
 `Severity` derives `Ord`, so threshold filters compile directly:
 

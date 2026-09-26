@@ -98,10 +98,14 @@ lifecycle **and** typed messages from one parser in wire order, use
 `flowscope::pcap::session_pulses::<P>(path)` / `datagram_pulses::<P>`,
 which yield a single ordered `Pulse<K, M>` stream.
 
-For per-port filtering, multiple parsers per pcap, or live
-NIC capture, drop down to `Driver::builder(ext)` — the typed
-low-level driver with one `SlotHandle<M, K>` per parser and the
-flow-lifecycle `Event<K>` stream. See
+For a live packet source (any `&[u8]` frames), drive one parser with
+`session::SessionDriver` / `DatagramDriver` — flow tracking, TCP
+reassembly and per-flow parsing with one ordered `SessionEvent` stream
+— or several with `Driver::builder(ext)`, which hands out one
+`SlotHandle<M, K>` per parser beside the flow-lifecycle `Event<K>`
+stream. Both run the same engine: one flow table, reassembly with
+explicit gaps, and parsers that are closed (never silently wedged or
+re-created) when they give up. See
 [`examples/07-multi-protocol/`](examples/07-multi-protocol/).
 
 ---
@@ -259,6 +263,7 @@ Per-feature dependency tree is documented inline in
 | [`docs/discoverability.md`](docs/discoverability.md) | one-page prelude tour grouped by use case |
 | [`docs/performance.md`](docs/performance.md) | criterion bench methodology + numbers |
 | [`docs/design.md`](docs/design.md) | why flowscope is shaped the way it is |
+| [`docs/migration-0.24-to-0.25.md`](docs/migration-0.24-to-0.25.md) | the 0.25 session-engine redesign — one engine for `Driver` / `SessionDriver`, explicit reassembly gaps, parser closes that no longer end (or re-create) flows, pcapng |
 | [`docs/migration-0.22-to-0.23.md`](docs/migration-0.22-to-0.23.md) | the 0.23 inline-proxy cycle — one streaming HTTP engine, `BodyFraming::UntilClose`, and the framing behaviour that changed |
 | [`docs/migration-0.21-to-0.22.md`](docs/migration-0.21-to-0.22.md) | the 0.22 breaks — stateful `QuicUdpParser::new()` (PQ ClientHello reassembly) + `parser_kinds` removal — plus the additive 0.22 surface |
 | [`docs/migration-0.20-to-0.21.md`](docs/migration-0.20-to-0.21.md) | the 0.21 detection-architecture breaks — typed `DetectorKind`, `DetectorScore::kind()`, opt-in per-packet `source_idx` |
