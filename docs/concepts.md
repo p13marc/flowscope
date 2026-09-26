@@ -20,7 +20,7 @@ gives you out of the box:
 ```
 ┌─ Tier 1 — flowscope::driver::Driver<E> ─────────────────────┐
 │  One builder, one typed `SlotHandle<M, K>` per parser,      │
-│  zero-allocation `track_into` + `drain` per packet.         │
+│  allocation-free `track_into` per in-order packet.             │
 │  90 % of users; offline + simple online pipelines.          │
 │  Slot handles are `Send + Sync` (0.12); the whole driver is │
 │  `Send + Sync` (0.13) — `tokio::spawn(driver_task)` on the  │

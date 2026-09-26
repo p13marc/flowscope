@@ -31,8 +31,13 @@
 //! - Per-packet: `driver.track_into(view, &mut events)` emits
 //!   flow-lifecycle events; `slot.drain(&mut msgs)` drains the
 //!   typed messages produced this packet.
-//! - Zero-allocation in steady state across the full dispatch
-//!   path including registered slots.
+//! - No allocation per packet in steady state: in-order TCP payload
+//!   is handed to parsers straight from the frame, scratch buffers
+//!   are reused, and a sweep that ends nothing allocates nothing
+//!   (measured by `tests/alloc_steady_state.rs`). Allocations remain
+//!   per new flow (flow table entry, parser), per out-of-order
+//!   segment held, and for whatever the parsers and slot queues
+//!   themselves allocate.
 //!
 //! Plan 122 (0.12): `SlotHandle<M, K>` is `Send + Sync` (backed
 //! by `Arc<crossbeam_queue::SegQueue>`). Move the handle to a
