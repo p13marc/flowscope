@@ -978,6 +978,53 @@ pub enum SessionEvent<K, M> {
 }
 
 impl<K, M> SessionEvent<K, M> {
+    /// The session form of a flow-tracker event, as the session
+    /// engines emit it: `Started` and anomalies / ticks map 1:1,
+    /// `Ended` becomes `Closed` (stamped with the flow's last packet).
+    /// Per-packet `Packet` / `Established` / `StateChange` have no
+    /// session form (`None`). Lets a caller moving from a flow stream to
+    /// a session stream keep the flow events it already queued.
+    pub fn from_flow_event(ev: crate::event::FlowEvent<K>) -> Option<Self> {
+        use crate::event::FlowEvent;
+        Some(match ev {
+            FlowEvent::Started {
+                key,
+                side,
+                orientation,
+                ts,
+                l4,
+            } => SessionEvent::Started {
+                key,
+                side,
+                orientation,
+                ts,
+                l4,
+            },
+            FlowEvent::Ended {
+                key,
+                reason,
+                stats,
+                l4,
+                ..
+            } => {
+                let ts = stats.last_seen;
+                SessionEvent::Closed {
+                    key,
+                    reason,
+                    stats,
+                    l4,
+                    ts,
+                }
+            }
+            FlowEvent::FlowAnomaly { key, kind, ts } => SessionEvent::FlowAnomaly { key, kind, ts },
+            FlowEvent::TrackerAnomaly { kind, ts } => SessionEvent::TrackerAnomaly { kind, ts },
+            FlowEvent::Tick { key, stats, ts } => SessionEvent::Tick { key, stats, ts },
+            FlowEvent::Packet { .. }
+            | FlowEvent::Established { .. }
+            | FlowEvent::StateChange { .. } => return None,
+        })
+    }
+
     /// The flow key, when the variant has one.
     pub fn key(&self) -> Option<&K> {
         match self {
@@ -1093,6 +1140,33 @@ pub(crate) fn resync_frames(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn flow_events_map_to_their_session_form() {
+        use crate::event::FlowEvent;
+        let stats = FlowStats {
+            last_seen: Timestamp::new(7, 0),
+            ..Default::default()
+        };
+        let closed: Option<SessionEvent<u8, ()>> =
+            SessionEvent::from_flow_event(FlowEvent::Ended {
+                key: 1u8,
+                reason: EndReason::Fin,
+                stats,
+                history: Default::default(),
+                l4: None,
+            });
+        assert!(matches!(
+            closed,
+            Some(SessionEvent::Closed { key: 1, reason: EndReason::Fin, ts, .. }) if ts == Timestamp::new(7, 0)
+        ));
+        let tick: Option<SessionEvent<u8, ()>> = SessionEvent::from_flow_event(FlowEvent::Tick {
+            key: 2u8,
+            stats: FlowStats::default(),
+            ts: Timestamp::new(8, 0),
+        });
+        assert!(matches!(tick, Some(SessionEvent::Tick { key: 2, .. })));
+    }
 
     #[derive(Default, Clone)]
     struct CountParser {

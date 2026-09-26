@@ -93,45 +93,7 @@ impl<K: Clone, M: std::fmt::Debug> Output<K, M> for Vec<SessionEvent<K, M>> {
 
 /// Translate a flow-driver event into the session vocabulary.
 fn lifecycle<K, M>(ev: FlowEvent<K>, out: &mut Vec<SessionEvent<K, M>>) {
-    out.push(match ev {
-        FlowEvent::Started {
-            key,
-            side,
-            orientation,
-            ts,
-            l4,
-        } => SessionEvent::Started {
-            key,
-            side,
-            orientation,
-            ts,
-            l4,
-        },
-        FlowEvent::Ended {
-            key,
-            reason,
-            stats,
-            l4,
-            ..
-        } => {
-            let ts = stats.last_seen;
-            SessionEvent::Closed {
-                key,
-                reason,
-                stats,
-                l4,
-                ts,
-            }
-        }
-        FlowEvent::FlowAnomaly { key, kind, ts } => SessionEvent::FlowAnomaly { key, kind, ts },
-        FlowEvent::TrackerAnomaly { kind, ts } => SessionEvent::TrackerAnomaly { kind, ts },
-        FlowEvent::Tick { key, stats, ts } => SessionEvent::Tick { key, stats, ts },
-        FlowEvent::Packet { .. }
-        | FlowEvent::Established { .. }
-        | FlowEvent::StateChange { .. } => {
-            return;
-        }
-    });
+    out.extend(SessionEvent::from_flow_event(ev));
 }
 
 impl<K, F> Dispatch<K> for SessionCore<K, F>
