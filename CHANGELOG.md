@@ -234,6 +234,13 @@ breaking release driven by a downstream report (des-capture) against
   {last_packet, track_pending_with, drain_stream, discard_stream,
   discard_side, force_close_pending, finalize_flow, flow_stats,
   set_config, pause_events, resume_events}`.
+- `FlowDriver::sweep_pending_drain` (#200): a sweep that also hands
+  over what it released — data parked behind a hole that just expired
+  (with the `Chunk::Gap` marking it), per side, so a pull consumer
+  does not wait for the side's next packet.
+- `SessionEvent::from_flow_event`: the session engines' lifecycle
+  mapping (`Ended` → `Closed`, …), public — for callers switching from
+  a flow stream to a session stream with events already queued.
 - **pcap** (#195): `pcap::CaptureReader` reads pcap and pcapng
   (`if_tsresol` / `if_tsoffset` honoured); `CapturedPacket::
   into_ethernet` normalises `LINUX_SLL` / `LINUX_SLL2` (`tcpdump -i
