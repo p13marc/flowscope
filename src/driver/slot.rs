@@ -20,20 +20,46 @@ use crossbeam_queue::SegQueue;
 
 use crate::Timestamp;
 use crate::event::FlowSide;
+use crate::extractor::Orientation;
 use crate::parser_kind::ParserKind;
 
 /// One typed message emitted by a registered parser.
 ///
-/// The queue behind the `SlotHandle` holds these directly; the
-/// `key` and `side` are the flow's metadata at the moment the
+/// The queue behind the `SlotHandle` holds these directly; `key`,
+/// `side` and `orientation` are the flow's metadata at the moment the
 /// parser produced the message.
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct SlotMessage<M, K> {
     pub key: K,
+    /// Logical side whose bytes produced the message (`on_tick`
+    /// output is attributed to the initiator).
     pub side: FlowSide,
+    /// Canonical (address-sorted) direction matching `side` — tells
+    /// whether the message travelled `key.a → key.b` or the reverse
+    /// without tracking `Event::Started` per key. New in 0.25.0.
+    pub orientation: Orientation,
     pub message: M,
     pub ts: Timestamp,
+}
+
+impl<M, K> SlotMessage<M, K> {
+    /// Build a message (for tests and custom slot pipelines).
+    pub fn new(
+        key: K,
+        side: FlowSide,
+        orientation: Orientation,
+        message: M,
+        ts: Timestamp,
+    ) -> Self {
+        Self {
+            key,
+            side,
+            orientation,
+            message,
+            ts,
+        }
+    }
 }
 
 /// Typed drain handle returned by the builder for each
@@ -250,12 +276,14 @@ mod tests {
         queue.push(SlotMessage {
             key: 1,
             side: FlowSide::Initiator,
+            orientation: Orientation::Forward,
             message: 100,
             ts: Timestamp::default(),
         });
         queue.push(SlotMessage {
             key: 2,
             side: FlowSide::Responder,
+            orientation: Orientation::Forward,
             message: 200,
             ts: Timestamp::default(),
         });
@@ -285,6 +313,7 @@ mod tests {
         queue.push(SlotMessage {
             key: 1,
             side: FlowSide::Initiator,
+            orientation: Orientation::Forward,
             message: "x",
             ts: Timestamp::default(),
         });
@@ -305,6 +334,7 @@ mod tests {
             queue.push(SlotMessage {
                 key: 1,
                 side: FlowSide::Initiator,
+                orientation: Orientation::Forward,
                 message: i,
                 ts: Timestamp::default(),
             });

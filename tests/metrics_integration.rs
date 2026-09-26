@@ -70,11 +70,9 @@ fn metrics_capture_basic_flow_lifecycle_and_anomalies() {
     let mut d =
         FlowDriver::<_, _>::new(FiveTuple::bidirectional(), factory).with_emit_anomalies(true);
 
-    // 3WHS + 200B initiator data. The data segment poisons the
-    // 64-byte cap; the driver synthesises an Ended{BufferOverflow}
-    // and forgets the flow. We deliberately stop here — sending more
-    // packets would create a fresh flow under the same 5-tuple,
-    // which is correct DropFlow semantics but irrelevant to this test.
+    // 3WHS + 200B initiator data. The data segment overflows the
+    // 64-byte cap: reassembly of that side stops (anomaly), the flow
+    // stays tracked until `finish()` idles it out.
     let mac = [0u8; 6];
     let ip_a = [10, 0, 0, 1];
     let ip_b = [10, 0, 0, 2];
@@ -88,6 +86,7 @@ fn metrics_capture_basic_flow_lifecycle_and_anomalies() {
     for f in &frames {
         d.track(PacketView::new(f, Timestamp::default()));
     }
+    d.finish();
 
     // Separate flow that retransmits an initiator data segment, then
     // RST. Drives the retransmit anomaly + counter, and the
@@ -125,8 +124,13 @@ fn metrics_capture_basic_flow_lifecycle_and_anomalies() {
             METRIC_FLOWS_ENDED,
             Some(("reason", "buffer_overflow"))
         ),
+        0,
+        "an overflow stops reassembly; it never ends the flow"
+    );
+    assert_eq!(
+        counter_value(&rows, METRIC_FLOWS_ENDED, Some(("reason", "idle"))),
         1,
-        "expected 1 ended with reason=buffer_overflow"
+        "the overflowed flow ends on its own terms"
     );
     let init_bytes = counter_value(&rows, METRIC_BYTES, Some(("side", "initiator")));
     assert!(init_bytes >= 200, "initiator bytes = {}", init_bytes);

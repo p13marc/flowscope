@@ -15,7 +15,7 @@ use smallvec::SmallVec;
 
 use crate::Timestamp;
 use crate::event::{EndReason, EventMask, FlowEvent, FlowSide, FlowState, FlowStats};
-use crate::extractor::{Extracted, FlowExtractor, L4Proto, Orientation, TcpFlags};
+use crate::extractor::{Extracted, FlowExtractor, L4Proto, Orientation, TcpFlags, TcpInfo};
 use crate::history::{HistoryString, push_for_flags};
 use crate::tcp_state;
 use crate::view::PacketView;
@@ -24,6 +24,31 @@ use crate::view::PacketView;
 /// Most packets emit 1–2 events; pathological cases (Started +
 /// Established + Packet) emit 3.
 pub type FlowEvents<K> = SmallVec<[FlowEvent<K>; 3]>;
+
+/// Per-packet context handed to [`FlowTracker::track_with`]'s
+/// callback. Borrowed from the packet being tracked.
+#[derive(Debug, Clone, Copy)]
+#[non_exhaustive]
+pub struct PacketContext<'a, K> {
+    /// The flow this packet belongs to.
+    pub key: &'a K,
+    /// Logical side of the flow that sent this packet.
+    pub side: FlowSide,
+    /// Canonical (address-sorted) direction of this packet.
+    pub orientation: Orientation,
+    /// L4 protocol, when the extractor identified one.
+    pub l4: Option<L4Proto>,
+    /// Parsed TCP header, for TCP packets.
+    pub tcp: Option<&'a TcpInfo>,
+    /// TCP payload bytes; empty for non-TCP or payload-less packets.
+    pub tcp_payload: &'a [u8],
+    /// Packet timestamp (after any driver-side clamping).
+    pub ts: Timestamp,
+    /// Frame length in bytes.
+    pub len: usize,
+    /// `true` when this packet created the flow.
+    pub is_new: bool,
+}
 
 /// Snapshot of one live flow returned by [`FlowTracker::iter_active`].
 ///
@@ -96,10 +121,11 @@ pub struct FlowTrackerConfig {
     /// Sweep interval used by async adapters (the sync API doesn't
     /// auto-sweep — call [`FlowTracker::sweep`] yourself).
     pub sweep_interval: Duration,
-    /// Hint to the default [`crate::BufferedReassemblerFactory`] when
-    /// it's used via [`crate::FlowDriver`]. The tracker itself owns
-    /// no reassemblers; custom `ReassemblerFactory` impls must read
-    /// this and honour it themselves.
+    /// Per-side cap on bytes buffered in order but not yet drained.
+    /// The tracker itself owns no reassemblers: drivers hand this to
+    /// their factory through
+    /// [`crate::ReassemblerFactory::apply_config`] (the built-in
+    /// factories honour it; custom factories may).
     ///
     /// Default `Some(1 MiB)` per side. `None` means unbounded, which
     /// is only safe when you control the traffic: a single flow whose
@@ -162,6 +188,22 @@ pub struct FlowTrackerConfig {
     ///
     /// Issue #17 (0.18 close).
     pub tcp_overlap_policy: crate::event::TcpOverlapPolicy,
+    /// Per-side cap on bytes held out of order while waiting for a
+    /// hole to fill, used by the default session-engine reassembler
+    /// ([`crate::SegmentBufferReassembler`]). When the cap is hit the
+    /// oldest hole is skipped and reported as a gap — data is never
+    /// discarded to make room. `0` disables out-of-order buffering
+    /// (every hole is skipped immediately).
+    ///
+    /// Default 256 KiB. New in 0.25.0.
+    pub reassembly_ooo_buffer: usize,
+    /// How long an out-of-order segment may wait (in packet time)
+    /// for the hole in front of it to fill before the hole is
+    /// skipped and reported as a gap. Checked on every segment of
+    /// the side and on every sweep.
+    ///
+    /// Default 1 s. New in 0.25.0.
+    pub reassembly_ooo_deadline: Duration,
     /// Tracker-wide reassembly memcap — total bytes of
     /// reassembly buffering across every live flow. When the
     /// running sum trips this cap on a `track` call, the
@@ -257,6 +299,8 @@ impl Default for FlowTrackerConfig {
             flow_tick_interval: None,
             auto_sweep_interval: None,
             tcp_overlap_policy: crate::event::TcpOverlapPolicy::First,
+            reassembly_ooo_buffer: 256 * 1024,
+            reassembly_ooo_deadline: Duration::from_secs(1),
             reassembly_memcap: None,
             reassembly_memcap_policy: crate::event::MemcapPolicy::Ignore,
             active_idle_threshold: Some(Duration::from_secs(1)),
@@ -463,7 +507,8 @@ impl<E: FlowExtractor, S: Send + 'static> FlowTracker<E, S> {
     /// events are returned. Lets sync reassemblers (or any per-segment
     /// dispatch) run inline without a second extract pass.
     ///
-    /// `payload_cb` is called at most once per packet (TCP only).
+    /// `payload_cb` is called at most once per packet (TCP only). See
+    /// [`Self::track_with`] for a hook that fires for every packet.
     pub fn track_with_payload<'v, F>(
         &mut self,
         view: impl Into<PacketView<'v>>,
@@ -471,6 +516,33 @@ impl<E: FlowExtractor, S: Send + 'static> FlowTracker<E, S> {
     ) -> FlowEvents<E::Key>
     where
         F: FnMut(&E::Key, FlowSide, u32, &[u8]),
+    {
+        self.track_with(view, |p| {
+            if let Some(tcp) = p.tcp
+                && !p.tcp_payload.is_empty()
+            {
+                payload_cb(p.key, p.side, tcp.seq, p.tcp_payload);
+            }
+        })
+    }
+
+    /// Process a packet, calling `cb` exactly once for every packet
+    /// that maps to a flow, with the packet's [`PacketContext`]
+    /// (flow key, side, orientation, L4, TCP header, TCP payload).
+    ///
+    /// The callback runs after the flow entry is created or looked up
+    /// and before the flow's counters and TCP state are updated, and
+    /// it fires regardless of which events the tracker is configured
+    /// to emit — which is what makes it the right hook for
+    /// per-packet dispatch: `FlowEvent::Packet` can be shed by
+    /// [`FlowTrackerConfig::suppress_events`], this cannot.
+    pub fn track_with<'v, F>(
+        &mut self,
+        view: impl Into<PacketView<'v>>,
+        mut cb: F,
+    ) -> FlowEvents<E::Key>
+    where
+        F: FnMut(&PacketContext<'_, E::Key>),
     {
         let view: PacketView<'v> = view.into();
         let mut events: FlowEvents<E::Key> = SmallVec::new();
@@ -631,20 +703,28 @@ impl<E: FlowExtractor, S: Send + 'static> FlowTracker<E, S> {
             }
         }
 
-        // ── reassembler dispatch hook ────────────────────────────
-        // Called inline before any events are queued. The callback
-        // sees the same `key` and the current `side`, plus the TCP
-        // sequence number and payload slice. Non-TCP / no-payload
-        // packets skip the call.
-        if let Some(tcp_info) = &tcp
-            && tcp_info.payload_len > 0
-        {
-            let start = tcp_info.payload_offset;
-            let end = start + tcp_info.payload_len;
-            if end <= view.frame.len() {
-                payload_cb(&key, side, tcp_info.seq, &view.frame[start..end]);
+        // ── per-packet hook ──────────────────────────────────────
+        // Called inline before any events are queued, for every
+        // packet that maps to a flow (reassemblers, parser dispatch).
+        let tcp_payload: &[u8] = match &tcp {
+            Some(t) if t.payload_len > 0 => {
+                let start = t.payload_offset;
+                let end = start + t.payload_len;
+                view.frame.get(start..end).unwrap_or(&[])
             }
-        }
+            _ => &[],
+        };
+        cb(&PacketContext {
+            key: &key,
+            side,
+            orientation,
+            l4,
+            tcp: tcp.as_ref(),
+            tcp_payload,
+            ts,
+            len,
+            is_new,
+        });
 
         // ── update stats ─────────────────────────────────────────
         // Per-direction IAT observation must run BEFORE the

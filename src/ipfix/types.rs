@@ -154,7 +154,7 @@ impl From<crate::EndReason> for FlowEndReason {
             E::Fin | E::Rst => FlowEndReason::EndOfFlowDetected,
             E::IdleTimeout => FlowEndReason::IdleTimeout,
             E::Evicted => FlowEndReason::LackOfResources,
-            E::BufferOverflow | E::ParseError | E::ParserDone | E::ForceClosed => {
+            E::BufferOverflow | E::ParseError | E::ParserDone | E::ForceClosed | E::StreamGap => {
                 FlowEndReason::ForcedEnd
             }
         }

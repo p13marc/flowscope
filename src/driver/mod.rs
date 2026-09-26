@@ -19,9 +19,11 @@
 //!
 //! ## Architecture
 //!
-//! - [`Driver<E>`] owns a central [`crate::FlowTracker`] for flow
-//!   lifecycle + per-parser slots that own their inner
-//!   session/datagram drivers.
+//! - [`Driver<E>`] owns **one** flow table and one reassembler per
+//!   flow side (the engine shared with
+//!   [`crate::session::SessionDriver`]); registered parsers are slots
+//!   fed from it, so every parser sees the flows, timeouts, dedup and
+//!   bytes the lifecycle events describe.
 //! - Each `.session_*` / `.datagram_*` builder call returns a
 //!   typed [`SlotHandle<M, K>`]; the slot's typed messages flow
 //!   into the handle's internal buffer via a shared
@@ -51,9 +53,8 @@ mod broadcast;
 mod slot;
 mod typed;
 mod typed_slot;
-mod typed_slot_heuristic;
 
+pub use crate::session::core::{DEFAULT_PROBE_PACKETS, PROBE_BUFFER_CAP};
 pub use broadcast::BroadcastSlotHandle;
 pub use slot::{SlotDrain, SlotHandle, SlotMessage};
 pub use typed::{Driver, DriverBuilder, Event};
-pub use typed_slot_heuristic::{DEFAULT_PROBE_PACKETS, PROBE_BUFFER_CAP};

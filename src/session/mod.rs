@@ -33,6 +33,33 @@
 //! | Cross-direction state         | painful                 | natural                      |
 //! | UDP support                   | no                      | use [`DatagramParser`]       |
 //!
+//! # Running parsers
+//!
+//! - [`SessionDriver`] / [`DatagramDriver`] — one parser type over a
+//!   whole capture, yielding an ordered stream of [`SessionEvent`]s
+//!   (lifecycle, messages, parser closes, anomalies). What
+//!   `netring`'s `SessionStream` / `DatagramStream` wrap.
+//! - [`crate::driver::Driver`] — several parsers (by port, by
+//!   signature, or on every flow) sharing one flow table, with typed
+//!   per-parser drain handles.
+//!
+//! Both are built on the same engine, so they behave identically:
+//! one flow table, one reassembler per flow side (shared by every
+//! parser), and these per-parser rules:
+//!
+//! - A parser that reports [`SessionParser::is_poisoned`] or
+//!   [`SessionParser::is_done`] after a call is **closed** (a parser
+//!   close event with [`EndReason::ParseError`] /
+//!   [`EndReason::ParserDone`], plus an
+//!   [`AnomalyKind::SessionParseError`] for poison when anomalies are
+//!   on). It is never fed again for that flow — and never re-created:
+//!   the flow itself stays tracked until its transport end.
+//! - Missing bytes are reported through [`SessionParser::on_gap`];
+//!   the default answer closes the parser with
+//!   [`EndReason::StreamGap`].
+//! - A reassembly stop (per-side cap, memcap) closes the parser with
+//!   [`EndReason::BufferOverflow`].
+//!
 //! # Example
 //!
 //! ```
@@ -67,9 +94,20 @@
 
 use crate::{
     event::{AnomalyKind, EndReason, FlowSide, FlowStats},
+    extractor::{L4Proto, Orientation},
     parser_kind::ParserKind,
     timestamp::Timestamp,
 };
+
+#[cfg(all(feature = "extractors", feature = "reassembler"))]
+pub(crate) mod core;
+#[cfg(all(feature = "extractors", feature = "reassembler"))]
+mod driver;
+#[cfg(all(feature = "extractors", feature = "reassembler"))]
+pub(crate) mod engine;
+
+#[cfg(all(feature = "extractors", feature = "reassembler"))]
+pub use driver::{DatagramDriver, SessionDriver};
 
 /// Default per-side buffer cap for [`BufferedFrameDrain`] /
 /// [`AccumulatingSessionParser`]. 64 KiB matches the TCP
@@ -539,10 +577,36 @@ pub trait SessionParser: Send + 'static {
     /// [`FlowSide::Initiator`]. Default: no-op.
     fn on_tick(&mut self, _now: Timestamp, _out: &mut Vec<Self::Message>) {}
 
+    /// Bytes are missing from `side`'s stream: `missing` bytes the
+    /// reassembler never saw (capture loss, asymmetric routing, an
+    /// out-of-order hole that expired, or bytes dropped by the
+    /// sliding-window buffer cap). The next `feed_*` call for that
+    /// side resumes **after** the hole.
+    ///
+    /// Return [`GapResponse::Continue`] if the parser can cope (it
+    /// resynchronises on message boundaries, or only counts bytes);
+    /// the default returns [`GapResponse::Stop`], which closes the
+    /// parser for this flow with [`EndReason::StreamGap`] — a framed
+    /// parser fed a spliced stream would otherwise mis-parse
+    /// silently. This mirrors Suricata, where app-layer parsers that
+    /// don't declare gap support are disabled on a gap.
+    ///
+    /// Messages pushed into `out` are emitted before the close.
+    fn on_gap(
+        &mut self,
+        _side: FlowSide,
+        _missing: u64,
+        _ts: Timestamp,
+        _out: &mut Vec<Self::Message>,
+    ) -> GapResponse {
+        GapResponse::Stop
+    }
+
     /// True after the parser has hit an unrecoverable error and
-    /// can no longer make progress. The driver checks this after
-    /// every `feed_*` / `fin_*` call and tears the flow down on
-    /// `true`. Default: `false` (parser never poisons).
+    /// can no longer make progress. The engines check this after
+    /// every `feed_*` / `on_gap` / `on_tick` call and close the parser
+    /// on `true` — it is not fed again for that flow, and the flow
+    /// itself stays tracked. Default: `false` (parser never poisons).
     ///
     /// Parsers that want to drop a malformed message and keep
     /// going should NOT use this — just don't push the message
@@ -569,12 +633,12 @@ pub trait SessionParser: Send + 'static {
     /// Symmetric "I'm done — close this flow cleanly" signal.
     /// Default: `false` (parser never self-terminates).
     ///
-    /// Returning `true` tells the driver this parser has no more
-    /// useful work to extract — the flow can close ahead of FIN
-    /// / idle-timeout. The driver responds by closing the flow with
-    /// [`crate::EndReason::ParserDone`] on the next check, after
-    /// flushing any pending messages from the same `feed_*` /
-    /// `on_tick` call.
+    /// Returning `true` tells the engine this parser has no more
+    /// useful work to extract. The engine closes the parser with
+    /// [`crate::EndReason::ParserDone`] right after emitting the
+    /// messages of the same `feed_*` / `on_tick` call and stops
+    /// feeding it; the flow itself stays tracked until its transport
+    /// end.
     ///
     /// Reserve for protocols with intrinsic completion semantics:
     /// HTTP/1.0 `Connection: close` after body fully received;
@@ -698,17 +762,26 @@ where
     }
 }
 
-/// Crate-internal output of the session/datagram parser-dispatch
-/// engines. `K` is the flow key, `M` is the parser's message type.
+/// Answer to [`SessionParser::on_gap`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
+pub enum GapResponse {
+    /// Keep feeding this parser; bytes after the gap follow.
+    Continue,
+    /// Close the parser for this flow ([`EndReason::StreamGap`]).
+    #[default]
+    Stop,
+}
+
+/// Output of [`SessionDriver`] / [`DatagramDriver`]: flow lifecycle,
+/// parser messages, parser closes and anomalies, in the order they
+/// happened. `K` is the flow key, `M` the parser's message type.
 ///
-/// This was the public output of `FlowSessionDriver` /
-/// `FlowDatagramDriver` through 0.19. With those drivers removed
-/// (#99) and the typed [`crate::driver::Driver`] (`Event<K>` +
-/// `SlotHandle` messages) as the supported surface, `SessionEvent`
-/// was demoted to a private engine type in 0.20 (#100) — the
-/// two-enum end state keeps only `FlowEvent<K>` and `Event<K>`
-/// public. It survives as the currency between the engines and the
-/// typed slots / offline pcap helpers.
+/// For one flow the order is: `Started`, then any number of
+/// `Application` / `FlowAnomaly` / `Tick`, possibly one
+/// `ParserClosed` (the parser gave up or finished early — the flow
+/// goes on), then `Closed`. Messages a parser flushes at flow end
+/// (`fin_*`) come before `Closed`.
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(tag = "type", rename_all = "snake_case"))]
@@ -720,60 +793,69 @@ where
     ))
 )]
 #[non_exhaustive]
-// Internal carrier between the parser-dispatch engines and their
-// sinks. Different sinks read different subsets — the typed-driver
-// slots suppress `Started`/anomaly/tick events and ignore
-// `parser_kind` / `l4`, while the pcap-iter / serde sinks read more.
-// The fields are meaningful engine state, not dead, so allow the
-// per-field dead-code lint that fires in non-serde feature combos.
-#[allow(dead_code)]
-pub(crate) enum SessionEvent<K, M> {
-    /// First packet of a new session.
-    Started { key: K, ts: Timestamp },
-    /// Parser emitted a complete L7 message.
+pub enum SessionEvent<K, M> {
+    /// First packet of a new flow.
+    Started {
+        key: K,
+        /// Logical role of the side that sent the first packet
+        /// (arrival-order relative; see `orientation` for the
+        /// race-stable axis).
+        side: FlowSide,
+        /// Canonical, address-sorted direction of the first packet.
+        orientation: Orientation,
+        ts: Timestamp,
+        l4: Option<L4Proto>,
+    },
+    /// The parser emitted a message.
     Application {
         key: K,
+        /// Side whose bytes produced the message (`on_tick` output is
+        /// attributed to the initiator).
         side: FlowSide,
+        /// Canonical direction matching `side`.
+        orientation: Orientation,
         message: M,
+        /// Timestamp of the packet (or sweep) that produced it.
         ts: Timestamp,
-        /// Identifier of the parser that produced this message —
-        /// the value returned by [`SessionParser::parser_kind`] (or
-        /// [`DatagramParser::parser_kind`] for UDP). New in 0.5.0;
-        /// lifted to [`ParserKind`] in 0.20 (#109).
-        /// [`ParserKind::Unspecified`] when the parser doesn't
-        /// override the default.
+        /// [`SessionParser::parser_kind`] of the producing parser.
         parser_kind: ParserKind,
     },
-    /// Session ended (FIN/RST/idle/eviction). Any messages the
-    /// parser flushed on close arrive as `Application` events
-    /// before the corresponding `Closed`.
+    /// The parser was closed before its flow ended — poisoned
+    /// ([`EndReason::ParseError`]), done ([`EndReason::ParserDone`]),
+    /// stopped at a gap ([`EndReason::StreamGap`]) or cut off by a
+    /// reassembly limit ([`EndReason::BufferOverflow`]). The flow
+    /// stays tracked and ends later with `Closed`; the parser is not
+    /// fed again for it.
+    ParserClosed {
+        key: K,
+        parser_kind: ParserKind,
+        reason: EndReason,
+        /// Human-readable detail: the parser's `poison_reason()`
+        /// (truncated to 256 bytes), the gap size, or the stop reason.
+        detail: Option<String>,
+        ts: Timestamp,
+    },
+    /// The flow ended (transport reason: FIN / RST / idle / eviction /
+    /// force-close). `stats` includes the reassembly diagnostics.
     Closed {
         key: K,
         reason: EndReason,
         stats: FlowStats,
-        /// L4 protocol of the flow this session was tracked over.
-        /// New in 0.7.0; mirrors [`crate::FlowEvent::Ended::l4`].
-        l4: Option<crate::extractor::L4Proto>,
+        l4: Option<L4Proto>,
+        ts: Timestamp,
     },
-    /// Live, in-flight per-flow anomaly forwarded from
-    /// [`crate::FlowEvent::FlowAnomaly`]. Emitted only when the
-    /// owning driver has `with_emit_anomalies(true)` set.
+    /// Per-flow anomaly (reassembly, parser poison). Only when the
+    /// driver was built with anomalies enabled.
     FlowAnomaly {
         key: K,
         kind: AnomalyKind,
         ts: Timestamp,
     },
-
-    /// Live, in-flight tracker-global anomaly forwarded from
-    /// [`crate::FlowEvent::TrackerAnomaly`] (e.g.
-    /// [`AnomalyKind::FlowTableEvictionPressure`]). Opt-in like
-    /// [`Self::FlowAnomaly`].
+    /// Tracker-global anomaly (eviction pressure, memcap). Only when
+    /// anomalies are enabled.
     TrackerAnomaly { kind: AnomalyKind, ts: Timestamp },
-
-    /// Periodic [`FlowStats`] snapshot forwarded from
-    /// [`crate::FlowEvent::Tick`]. Emitted when the underlying
-    /// [`crate::FlowTrackerConfig::flow_tick_interval`] is `Some`.
-    /// New in 0.5.0.
+    /// Periodic stats snapshot, when
+    /// [`crate::FlowTrackerConfig::flow_tick_interval`] is set.
     Tick {
         key: K,
         stats: FlowStats,
@@ -782,18 +864,67 @@ pub(crate) enum SessionEvent<K, M> {
 }
 
 impl<K, M> SessionEvent<K, M> {
-    /// Borrow the anomaly kind if this event is an anomaly (either
-    /// per-flow or tracker-global). Returns `None` for the
-    /// non-anomaly variants. Used by the engines' unit tests; the
-    /// production anomaly path goes through `FlowEvent` / `Event`.
-    #[cfg(test)]
-    pub(crate) fn anomaly_kind(&self) -> Option<&AnomalyKind> {
+    /// The flow key, when the variant has one.
+    pub fn key(&self) -> Option<&K> {
+        match self {
+            SessionEvent::Started { key, .. }
+            | SessionEvent::Application { key, .. }
+            | SessionEvent::ParserClosed { key, .. }
+            | SessionEvent::Closed { key, .. }
+            | SessionEvent::FlowAnomaly { key, .. }
+            | SessionEvent::Tick { key, .. } => Some(key),
+            SessionEvent::TrackerAnomaly { .. } => None,
+        }
+    }
+
+    /// The event's timestamp.
+    pub fn timestamp(&self) -> Timestamp {
+        match self {
+            SessionEvent::Started { ts, .. }
+            | SessionEvent::Application { ts, .. }
+            | SessionEvent::ParserClosed { ts, .. }
+            | SessionEvent::Closed { ts, .. }
+            | SessionEvent::FlowAnomaly { ts, .. }
+            | SessionEvent::TrackerAnomaly { ts, .. }
+            | SessionEvent::Tick { ts, .. } => *ts,
+        }
+    }
+
+    /// The anomaly kind, for the two anomaly variants.
+    pub fn anomaly_kind(&self) -> Option<&AnomalyKind> {
         match self {
             SessionEvent::FlowAnomaly { kind, .. } | SessionEvent::TrackerAnomaly { kind, .. } => {
                 Some(kind)
             }
             _ => None,
         }
+    }
+}
+
+/// A [`SessionParserFactory`] / [`DatagramParserFactory`] that clones
+/// a template parser for every flow. The blanket factory impls need
+/// `Default + Clone`; this one only needs `Clone`, for parsers built
+/// from configuration.
+#[derive(Debug, Clone)]
+pub struct TemplateFactory<P>(pub P);
+
+impl<K, P> SessionParserFactory<K> for TemplateFactory<P>
+where
+    P: SessionParser + Clone,
+{
+    type Parser = P;
+    fn new_parser(&mut self, _key: &K) -> P {
+        self.0.clone()
+    }
+}
+
+impl<K, P> DatagramParserFactory<K> for TemplateFactory<P>
+where
+    P: DatagramParser + Clone,
+{
+    type Parser = P;
+    fn new_parser(&mut self, _key: &K) -> P {
+        self.0.clone()
     }
 }
 

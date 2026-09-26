@@ -1,6 +1,8 @@
-//! pcap file source for offline replay.
+//! Capture-file source for offline replay — classic pcap and pcapng.
 //!
-//! Wraps [`pcap-file`](https://crates.io/crates/pcap-file). Removes
+//! Wraps [`pcap-file`](https://crates.io/crates/pcap-file);
+//! [`CaptureReader`] detects the format from the magic number and
+//! applies pcapng per-interface timestamp resolution. Removes
 //! the boilerplate every program needs to feed a pcap into a
 //! [`FlowTracker`](crate::FlowTracker).
 //!
@@ -35,7 +37,12 @@ mod summaries;
 pub use messages::{datagram_messages, session_messages};
 #[cfg(all(feature = "session", feature = "reassembler"))]
 pub use pulses::{Pulse, datagram_pulses, session_pulses};
-pub use source::{EventIter, OwnedPacketView, PcapFlowSource, ViewIter};
+pub use source::{
+    CaptureFormat, CaptureReader, CapturedPacket, EventIter, OwnedPacketView, PcapFlowSource,
+    ViewIter,
+};
+#[cfg(all(feature = "session", feature = "reassembler"))]
+pub use source::{DatagramIter, SessionIter};
 #[cfg(feature = "tracker")]
 #[allow(deprecated)]
 pub use summaries::{FlowSummary, flow_summaries, flow_summaries_from_pcap};

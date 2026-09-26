@@ -78,6 +78,9 @@ pub const METRIC_REASSEMBLER_HIGH_WATERMARK: &str = "flowscope_reassembler_high_
 /// `flowscope_retransmits_total{side=...}` — cumulative TCP segment
 /// retransmits classified by the per-side reassembler.
 pub const METRIC_RETRANSMITS: &str = "flowscope_retransmits_total";
+/// Counter: bytes the reassembler never saw and skipped as gaps
+/// (Zeek's `missed_bytes`), labelled by `side`. New in 0.25.0.
+pub const METRIC_REASSEMBLY_GAP_BYTES: &str = "flowscope_reassembly_gap_bytes_total";
 /// `flowscope_flow_ticks_total` — total [`crate::FlowEvent::Tick`]
 /// events emitted across all flows. Fires once per tick per live
 /// flow when [`crate::FlowTrackerConfig::flow_tick_interval`] is
@@ -117,6 +120,7 @@ pub(crate) fn reason_label(reason: EndReason) -> &'static str {
         EndReason::ParseError => "parse_error",
         EndReason::ParserDone => "parser_done",
         EndReason::ForceClosed => "force_closed",
+        EndReason::StreamGap => "stream_gap",
     }
 }
 
@@ -130,6 +134,7 @@ pub(crate) fn anomaly_label(kind: &AnomalyKind) -> &'static str {
         AnomalyKind::ReassemblerHighWatermark { .. } => "reassembler_high_watermark",
         AnomalyKind::TcpRexmitInconsistency { .. } => "tcp_rexmit_inconsistency",
         AnomalyKind::GlobalMemcapHit { .. } => "global_memcap_hit",
+        AnomalyKind::StreamGap { .. } => "stream_gap",
     }
 }
 
@@ -196,6 +201,14 @@ pub(crate) fn record_reassembly_diagnostics(stats: &FlowStats) {
     if stats.retransmits_responder > 0 {
         metrics::counter!(METRIC_RETRANSMITS, "side" => "responder")
             .increment(stats.retransmits_responder);
+    }
+    if stats.reassembly_gap_bytes_initiator > 0 {
+        metrics::counter!(METRIC_REASSEMBLY_GAP_BYTES, "side" => "initiator")
+            .increment(stats.reassembly_gap_bytes_initiator);
+    }
+    if stats.reassembly_gap_bytes_responder > 0 {
+        metrics::counter!(METRIC_REASSEMBLY_GAP_BYTES, "side" => "responder")
+            .increment(stats.reassembly_gap_bytes_responder);
     }
 }
 

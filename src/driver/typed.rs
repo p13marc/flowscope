@@ -33,13 +33,15 @@
 //! // http_slot.drain(&mut http_msgs);
 //! ```
 
-use std::{hash::Hash, time::Duration};
+use std::{hash::Hash, sync::Arc, time::Duration};
+
+use crossbeam_queue::SegQueue;
 
 use super::{
     BroadcastSlotHandle,
+    broadcast::BroadcastInner,
     slot::SlotHandle,
-    typed_slot::{ErasedSlot, TypedConcreteDatagramSlot, TypedConcreteSlot},
-    typed_slot_heuristic::{TypedHeuristicDatagramSlot, TypedHeuristicSessionSlot},
+    typed_slot::{DatagramSlot, ErasedSlot, SessionSlot},
 };
 use crate::{
     PacketView, Timestamp,
@@ -50,8 +52,13 @@ use crate::{
     flow_driver::FlowDriver,
     history::HistoryString,
     parser_kind::ParserKind,
-    reassembler::NoopReassemblerFactory,
-    session::{DatagramParser, SessionParser},
+    reassembler::StreamChunks,
+    segment_reassembler::SegmentBufferReassemblerFactory,
+    session::{
+        DatagramParser, SessionParser, TemplateFactory,
+        core::{Ctx, DEFAULT_PROBE_PACKETS, DatagramCore, Ports, Selector, SessionCore},
+        engine::{Dispatch, Engine},
+    },
     tracker::{FlowTracker, FlowTrackerConfig},
 };
 
@@ -181,14 +188,25 @@ pub enum Event<K> {
         ts: Timestamp,
     },
 
-    /// Parser-level close — a registered parser drained its
-    /// `fin_*` accumulator or reported `is_done` / `is_poisoned`.
-    /// Distinct from [`Self::Ended`]: this fires per
-    /// (parser, flow); the flow may still be alive.
+    /// A registered parser was closed for this flow — once per
+    /// (parser, flow), never re-opened for the same flow.
+    ///
+    /// - Early close, flow still alive: `reason` is
+    ///   [`EndReason::ParseError`] (poisoned), [`EndReason::ParserDone`],
+    ///   [`EndReason::StreamGap`] or [`EndReason::BufferOverflow`],
+    ///   and `detail` says why.
+    /// - At the flow's end: `reason` is the flow's end reason, and the
+    ///   event comes right before that flow's [`Self::Ended`].
+    ///
+    /// `#[non_exhaustive]` — match with a trailing `..`.
+    #[non_exhaustive]
     ParserClosed {
         key: K,
         parser_kind: ParserKind,
         reason: EndReason,
+        /// The parser's `poison_reason()` (≤ 256 bytes), the gap
+        /// size, or the reassembly stop reason. New in 0.25.0.
+        detail: Option<String>,
         ts: Timestamp,
     },
 
@@ -400,26 +418,106 @@ impl<K> From<FlowEvent<K>> for Event<K> {
     }
 }
 
-/// Plan 121 typed driver. Emits flow-lifecycle [`Event<K>`] only;
-/// per-parser typed messages flow through [`SlotHandle`].
+/// The slot list, as the engine's [`Dispatch`].
+struct Slots<K> {
+    list: Vec<Box<dyn ErasedSlot<K> + Send + Sync>>,
+    needs_ports: bool,
+    emit_packet_details: bool,
+}
+
+impl<K> Dispatch<K> for Slots<K>
+where
+    K: Hash + Eq + Clone,
+{
+    type Out = Vec<Event<K>>;
+
+    fn needs_ports(&self) -> bool {
+        self.needs_ports
+    }
+    fn wants_stream(&self, ports: Ports) -> bool {
+        self.list.iter().any(|s| s.wants_stream(ports))
+    }
+    fn wants_datagram(&self, ports: Ports) -> bool {
+        self.list.iter().any(|s| s.wants_datagram(ports))
+    }
+    fn on_stream(
+        &mut self,
+        cx: &Ctx<'_, K>,
+        ports: Ports,
+        chunks: &StreamChunks,
+        out: &mut Self::Out,
+    ) {
+        for slot in &mut self.list {
+            slot.on_stream(cx, ports, chunks, out);
+        }
+    }
+    fn stream_done(&self, key: &K, ports: Ports) -> bool {
+        self.list.iter().all(|s| s.stream_done(key, ports))
+    }
+    fn on_datagram(&mut self, cx: &Ctx<'_, K>, ports: Ports, payload: &[u8], out: &mut Self::Out) {
+        for slot in &mut self.list {
+            slot.on_datagram(cx, ports, payload, out);
+        }
+    }
+    fn on_flow_end(
+        &mut self,
+        key: &K,
+        reason: EndReason,
+        stats: &FlowStats,
+        finals: [&StreamChunks; 2],
+        anomalies: bool,
+        out: &mut Self::Out,
+    ) {
+        for slot in &mut self.list {
+            slot.on_flow_end(key, reason, stats, finals, anomalies, out);
+        }
+    }
+    fn on_tick(
+        &mut self,
+        now: Timestamp,
+        orientation_of: &dyn Fn(&K) -> Orientation,
+        anomalies: bool,
+        out: &mut Self::Out,
+    ) {
+        for slot in &mut self.list {
+            slot.on_tick(now, orientation_of, anomalies, out);
+        }
+    }
+    fn retain(&mut self, alive: &dyn Fn(&K) -> bool) {
+        for slot in &mut self.list {
+            slot.retain(alive);
+        }
+    }
+    fn lifecycle(&mut self, ev: FlowEvent<K>, tcp: Option<TcpInfo>, out: &mut Self::Out) {
+        let tcp = if self.emit_packet_details { tcp } else { None };
+        if let Some(ev) = map_flow_event(ev, tcp) {
+            out.push(ev);
+        }
+    }
+}
+
+/// The multi-parser driver: one flow table, one reassembler per flow
+/// side, and any number of parser slots fed from them. Emits
+/// flow-lifecycle [`Event<K>`]s; each parser's typed messages flow
+/// through the [`SlotHandle`] returned at registration.
 ///
-/// `Driver<E>` is `Send + Sync` since 0.13 — every field is
-/// structurally Send+Sync (`Arc<SegQueue<_>>` slot queues,
-/// owned `FlowDriver`, `Vec<Box<dyn ErasedSlot<_> + Send + Sync>>`
-/// slot list). Methods take `&mut self`, so the `Sync` impl is
-/// decorative — you can borrow the driver across threads, but
-/// only one caller mutates at a time. The headline use case is
-/// `tokio::spawn(driver_task)` on the default multi-thread
-/// runtime.
+/// Every slot sees exactly the flows the lifecycle reports: the
+/// builder's [`config`](DriverBuilder::config),
+/// [`idle_timeout_fn`](DriverBuilder::idle_timeout_fn),
+/// [`dedup`](DriverBuilder::dedup) and
+/// [`monotonic_timestamps`](DriverBuilder::monotonic_timestamps)
+/// apply to parsing as much as to lifecycle, in whatever order they
+/// were set.
+///
+/// `Driver<E>` is `Send + Sync`: move it into a
+/// `tokio::spawn(driver_task)` and drain the handles anywhere.
 pub struct Driver<E>
 where
     E: FlowExtractor,
     E::Key: Hash + Eq + Clone + Send + Sync + 'static,
 {
-    central: FlowDriver<E, NoopReassemblerFactory, ()>,
-    extractor: E,
-    emit_packet_details: bool,
-    slots: Vec<Box<dyn ErasedSlot<E::Key> + Send + Sync>>,
+    engine: Engine<E>,
+    slots: Slots<E::Key>,
 }
 
 impl<E> Driver<E>
@@ -441,10 +539,8 @@ where
         }
     }
 
-    /// Process one packet. Returns the merged flow-lifecycle
-    /// event stream. Typed parser messages don't appear here —
-    /// drain them via the [`SlotHandle`]s returned at build
-    /// time.
+    /// Process one packet. Returns the flow-lifecycle event stream;
+    /// typed parser messages go to the [`SlotHandle`]s.
     pub fn track<'v>(&mut self, view: impl Into<PacketView<'v>>) -> Vec<Event<E::Key>> {
         let mut out = Vec::new();
         self.track_into(view, &mut out);
@@ -452,43 +548,21 @@ where
     }
 
     /// Append-only variant of [`Self::track`]. Reuses `out`'s
-    /// capacity — zero allocation at the surface in steady
-    /// state.
+    /// capacity.
+    ///
+    /// Order within one call: lifecycle events in tracker order; a
+    /// flow's [`Event::ParserClosed`] events come before its
+    /// [`Event::Ended`].
     pub fn track_into<'v>(
         &mut self,
         view: impl Into<PacketView<'v>>,
         out: &mut Vec<Event<E::Key>>,
     ) {
-        let view: PacketView<'v> = view.into();
-        let ts = view.timestamp;
-
-        let tcp_for_packet: Option<TcpInfo> = if self.emit_packet_details {
-            self.extractor.extract(view).and_then(|e| e.tcp)
-        } else {
-            None
-        };
-
-        let mut tcp_slot = tcp_for_packet;
-        for flow_ev in self.central.track(view).into_iter() {
-            let this_tcp = if matches!(flow_ev, FlowEvent::Packet { .. }) {
-                let t = tcp_slot;
-                tcp_slot = None;
-                t
-            } else {
-                None
-            };
-            if let Some(ev) = map_flow_event(flow_ev, this_tcp) {
-                out.push(ev);
-            }
-        }
-
-        for slot in &mut self.slots {
-            slot.track_into(view, ts, out);
-        }
+        self.engine.track(view, &mut self.slots, out);
     }
 
-    /// Periodic sweep. Drives idle-timeout `Ended` events
-    /// + each slot's `on_tick`.
+    /// Periodic sweep: parsers' `on_tick`, out-of-order hole
+    /// deadlines, idle-timeout `Ended` events.
     pub fn sweep(&mut self, now: Timestamp) -> Vec<Event<E::Key>> {
         let mut out = Vec::new();
         self.sweep_into(now, &mut out);
@@ -497,14 +571,7 @@ where
 
     /// Append-only sweep.
     pub fn sweep_into(&mut self, now: Timestamp, out: &mut Vec<Event<E::Key>>) {
-        for flow_ev in self.central.sweep(now) {
-            if let Some(ev) = map_flow_event(flow_ev, None) {
-                out.push(ev);
-            }
-        }
-        for slot in &mut self.slots {
-            slot.sweep_into(now, out);
-        }
+        self.engine.sweep(now, &mut self.slots, out);
     }
 
     /// End-of-input flush.
@@ -516,14 +583,7 @@ where
 
     /// Append-only finish.
     pub fn finish_into(&mut self, out: &mut Vec<Event<E::Key>>) {
-        for flow_ev in self.central.finish() {
-            if let Some(ev) = map_flow_event(flow_ev, None) {
-                out.push(ev);
-            }
-        }
-        for slot in &mut self.slots {
-            slot.finish_into(out);
-        }
+        self.sweep_into(Timestamp::MAX, out);
     }
 
     /// One-call iterator over a pcap file — drives every packet
@@ -532,13 +592,6 @@ where
     /// the registered [`SlotHandle`](super::SlotHandle)s; drain
     /// them yourself between iterator pulls if you need them
     /// in-line.
-    ///
-    /// This is the multi-parser sibling of the per-protocol
-    /// `*_from_pcap` helpers (`flowscope::http::requests_from_pcap`,
-    /// `flowscope::dns::messages_from_pcap`, etc.) — those work
-    /// when one parser owns the whole walk; this works when you
-    /// want HTTP + TLS + DNS slots on the same `Driver` and
-    /// process the combined event stream in one pass.
     ///
     /// ```no_run
     /// # #[cfg(all(feature = "pcap", feature = "extractors", feature = "tracker"))]
@@ -568,55 +621,47 @@ where
         })
     }
 
-    /// Force-end the flow with this key. Mirror of
-    /// [`crate::FlowTracker::force_close`] /
-    /// [`crate::FlowDriver::force_close`] at the typed-driver
-    /// layer.
-    ///
-    /// Drains any reassembler-buffered bytes through each
-    /// registered slot's parser (one last `feed_*` + `fin_*`
-    /// per side); typed messages flushed by the parser land in
-    /// their slot handle, [`Event::ParserClosed`] events land
-    /// in `out`, and a final [`Event::Ended`] with reason
-    /// [`crate::EndReason::ForceClosed`] is emitted by the
-    /// central tracker.
-    ///
-    /// No-op if `key` is not currently tracked.
+    /// Force-end the flow with this key: its last bytes reach every
+    /// parser, parsers are flushed (`fin_*`) and closed
+    /// ([`Event::ParserClosed`]), then [`Event::Ended`] with
+    /// [`crate::EndReason::ForceClosed`]. No-op for an unknown key.
     pub fn force_close(&mut self, key: &E::Key, now: Timestamp) -> Vec<Event<E::Key>> {
         let mut out = Vec::new();
         self.force_close_into(key, now, &mut out);
         out
     }
 
-    /// Append-only variant of [`Self::force_close`]. Reuses
-    /// `out`'s capacity.
+    /// Append-only variant of [`Self::force_close`].
     pub fn force_close_into(&mut self, key: &E::Key, now: Timestamp, out: &mut Vec<Event<E::Key>>) {
-        // Slots first — they may drain reassembled bytes and
-        // emit `ParserClosed` ahead of the central tracker's
-        // `Ended`.
-        for slot in &mut self.slots {
-            slot.force_close_into(key, now, out);
-        }
-        for flow_ev in self.central.force_close(key, now) {
-            if let Some(ev) = map_flow_event(flow_ev, None) {
-                out.push(ev);
-            }
-        }
+        self.engine.force_close(key, now, &mut self.slots, out);
     }
 
     /// Borrow the underlying tracker for introspection.
     pub fn tracker(&self) -> &FlowTracker<E, ()> {
-        self.central.tracker()
+        self.engine.flow.tracker()
     }
 
     /// Mutable borrow of the underlying tracker.
     pub fn tracker_mut(&mut self) -> &mut FlowTracker<E, ()> {
-        self.central.tracker_mut()
+        self.engine.flow.tracker_mut()
+    }
+
+    /// Borrow the underlying flow driver (reassembly state, memcap
+    /// accounting).
+    pub fn flow_driver(&self) -> &FlowDriver<E, SegmentBufferReassemblerFactory, ()> {
+        &self.engine.flow
+    }
+
+    /// Live `(key, stats)` for every tracked flow, including the
+    /// reassembly diagnostics (gaps, retransmits, watermark, …).
+    pub fn snapshot_flow_stats(&self) -> impl Iterator<Item = (E::Key, FlowStats)> + '_ {
+        self.engine.flow.snapshot_flow_stats()
     }
 }
 
 /// Builder for [`Driver`]. Mutates in place; each
 /// session/datagram registration returns a typed [`SlotHandle`].
+/// Settings and registrations may come in any order.
 #[must_use = "a DriverBuilder does nothing until you register parsers and call `.build()`"]
 pub struct DriverBuilder<E>
 where
@@ -638,7 +683,7 @@ where
     E: FlowExtractor + Clone + Send + 'static,
     E::Key: Hash + Eq + Clone + Send + Sync + 'static,
 {
-    /// Override the central tracker's config.
+    /// Flow-table and reassembly config.
     pub fn config(&mut self, c: FlowTrackerConfig) -> &mut Self {
         self.config = c;
         self
@@ -659,28 +704,30 @@ where
 
     /// Per-packet physical capture leg on [`Event::Packet`]
     /// (issue #121). Convenience passthrough for
-    /// [`crate::FlowTrackerConfig::emit_packet_source_idx`] — off
-    /// by default; see that field's docs for the audit-tier vs
-    /// per-direction-binding (issue #120) distinction.
+    /// [`crate::FlowTrackerConfig::emit_packet_source_idx`].
     pub fn emit_packet_source_idx(&mut self, on: bool) -> &mut Self {
         self.config.emit_packet_source_idx = on;
         self
     }
 
-    /// Emit `FlowAnomaly` / `TrackerAnomaly` events inline.
+    /// Emit `FlowAnomaly` / `TrackerAnomaly` events inline —
+    /// reassembly anomalies (gaps, retransmits, overflows,
+    /// watermark, overlap inconsistencies) and parser poison
+    /// ([`AnomalyKind::SessionParseError`]) included.
     pub fn emit_anomalies(&mut self, on: bool) -> &mut Self {
         self.emit_anomalies = on;
         self
     }
 
-    /// Content-hash duplicate filtering on the central
-    /// flow-lifecycle path.
+    /// Content-hash duplicate filtering before tracking. Duplicates
+    /// reach neither the lifecycle nor any parser.
     pub fn dedup(&mut self, dedup: Dedup) -> &mut Self {
         self.dedup = Some(dedup);
         self
     }
 
-    /// Per-key idle-timeout override.
+    /// Per-key idle-timeout override. Parser state lives exactly as
+    /// long as the flow, so this also decides when parsers reset.
     pub fn idle_timeout_fn<F>(&mut self, f: F) -> &mut Self
     where
         F: Fn(&E::Key, Option<L4Proto>) -> Option<Duration> + Send + Sync + 'static,
@@ -689,38 +736,55 @@ where
         self
     }
 
-    /// Register a session parser bound to a port set. Returns a
-    /// typed drain handle for the parser's output.
+    fn add_session<P>(&mut self, parser: P, selector: Selector) -> SlotHandle<P::Message, E::Key>
+    where
+        P: SessionParser + Clone + Send + Sync + 'static,
+        P::Message: Send + Sync + 'static,
+    {
+        let parser_kind = parser.parser_kind();
+        let queue = Arc::new(SegQueue::new());
+        self.slots.push(Box::new(SessionSlot {
+            core: SessionCore::new(TemplateFactory(parser), selector),
+            sink: Arc::clone(&queue),
+        }));
+        SlotHandle {
+            inner: queue,
+            parser_kind,
+        }
+    }
+
+    fn add_datagram<D>(&mut self, parser: D, selector: Selector) -> SlotHandle<D::Message, E::Key>
+    where
+        D: DatagramParser + Clone + Send + Sync + 'static,
+        D::Message: Send + Sync + 'static,
+    {
+        let parser_kind = parser.parser_kind();
+        let queue = Arc::new(SegQueue::new());
+        self.slots.push(Box::new(DatagramSlot {
+            core: DatagramCore::new(TemplateFactory(parser), selector),
+            sink: Arc::clone(&queue),
+        }));
+        SlotHandle {
+            inner: queue,
+            parser_kind,
+        }
+    }
+
+    /// Register a session parser for flows with either port in
+    /// `ports`. Returns a typed drain handle for its messages.
     pub fn session_on_ports<P, I>(&mut self, parser: P, ports: I) -> SlotHandle<P::Message, E::Key>
     where
         P: SessionParser + Clone + Send + Sync + 'static,
         P::Message: Send + Sync + 'static,
         I: IntoIterator<Item = u16>,
     {
-        let port_set: smallvec::SmallVec<[u16; 4]> = ports.into_iter().collect();
-        let (slot, handle) = TypedConcreteSlot::new(
-            self.extractor.clone(),
-            parser,
-            self.config.clone(),
-            Some(port_set),
-            self.monotonic_timestamps,
-        );
-        self.slots.push(Box::new(slot));
-        handle
+        self.add_session(parser, Selector::Ports(ports.into_iter().collect()))
     }
 
     /// Register a session parser bound to a port set, with
     /// **broadcast** (fan-out) consumer semantics. Returns a
     /// [`BroadcastSlotHandle`] — each [`Clone`] of the handle
     /// is a separate subscriber that sees **every** message.
-    ///
-    /// Plan 150 (0.13). Compare with
-    /// [`Self::session_on_ports`] (competitive-consumer MPMC).
-    /// Use broadcast when multiple downstream consumers each
-    /// need their own copy of every message — typically a
-    /// logger + a metrics aggregator + a sink. Each subscriber's
-    /// queue grows independently; cap with
-    /// [`BroadcastSlotHandle::drain_n`].
     ///
     /// Requires `P::Message: Clone` (each push clones once per
     /// live subscriber).
@@ -735,38 +799,32 @@ where
         E::Key: Send + Sync + Clone + 'static,
         I: IntoIterator<Item = u16>,
     {
-        let port_set: smallvec::SmallVec<[u16; 4]> = ports.into_iter().collect();
-        let (slot, handle) = super::typed_slot::TypedBroadcastSlot::new(
-            self.extractor.clone(),
-            parser,
-            self.config.clone(),
-            Some(port_set),
-            self.monotonic_timestamps,
-        );
-        self.slots.push(Box::new(slot));
+        let parser_kind = parser.parser_kind();
+        let inner = BroadcastInner::new();
+        let handle = BroadcastSlotHandle::new(Arc::clone(&inner), parser_kind);
+        self.slots.push(Box::new(SessionSlot {
+            core: SessionCore::new(
+                TemplateFactory(parser),
+                Selector::Ports(ports.into_iter().collect()),
+            ),
+            sink: inner,
+        }));
         handle
     }
 
-    /// Register a session parser that observes every flow.
+    /// Register a session parser that observes every TCP flow.
     pub fn session_broadcast<P>(&mut self, parser: P) -> SlotHandle<P::Message, E::Key>
     where
         P: SessionParser + Clone + Send + Sync + 'static,
         P::Message: Send + Sync + 'static,
     {
-        let (slot, handle) = TypedConcreteSlot::new(
-            self.extractor.clone(),
-            parser,
-            self.config.clone(),
-            None,
-            self.monotonic_timestamps,
-        );
-        self.slots.push(Box::new(slot));
-        handle
+        self.add_session(parser, Selector::All)
     }
 
-    /// Register a session parser activated by a signature
-    /// probe — runs against every flow's initial bytes; pins
-    /// to the parser once the signature matches.
+    /// Register a session parser activated by a signature probe
+    /// over the first bytes of each flow's reassembled stream. Once
+    /// the signature matches, the parser receives the stream from its
+    /// first byte (the probed bytes are replayed).
     pub fn session_heuristic<P>(
         &mut self,
         parser: P,
@@ -776,15 +834,11 @@ where
         P: SessionParser + Clone + Send + Sync + 'static,
         P::Message: Send + Sync + 'static,
     {
-        self.session_heuristic_with_budget(
-            parser,
-            signature,
-            super::typed_slot_heuristic::DEFAULT_PROBE_PACKETS,
-        )
+        self.session_heuristic_with_budget(parser, signature, DEFAULT_PROBE_PACKETS)
     }
 
-    /// Register a session parser with a custom probe-packet
-    /// budget.
+    /// [`Self::session_heuristic`] with a custom budget of
+    /// data-bearing packets before the probe gives up.
     pub fn session_heuristic_with_budget<P>(
         &mut self,
         parser: P,
@@ -795,16 +849,13 @@ where
         P: SessionParser + Clone + Send + Sync + 'static,
         P::Message: Send + Sync + 'static,
     {
-        let (slot, handle) = TypedHeuristicSessionSlot::new(
-            self.extractor.clone(),
+        self.add_session(
             parser,
-            self.config.clone(),
-            signature,
-            max_probe_packets,
-            self.monotonic_timestamps,
-        );
-        self.slots.push(Box::new(slot));
-        handle
+            Selector::Signature {
+                signature,
+                max_probe_packets,
+            },
+        )
     }
 
     /// Register a datagram parser bound to a port set.
@@ -814,37 +865,19 @@ where
         D::Message: Send + Sync + 'static,
         I: IntoIterator<Item = u16>,
     {
-        let port_set: smallvec::SmallVec<[u16; 4]> = ports.into_iter().collect();
-        let (slot, handle) = TypedConcreteDatagramSlot::new(
-            self.extractor.clone(),
-            parser,
-            self.config.clone(),
-            Some(port_set),
-            self.monotonic_timestamps,
-        );
-        self.slots.push(Box::new(slot));
-        handle
+        self.add_datagram(parser, Selector::Ports(ports.into_iter().collect()))
     }
 
-    /// Register a datagram parser that observes every flow.
+    /// Register a datagram parser that observes every UDP flow.
     pub fn datagram_broadcast<D>(&mut self, parser: D) -> SlotHandle<D::Message, E::Key>
     where
         D: DatagramParser + Clone + Send + Sync + 'static,
         D::Message: Send + Sync + 'static,
     {
-        let (slot, handle) = TypedConcreteDatagramSlot::new(
-            self.extractor.clone(),
-            parser,
-            self.config.clone(),
-            None,
-            self.monotonic_timestamps,
-        );
-        self.slots.push(Box::new(slot));
-        handle
+        self.add_datagram(parser, Selector::All)
     }
 
-    /// Register a datagram parser activated by a signature
-    /// probe.
+    /// Register a datagram parser activated by a signature probe.
     pub fn datagram_heuristic<D>(
         &mut self,
         parser: D,
@@ -854,15 +887,10 @@ where
         D: DatagramParser + Clone + Send + Sync + 'static,
         D::Message: Send + Sync + 'static,
     {
-        self.datagram_heuristic_with_budget(
-            parser,
-            signature,
-            super::typed_slot_heuristic::DEFAULT_PROBE_PACKETS,
-        )
+        self.datagram_heuristic_with_budget(parser, signature, DEFAULT_PROBE_PACKETS)
     }
 
-    /// Register a datagram parser with a custom probe-packet
-    /// budget.
+    /// [`Self::datagram_heuristic`] with a custom probe budget.
     pub fn datagram_heuristic_with_budget<D>(
         &mut self,
         parser: D,
@@ -873,37 +901,37 @@ where
         D: DatagramParser + Clone + Send + Sync + 'static,
         D::Message: Send + Sync + 'static,
     {
-        let (slot, handle) = TypedHeuristicDatagramSlot::new(
-            self.extractor.clone(),
+        self.add_datagram(
             parser,
-            self.config.clone(),
-            signature,
-            max_probe_packets,
-            self.monotonic_timestamps,
-        );
-        self.slots.push(Box::new(slot));
-        handle
+            Selector::Signature {
+                signature,
+                max_probe_packets,
+            },
+        )
     }
 
     /// Materialise the driver.
     pub fn build(self) -> Driver<E> {
-        let mut central =
-            FlowDriver::with_config(self.extractor.clone(), NoopReassemblerFactory, self.config)
-                .with_emit_anomalies(self.emit_anomalies)
-                .with_monotonic_timestamps(self.monotonic_timestamps);
-        if let Some(d) = self.dedup {
-            central = central.with_dedup(d);
-        }
+        let mut engine = Engine::new(self.extractor, self.config);
+        engine.flow.set_emit_anomalies(self.emit_anomalies);
+        engine
+            .flow
+            .set_monotonic_timestamps(self.monotonic_timestamps);
+        engine.flow.set_dedup(self.dedup);
         if let Some(f) = self.idle_timeout_fn {
-            central
+            engine
+                .flow
                 .tracker_mut()
                 .set_idle_timeout_fn(move |k, l4| f(k, l4));
         }
+        let needs_ports = self.slots.iter().any(|s| s.needs_ports());
         Driver {
-            central,
-            extractor: self.extractor,
-            emit_packet_details: self.emit_packet_details,
-            slots: self.slots,
+            engine,
+            slots: Slots {
+                list: self.slots,
+                needs_ports,
+                emit_packet_details: self.emit_packet_details,
+            },
         }
     }
 }

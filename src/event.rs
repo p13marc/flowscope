@@ -94,23 +94,22 @@ pub enum EndReason {
     IdleTimeout,
     /// Tracker hit `max_flows` and evicted the oldest flow.
     Evicted,
-    /// A reassembler with [`OverflowPolicy::DropFlow`] hit its cap;
-    /// the driver tore the flow down rather than dropping bytes.
-    /// Synthesised by [`crate::FlowDriver`] (the tracker itself never
-    /// emits this reason).
+    /// **Parser-level reason** (reported on a parser close, never on
+    /// a flow end): the byte stream feeding the parser stopped because
+    /// a reassembly limit was hit — the per-side cap under
+    /// [`OverflowPolicy::DropFlow`], or the tracker-wide memcap. The
+    /// flow itself stays tracked.
+    ///
+    /// Before 0.25 this also ended the flow (and the next packet
+    /// re-created it mid-stream).
     BufferOverflow,
-    /// A [`crate::SessionParser`] or [`crate::DatagramParser`]
-    /// returned `true` from `is_poisoned()`. Synthesised by the
-    /// session-/datagram-driver — the tracker itself never emits
-    /// this reason.
+    /// **Parser-level reason**: the parser returned `true` from
+    /// `is_poisoned()`. The parser is closed; the flow stays tracked
+    /// and ends later with its transport reason.
     ParseError,
-    /// New in 0.7.0. A [`crate::SessionParser`] or
-    /// [`crate::DatagramParser`] returned `true` from `is_done()`,
-    /// signalling clean completion ahead of FIN / idle-timeout.
-    /// Synthesised by the session-/datagram-driver — the tracker
-    /// itself never emits this reason. Distinct from
-    /// [`Self::ParseError`]: a `ParserDone` flow ended successfully;
-    /// a `ParseError` flow was torn down due to broken parser state.
+    /// **Parser-level reason**: the parser returned `true` from
+    /// `is_done()` (clean completion). The parser is closed; the flow
+    /// stays tracked and ends later with its transport reason.
     ParserDone,
     /// New in 0.8.0. External orchestration called
     /// [`crate::FlowTracker::force_close`] (or a driver-level
@@ -118,9 +117,29 @@ pub enum EndReason {
     /// limiters — anywhere the consumer needs to end a specific
     /// flow ahead of FIN / idle / eviction.
     ForceClosed,
+    /// **Parser-level reason**: bytes were missing from the stream
+    /// (capture loss, or an out-of-order hole that expired) and the
+    /// parser answered [`crate::SessionParser::on_gap`] with
+    /// [`crate::session::GapResponse::Stop`] (the default). New in
+    /// 0.25.0.
+    StreamGap,
 }
 
 impl EndReason {
+    /// `true` for the reasons after which buffered data is still
+    /// trustworthy and parsers should flush (`fin_*`): `Fin`,
+    /// `IdleTimeout`, `ForceClosed`, `ParserDone`. `false` for
+    /// aborts (`Rst`, `Evicted`) and failures. New in 0.25.0.
+    pub const fn is_graceful(&self) -> bool {
+        matches!(
+            self,
+            EndReason::Fin
+                | EndReason::IdleTimeout
+                | EndReason::ForceClosed
+                | EndReason::ParserDone
+        )
+    }
+
     /// Snake-case short label for this end reason.
     ///
     /// Matches the `flowscope_flows_ended_total{reason=…}` metric
@@ -139,6 +158,7 @@ impl EndReason {
     /// | [`Self::ParseError`] | `"parse_error"` |
     /// | [`Self::ParserDone`] | `"parser_done"` |
     /// | [`Self::ForceClosed`] | `"force_closed"` |
+    /// | [`Self::StreamGap`] | `"stream_gap"` |
     ///
     /// New in 0.10.0.
     pub fn as_str(&self) -> &'static str {
@@ -160,6 +180,7 @@ impl EndReason {
     /// | [`Self::ParseError`] | `"REJ"` | Parser rejected the stream. |
     /// | [`Self::ParserDone`] | `"SF"` | Parser drained cleanly. |
     /// | [`Self::ForceClosed`] | `"OTH"` | External force-close. |
+    /// | [`Self::StreamGap`] | `"OTH"` | Parser stopped at a gap. |
     ///
     /// Documented stable for the 0.10 cycle so downstream Zeek
     /// pipelines can rely on the mapping. Use the
@@ -173,7 +194,10 @@ impl EndReason {
             EndReason::Rst => "RSTO",
             EndReason::BufferOverflow => "S0",
             EndReason::ParseError => "REJ",
-            EndReason::IdleTimeout | EndReason::Evicted | EndReason::ForceClosed => "OTH",
+            EndReason::IdleTimeout
+            | EndReason::Evicted
+            | EndReason::ForceClosed
+            | EndReason::StreamGap => "OTH",
         }
     }
 }
@@ -193,22 +217,69 @@ impl std::fmt::Display for EndReason {
 #[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
 #[non_exhaustive]
 pub enum OverflowPolicy {
-    /// Drop oldest bytes from the front of the buffer until the new
-    /// payload fits. The flow stays alive; the parser sees a gap and
-    /// must resync. `bytes_dropped_oversize` counts bytes rotated out.
+    /// Drop the oldest undelivered bytes until the new payload fits.
+    /// The dropped bytes are reported as a gap in the reassembled
+    /// stream (so a session parser gets
+    /// [`crate::SessionParser::on_gap`]); `bytes_dropped_oversize`
+    /// counts them.
     ///
     /// Default. Best for stream-shaped / append-only protocols (HTTP
     /// body streams, plain TCP) where resync after a gap is well-defined.
     #[default]
     SlidingWindow,
-    /// Mark the reassembler as poisoned and signal end-of-flow on the
-    /// next driver tick via [`EndReason::BufferOverflow`]. Subsequent
-    /// segments are no-ops; the buffer is cleared.
+    /// Stop reassembling this side: the buffered in-order bytes are
+    /// still delivered, then the stream ends with
+    /// [`crate::ReassemblyStop::Overflow`]. The **flow keeps being
+    /// tracked** (so its later packets are not mistaken for a new
+    /// connection); a session parser reading the side is closed with
+    /// [`EndReason::BufferOverflow`].
     ///
     /// Best for framed binary protocols (DES PSMSG, TLS records,
     /// length-prefixed wire formats) where a mid-frame gap would
     /// permanently desync the parser.
     DropFlow,
+}
+
+/// Why a reassembler stopped accepting bytes for its direction.
+///
+/// A stopped reassembler never *ends a flow*: the flow stays
+/// tracked (so later packets of the same connection are still
+/// recognised as belonging to it) and keeps accruing statistics.
+/// Stopping only abandons L7 reassembly — consumers learn about it
+/// from [`crate::StreamChunks::stop`] on the next drain, from the
+/// [`AnomalyKind::BufferOverflow`] anomaly, from
+/// [`FlowStats::reassembly_stop_initiator`] /
+/// [`FlowStats::reassembly_stop_responder`], and (for session
+/// parsers) from a parser close with [`EndReason::BufferOverflow`].
+///
+/// New in 0.25.0.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
+#[non_exhaustive]
+pub enum ReassemblyStop {
+    /// The per-side buffer cap was exceeded under
+    /// [`OverflowPolicy::DropFlow`].
+    Overflow,
+    /// The driver's tracker-wide reassembly memcap reclaimed this
+    /// side ([`MemcapPolicy::DropFlow`] / [`MemcapPolicy::PassThrough`]).
+    Memcap,
+}
+
+impl ReassemblyStop {
+    /// Stable snake-case label.
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            ReassemblyStop::Overflow => "overflow",
+            ReassemblyStop::Memcap => "memcap",
+        }
+    }
+}
+
+impl std::fmt::Display for ReassemblyStop {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
 }
 
 /// TCP overlap-resolution policy — which segment's bytes win
@@ -319,15 +390,20 @@ pub enum MemcapPolicy {
     /// buffered.
     #[default]
     Ignore,
-    /// End the violating flow — emits
-    /// `Ended { reason: BufferOverflow }` in the same tick and
-    /// releases both of its reassemblers. Use when you'd rather
-    /// lose one flow than corrupt analysis on it.
+    /// Stop reassembling the violating flow — **both** sides are
+    /// released ([`ReassemblyStop::Memcap`]) — while the flow stays
+    /// tracked until its transport end (so its later packets are not
+    /// mistaken for a new connection). Session parsers on the flow are
+    /// closed with [`EndReason::BufferOverflow`]. Use when you'd
+    /// rather lose one flow's L7 than corrupt analysis on it.
+    ///
+    /// Before 0.25 this ended the flow with
+    /// `Ended { reason: BufferOverflow }` and forgot it.
     DropFlow,
     /// Refuse the segment that would push past the memcap,
     /// keeping the flow and everything already buffered. The
-    /// reassembler stays usable; the parser sees a gap and may
-    /// resync.
+    /// reassembler stays usable; the refused bytes surface as a gap
+    /// ([`crate::SessionParser::on_gap`]) once later data arrives.
     ///
     /// The decision is made *before* the segment is handed to the
     /// reassembler — [`Reassembler::segment`](crate::Reassembler::segment)
@@ -335,9 +411,11 @@ pub enum MemcapPolicy {
     /// that would have deduplicated the payload is still charged
     /// its full length.
     DropPacket,
-    /// Stop reassembling the offending side and release what it
-    /// holds, but keep the flow in the tracker. Flow accounting
-    /// continues; the parser stops seeing bytes for that side.
+    /// Stop reassembling the offending side only
+    /// ([`ReassemblyStop::Memcap`]) and release what it holds, but
+    /// keep the flow in the tracker. Flow accounting continues;
+    /// session parsers on the flow are closed with
+    /// [`EndReason::BufferOverflow`].
     ///
     /// Reclaiming the memory needs
     /// [`Reassembler::release`](crate::Reassembler::release),
@@ -374,10 +452,12 @@ pub struct FlowStats {
     pub bytes_responder: u64,
     pub started: Timestamp,
     pub last_seen: Timestamp,
-    /// Per-side reassembly diagnostics, populated by [`crate::FlowDriver`]
-    /// when the flow ends. Zero when no driver is in play (i.e. the
-    /// consumer used [`crate::FlowTracker`] directly without a
-    /// reassembler factory).
+    /// Per-side count of segments discarded because they arrived
+    /// after the hole they belonged to had been skipped (see
+    /// [`crate::Reassembler::dropped_segments`]). Populated by
+    /// [`crate::FlowDriver`] (and the engines built on it) on `Ended`,
+    /// `Tick` and live snapshots. Zero when no reassembler was
+    /// attached (e.g. [`crate::FlowTracker`] used directly).
     pub reassembly_dropped_ooo_initiator: u64,
     pub reassembly_dropped_ooo_responder: u64,
     /// See [`crate::BufferedReassembler::with_max_buffer`] /
@@ -399,6 +479,19 @@ pub struct FlowStats {
     /// [`crate::Reassembler::retransmits`].
     pub retransmits_initiator: u64,
     pub retransmits_responder: u64,
+    /// New in 0.25.0: holes the per-side reassembler skipped because
+    /// the missing bytes never arrived (capture loss, expired
+    /// out-of-order hole). See [`crate::Reassembler::gaps`].
+    pub reassembly_gaps_initiator: u64,
+    pub reassembly_gaps_responder: u64,
+    /// New in 0.25.0: bytes missing across those gaps — Zeek's
+    /// `missed_bytes`. See [`crate::Reassembler::gap_bytes`].
+    pub reassembly_gap_bytes_initiator: u64,
+    pub reassembly_gap_bytes_responder: u64,
+    /// New in 0.25.0: set when the per-side reassembler stopped (see
+    /// [`ReassemblyStop`]); the flow kept being tracked.
+    pub reassembly_stop_initiator: Option<ReassemblyStop>,
+    pub reassembly_stop_responder: Option<ReassemblyStop>,
     /// New in 0.18.0 (issue #15): per-direction last-seen
     /// timestamps. The whole-flow [`Self::last_seen`] is the
     /// max of the two. Defaults to [`Timestamp::default`]
@@ -766,10 +859,22 @@ pub enum AnomalyKind {
         bytes: u64,
         policy: OverflowPolicy,
     },
-    /// Reassembler dropped one or more out-of-order segments during
-    /// this tick. Coalesced — at most one anomaly per (flow, side)
-    /// per tick, with `count` summing the drops in that tick.
+    /// Reassembler discarded one or more segments during this tick
+    /// because they arrived after the hole they belonged to had
+    /// already been skipped (see [`Self::StreamGap`]). Coalesced — at
+    /// most one anomaly per (flow, side) per tick.
     OutOfOrderSegment { side: FlowSide, count: u64 },
+    /// New in 0.25.0. The reassembler skipped `gaps` holes totalling
+    /// `bytes` missing bytes during this tick — the bytes never
+    /// arrived (capture loss, asymmetric routing) or an out-of-order
+    /// hole waited past its deadline. Parsers are told through
+    /// [`crate::SessionParser::on_gap`]. Coalesced per (flow, side)
+    /// per tick.
+    StreamGap {
+        side: FlowSide,
+        gaps: u64,
+        bytes: u64,
+    },
     /// Tracker hit `max_flows` and evicted at least one LRU flow
     /// during this tick. The evicted flow's own
     /// `Ended { reason: Evicted }` is still emitted; this anomaly is
@@ -782,9 +887,10 @@ pub enum AnomalyKind {
         evicted_total: u64,
     },
     /// A [`crate::SessionParser`] / [`crate::DatagramParser`] just
-    /// returned `true` from `is_poisoned()`. The corresponding
-    /// `Ended { reason: ParseError }` follows in the same tick.
-    /// `reason` carries `poison_reason()` truncated to ~256 bytes.
+    /// returned `true` from `is_poisoned()`. The parser is closed
+    /// (a parser close with [`EndReason::ParseError`] follows); the
+    /// flow stays tracked. `reason` carries `poison_reason()`
+    /// truncated to ~256 bytes.
     SessionParseError {
         side: FlowSide,
         reason: Option<String>,
@@ -857,6 +963,7 @@ impl AnomalyKind {
     /// | [`Self::ReassemblerHighWatermark`] | `"reassembler_high_watermark"` |
     /// | [`Self::TcpRexmitInconsistency`] | `"tcp_rexmit_inconsistency"` |
     /// | [`Self::GlobalMemcapHit`] | `"global_memcap_hit"` |
+    /// | [`Self::StreamGap`] | `"stream_gap"` |
     pub fn short_kind(&self) -> &'static str {
         crate::obs::anomaly_label(self)
     }
@@ -879,6 +986,7 @@ impl crate::AnomalyFields for AnomalyKind {
             | AnomalyKind::OutOfOrderSegment { .. }
             | AnomalyKind::RetransmittedSegment { .. }
             | AnomalyKind::TcpRexmitInconsistency { .. }
+            | AnomalyKind::StreamGap { .. }
             | AnomalyKind::ReassemblerHighWatermark { .. } => "stream",
             AnomalyKind::SessionParseError { .. } => "applayer",
             AnomalyKind::FlowTableEvictionPressure { .. } => "stream",
@@ -946,9 +1054,10 @@ impl AnomalyKind {
     /// | [`Self::OutOfOrderSegment`] | [`Severity::Info`] | Routine on lossy / multi-path networks. |
     /// | [`Self::RetransmittedSegment`] | [`Severity::Info`] | Normal TCP behaviour at low rates. |
     /// | [`Self::ReassemblerHighWatermark`] | [`Severity::Warning`] | Cap pressure building; tune [`crate::FlowTrackerConfig::max_reassembler_buffer`]. |
-    /// | [`Self::BufferOverflow`] | [`Severity::Warning`] | Bytes dropped (sliding-window) or flow torn down (drop-flow). |
+    /// | [`Self::BufferOverflow`] | [`Severity::Warning`] | Bytes dropped (sliding-window) or reassembly stopped (drop-flow). |
+    /// | [`Self::StreamGap`] | [`Severity::Warning`] | Bytes never seen; parsers may have stopped. |
     /// | [`Self::FlowTableEvictionPressure`] | [`Severity::Warning`] | Tracker bottleneck; bump `max_flows` or shorten idle. |
-    /// | [`Self::SessionParseError`] | [`Severity::Error`] | Parser is poisoned; flow ended. |
+    /// | [`Self::SessionParseError`] | [`Severity::Error`] | Parser is poisoned and closed. |
     pub fn severity(&self) -> Severity {
         match self {
             AnomalyKind::OutOfOrderSegment { .. } | AnomalyKind::RetransmittedSegment { .. } => {
@@ -956,6 +1065,7 @@ impl AnomalyKind {
             }
             AnomalyKind::ReassemblerHighWatermark { .. }
             | AnomalyKind::BufferOverflow { .. }
+            | AnomalyKind::StreamGap { .. }
             | AnomalyKind::FlowTableEvictionPressure { .. } => Severity::Warning,
             AnomalyKind::SessionParseError { .. } => Severity::Error,
             // Overlapping bytes that disagree is an evasion IOC,

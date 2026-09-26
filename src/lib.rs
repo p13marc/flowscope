@@ -15,17 +15,19 @@
 //!   machine + idle/eviction policy. Hot-cache fast path on
 //!   monoflow workloads.
 //! - [`Reassembler`] — sync per-(flow, side) TCP byte stream hook.
-//!   Optional per-side buffer cap with [`OverflowPolicy`]
-//!   (sliding-window or drop-flow).
+//!   The built-ins report unfillable holes as gaps ([`StreamChunks`])
+//!   instead of wedging; optional per-side buffer cap with
+//!   [`OverflowPolicy`] (sliding-window or drop-flow).
 //! - [`SessionParser`] / [`DatagramParser`] — typed L7 message
 //!   parsing per flow.
 //! - [`FlowDriver`] — sync wrapper combining the tracker with a
 //!   reassembler factory; optional anomaly emission via
 //!   [`FlowDriver::with_emit_anomalies`].
-//! - [`driver::Driver`] — typed flow-lifecycle driver; register one
-//!   session/datagram slot per protocol for typed L7 messages. This
-//!   replaced the per-parser `FlowSessionDriver` / `FlowDatagramDriver`
-//!   in 0.20 (#99).
+//! - [`session::SessionDriver`] / [`session::DatagramDriver`] — one
+//!   parser type over a capture, ordered [`SessionEvent`] output.
+//! - [`driver::Driver`] — several parsers sharing one flow table;
+//!   register one session/datagram slot per protocol for typed L7
+//!   messages beside the flow-lifecycle event stream.
 //!
 //! Built-in extractors and decap combinators (`extractors` feature):
 //!
@@ -236,20 +238,10 @@ pub mod reassembler;
 pub mod segment_reassembler;
 
 #[cfg(feature = "reassembler")]
-pub use segment_reassembler::SegmentBufferReassembler;
+pub use segment_reassembler::{SegmentBufferReassembler, SegmentBufferReassemblerFactory};
 
 #[cfg(feature = "tracker")]
 pub mod dedup;
-
-// Crate-internal session/datagram engines (the public
-// `FlowSessionDriver` / `FlowDatagramDriver` were removed in 0.20,
-// #99). Retained privately because the typed `driver` slots and the
-// offline `pcap` source both need per-flow parser dispatch.
-#[cfg(all(feature = "extractors", feature = "reassembler", feature = "session"))]
-pub(crate) mod session_driver;
-
-#[cfg(all(feature = "extractors", feature = "reassembler", feature = "session"))]
-pub(crate) mod datagram_driver;
 
 #[cfg(all(feature = "extractors", feature = "reassembler", feature = "session"))]
 pub mod driver;
@@ -500,22 +492,27 @@ pub use dedup::Dedup;
 #[cfg(feature = "tracker")]
 pub use event::{
     AnomalyKind, EndReason, EventMask, FlowEvent, FlowSide, FlowState, FlowStats, MemcapPolicy,
-    OverflowPolicy, TcpOverlapPolicy,
+    OverflowPolicy, ReassemblyStop, TcpOverlapPolicy,
 };
 pub use extractor::{Extracted, FlowExtractor, L4Proto, Orientation, TcpFlags, TcpInfo};
 #[cfg(feature = "reassembler")]
-pub use flow_driver::FlowDriver;
+pub use flow_driver::{FlowDriver, PacketInfo};
 #[cfg(feature = "tracker")]
 pub use history::HistoryString;
 #[cfg(feature = "reassembler")]
 pub use reassembler::{
-    BufferedReassembler, BufferedReassemblerFactory, NoopReassembler, NoopReassemblerFactory,
-    Reassembler, ReassemblerFactory,
+    BufferedReassembler, BufferedReassemblerFactory, Chunk, Chunks, NoopReassembler,
+    NoopReassemblerFactory, Reassembler, ReassemblerFactory, StreamChunks,
 };
 #[cfg(feature = "session")]
 pub use session::{
     AccumulatingSessionParser, BufferedFrameDrain, DatagramParser, DatagramParserFactory,
-    FrameDrainError, PerDatagramParser, SessionParser, SessionParserFactory,
+    FrameDrainError, GapResponse, PerDatagramParser, SessionEvent, SessionParser,
+    SessionParserFactory, TemplateFactory,
 };
+#[cfg(all(feature = "session", feature = "extractors", feature = "reassembler"))]
+pub use session::{DatagramDriver, SessionDriver};
 #[cfg(feature = "tracker")]
-pub use tracker::{FlowEntry, FlowEvents, FlowTracker, FlowTrackerConfig, FlowTrackerStats};
+pub use tracker::{
+    FlowEntry, FlowEvents, FlowTracker, FlowTrackerConfig, FlowTrackerStats, PacketContext,
+};

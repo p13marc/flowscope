@@ -349,10 +349,22 @@ pub mod events {
 
         /// `Event::ParserClosed` with `EndReason::ParserDone`.
         pub fn parser_closed<K>(key: K, parser_kind: crate::ParserKind, ts: Timestamp) -> Event<K> {
+            parser_closed_with(key, parser_kind, EndReason::ParserDone, None, ts)
+        }
+
+        /// `Event::ParserClosed` with an explicit reason and detail.
+        pub fn parser_closed_with<K>(
+            key: K,
+            parser_kind: crate::ParserKind,
+            reason: EndReason,
+            detail: Option<String>,
+            ts: Timestamp,
+        ) -> Event<K> {
             Event::ParserClosed {
                 key,
                 parser_kind,
-                reason: EndReason::ParserDone,
+                reason,
+                detail,
                 ts,
             }
         }
