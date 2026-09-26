@@ -15,7 +15,14 @@ const S8_PEAK: u64 = 2 * 256 * 1024 + 64 * 1024;
 fn superset(s: Scenario, new: &Outcome, old: &Outcome) {
     assert!(new.lines_initiator >= old.lines_initiator, "{}: initiator lines {new:?} < {old:?}", s.name());
     assert!(new.lines_responder >= old.lines_responder, "{}: responder lines {new:?} < {old:?}", s.name());
-    assert!(new.fins >= old.fins, "{}: fin markers {new:?} < {old:?}", s.name());
+    // A side the parser stopped reading after a gap is reported
+    // (`ParserSideStopped`) instead of getting a `fin_*` — the parser
+    // is told the stream is incomplete rather than that it ended.
+    assert!(
+        new.fins + new.side_stopped >= old.fins,
+        "{}: fin markers {new:?} < {old:?}",
+        s.name()
+    );
     assert!(new.datagrams >= old.datagrams, "{}: datagrams {new:?} < {old:?}", s.name());
     assert_eq!(new.ended, old.ended, "{}: flows ended", s.name());
 }

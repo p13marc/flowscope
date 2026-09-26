@@ -68,10 +68,11 @@ pub(crate) trait Dispatch<K> {
         out: &mut Self::Out,
     );
 
-    /// After `on_stream`: `true` when no core can use this flow's
-    /// byte stream any more (every interested parser closed or
-    /// rejected it), so the engine can stop reassembling it.
-    fn stream_done(&self, key: &K, ports: Ports) -> bool;
+    /// After `on_stream`, per side (initiator, responder): `true`
+    /// when no core can use that side's byte stream any more (every
+    /// interested parser closed, stopped the side or rejected the
+    /// flow), so the engine can stop reassembling it.
+    fn streams_done(&self, key: &K, ports: Ports) -> [bool; 2];
 
     fn on_datagram(&mut self, cx: &Ctx<'_, K>, ports: Ports, payload: &[u8], out: &mut Self::Out);
 
@@ -338,8 +339,11 @@ where
                     }
                     dispatch.on_stream(&cx, ports, &Stream::Chunks(&self.scratch), out);
                 }
-                if dispatch.stream_done(&p.key, ports) {
-                    self.flow.discard_stream(&p.key);
+                match dispatch.streams_done(&p.key, ports) {
+                    [true, true] => self.flow.discard_stream(&p.key),
+                    [true, false] => self.flow.discard_side(&p.key, FlowSide::Initiator),
+                    [false, true] => self.flow.discard_side(&p.key, FlowSide::Responder),
+                    [false, false] => {}
                 }
             }
             _ if dispatch.wants_datagram(ports, p.l4) => {

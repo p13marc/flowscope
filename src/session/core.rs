@@ -184,6 +184,17 @@ pub(crate) trait Output<K, M> {
         at_flow_end: bool,
     );
 
+    /// A parser stopped reading one side; the other goes on.
+    fn parser_side_stopped(
+        &mut self,
+        key: &K,
+        parser_kind: ParserKind,
+        side: FlowSide,
+        reason: EndReason,
+        detail: Option<String>,
+        ts: Timestamp,
+    );
+
     /// Called only when the engine emits anomalies.
     fn anomaly(&mut self, key: &K, kind: AnomalyKind, ts: Timestamp);
 }
@@ -203,7 +214,8 @@ enum Close {
     Poison(Option<String>),
     Done,
     Gap(FlowSide, u64),
-    Stopped(String),
+    /// Both sides stopped (the last stop's reason).
+    BothSides(EndReason),
 }
 
 impl Close {
@@ -212,7 +224,7 @@ impl Close {
             Close::Poison(_) => EndReason::ParseError,
             Close::Done => EndReason::ParserDone,
             Close::Gap(..) => EndReason::StreamGap,
-            Close::Stopped(_) => EndReason::BufferOverflow,
+            Close::BothSides(reason) => *reason,
         }
     }
 
@@ -221,7 +233,72 @@ impl Close {
             Close::Poison(r) => r,
             Close::Done => None,
             Close::Gap(side, n) => Some(format!("{n} bytes missing on the {side} side")),
-            Close::Stopped(why) => Some(why),
+            Close::BothSides(_) => Some("both sides stopped".to_owned()),
+        }
+    }
+}
+
+/// What ended a [`feed`] early.
+enum FeedEnd {
+    /// Close the whole parser.
+    Close(Close),
+    /// Stop reading this side.
+    StopSide(EndReason, String),
+}
+
+/// A parser with its per-side stop flags.
+struct Active<P> {
+    parser: P,
+    stopped: [bool; 2],
+}
+
+fn side_idx(side: FlowSide) -> usize {
+    match side {
+        FlowSide::Initiator => 0,
+        FlowSide::Responder => 1,
+    }
+}
+
+impl<P: SessionParser> Active<P> {
+    fn new(parser: P) -> Self {
+        Self {
+            parser,
+            stopped: [false, false],
+        }
+    }
+
+    /// Feed one side. Returns `true` when the parser is closed.
+    fn feed<K, O>(
+        &mut self,
+        cx: &Ctx<'_, K>,
+        stream: &Stream<'_>,
+        scratch: &mut Vec<P::Message>,
+        out: &mut O,
+    ) -> bool
+    where
+        O: Output<K, P::Message>,
+    {
+        let si = side_idx(cx.side);
+        if self.stopped[si] {
+            return false;
+        }
+        let kind = self.parser.parser_kind();
+        match feed(&mut self.parser, cx, stream, scratch, out) {
+            None => false,
+            Some(FeedEnd::Close(close)) => {
+                emit_close(cx, kind, close, out);
+                true
+            }
+            Some(FeedEnd::StopSide(reason, detail)) => {
+                self.stopped[si] = true;
+                crate::obs::record_parser_side_stopped(kind, cx.side, reason);
+                out.parser_side_stopped(cx.key, kind, cx.side, reason, Some(detail), cx.ts);
+                if self.stopped == [true, true] {
+                    emit_close(cx, kind, Close::BothSides(reason), out);
+                    return true;
+                }
+                false
+            }
         }
     }
 }
@@ -241,7 +318,7 @@ enum SessionFlow<P> {
     /// Signature not decided yet. `replay` keeps the stream seen so
     /// far, in arrival order, for the parser once it pins.
     Probing(Box<Probe>),
-    Active(P),
+    Active(Active<P>),
     /// Closed early or rejected by the signature; ignored until the
     /// flow ends.
     Closed,
@@ -305,7 +382,7 @@ where
             let state = match self.selector {
                 Selector::Signature { .. } => SessionFlow::Probing(Box::default()),
                 Selector::All | Selector::Ports(_) => {
-                    SessionFlow::Active(self.factory.new_parser(cx.key))
+                    SessionFlow::Active(Active::new(self.factory.new_parser(cx.key)))
                 }
             };
             self.flows.insert(cx.key.clone(), state);
@@ -313,11 +390,9 @@ where
         let state = self.flows.get_mut(cx.key).expect("just inserted");
         match state {
             SessionFlow::Closed => {}
-            SessionFlow::Active(parser) => {
-                if let Some(close) = feed(parser, cx, chunks, &mut self.scratch, out) {
-                    let kind = parser.parser_kind();
+            SessionFlow::Active(active) => {
+                if active.feed(cx, chunks, &mut self.scratch, out) {
                     *state = SessionFlow::Closed;
-                    emit_close(cx, kind, close, out);
                 }
             }
             SessionFlow::Probing(probe_state) => {
@@ -364,8 +439,8 @@ where
                     || *replay_bytes > PROBE_REPLAY_BYTE_CAP;
                 if matched {
                     let replay = std::mem::take(replay);
-                    let mut parser = self.factory.new_parser(cx.key);
-                    let mut closed = None;
+                    let mut active = Active::new(self.factory.new_parser(cx.key));
+                    let mut closed = false;
                     for (side, orientation, ts, chunks) in &replay {
                         let rcx = Ctx {
                             key: cx.key,
@@ -375,25 +450,16 @@ where
                             ts: *ts,
                             anomalies: cx.anomalies,
                         };
-                        if let Some(close) = feed(
-                            &mut parser,
-                            &rcx,
-                            &Stream::Chunks(chunks),
-                            &mut self.scratch,
-                            out,
-                        ) {
-                            closed = Some(close);
+                        if active.feed(&rcx, &Stream::Chunks(chunks), &mut self.scratch, out) {
+                            closed = true;
                             break;
                         }
                     }
-                    match closed {
-                        Some(close) => {
-                            let kind = parser.parser_kind();
-                            *state = SessionFlow::Closed;
-                            emit_close(cx, kind, close, out);
-                        }
-                        None => *state = SessionFlow::Active(parser),
-                    }
+                    *state = if closed {
+                        SessionFlow::Closed
+                    } else {
+                        SessionFlow::Active(active)
+                    };
                 } else if rejected {
                     *state = SessionFlow::Closed;
                 }
@@ -401,14 +467,19 @@ where
         }
     }
 
-    /// `true` when this core will never use the flow's stream again:
-    /// its parser closed or the signature rejected it, or the flow
+    /// Per side (initiator, responder): `true` when this core will
+    /// never use that side's stream again — its parser closed or
+    /// stopped the side, the signature rejected the flow, or the flow
     /// was never admitted.
-    pub(crate) fn stream_done(&self, key: &K, ports: Ports) -> bool {
+    pub(crate) fn streams_done(&self, key: &K, ports: Ports) -> [bool; 2] {
         match self.flows.get(key) {
-            Some(SessionFlow::Closed) => true,
-            Some(_) => false,
-            None => !self.selector.admits(ports),
+            Some(SessionFlow::Closed) => [true, true],
+            Some(SessionFlow::Active(a)) => a.stopped,
+            Some(SessionFlow::Probing(_)) => [false, false],
+            None => {
+                let done = !self.selector.admits(ports);
+                [done, done]
+            }
         }
     }
 
@@ -426,11 +497,11 @@ where
     ) where
         O: Output<K, <F::Parser as SessionParser>::Message>,
     {
-        let Some(SessionFlow::Active(mut parser)) = self.flows.remove(key) else {
+        let Some(SessionFlow::Active(mut active)) = self.flows.remove(key) else {
             return;
         };
         let ts = stats.last_seen;
-        let kind = parser.parser_kind();
+        let kind = active.parser.parser_kind();
         for (side, chunks) in [FlowSide::Initiator, FlowSide::Responder]
             .into_iter()
             .zip(finals)
@@ -443,33 +514,39 @@ where
                 ts,
                 anomalies,
             };
-            if let Some(close) = feed(
-                &mut parser,
-                &cx,
-                &Stream::Chunks(chunks),
-                &mut self.scratch,
-                out,
-            ) {
-                emit_close(&cx, kind, close, out);
+            if active.feed(&cx, &Stream::Chunks(chunks), &mut self.scratch, out) {
                 return;
             }
         }
-        if reason.is_graceful() {
-            for side in [FlowSide::Initiator, FlowSide::Responder] {
+        // Each side still read ends on its own terms: `fin_*` when the
+        // flow ended gracefully or that side sent a FIN, `rst_*`
+        // otherwise. A stopped side gets neither.
+        for side in [FlowSide::Initiator, FlowSide::Responder] {
+            if active.stopped[side_idx(side)] {
+                continue;
+            }
+            let fin_seen = match side {
+                FlowSide::Initiator => stats.fin_initiator,
+                FlowSide::Responder => stats.fin_responder,
+            };
+            if reason.is_graceful() || fin_seen {
                 self.scratch.clear();
                 match side {
-                    FlowSide::Initiator => parser.fin_initiator(&mut self.scratch),
-                    FlowSide::Responder => parser.fin_responder(&mut self.scratch),
+                    FlowSide::Initiator => active.parser.fin_initiator(&mut self.scratch),
+                    FlowSide::Responder => active.parser.fin_responder(&mut self.scratch),
                 }
                 let orientation = stats.orientation_for(side);
                 for m in self.scratch.drain(..) {
                     out.message(key, side, orientation, m, ts, kind);
                 }
+            } else {
+                match side {
+                    FlowSide::Initiator => active.parser.rst_initiator(),
+                    FlowSide::Responder => active.parser.rst_responder(),
+                }
             }
-        } else {
-            parser.rst_initiator();
-            parser.rst_responder();
         }
+        crate::obs::record_parser_closed(kind, reason);
         out.parser_closed(key, kind, reason, None, ts, true);
     }
 
@@ -486,7 +563,7 @@ where
         O: Output<K, <F::Parser as SessionParser>::Message>,
     {
         for (key, state) in self.flows.iter_mut() {
-            let SessionFlow::Active(parser) = state else {
+            let SessionFlow::Active(Active { parser, .. }) = state else {
                 continue;
             };
             let kind = parser.parser_kind();
@@ -518,15 +595,15 @@ where
     }
 }
 
-/// Feed one side's chunks into `parser`. Returns why the parser must
-/// close, if it must.
+/// Feed one side's chunks into `parser`. Returns what ended the feed
+/// early, if anything: the parser must close, or stop this side.
 fn feed<K, P, O>(
     parser: &mut P,
     cx: &Ctx<'_, K>,
     chunks: &Stream<'_>,
     scratch: &mut Vec<P::Message>,
     out: &mut O,
-) -> Option<Close>
+) -> Option<FeedEnd>
 where
     P: SessionParser,
     O: Output<K, P::Message>,
@@ -548,17 +625,26 @@ where
             out.message(cx.key, cx.side, cx.orientation, m, cx.ts, kind);
         }
         if let Some(close) = check_close(parser) {
-            return Some(close);
+            return Some(FeedEnd::Close(close));
         }
-        if let Some((missing, GapResponse::Stop)) = gap {
-            return Some(Close::Gap(cx.side, missing));
+        match gap {
+            Some((missing, GapResponse::Stop)) => {
+                return Some(FeedEnd::Close(Close::Gap(cx.side, missing)));
+            }
+            Some((missing, GapResponse::StopSide)) => {
+                return Some(FeedEnd::StopSide(
+                    EndReason::StreamGap,
+                    format!("{missing} bytes missing"),
+                ));
+            }
+            _ => {}
         }
     }
     chunks.stop().map(|stop| {
-        Close::Stopped(format!(
-            "reassembly stopped on the {} side: {stop}",
-            cx.side
-        ))
+        FeedEnd::StopSide(
+            EndReason::BufferOverflow,
+            format!("reassembly stopped: {stop}"),
+        )
     })
 }
 
@@ -574,6 +660,7 @@ fn check_close<P: SessionParser>(parser: &P) -> Option<Close> {
 
 fn emit_close<K, M, O: Output<K, M>>(cx: &Ctx<'_, K>, kind: ParserKind, close: Close, out: &mut O) {
     let reason = close.reason();
+    crate::obs::record_parser_closed(kind, reason);
     if let Close::Poison(detail) = &close
         && cx.anomalies
     {
@@ -705,6 +792,7 @@ where
         O: Output<K, <F::Parser as DatagramParser>::Message>,
     {
         if let Some(DatagramFlow::Active(parser)) = self.flows.remove(key) {
+            crate::obs::record_parser_closed(parser.parser_kind(), reason);
             out.parser_closed(
                 key,
                 parser.parser_kind(),

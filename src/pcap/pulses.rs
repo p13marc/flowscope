@@ -29,7 +29,7 @@
 use std::path::Path;
 
 use crate::driver::SlotMessage;
-use crate::event::{EndReason, FlowStats};
+use crate::event::{EndReason, FlowSide, FlowStats};
 use crate::extract::{FiveTuple, FiveTupleKey};
 use crate::extractor::L4Proto;
 use crate::pcap::PcapFlowSource;
@@ -73,6 +73,21 @@ pub enum Pulse<K, M> {
         /// [`EndReason::StreamGap`] or [`EndReason::BufferOverflow`].
         reason: EndReason,
         /// Why, in words (poison reason, gap size, …).
+        detail: Option<String>,
+        /// When.
+        ts: Timestamp,
+    },
+    /// The parser stopped reading one side of the flow (a gap it
+    /// cannot bridge, or a reassembly limit); the other side keeps
+    /// producing `Message` pulses. New in 0.25.0.
+    ParserSideStopped {
+        /// Flow key.
+        key: K,
+        /// The side that stopped.
+        side: FlowSide,
+        /// [`EndReason::StreamGap`] or [`EndReason::BufferOverflow`].
+        reason: EndReason,
+        /// Why, in words (gap size, stop reason).
         detail: Option<String>,
         /// When.
         ts: Timestamp,
@@ -127,6 +142,20 @@ fn pulse_from_event<K, M>(ev: SessionEvent<K, M>) -> Option<Pulse<K, M>> {
             ..
         } => Some(Pulse::ParserClosed {
             key,
+            reason,
+            detail,
+            ts,
+        }),
+        SessionEvent::ParserSideStopped {
+            key,
+            side,
+            reason,
+            detail,
+            ts,
+            ..
+        } => Some(Pulse::ParserSideStopped {
+            key,
+            side,
             reason,
             detail,
             ts,

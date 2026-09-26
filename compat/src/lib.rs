@@ -28,6 +28,9 @@ pub struct Outcome {
     pub ended: u64,
     /// `Event::ParserClosed` count.
     pub parser_closed: u64,
+    /// `Event::ParserSideStopped` count (0.25+): a side the parser
+    /// stopped reading after a gap — reported instead of a `fin_*`.
+    pub side_stopped: u64,
 }
 
 /// Cost of one scenario run.
@@ -124,7 +127,7 @@ pub fn s8_bytes() -> usize {
 
 /// Generates `run_new` / `run_old`: identical code against each crate.
 macro_rules! runner {
-    ($modname:ident, $fs:ident) => {
+    ($modname:ident, $fs:ident, $is_side_stop:expr) => {
         pub mod $modname {
             use super::{Cost, Outcome, Scenario, alloc, traffic::Capture};
             use $fs::driver::{Driver, Event, SlotHandle, SlotMessage};
@@ -255,6 +258,7 @@ macro_rules! runner {
                             match e {
                                 Event::Ended { .. } => out.ended += 1,
                                 Event::ParserClosed { .. } => out.parser_closed += 1,
+                                ref e if ($is_side_stop)(e) => out.side_stopped += 1,
                                 _ => {}
                             }
                         }
@@ -271,6 +275,7 @@ macro_rules! runner {
                     match e {
                         Event::Ended { .. } => out.ended += 1,
                         Event::ParserClosed { .. } => out.parser_closed += 1,
+                        ref e if ($is_side_stop)(e) => out.side_stopped += 1,
                         _ => {}
                     }
                 }
@@ -299,5 +304,9 @@ macro_rules! runner {
     };
 }
 
-runner!(run_new, new);
-runner!(run_old, old);
+runner!(
+    run_new,
+    new,
+    |e: &Event<FiveTupleKey>| matches!(e, Event::ParserSideStopped { .. })
+);
+runner!(run_old, old, |_: &Event<FiveTupleKey>| false);

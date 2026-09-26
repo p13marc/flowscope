@@ -94,6 +94,25 @@ where
         });
     }
 
+    fn parser_side_stopped(
+        &mut self,
+        key: &K,
+        parser_kind: ParserKind,
+        side: FlowSide,
+        reason: EndReason,
+        detail: Option<String>,
+        ts: Timestamp,
+    ) {
+        self.events.push(Event::ParserSideStopped {
+            key: key.clone(),
+            parser_kind,
+            side,
+            reason,
+            detail,
+            ts,
+        });
+    }
+
     fn anomaly(&mut self, key: &K, kind: AnomalyKind, ts: Timestamp) {
         crate::obs::record_anomaly(&kind);
         crate::obs::trace_anomaly(&kind);
@@ -117,8 +136,9 @@ pub(super) trait ErasedSlot<K>: Send + Sync {
         chunks: &Stream<'_>,
         events: &mut Vec<Event<K>>,
     );
-    /// `true` when this slot will never use the flow's stream again.
-    fn stream_done(&self, key: &K, ports: Ports) -> bool;
+    /// Per side: `true` when this slot will never use that side's
+    /// stream again.
+    fn streams_done(&self, key: &K, ports: Ports) -> [bool; 2];
     fn on_datagram(
         &mut self,
         cx: &Ctx<'_, K>,
@@ -186,8 +206,8 @@ where
         };
         self.core.on_stream(cx, ports, chunks, &mut out);
     }
-    fn stream_done(&self, key: &K, ports: Ports) -> bool {
-        self.core.stream_done(key, ports)
+    fn streams_done(&self, key: &K, ports: Ports) -> [bool; 2] {
+        self.core.streams_done(key, ports)
     }
     fn on_datagram(
         &mut self,
@@ -267,8 +287,8 @@ where
         _events: &mut Vec<Event<K>>,
     ) {
     }
-    fn stream_done(&self, _key: &K, _ports: Ports) -> bool {
-        true
+    fn streams_done(&self, _key: &K, _ports: Ports) -> [bool; 2] {
+        [true, true]
     }
     fn on_datagram(
         &mut self,

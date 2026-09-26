@@ -210,6 +210,25 @@ pub enum Event<K> {
         ts: Timestamp,
     },
 
+    /// A registered parser stopped reading one side of the flow: a
+    /// gap it cannot bridge ([`EndReason::StreamGap`], see
+    /// [`crate::GapResponse::StopSide`]) or a reassembly limit on that
+    /// side ([`EndReason::BufferOverflow`]). The other side keeps
+    /// being parsed; when both are stopped a [`Self::ParserClosed`]
+    /// follows. New in 0.25.0.
+    ///
+    /// `#[non_exhaustive]` — match with a trailing `..`.
+    #[non_exhaustive]
+    ParserSideStopped {
+        key: K,
+        parser_kind: ParserKind,
+        side: FlowSide,
+        reason: EndReason,
+        /// The gap size or the reassembly stop reason.
+        detail: Option<String>,
+        ts: Timestamp,
+    },
+
     /// Live per-flow anomaly forwarded from the central tracker.
     /// Emitted only when `emit_anomalies(true)` was set.
     FlowAnomaly {
@@ -233,6 +252,7 @@ impl<K> Event<K> {
             | Event::Ended { key, .. }
             | Event::Tick { key, .. }
             | Event::ParserClosed { key, .. }
+            | Event::ParserSideStopped { key, .. }
             | Event::FlowAnomaly { key, .. } => Some(key),
             Event::TrackerAnomaly { .. } => None,
         }
@@ -267,6 +287,7 @@ impl<K> Event<K> {
             | Event::Ended { ts, .. }
             | Event::Tick { ts, .. }
             | Event::ParserClosed { ts, .. }
+            | Event::ParserSideStopped { ts, .. }
             | Event::FlowAnomaly { ts, .. }
             | Event::TrackerAnomaly { ts, .. } => *ts,
         }
@@ -275,8 +296,9 @@ impl<K> Event<K> {
     /// Project this typed event back to a tracker
     /// [`FlowEvent`](crate::FlowEvent), if it has one (issue #97).
     ///
-    /// Returns `None` for [`Self::ParserClosed`] — a parser-level
-    /// marker with no tracker-event counterpart. The
+    /// Returns `None` for [`Self::ParserClosed`] /
+    /// [`Self::ParserSideStopped`] — parser-level markers with no
+    /// tracker-event counterpart. The
     /// [`Self::Packet`] `tcp` enrichment is dropped (`FlowEvent`
     /// carries no per-packet TCP details) and [`Self::Ended`]'s
     /// explicit `ts` is folded back into `stats.last_seen`.
@@ -335,7 +357,7 @@ impl<K> Event<K> {
             Event::Tick { key, stats, ts } => FlowEvent::Tick { key, stats, ts },
             Event::FlowAnomaly { key, kind, ts } => FlowEvent::FlowAnomaly { key, kind, ts },
             Event::TrackerAnomaly { kind, ts } => FlowEvent::TrackerAnomaly { kind, ts },
-            Event::ParserClosed { .. } => return None,
+            Event::ParserClosed { .. } | Event::ParserSideStopped { .. } => return None,
         })
     }
 
@@ -451,8 +473,17 @@ where
             slot.on_stream(cx, ports, chunks, out);
         }
     }
-    fn stream_done(&self, key: &K, ports: Ports) -> bool {
-        self.list.iter().all(|s| s.stream_done(key, ports))
+    fn streams_done(&self, key: &K, ports: Ports) -> [bool; 2] {
+        let mut done = [true, true];
+        for slot in &self.list {
+            let d = slot.streams_done(key, ports);
+            done[0] &= d[0];
+            done[1] &= d[1];
+            if done == [false, false] {
+                break;
+            }
+        }
+        done
     }
     fn on_datagram(&mut self, cx: &Ctx<'_, K>, ports: Ports, payload: &[u8], out: &mut Self::Out) {
         for slot in &mut self.list {

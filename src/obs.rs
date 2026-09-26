@@ -29,6 +29,8 @@
 //! | `flowscope_reassembly_bytes_dropped_oversize_total` | counter | `side` |
 //! | `flowscope_reassembler_high_watermark_bytes` | histogram | `side` |
 //! | `flowscope_retransmits_total` | counter | `side` |
+//! | `flowscope_parser_closed_total` | counter | `parser_kind`, `reason` |
+//! | `flowscope_parser_side_stopped_total` | counter | `parser_kind`, `side`, `reason` |
 //! | `flowscope_flow_ticks_total` | counter | — |
 //! | `flowscope_http_messages_total` | counter | `direction` (`request`/`response`) |
 //! | `flowscope_http_poisoned_total` | counter | `reason` ([`HttpPoison`](crate::http::HttpPoison) slug) |
@@ -78,6 +80,17 @@ pub const METRIC_REASSEMBLER_HIGH_WATERMARK: &str = "flowscope_reassembler_high_
 /// `flowscope_retransmits_total{side=...}` — cumulative TCP segment
 /// retransmits classified by the per-side reassembler.
 pub const METRIC_RETRANSMITS: &str = "flowscope_retransmits_total";
+/// `flowscope_parser_closed_total{parser_kind=..., reason=...}` — a
+/// session / datagram parser was closed for a flow: early
+/// (`parse_error` / `parser_done` / `stream_gap` / `buffer_overflow`)
+/// or at the flow's end (the transport reason). Replaces the
+/// parser-related `reason` labels `flowscope_flows_ended_total` had
+/// before 0.25 (a parser close no longer ends a flow). New in 0.25.0.
+pub const METRIC_PARSER_CLOSED: &str = "flowscope_parser_closed_total";
+/// `flowscope_parser_side_stopped_total{parser_kind=..., side=...,
+/// reason=...}` — a session parser stopped reading one side of a
+/// flow (`stream_gap` / `buffer_overflow`). New in 0.25.0.
+pub const METRIC_PARSER_SIDE_STOPPED: &str = "flowscope_parser_side_stopped_total";
 /// Counter: bytes the reassembler never saw and skipped as gaps
 /// (Zeek's `missed_bytes`), labelled by `side`. New in 0.25.0.
 pub const METRIC_REASSEMBLY_GAP_BYTES: &str = "flowscope_reassembly_gap_bytes_total";
@@ -231,6 +244,44 @@ pub(crate) fn record_flow_tick(_stats: &FlowStats) {}
 #[cfg(feature = "metrics")]
 pub(crate) fn record_packet_unmatched() {
     metrics::counter!(METRIC_PACKETS_UNMATCHED).increment(1);
+}
+
+#[cfg(all(feature = "metrics", feature = "session"))]
+pub(crate) fn record_parser_closed(kind: crate::ParserKind, reason: EndReason) {
+    metrics::counter!(
+        METRIC_PARSER_CLOSED,
+        "parser_kind" => kind.as_str(),
+        "reason" => reason_label(reason)
+    )
+    .increment(1);
+}
+
+#[cfg(all(not(feature = "metrics"), feature = "session"))]
+#[inline(always)]
+pub(crate) fn record_parser_closed(_kind: crate::ParserKind, _reason: EndReason) {}
+
+#[cfg(all(feature = "metrics", feature = "session"))]
+pub(crate) fn record_parser_side_stopped(
+    kind: crate::ParserKind,
+    side: crate::FlowSide,
+    reason: EndReason,
+) {
+    metrics::counter!(
+        METRIC_PARSER_SIDE_STOPPED,
+        "parser_kind" => kind.as_str(),
+        "side" => side.as_str(),
+        "reason" => reason_label(reason)
+    )
+    .increment(1);
+}
+
+#[cfg(all(not(feature = "metrics"), feature = "session"))]
+#[inline(always)]
+pub(crate) fn record_parser_side_stopped(
+    _kind: crate::ParserKind,
+    _side: crate::FlowSide,
+    _reason: EndReason,
+) {
 }
 
 #[cfg(all(feature = "metrics", feature = "reassembler"))]

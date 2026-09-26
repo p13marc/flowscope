@@ -362,10 +362,10 @@ fn x1_builder_config_is_order_independent() {
             driver.track_into(PacketView::new(f, *t), &mut events);
         }
         driver.finish_into(&mut events);
-        let closed: Vec<_> = events
+        let stopped: Vec<_> = events
             .iter()
             .filter_map(|e| match e {
-                Event::ParserClosed { reason, .. } => Some(*reason),
+                Event::ParserSideStopped { side, reason, .. } => Some((*side, *reason)),
                 _ => None,
             })
             .collect();
@@ -374,9 +374,11 @@ fn x1_builder_config_is_order_independent() {
             0,
             "config_first={config_first}"
         );
+        // The overflow stops the side that overflowed; the parser
+        // keeps the other side.
         assert_eq!(
-            closed,
-            vec![EndReason::BufferOverflow],
+            stopped,
+            vec![(FlowSide::Initiator, EndReason::BufferOverflow)],
             "config_first={config_first}"
         );
         let ended: Vec<_> = events
@@ -762,4 +764,234 @@ fn retransmitted_fin_does_not_end_the_flow_early() {
         })
         .expect("closed by FIN");
     assert!(stats.fin_initiator && stats.fin_responder);
+}
+
+// ── #181: a gap stops one side, not the parser ───────────────────
+
+/// Server 10.0.0.2:9000 answers each client segment; the client's
+/// segment `lose` is never captured. Each side's `fin_*` is recorded.
+fn request_response(lose: usize) -> Vec<(Timestamp, Vec<u8>)> {
+    let (c, s) = ([10, 0, 0, 1], [10, 0, 0, 2]);
+    let (cp, sp) = (40_000u16, 9_000u16);
+    let (mut cseq, mut sseq) = (1000u32, 5000u32);
+    let mut v = vec![
+        ipv4_tcp(MAC, MAC, c, s, cp, sp, cseq, 0, SYN, &[]),
+        ipv4_tcp(MAC, MAC, s, c, sp, cp, sseq, cseq + 1, SYN | ACK, &[]),
+    ];
+    cseq += 1;
+    sseq += 1;
+    v.push(ipv4_tcp(MAC, MAC, c, s, cp, sp, cseq, sseq, ACK, &[]));
+    for i in 0..4 {
+        let req = format!("req{i}\n");
+        if i != lose {
+            v.push(ipv4_tcp(
+                MAC,
+                MAC,
+                c,
+                s,
+                cp,
+                sp,
+                cseq,
+                sseq,
+                PSH | ACK,
+                req.as_bytes(),
+            ));
+        }
+        cseq += req.len() as u32;
+        let resp = format!("resp{i}\n");
+        v.push(ipv4_tcp(
+            MAC,
+            MAC,
+            s,
+            c,
+            sp,
+            cp,
+            sseq,
+            cseq,
+            PSH | ACK,
+            resp.as_bytes(),
+        ));
+        sseq += resp.len() as u32;
+    }
+    v.push(ipv4_tcp(MAC, MAC, c, s, cp, sp, cseq, sseq, FIN | ACK, &[]));
+    v.push(ipv4_tcp(
+        MAC,
+        MAC,
+        s,
+        c,
+        sp,
+        cp,
+        sseq,
+        cseq + 1,
+        FIN | ACK,
+        &[],
+    ));
+    v.push(ipv4_tcp(
+        MAC,
+        MAC,
+        c,
+        s,
+        cp,
+        sp,
+        cseq + 1,
+        sseq + 1,
+        ACK,
+        &[],
+    ));
+    v.into_iter()
+        .enumerate()
+        .map(|(i, f)| (ts_ms(1_000 + i as u64), f))
+        .collect()
+}
+
+/// Line parser with the default gap response.
+#[derive(Clone, Default)]
+struct Lines {
+    buf: [Vec<u8>; 2],
+}
+
+#[derive(Debug, Clone, PartialEq)]
+enum Line {
+    Text(FlowSide, String),
+    Fin(FlowSide),
+}
+
+impl Lines {
+    fn push(&mut self, side: FlowSide, b: &[u8], out: &mut Vec<Line>) {
+        let i = usize::from(side == FlowSide::Responder);
+        self.buf[i].extend_from_slice(b);
+        while let Some(p) = self.buf[i].iter().position(|&c| c == b'\n') {
+            let line: Vec<u8> = self.buf[i].drain(..=p).collect();
+            out.push(Line::Text(side, String::from_utf8_lossy(&line[..p]).into()));
+        }
+    }
+}
+
+impl SessionParser for Lines {
+    type Message = Line;
+    fn feed_initiator(&mut self, b: &[u8], _: Timestamp, out: &mut Vec<Line>) {
+        self.push(FlowSide::Initiator, b, out);
+    }
+    fn feed_responder(&mut self, b: &[u8], _: Timestamp, out: &mut Vec<Line>) {
+        self.push(FlowSide::Responder, b, out);
+    }
+    fn fin_initiator(&mut self, out: &mut Vec<Line>) {
+        out.push(Line::Fin(FlowSide::Initiator));
+    }
+    fn fin_responder(&mut self, out: &mut Vec<Line>) {
+        out.push(Line::Fin(FlowSide::Responder));
+    }
+}
+
+#[test]
+fn responder_keeps_parsing_and_fins_after_an_initiator_gap() {
+    let mut d = SessionDriver::new(FiveTuple::bidirectional(), Lines::default());
+    let events = session_events(&mut d, &request_response(1));
+    let lines: Vec<Line> = events
+        .iter()
+        .filter_map(|e| match e {
+            SessionEvent::Application { message, .. } => Some(message.clone()),
+            _ => None,
+        })
+        .collect();
+    let resp: Vec<_> = lines
+        .iter()
+        .filter(|l| matches!(l, Line::Text(FlowSide::Responder, _)))
+        .collect();
+    assert_eq!(resp.len(), 4, "every response parsed: {lines:?}");
+    assert!(lines.contains(&Line::Fin(FlowSide::Responder)));
+    assert!(
+        !lines.contains(&Line::Fin(FlowSide::Initiator)),
+        "a stopped side gets no fin"
+    );
+    let stops: Vec<_> = events
+        .iter()
+        .filter_map(|e| match e {
+            SessionEvent::ParserSideStopped { side, reason, .. } => Some((*side, *reason)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(stops, vec![(FlowSide::Initiator, EndReason::StreamGap)]);
+    assert!(
+        !events
+            .iter()
+            .any(|e| matches!(e, SessionEvent::ParserClosed { .. })),
+        "the parser stays open"
+    );
+}
+
+/// The gap only shows up in the final flush (the hole is still open
+/// when the flow ends): the other side's fin still runs.
+#[test]
+fn gap_in_finals_does_not_skip_the_other_sides_fin() {
+    let mut d = SessionDriver::new(FiveTuple::bidirectional(), Lines::default());
+    let events = session_events(&mut d, &request_response(2));
+    let fins: Vec<_> = events
+        .iter()
+        .filter_map(|e| match e {
+            SessionEvent::Application {
+                message: Line::Fin(s),
+                ..
+            } => Some(*s),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(fins, vec![FlowSide::Responder]);
+}
+
+/// `GapResponse::Stop` still closes the whole parser.
+#[test]
+fn stop_still_closes_the_parser() {
+    #[derive(Clone, Default)]
+    struct StopAll(Lines);
+    impl SessionParser for StopAll {
+        type Message = Line;
+        fn feed_initiator(&mut self, b: &[u8], t: Timestamp, out: &mut Vec<Line>) {
+            self.0.feed_initiator(b, t, out);
+        }
+        fn feed_responder(&mut self, b: &[u8], t: Timestamp, out: &mut Vec<Line>) {
+            self.0.feed_responder(b, t, out);
+        }
+        fn on_gap(&mut self, _: FlowSide, _: u64, _: Timestamp, _: &mut Vec<Line>) -> GapResponse {
+            GapResponse::Stop
+        }
+    }
+    let mut d = SessionDriver::new(FiveTuple::bidirectional(), StopAll::default());
+    let events = session_events(&mut d, &request_response(1));
+    assert!(events.iter().any(|e| matches!(
+        e,
+        SessionEvent::ParserClosed {
+            reason: EndReason::StreamGap,
+            ..
+        }
+    )));
+}
+
+/// Both sides stopped: the parser closes, once.
+#[test]
+fn both_sides_stopped_close_the_parser_once() {
+    let mut cfg = FlowTrackerConfig::default();
+    cfg.max_reassembler_buffer = Some(2);
+    cfg.overflow_policy = OverflowPolicy::DropFlow;
+    let mut d = SessionDriver::with_config(FiveTuple::bidirectional(), Lines::default(), cfg);
+    let events = session_events(&mut d, &request_response(99));
+    let stops = events
+        .iter()
+        .filter(|e| matches!(e, SessionEvent::ParserSideStopped { .. }))
+        .count();
+    let closes: Vec<_> = events
+        .iter()
+        .filter_map(|e| match e {
+            SessionEvent::ParserClosed { reason, detail, .. } => Some((*reason, detail.clone())),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(stops, 2);
+    assert_eq!(
+        closes,
+        vec![(
+            EndReason::BufferOverflow,
+            Some("both sides stopped".to_owned())
+        )]
+    );
 }

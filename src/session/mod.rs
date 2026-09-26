@@ -584,14 +584,19 @@ pub trait SessionParser: Send + 'static {
     /// side resumes **after** the hole.
     ///
     /// Return [`GapResponse::Continue`] if the parser can cope (it
-    /// resynchronises on message boundaries, or only counts bytes);
-    /// the default returns [`GapResponse::Stop`], which closes the
-    /// parser for this flow with [`EndReason::StreamGap`] — a framed
-    /// parser fed a spliced stream would otherwise mis-parse
-    /// silently. This mirrors Suricata, where app-layer parsers that
-    /// don't declare gap support are disabled on a gap.
+    /// resynchronises on message boundaries, or only counts bytes).
+    /// The default, [`GapResponse::StopSide`], stops feeding **this
+    /// side** (a framed parser fed a spliced stream would otherwise
+    /// mis-parse silently, as in Suricata, where app-layer parsers
+    /// that don't declare gap support stop on a gap) while the other
+    /// side keeps being parsed and still gets its `fin_*` / `rst_*`.
+    /// [`GapResponse::Stop`] closes the whole parser
+    /// ([`EndReason::StreamGap`]) — for protocols whose state spans
+    /// both directions (HTTP/2's HPACK).
     ///
-    /// Messages pushed into `out` are emitted before the close.
+    /// A stopped side gets no further `feed_*`, `on_gap` or
+    /// `fin_*` / `rst_*` call: flush anything worth keeping here.
+    /// Messages pushed into `out` are emitted before the stop.
     fn on_gap(
         &mut self,
         _side: FlowSide,
@@ -599,7 +604,7 @@ pub trait SessionParser: Send + 'static {
         _ts: Timestamp,
         _out: &mut Vec<Self::Message>,
     ) -> GapResponse {
-        GapResponse::Stop
+        GapResponse::StopSide
     }
 
     /// True after the parser has hit an unrecoverable error and
@@ -824,8 +829,14 @@ where
 pub enum GapResponse {
     /// Keep feeding this parser; bytes after the gap follow.
     Continue,
-    /// Close the parser for this flow ([`EndReason::StreamGap`]).
+    /// **Default.** Stop feeding the side with the gap; the other
+    /// side keeps being parsed. Reported as a parser side stop
+    /// ([`SessionEvent::ParserSideStopped`] /
+    /// [`crate::driver::Event::ParserSideStopped`]). When both sides
+    /// are stopped the parser is closed. New in 0.25.0.
     #[default]
+    StopSide,
+    /// Close the parser for this flow ([`EndReason::StreamGap`]).
     Stop,
 }
 
@@ -834,10 +845,10 @@ pub enum GapResponse {
 /// happened. `K` is the flow key, `M` the parser's message type.
 ///
 /// For one flow the order is: `Started`, then any number of
-/// `Application` / `FlowAnomaly` / `Tick`, possibly one
-/// `ParserClosed` (the parser gave up or finished early — the flow
-/// goes on), then `Closed`. Messages a parser flushes at flow end
-/// (`fin_*`) come before `Closed`.
+/// `Application` / `FlowAnomaly` / `Tick` / `ParserSideStopped`,
+/// possibly one `ParserClosed` (the parser gave up or finished early
+/// — the flow goes on), then `Closed`. Messages a parser flushes at
+/// flow end (`fin_*`) come before `Closed`.
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(tag = "type", rename_all = "snake_case"))]
@@ -891,6 +902,21 @@ pub enum SessionEvent<K, M> {
         detail: Option<String>,
         ts: Timestamp,
     },
+    /// The parser stopped reading one side of the flow — a gap it
+    /// cannot bridge ([`EndReason::StreamGap`],
+    /// [`GapResponse::StopSide`]) or a reassembly limit on that side
+    /// ([`EndReason::BufferOverflow`]). The other side keeps being
+    /// parsed; when both sides are stopped a `ParserClosed` follows.
+    /// New in 0.25.0.
+    ParserSideStopped {
+        key: K,
+        parser_kind: ParserKind,
+        side: FlowSide,
+        reason: EndReason,
+        /// The gap size or the reassembly stop reason.
+        detail: Option<String>,
+        ts: Timestamp,
+    },
     /// The flow ended (transport reason: FIN / RST / idle / eviction /
     /// force-close). `stats` includes the reassembly diagnostics.
     Closed {
@@ -926,6 +952,7 @@ impl<K, M> SessionEvent<K, M> {
             SessionEvent::Started { key, .. }
             | SessionEvent::Application { key, .. }
             | SessionEvent::ParserClosed { key, .. }
+            | SessionEvent::ParserSideStopped { key, .. }
             | SessionEvent::Closed { key, .. }
             | SessionEvent::FlowAnomaly { key, .. }
             | SessionEvent::Tick { key, .. } => Some(key),
@@ -939,6 +966,7 @@ impl<K, M> SessionEvent<K, M> {
             SessionEvent::Started { ts, .. }
             | SessionEvent::Application { ts, .. }
             | SessionEvent::ParserClosed { ts, .. }
+            | SessionEvent::ParserSideStopped { ts, .. }
             | SessionEvent::Closed { ts, .. }
             | SessionEvent::FlowAnomaly { ts, .. }
             | SessionEvent::TrackerAnomaly { ts, .. }

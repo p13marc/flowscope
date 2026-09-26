@@ -61,6 +61,25 @@ impl<K: Clone, M: std::fmt::Debug> Output<K, M> for Vec<SessionEvent<K, M>> {
         }
     }
 
+    fn parser_side_stopped(
+        &mut self,
+        key: &K,
+        parser_kind: ParserKind,
+        side: FlowSide,
+        reason: EndReason,
+        detail: Option<String>,
+        ts: Timestamp,
+    ) {
+        self.push(SessionEvent::ParserSideStopped {
+            key: key.clone(),
+            parser_kind,
+            side,
+            reason,
+            detail,
+            ts,
+        });
+    }
+
     fn anomaly(&mut self, key: &K, kind: AnomalyKind, ts: Timestamp) {
         crate::obs::record_anomaly(&kind);
         crate::obs::trace_anomaly(&kind);
@@ -140,8 +159,8 @@ where
     ) {
         SessionCore::on_stream(self, cx, ports, chunks, out);
     }
-    fn stream_done(&self, key: &K, ports: Ports) -> bool {
-        SessionCore::stream_done(self, key, ports)
+    fn streams_done(&self, key: &K, ports: Ports) -> [bool; 2] {
+        SessionCore::streams_done(self, key, ports)
     }
     fn on_datagram(
         &mut self,
@@ -204,8 +223,8 @@ where
         _out: &mut Self::Out,
     ) {
     }
-    fn stream_done(&self, _key: &K, _ports: Ports) -> bool {
-        true
+    fn streams_done(&self, _key: &K, _ports: Ports) -> [bool; 2] {
+        [true, true]
     }
     fn on_datagram(&mut self, cx: &Ctx<'_, K>, ports: Ports, payload: &[u8], out: &mut Self::Out) {
         DatagramCore::on_datagram(self, cx, ports, payload, out);
