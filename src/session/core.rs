@@ -24,7 +24,7 @@ use crate::detect::signatures::{SignatureFn, SignatureMatch};
 use crate::event::{AnomalyKind, EndReason, FlowSide, FlowStats};
 use crate::extractor::Orientation;
 use crate::parser_kind::ParserKind;
-use crate::reassembler::{Chunk, StreamChunks};
+use crate::reassembler::{Chunk, Chunks, ReassemblyStop, StreamChunks};
 use crate::session::{
     DatagramParser, DatagramParserFactory, GapResponse, SessionParser, SessionParserFactory,
     Transports,
@@ -60,6 +60,73 @@ pub(crate) fn truncate_reason(s: &str) -> String {
 
 /// Source and destination port of a packet, when it has them.
 pub(crate) type Ports = Option<(u16, u16)>;
+
+/// Reassembled output handed to a core: chunks drained from a
+/// reassembler, or in-order bytes let through straight from the
+/// packet (no copy).
+#[derive(Clone, Copy)]
+pub(crate) enum Stream<'a> {
+    Chunks(&'a StreamChunks),
+    Bytes(&'a [u8]),
+}
+
+impl<'a> Stream<'a> {
+    pub(crate) fn is_empty(&self) -> bool {
+        match self {
+            Stream::Chunks(c) => c.is_empty(),
+            Stream::Bytes(b) => b.is_empty(),
+        }
+    }
+
+    /// Data bytes (gaps excluded).
+    pub(crate) fn len(&self) -> usize {
+        match self {
+            Stream::Chunks(c) => c.len(),
+            Stream::Bytes(b) => b.len(),
+        }
+    }
+
+    pub(crate) fn stop(&self) -> Option<ReassemblyStop> {
+        match self {
+            Stream::Chunks(c) => c.stop(),
+            Stream::Bytes(_) => None,
+        }
+    }
+
+    pub(crate) fn iter(&self) -> StreamIter<'a> {
+        match *self {
+            Stream::Chunks(c) => StreamIter::Chunks(c.iter()),
+            Stream::Bytes(b) => StreamIter::Bytes((!b.is_empty()).then_some(b)),
+        }
+    }
+
+    /// Owned copy (for probing replay).
+    pub(crate) fn to_chunks(self) -> StreamChunks {
+        match self {
+            Stream::Chunks(c) => c.clone(),
+            Stream::Bytes(b) => {
+                let mut c = StreamChunks::new();
+                c.push_data(b);
+                c
+            }
+        }
+    }
+}
+
+pub(crate) enum StreamIter<'a> {
+    Chunks(Chunks<'a>),
+    Bytes(Option<&'a [u8]>),
+}
+
+impl<'a> Iterator for StreamIter<'a> {
+    type Item = Chunk<'a>;
+    fn next(&mut self) -> Option<Chunk<'a>> {
+        match self {
+            StreamIter::Chunks(c) => c.next(),
+            StreamIter::Bytes(b) => b.take().map(Chunk::Data),
+        }
+    }
+}
 
 /// Which flows a core wants.
 pub(crate) enum Selector {
@@ -159,16 +226,21 @@ impl Close {
     }
 }
 
+/// Probing state of one flow (boxed: most flows never probe, and it
+/// is much larger than a parser handle).
+#[derive(Default)]
+struct Probe {
+    packets: u8,
+    init: SmallVec<[u8; PROBE_BUFFER_CAP]>,
+    resp: SmallVec<[u8; PROBE_BUFFER_CAP]>,
+    replay: Vec<(FlowSide, Orientation, Timestamp, StreamChunks)>,
+    replay_bytes: usize,
+}
+
 enum SessionFlow<P> {
     /// Signature not decided yet. `replay` keeps the stream seen so
     /// far, in arrival order, for the parser once it pins.
-    Probing {
-        packets: u8,
-        init: SmallVec<[u8; PROBE_BUFFER_CAP]>,
-        resp: SmallVec<[u8; PROBE_BUFFER_CAP]>,
-        replay: Vec<(FlowSide, Orientation, Timestamp, StreamChunks)>,
-        replay_bytes: usize,
-    },
+    Probing(Box<Probe>),
     Active(P),
     /// Closed early or rejected by the signature; ignored until the
     /// flow ends.
@@ -218,7 +290,7 @@ where
         &mut self,
         cx: &Ctx<'_, K>,
         ports: Ports,
-        chunks: &StreamChunks,
+        chunks: &Stream<'_>,
         out: &mut O,
     ) where
         O: Output<K, <F::Parser as SessionParser>::Message>,
@@ -231,13 +303,7 @@ where
                 return;
             }
             let state = match self.selector {
-                Selector::Signature { .. } => SessionFlow::Probing {
-                    packets: 0,
-                    init: SmallVec::new(),
-                    resp: SmallVec::new(),
-                    replay: Vec::new(),
-                    replay_bytes: 0,
-                },
+                Selector::Signature { .. } => SessionFlow::Probing(Box::default()),
                 Selector::All | Selector::Ports(_) => {
                     SessionFlow::Active(self.factory.new_parser(cx.key))
                 }
@@ -254,13 +320,14 @@ where
                     emit_close(cx, kind, close, out);
                 }
             }
-            SessionFlow::Probing {
-                packets,
-                init,
-                resp,
-                replay,
-                replay_bytes,
-            } => {
+            SessionFlow::Probing(probe_state) => {
+                let Probe {
+                    packets,
+                    init,
+                    resp,
+                    replay,
+                    replay_bytes,
+                } = &mut **probe_state;
                 let Selector::Signature {
                     signature,
                     max_probe_packets,
@@ -286,7 +353,7 @@ where
                 }
                 *packets = packets.saturating_add(1);
                 *replay_bytes += chunks.len();
-                replay.push((cx.side, cx.orientation, cx.ts, chunks.clone()));
+                replay.push((cx.side, cx.orientation, cx.ts, chunks.to_chunks()));
 
                 let verdicts = (signature(init), signature(resp));
                 let matched = matches!(verdicts.0, SignatureMatch::Match)
@@ -308,8 +375,13 @@ where
                             ts: *ts,
                             anomalies: cx.anomalies,
                         };
-                        if let Some(close) = feed(&mut parser, &rcx, chunks, &mut self.scratch, out)
-                        {
+                        if let Some(close) = feed(
+                            &mut parser,
+                            &rcx,
+                            &Stream::Chunks(chunks),
+                            &mut self.scratch,
+                            out,
+                        ) {
                             closed = Some(close);
                             break;
                         }
@@ -371,7 +443,13 @@ where
                 ts,
                 anomalies,
             };
-            if let Some(close) = feed(&mut parser, &cx, chunks, &mut self.scratch, out) {
+            if let Some(close) = feed(
+                &mut parser,
+                &cx,
+                &Stream::Chunks(chunks),
+                &mut self.scratch,
+                out,
+            ) {
                 emit_close(&cx, kind, close, out);
                 return;
             }
@@ -400,6 +478,7 @@ where
     pub(crate) fn on_tick<O>(
         &mut self,
         now: Timestamp,
+        stamp: Timestamp,
         orientation_of: &dyn Fn(&K) -> Orientation,
         anomalies: bool,
         out: &mut O,
@@ -415,7 +494,7 @@ where
             self.scratch.clear();
             parser.on_tick(now, &mut self.scratch);
             for m in self.scratch.drain(..) {
-                out.message(key, FlowSide::Initiator, orientation, m, now, kind);
+                out.message(key, FlowSide::Initiator, orientation, m, stamp, kind);
             }
             if let Some(close) = check_close(parser) {
                 *state = SessionFlow::Closed;
@@ -424,7 +503,7 @@ where
                     l4: None,
                     side: FlowSide::Initiator,
                     orientation,
-                    ts: now,
+                    ts: stamp,
                     anomalies,
                 };
                 emit_close(&cx, kind, close, out);
@@ -444,7 +523,7 @@ where
 fn feed<K, P, O>(
     parser: &mut P,
     cx: &Ctx<'_, K>,
-    chunks: &StreamChunks,
+    chunks: &Stream<'_>,
     scratch: &mut Vec<P::Message>,
     out: &mut O,
 ) -> Option<Close>
@@ -640,6 +719,7 @@ where
     pub(crate) fn on_tick<O>(
         &mut self,
         now: Timestamp,
+        stamp: Timestamp,
         orientation_of: &dyn Fn(&K) -> Orientation,
         anomalies: bool,
         out: &mut O,
@@ -655,7 +735,7 @@ where
             self.scratch.clear();
             parser.on_tick(now, &mut self.scratch);
             for m in self.scratch.drain(..) {
-                out.message(key, FlowSide::Initiator, orientation, m, now, kind);
+                out.message(key, FlowSide::Initiator, orientation, m, stamp, kind);
             }
             if let Some(close) = check_datagram_close(parser) {
                 *state = DatagramFlow::Closed;
@@ -664,7 +744,7 @@ where
                     l4: None,
                     side: FlowSide::Initiator,
                     orientation,
-                    ts: now,
+                    ts: stamp,
                     anomalies,
                 };
                 emit_close(&cx, kind, close, out);

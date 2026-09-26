@@ -20,7 +20,7 @@ use crate::event::{AnomalyKind, EndReason, FlowSide, FlowStats};
 use crate::extractor::Orientation;
 use crate::parser_kind::ParserKind;
 use crate::reassembler::StreamChunks;
-use crate::session::core::{Ctx, DatagramCore, Output, Ports, SessionCore};
+use crate::session::core::{Ctx, DatagramCore, Output, Ports, SessionCore, Stream};
 use crate::session::{DatagramParser, DatagramParserFactory, SessionParser, SessionParserFactory};
 
 /// Where a slot's typed messages go.
@@ -114,7 +114,7 @@ pub(super) trait ErasedSlot<K>: Send + Sync {
         &mut self,
         cx: &Ctx<'_, K>,
         ports: Ports,
-        chunks: &StreamChunks,
+        chunks: &Stream<'_>,
         events: &mut Vec<Event<K>>,
     );
     /// `true` when this slot will never use the flow's stream again.
@@ -139,6 +139,7 @@ pub(super) trait ErasedSlot<K>: Send + Sync {
     fn on_tick(
         &mut self,
         now: Timestamp,
+        stamp: Timestamp,
         orientation_of: &dyn Fn(&K) -> Orientation,
         anomalies: bool,
         events: &mut Vec<Event<K>>,
@@ -176,7 +177,7 @@ where
         &mut self,
         cx: &Ctx<'_, K>,
         ports: Ports,
-        chunks: &StreamChunks,
+        chunks: &Stream<'_>,
         events: &mut Vec<Event<K>>,
     ) {
         let mut out = SlotOut {
@@ -215,6 +216,7 @@ where
     fn on_tick(
         &mut self,
         now: Timestamp,
+        stamp: Timestamp,
         orientation_of: &dyn Fn(&K) -> Orientation,
         anomalies: bool,
         events: &mut Vec<Event<K>>,
@@ -223,7 +225,8 @@ where
             sink: &self.sink,
             events,
         };
-        self.core.on_tick(now, orientation_of, anomalies, &mut out);
+        self.core
+            .on_tick(now, stamp, orientation_of, anomalies, &mut out);
     }
     fn retain(&mut self, alive: &dyn Fn(&K) -> bool) {
         self.core.retain(alive);
@@ -260,7 +263,7 @@ where
         &mut self,
         _cx: &Ctx<'_, K>,
         _ports: Ports,
-        _chunks: &StreamChunks,
+        _chunks: &Stream<'_>,
         _events: &mut Vec<Event<K>>,
     ) {
     }
@@ -298,6 +301,7 @@ where
     fn on_tick(
         &mut self,
         now: Timestamp,
+        stamp: Timestamp,
         orientation_of: &dyn Fn(&K) -> Orientation,
         anomalies: bool,
         events: &mut Vec<Event<K>>,
@@ -306,7 +310,8 @@ where
             sink: &self.sink,
             events,
         };
-        self.core.on_tick(now, orientation_of, anomalies, &mut out);
+        self.core
+            .on_tick(now, stamp, orientation_of, anomalies, &mut out);
     }
     fn retain(&mut self, alive: &dyn Fn(&K) -> bool) {
         self.core.retain(alive);

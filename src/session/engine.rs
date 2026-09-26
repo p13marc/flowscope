@@ -6,31 +6,39 @@
 //! Per packet, in order:
 //!
 //! 1. The flow driver tracks the packet (dedup, clamping, TCP state,
-//!    reassembly, reassembly anomalies).
-//! 2. Lifecycle events are handed to the dispatch in order. Right
-//!    before the packet's own flow ends (or after the last event), the
-//!    packet's data is dispatched: the side's reassembled stream is
-//!    drained **once** and offered to every interested core, or the
-//!    UDP payload is.
-//! 3. For each ended flow the last stream bytes are drained and the
-//!    cores close their parsers — before the `Ended` itself is
-//!    forwarded, so a consumer sees a flow's final messages and
+//!    reassembly). In-order TCP payload is let through without being
+//!    copied ([`crate::SegmentOutcome::Passthrough`]).
+//! 2. Lifecycle events are handed to the dispatch in order; the
+//!    packet's reassembly anomalies come right before the packet's
+//!    own `Ended`. Right before that `Ended` (or after the last
+//!    event), the packet's data is dispatched: the let-through bytes
+//!    or the side's drained stream, or the datagram payload.
+//! 3. For each ended flow: flush (anomalies) → final bytes → parser
+//!    closes → `Ended`. A consumer sees a flow's final messages and
 //!    parser closes before its end.
+//!
+//! Per sweep, in order: parser ticks (stamped with the clamped
+//! `now`), then data released by hole deadlines on flows that are
+//! still tracked, then the flows the sweep ends (step 3). Released
+//! data is therefore never drained from a flow after its end was
+//! decided (before 0.25 it was, and dropped).
 //!
 //! Dispatch is keyed off [`FlowDriver::last_packet`], never off
 //! `FlowEvent::Packet`, so shedding `Packet` events with
-//! [`crate::EventMask`] does not stop L7 parsing.
+//! [`crate::EventMask`] does not stop L7 parsing. The event mask and
+//! pause only affect what reaches the consumer: parsers still see
+//! every flow end.
 
 use std::hash::Hash;
 
 use crate::Timestamp;
-use crate::event::{EndReason, FlowEvent, FlowSide, FlowStats};
+use crate::event::{EndReason, EventMask, FlowEvent, FlowSide, FlowStats};
 use crate::extract::parse::{self, ParsedL4};
 use crate::extractor::{FlowExtractor, L4Proto, Orientation};
 use crate::flow_driver::{FlowDriver, PacketInfo};
 use crate::reassembler::StreamChunks;
 use crate::segment_reassembler::SegmentBufferReassemblerFactory;
-use crate::session::core::{Ctx, Ports};
+use crate::session::core::{Ctx, Ports, Stream};
 use crate::tracker::{FlowTracker, FlowTrackerConfig};
 use crate::view::PacketView;
 
@@ -56,7 +64,7 @@ pub(crate) trait Dispatch<K> {
         &mut self,
         cx: &Ctx<'_, K>,
         ports: Ports,
-        chunks: &StreamChunks,
+        stream: &Stream<'_>,
         out: &mut Self::Out,
     );
 
@@ -78,9 +86,12 @@ pub(crate) trait Dispatch<K> {
         out: &mut Self::Out,
     );
 
+    /// Parser ticks. Parsers see `now` (`Timestamp::MAX` at the end
+    /// of input); their output is stamped `stamp`.
     fn on_tick(
         &mut self,
         now: Timestamp,
+        stamp: Timestamp,
         orientation_of: &dyn Fn(&K) -> Orientation,
         anomalies: bool,
         out: &mut Self::Out,
@@ -131,6 +142,7 @@ where
     pub(crate) flow: FlowDriver<E, SegmentBufferReassemblerFactory, ()>,
     scratch: StreamChunks,
     finals: [StreamChunks; 2],
+    anomalies: Vec<FlowEvent<E::Key>>,
 }
 
 impl<E> Engine<E>
@@ -143,10 +155,14 @@ where
     }
 
     pub(crate) fn from_tracker(tracker: FlowTracker<E, ()>) -> Self {
+        let mut flow =
+            FlowDriver::from_tracker(tracker, SegmentBufferReassemblerFactory::default());
+        flow.set_passthrough(true);
         Self {
-            flow: FlowDriver::from_tracker(tracker, SegmentBufferReassemblerFactory::default()),
+            flow,
             scratch: StreamChunks::new(),
             finals: [StreamChunks::new(), StreamChunks::new()],
+            anomalies: Vec::new(),
         }
     }
 
@@ -159,7 +175,7 @@ where
         let view: PacketView<'v> = view.into();
         let needs_ports = dispatch.needs_ports();
         let frame = view.frame;
-        let mut events = self.flow.track_pending_with(view, |p| {
+        let mut events = self.flow.track_raw(view, |p| {
             let ports = match p.l4_meta {
                 Some(m) => m.ports,
                 None if needs_ports => ports_of(frame),
@@ -167,8 +183,6 @@ where
             };
             dispatch.wants_stream(ports)
         });
-        // `forward` finalizes each ended flow itself, right after its
-        // last bytes are dispatched.
         let packet = self.flow.last_packet().cloned();
         let ports = match packet.as_ref().and_then(|p| p.l4_meta) {
             Some(m) => m.ports,
@@ -191,6 +205,11 @@ where
         if data_pending && let Some(p) = &packet {
             self.dispatch_packet(p, view, ports, anomalies, dispatch, out);
         }
+        if let Some(p) = &packet
+            && self.flow.auto_sweep_due(p.ts)
+        {
+            self.sweep(p.ts, dispatch, out);
+        }
     }
 
     pub(crate) fn sweep<D: Dispatch<E::Key>>(
@@ -199,29 +218,75 @@ where
         dispatch: &mut D,
         out: &mut D::Out,
     ) {
+        let now = self.flow.clamp_now(now);
         let anomalies = self.flow.emits_anomalies();
-        // Ticks first: a flow this sweep closes still gets its final
-        // tick, and the tick's messages land ahead of its end.
-        {
-            let tracker = self.flow.tracker();
-            let orientation_of = |k: &E::Key| {
-                tracker
-                    .get(k)
-                    .map(|e| e.initiator_orientation())
-                    .unwrap_or_default()
-            };
-            dispatch.on_tick(now, &orientation_of, anomalies, out);
-        }
-        let events = self.flow.sweep_pending(now);
-        // Holes that expired in this sweep released data on sides
-        // that may have gone quiet: hand it over.
-        self.dispatch_released(anomalies, dispatch, out);
+        // 1. Ticks: a flow this sweep closes still gets its final
+        //    tick, and the tick's messages land ahead of its end.
+        self.tick(now, now, anomalies, dispatch, out);
+        // 2. Holes past their deadline release data — on flows that
+        //    are still tracked.
+        let emit_flow_anomalies = self.flow.emits_mask(EventMask::FLOW_ANOMALY);
+        self.flow
+            .advance_streams(now, Some(&mut self.scratch), |r| {
+                for a in r.anomalies.drain(..) {
+                    if emit_flow_anomalies {
+                        dispatch.lifecycle(a, None, out);
+                    }
+                }
+                if let Some(data) = r.data.as_deref()
+                    && !data.is_empty()
+                {
+                    let cx = Ctx {
+                        key: r.key,
+                        l4: Some(L4Proto::Tcp),
+                        side: r.side,
+                        orientation: r.orientation,
+                        ts: now,
+                        anomalies,
+                    };
+                    dispatch.on_stream(&cx, r.ports, &Stream::Chunks(data), out);
+                }
+            });
+        // 3. Flows the sweep ends.
+        let events = self.flow.sweep_raw(now);
         let mut none = None;
         for ev in events {
             self.forward(ev, &mut none, anomalies, dispatch, out);
         }
         let tracker = self.flow.tracker();
         dispatch.retain(&|k| tracker.get(k).is_some());
+    }
+
+    /// End of input: every flow ends. Parsers' `on_tick` sees
+    /// `Timestamp::MAX`; everything is stamped with the latest packet
+    /// time, and the monotonic clock is left alone.
+    pub(crate) fn finish<D: Dispatch<E::Key>>(&mut self, dispatch: &mut D, out: &mut D::Out) {
+        let stamp = self.flow.max_timestamp();
+        let anomalies = self.flow.emits_anomalies();
+        self.tick(Timestamp::MAX, stamp, anomalies, dispatch, out);
+        let events = self.flow.finish_raw();
+        let mut none = None;
+        for ev in events {
+            self.forward(ev, &mut none, anomalies, dispatch, out);
+        }
+    }
+
+    fn tick<D: Dispatch<E::Key>>(
+        &mut self,
+        now: Timestamp,
+        stamp: Timestamp,
+        anomalies: bool,
+        dispatch: &mut D,
+        out: &mut D::Out,
+    ) {
+        let tracker = self.flow.tracker();
+        let orientation_of = |k: &E::Key| {
+            tracker
+                .get(k)
+                .map(|e| e.initiator_orientation())
+                .unwrap_or_default()
+        };
+        dispatch.on_tick(now, stamp, &orientation_of, anomalies, out);
     }
 
     pub(crate) fn force_close<D: Dispatch<E::Key>>(
@@ -232,7 +297,7 @@ where
         out: &mut D::Out,
     ) {
         let anomalies = self.flow.emits_anomalies();
-        let events = self.flow.force_close_pending(key, now);
+        let events = self.flow.force_close_raw(key, now);
         let mut none = None;
         for ev in events {
             self.forward(ev, &mut none, anomalies, dispatch, out);
@@ -259,14 +324,22 @@ where
         };
         match p.l4 {
             Some(L4Proto::Tcp) => {
-                self.scratch.clear();
-                if self.flow.drain_stream(&p.key, p.side, &mut self.scratch)
-                    && !self.scratch.is_empty()
-                {
-                    dispatch.on_stream(&cx, ports, &self.scratch, out);
-                    if dispatch.stream_done(&p.key, ports) {
-                        self.flow.discard_stream(&p.key);
+                if let Some(bytes) = p.passthrough_bytes(view.frame) {
+                    if bytes.is_empty() {
+                        return;
                     }
+                    dispatch.on_stream(&cx, ports, &Stream::Bytes(bytes), out);
+                } else {
+                    self.scratch.clear();
+                    if !self.flow.drain_stream(&p.key, p.side, &mut self.scratch)
+                        || self.scratch.is_empty()
+                    {
+                        return;
+                    }
+                    dispatch.on_stream(&cx, ports, &Stream::Chunks(&self.scratch), out);
+                }
+                if dispatch.stream_done(&p.key, ports) {
+                    self.flow.discard_stream(&p.key);
                 }
             }
             _ if dispatch.wants_datagram(ports, p.l4) => {
@@ -282,47 +355,12 @@ where
         }
     }
 
-    /// After a sweep, drain every side whose reassembler released
-    /// data (expired holes) and dispatch it.
-    fn dispatch_released<D: Dispatch<E::Key>>(
-        &mut self,
-        anomalies: bool,
-        dispatch: &mut D,
-        out: &mut D::Out,
-    ) {
-        let keys: Vec<(E::Key, FlowSide)> = self.flow.reassembler_keys().collect();
-        for (key, side) in keys {
-            self.scratch.clear();
-            self.flow.drain_stream(&key, side, &mut self.scratch);
-            if self.scratch.data().is_empty() && self.scratch.gap_count() == 0 {
-                // Nothing new (a sticky stop alone was already acted on).
-                continue;
-            }
-            let Some(entry) = self.flow.tracker().get(&key) else {
-                continue;
-            };
-            let initiator = entry.initiator_orientation();
-            let orientation = match side {
-                FlowSide::Initiator => initiator,
-                FlowSide::Responder => initiator.flipped(),
-            };
-            let cx = Ctx {
-                key: &key,
-                l4: Some(L4Proto::Tcp),
-                side,
-                orientation,
-                ts: entry.stats.last_seen,
-                anomalies,
-            };
-            dispatch.on_stream(&cx, None, &self.scratch, out);
-        }
-    }
-
-    /// Forward one lifecycle event; for an `Ended`, first hand the
-    /// flow's last bytes to the cores and release its reassemblers.
+    /// Forward one lifecycle event; for an `Ended`, first flush the
+    /// flow (anomalies), hand its last bytes to the cores, close its
+    /// parsers and release its stream state.
     fn forward<D: Dispatch<E::Key>>(
         &mut self,
-        ev: FlowEvent<E::Key>,
+        mut ev: FlowEvent<E::Key>,
         packet_tcp: &mut Option<crate::extractor::TcpInfo>,
         anomalies: bool,
         dispatch: &mut D,
@@ -330,8 +368,15 @@ where
     ) {
         if let FlowEvent::Ended {
             key, reason, stats, ..
-        } = &ev
+        } = &mut ev
         {
+            self.anomalies.clear();
+            self.flow.close_flow(key, stats, &mut self.anomalies);
+            for a in self.anomalies.drain(..) {
+                if self.flow.emits(&a) {
+                    dispatch.lifecycle(a, None, out);
+                }
+            }
             let [init, resp] = &mut self.finals;
             init.clear();
             resp.clear();
@@ -339,6 +384,9 @@ where
             self.flow.drain_stream(key, FlowSide::Responder, resp);
             dispatch.on_flow_end(key, *reason, stats, [&*init, &*resp], anomalies, out);
             self.flow.finalize_flow(key, *reason);
+        }
+        if !self.flow.emits(&ev) {
+            return;
         }
         let tcp = if matches!(ev, FlowEvent::Packet { .. }) {
             packet_tcp.take()

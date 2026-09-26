@@ -11,7 +11,7 @@ use crate::flow_driver::FlowDriver;
 use crate::parser_kind::ParserKind;
 use crate::reassembler::StreamChunks;
 use crate::segment_reassembler::SegmentBufferReassemblerFactory;
-use crate::session::core::{Ctx, DatagramCore, Output, Ports, Selector, SessionCore};
+use crate::session::core::{Ctx, DatagramCore, Output, Ports, Selector, SessionCore, Stream};
 use crate::session::engine::{Dispatch, Engine};
 use crate::session::{
     DatagramParser, DatagramParserFactory, SessionEvent, SessionParser, SessionParserFactory,
@@ -135,7 +135,7 @@ where
         &mut self,
         cx: &Ctx<'_, K>,
         ports: Ports,
-        chunks: &StreamChunks,
+        chunks: &Stream<'_>,
         out: &mut Self::Out,
     ) {
         SessionCore::on_stream(self, cx, ports, chunks, out);
@@ -165,11 +165,12 @@ where
     fn on_tick(
         &mut self,
         now: Timestamp,
+        stamp: Timestamp,
         orientation_of: &dyn Fn(&K) -> Orientation,
         anomalies: bool,
         out: &mut Self::Out,
     ) {
-        SessionCore::on_tick(self, now, orientation_of, anomalies, out);
+        SessionCore::on_tick(self, now, stamp, orientation_of, anomalies, out);
     }
     fn retain(&mut self, alive: &dyn Fn(&K) -> bool) {
         SessionCore::retain(self, alive);
@@ -199,7 +200,7 @@ where
         &mut self,
         _cx: &Ctx<'_, K>,
         _ports: Ports,
-        _chunks: &StreamChunks,
+        _chunks: &Stream<'_>,
         _out: &mut Self::Out,
     ) {
     }
@@ -223,11 +224,12 @@ where
     fn on_tick(
         &mut self,
         now: Timestamp,
+        stamp: Timestamp,
         orientation_of: &dyn Fn(&K) -> Orientation,
         anomalies: bool,
         out: &mut Self::Out,
     ) {
-        DatagramCore::on_tick(self, now, orientation_of, anomalies, out);
+        DatagramCore::on_tick(self, now, stamp, orientation_of, anomalies, out);
     }
     fn retain(&mut self, alive: &dyn Fn(&K) -> bool) {
         DatagramCore::retain(self, alive);
@@ -360,14 +362,18 @@ macro_rules! shared_driver_api {
             out
         }
 
-        /// End of input: end every flow (`sweep(Timestamp::MAX)`).
+        /// End of input: end every flow. Parsers' `on_tick` sees
+        /// `Timestamp::MAX`; output is stamped with the latest packet
+        /// timestamp and the monotonic clock is left alone.
         pub fn finish_into(&mut self, out: &mut Vec<SessionEvent<E::Key, M>>) {
-            self.sweep_into(Timestamp::MAX, out);
+            self.engine.finish(&mut self.core, out);
         }
 
         /// [`Self::finish_into`] returning a fresh `Vec`.
         pub fn finish(&mut self) -> Vec<SessionEvent<E::Key, M>> {
-            self.sweep(Timestamp::MAX)
+            let mut out = Vec::new();
+            self.finish_into(&mut out);
+            out
         }
 
         /// End one flow now ([`EndReason::ForceClosed`]): its last

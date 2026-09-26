@@ -492,6 +492,23 @@ pub struct FlowStats {
     /// [`ReassemblyStop`]); the flow kept being tracked.
     pub reassembly_stop_initiator: Option<ReassemblyStop>,
     pub reassembly_stop_responder: Option<ReassemblyStop>,
+    /// New in 0.25.0: segments dropped as strays because they
+    /// started too far from the stream position and nothing
+    /// corroborated them. See
+    /// [`crate::Reassembler::out_of_window_segments`].
+    pub reassembly_out_of_window_initiator: u64,
+    pub reassembly_out_of_window_responder: u64,
+    /// New in 0.25.0: gaps skipped early because the peer had
+    /// acknowledged the missing bytes (included in
+    /// `reassembly_gaps_*`). See
+    /// [`crate::Reassembler::ack_confirmed_gaps`].
+    pub reassembly_ack_confirmed_gaps_initiator: u64,
+    pub reassembly_ack_confirmed_gaps_responder: u64,
+    /// New in 0.25.0: times the stream re-anchored after
+    /// corroborated out-of-window data. See
+    /// [`crate::Reassembler::origin_resets`].
+    pub reassembly_origin_resets_initiator: u64,
+    pub reassembly_origin_resets_responder: u64,
     /// New in 0.18.0 (issue #15): per-direction last-seen
     /// timestamps. The whole-flow [`Self::last_seen`] is the
     /// max of the two. Defaults to [`Timestamp::default`]
@@ -879,6 +896,13 @@ pub enum AnomalyKind {
         gaps: u64,
         bytes: u64,
     },
+    /// New in 0.25.0. The reassembler dropped `count` segments that
+    /// started too far from the expected sequence number and were not
+    /// corroborated — strays from an earlier connection reusing the
+    /// ports, injected or corrupt segments (see
+    /// [`crate::FlowTrackerConfig::reassembly_max_ahead`]). Coalesced
+    /// per (flow, side) per tick.
+    OutOfWindowSegment { side: FlowSide, count: u64 },
     /// Tracker hit `max_flows` and evicted at least one LRU flow
     /// during this tick. The evicted flow's own
     /// `Ended { reason: Evicted }` is still emitted; this anomaly is
@@ -991,6 +1015,7 @@ impl crate::AnomalyFields for AnomalyKind {
             | AnomalyKind::RetransmittedSegment { .. }
             | AnomalyKind::TcpRexmitInconsistency { .. }
             | AnomalyKind::StreamGap { .. }
+            | AnomalyKind::OutOfWindowSegment { .. }
             | AnomalyKind::ReassemblerHighWatermark { .. } => "stream",
             AnomalyKind::SessionParseError { .. } => "applayer",
             AnomalyKind::FlowTableEvictionPressure { .. } => "stream",
@@ -1060,6 +1085,7 @@ impl AnomalyKind {
     /// | [`Self::ReassemblerHighWatermark`] | [`Severity::Warning`] | Cap pressure building; tune [`crate::FlowTrackerConfig::max_reassembler_buffer`]. |
     /// | [`Self::BufferOverflow`] | [`Severity::Warning`] | Bytes dropped (sliding-window) or reassembly stopped (drop-flow). |
     /// | [`Self::StreamGap`] | [`Severity::Warning`] | Bytes never seen; parsers may have stopped. |
+    /// | [`Self::OutOfWindowSegment`] | [`Severity::Warning`] | Stray / injected segments dropped. |
     /// | [`Self::FlowTableEvictionPressure`] | [`Severity::Warning`] | Tracker bottleneck; bump `max_flows` or shorten idle. |
     /// | [`Self::SessionParseError`] | [`Severity::Error`] | Parser is poisoned and closed. |
     pub fn severity(&self) -> Severity {
@@ -1070,6 +1096,7 @@ impl AnomalyKind {
             AnomalyKind::ReassemblerHighWatermark { .. }
             | AnomalyKind::BufferOverflow { .. }
             | AnomalyKind::StreamGap { .. }
+            | AnomalyKind::OutOfWindowSegment { .. }
             | AnomalyKind::FlowTableEvictionPressure { .. } => Severity::Warning,
             AnomalyKind::SessionParseError { .. } => Severity::Error,
             // Overlapping bytes that disagree is an evasion IOC,

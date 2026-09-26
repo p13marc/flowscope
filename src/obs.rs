@@ -135,6 +135,7 @@ pub(crate) fn anomaly_label(kind: &AnomalyKind) -> &'static str {
         AnomalyKind::TcpRexmitInconsistency { .. } => "tcp_rexmit_inconsistency",
         AnomalyKind::GlobalMemcapHit { .. } => "global_memcap_hit",
         AnomalyKind::StreamGap { .. } => "stream_gap",
+        AnomalyKind::OutOfWindowSegment { .. } => "out_of_window_segment",
     }
 }
 

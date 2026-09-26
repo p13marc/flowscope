@@ -115,6 +115,21 @@ impl StreamChunks {
         self.bytes.extend_from_slice(data);
     }
 
+    /// Append owned bytes, taking the buffer over when no data is
+    /// held yet.
+    pub(crate) fn push_owned(&mut self, data: Vec<u8>) {
+        if self.bytes.is_empty() {
+            self.bytes = data;
+        } else {
+            self.bytes.extend_from_slice(&data);
+        }
+    }
+
+    /// `true` when no data bytes are held (gaps may be).
+    pub(crate) fn is_empty_data(&self) -> bool {
+        self.bytes.is_empty()
+    }
+
     /// Record that `len` bytes are missing at the current end.
     /// Adjacent gaps coalesce; `len == 0` is ignored.
     pub fn push_gap(&mut self, len: u64) {
@@ -164,20 +179,24 @@ impl StreamChunks {
     }
 
     /// Move everything from `other` onto the end of `self`, leaving
-    /// `other` empty (its capacity is kept).
+    /// `other` empty **and without capacity**: a reassembler drained
+    /// into a caller's buffer keeps no memory. When `self` is empty
+    /// the buffers are moved, not copied.
     pub fn append(&mut self, other: &mut StreamChunks) {
-        let base = self.bytes.len();
-        for g in other.gaps.drain(..) {
-            let at = base + g.at;
-            match self.gaps.last_mut() {
-                Some(last) if last.at == at => last.len = last.len.saturating_add(g.len),
-                _ => self.gaps.push(GapMark { at, len: g.len }),
-            }
-        }
-        if self.bytes.is_empty() {
-            std::mem::swap(&mut self.bytes, &mut other.bytes);
+        if self.bytes.is_empty() && self.gaps.is_empty() {
+            self.bytes = std::mem::take(&mut other.bytes);
+            self.gaps = std::mem::take(&mut other.gaps);
         } else {
-            self.bytes.append(&mut other.bytes);
+            let base = self.bytes.len();
+            for g in other.gaps.drain(..) {
+                let at = base + g.at;
+                match self.gaps.last_mut() {
+                    Some(last) if last.at == at => last.len = last.len.saturating_add(g.len),
+                    _ => self.gaps.push(GapMark { at, len: g.len }),
+                }
+            }
+            self.bytes.extend_from_slice(&other.bytes);
+            other.release();
         }
         if let Some(stop) = other.stop.take() {
             self.set_stop(stop);
@@ -272,6 +291,39 @@ pub trait Reassembler: Send + 'static {
     /// need it after returning. `ts` is the kernel/source timestamp
     /// of the packet carrying the segment.
     fn segment(&mut self, seq: u32, payload: &[u8], ts: Timestamp);
+
+    /// Like [`Self::segment`], for a caller that can deliver the
+    /// segment's bytes itself, straight from the packet.
+    ///
+    /// Return [`SegmentOutcome::Passthrough`] when `payload[skip..]`
+    /// are exactly the next in-order bytes and nothing else is ready:
+    /// the reassembler advances its position **without buffering
+    /// them**, and the caller delivers them. Otherwise behave like
+    /// `segment` and return [`SegmentOutcome::Buffered`] (the
+    /// default). The session engines use this so in-order data is
+    /// never copied or held per flow. New in 0.25.0.
+    fn segment_into(&mut self, seq: u32, payload: &[u8], ts: Timestamp) -> SegmentOutcome {
+        self.segment(seq, payload, ts);
+        SegmentOutcome::Buffered
+    }
+
+    /// The first byte of this direction has sequence number `seq`
+    /// (ISN + 1, from the SYN / SYN-ACK). Called before the first
+    /// segment when the handshake was seen; lets a reassembler anchor
+    /// the stream instead of trusting the first data segment to
+    /// arrive first. Default: no-op. New in 0.25.0.
+    fn set_origin(&mut self, _seq: u32) {}
+
+    /// The peer acknowledged every byte of this direction below
+    /// `ack`: those bytes were sent, even if the capture never saw
+    /// them. Reassemblers use it to give up on holes the receiver
+    /// already has (capture loss) instead of waiting for a deadline.
+    /// Default: no-op. New in 0.25.0.
+    fn peer_ack(&mut self, _ack: u32, _ts: Timestamp) {}
+
+    /// This direction sent a FIN whose sequence number is `end`: the
+    /// stream ends there. Default: no-op. New in 0.25.0.
+    fn fin_seen(&mut self, _end: u32, _ts: Timestamp) {}
 
     /// Move the reassembled output produced since the last call
     /// (in-order bytes, gap markers, and a stop reason if the
@@ -402,11 +454,47 @@ pub trait Reassembler: Send + 'static {
     fn release(&mut self) {}
 
     /// Current live byte occupancy (ready bytes plus any
-    /// out-of-order data held). The tracker-wide memcap sums this
-    /// across flows. Default `0`.
+    /// out-of-order data held, including bookkeeping overhead). The
+    /// tracker-wide memcap sums this across flows. Default `0`.
     fn current_bytes(&self) -> u64 {
         0
     }
+
+    /// Segments dropped because they started too far from the
+    /// expected sequence number (see
+    /// [`crate::FlowTrackerConfig::reassembly_max_ahead`]) and were
+    /// never corroborated — strays from an earlier connection on the
+    /// same ports, injected segments. Default `0`. New in 0.25.0.
+    fn out_of_window_segments(&self) -> u64 {
+        0
+    }
+
+    /// Holes skipped early because the peer had acknowledged the
+    /// missing bytes (capture loss). Included in [`Self::gaps`].
+    /// Default `0`. New in 0.25.0.
+    fn ack_confirmed_gaps(&self) -> u64 {
+        0
+    }
+
+    /// Times the stream was re-anchored after corroborated
+    /// out-of-window data (massive loss). Default `0`. New in 0.25.0.
+    fn origin_resets(&self) -> u64 {
+        0
+    }
+}
+
+/// What [`Reassembler::segment_into`] did with a segment.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SegmentOutcome {
+    /// Handled like [`Reassembler::segment`]: buffered, dropped or
+    /// counted; drain to see the result.
+    Buffered,
+    /// `payload[skip..]` are the next in-order bytes; the caller
+    /// delivers them (nothing was buffered).
+    Passthrough {
+        /// Leading bytes already delivered earlier (retransmitted head).
+        skip: usize,
+    },
 }
 
 /// Build a [`Reassembler`] for a brand-new session, given its key
@@ -449,19 +537,294 @@ impl<K> ReassemblerFactory<K> for NoopReassemblerFactory {
     }
 }
 
+/// Default [`crate::FlowTrackerConfig::reassembly_max_ahead`]: how far
+/// ahead of the expected sequence number a segment may start and
+/// still be believed.
+pub const DEFAULT_MAX_AHEAD: u64 = 1024 * 1024;
+
+/// Default [`crate::FlowTrackerConfig::reassembly_ack_grace`]: how long
+/// a hole the peer has already acknowledged is still waited for
+/// (capture reordering between the two directions) before it is
+/// skipped.
+pub const DEFAULT_ACK_GRACE: std::time::Duration = std::time::Duration::from_millis(10);
+
+/// Default time a hole may block a stream before it is skipped.
+pub const DEFAULT_REORDER_DEADLINE: std::time::Duration = std::time::Duration::from_secs(1);
+
+/// How many recently skipped holes are remembered, to tell a late
+/// segment (counted in `dropped_segments`) from a retransmit.
+const SKIPPED_HISTORY: usize = 8;
+
+/// A segment held back: out of window (a stray until corroborated) or
+/// waiting for the hole in front of it.
+#[derive(Debug)]
+pub(crate) struct Candidate {
+    pub(crate) off: u64,
+    pub(crate) data: Vec<u8>,
+    pub(crate) ts: Timestamp,
+}
+
+/// What a far-away (out-of-window) segment led to.
+pub(crate) enum FarOutcome {
+    /// Held or dropped as a stray; nothing else to do.
+    Held,
+    /// Corroborated: re-anchor the stream at the returned candidate
+    /// (deliver it after a gap) and process the new segment normally.
+    Resync(Box<Candidate>),
+}
+
+/// Stream-position bookkeeping shared by the built-in reassemblers:
+/// the sequence → stream-offset mapping, the out-of-window candidate,
+/// ACK / FIN evidence and recently skipped holes.
+#[derive(Debug, Default)]
+pub(crate) struct Track {
+    anchored: bool,
+    next_seq: u32,
+    /// Stream offset of the next in-order byte (bytes delivered or
+    /// skipped so far).
+    pub(crate) next_off: u64,
+    /// Highest stream offset the peer's ACKs (or this side's FIN)
+    /// prove was sent.
+    evidence: u64,
+    /// When `evidence` first went past `next_off`.
+    evidence_since: Option<Timestamp>,
+    /// Stream offset of this side's FIN, once seen.
+    fin_off: Option<u64>,
+    /// One out-of-window segment, until corroborated or expired.
+    oow: Option<Box<Candidate>>,
+    skipped: [(u64, u64); SKIPPED_HISTORY],
+    skipped_len: usize,
+    skipped_head: usize,
+    /// Packet time of the last forward progress (or of the moment a
+    /// hole appeared).
+    pub(crate) last_progress: Timestamp,
+    pub(crate) out_of_window: u64,
+    pub(crate) origin_resets: u64,
+}
+
+impl Track {
+    #[cfg(test)]
+    pub(crate) fn anchored(&self) -> bool {
+        self.anchored
+    }
+
+    /// Anchor the stream at `seq` unless already anchored.
+    pub(crate) fn anchor(&mut self, seq: u32, ts: Timestamp) {
+        if !self.anchored {
+            self.anchored = true;
+            self.next_seq = seq;
+            self.last_progress = ts;
+        }
+    }
+
+    /// Sequence number of stream offset `off`.
+    pub(crate) fn seq_of(&self, off: u64) -> u32 {
+        self.next_seq
+            .wrapping_add(off.wrapping_sub(self.next_off) as u32)
+    }
+
+    /// Signed stream offset of `seq`.
+    pub(crate) fn offset_of(&self, seq: u32) -> i64 {
+        self.next_off as i64 + i64::from(seq.wrapping_sub(self.next_seq) as i32)
+    }
+
+    /// Move the stream position forward to `off`.
+    pub(crate) fn advance_to(&mut self, off: u64, ts: Timestamp) {
+        if off <= self.next_off {
+            return;
+        }
+        let delta = off - self.next_off;
+        self.next_off = off;
+        self.next_seq = self.next_seq.wrapping_add(delta as u32);
+        self.last_progress = self.last_progress.max(ts);
+        if self.evidence <= self.next_off {
+            self.evidence_since = None;
+        }
+    }
+
+    pub(crate) fn record_skip(&mut self, from: u64, to: u64) {
+        let i = (self.skipped_head + self.skipped_len) % SKIPPED_HISTORY;
+        self.skipped[i] = (from, to);
+        if self.skipped_len < SKIPPED_HISTORY {
+            self.skipped_len += 1;
+        } else {
+            self.skipped_head = (self.skipped_head + 1) % SKIPPED_HISTORY;
+        }
+    }
+
+    /// Whether `[start, end)` overlaps a recently skipped hole.
+    pub(crate) fn in_skipped(&self, start: u64, end: u64) -> bool {
+        (0..self.skipped_len).any(|i| {
+            let (f, t) = self.skipped[(self.skipped_head + i) % SKIPPED_HISTORY];
+            start < t && f < end
+        })
+    }
+
+    /// A segment starting more than `max_ahead` past the stream
+    /// position. The first one is held as a candidate stray; a second
+    /// one within `max_ahead` of it corroborates it.
+    pub(crate) fn far_ahead(
+        &mut self,
+        off: u64,
+        payload: &[u8],
+        ts: Timestamp,
+        max_ahead: u64,
+    ) -> FarOutcome {
+        if let Some(c) = &self.oow
+            && off.abs_diff(c.off) <= max_ahead
+        {
+            // The held candidate was counted as a stray; it is used
+            // after all.
+            self.out_of_window -= 1;
+            self.origin_resets += 1;
+            return FarOutcome::Resync(self.oow.take().expect("checked"));
+        }
+        // Counted now; un-counted if a later segment corroborates it.
+        self.out_of_window += 1;
+        self.oow = Some(Box::new(Candidate {
+            off,
+            data: payload.to_vec(),
+            ts,
+        }));
+        FarOutcome::Held
+    }
+
+    /// Record proof that the stream extends to `seq`. Far-ahead proof
+    /// corroborates a held stray (returned for a resync).
+    pub(crate) fn evidence(
+        &mut self,
+        seq: u32,
+        ts: Timestamp,
+        max_ahead: u64,
+    ) -> Option<Box<Candidate>> {
+        if !self.anchored {
+            return None;
+        }
+        let off = self.offset_of(seq);
+        if off <= self.next_off as i64 {
+            return None;
+        }
+        let mut off = off as u64;
+        if let Some(fin) = self.fin_off {
+            off = off.min(fin);
+        }
+        if off - self.next_off > max_ahead {
+            if let Some(c) = &self.oow
+                && off >= c.off
+            {
+                self.out_of_window -= 1;
+                self.origin_resets += 1;
+                return self.oow.take();
+            }
+            return None;
+        }
+        if off > self.evidence {
+            self.evidence = off;
+        }
+        if self.evidence > self.next_off {
+            self.evidence_since.get_or_insert(ts);
+        }
+        None
+    }
+
+    /// Record this side's FIN at `seq`.
+    pub(crate) fn fin(
+        &mut self,
+        seq: u32,
+        ts: Timestamp,
+        max_ahead: u64,
+    ) -> Option<Box<Candidate>> {
+        if !self.anchored {
+            return None;
+        }
+        let off = self.offset_of(seq);
+        if off < self.next_off as i64 {
+            return None;
+        }
+        self.fin_off = Some(off as u64);
+        if self.evidence > off as u64 {
+            self.evidence = off as u64;
+        }
+        self.evidence(seq, ts, max_ahead)
+    }
+
+    /// The acknowledged-but-unseen frontier, once `grace` has passed
+    /// since it appeared.
+    pub(crate) fn evidence_due(&self, now: Timestamp, grace: std::time::Duration) -> Option<u64> {
+        let since = self.evidence_since?;
+        (self.evidence > self.next_off && now.saturating_sub(since) >= grace)
+            .then_some(self.evidence)
+    }
+
+    /// The acknowledged-but-unseen frontier, ignoring the grace
+    /// period (end of stream).
+    pub(crate) fn evidence_frontier(&self) -> Option<u64> {
+        (self.evidence > self.next_off).then_some(self.evidence)
+    }
+
+    /// Forget a lone out-of-window candidate older than `max_age`.
+    pub(crate) fn expire_stray(&mut self, now: Timestamp, max_age: std::time::Duration) {
+        if self
+            .oow
+            .as_ref()
+            .is_some_and(|c| now.saturating_sub(c.ts) > max_age)
+        {
+            self.oow = None;
+        }
+    }
+
+    pub(crate) fn drop_stray(&mut self) {
+        self.oow = None;
+    }
+
+    pub(crate) fn heap_bytes(&self) -> usize {
+        self.oow
+            .as_ref()
+            .map_or(0, |c| std::mem::size_of::<Candidate>() + c.data.capacity())
+    }
+}
+
+/// Settings shared by the built-in reassemblers.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct StreamRules {
+    pub(crate) max_ahead: u64,
+    pub(crate) ack_grace: std::time::Duration,
+    pub(crate) deadline: std::time::Duration,
+}
+
+impl Default for StreamRules {
+    fn default() -> Self {
+        Self {
+            max_ahead: DEFAULT_MAX_AHEAD,
+            ack_grace: DEFAULT_ACK_GRACE,
+            deadline: DEFAULT_REORDER_DEADLINE,
+        }
+    }
+}
+
 /// Built-in in-order reassembler: accumulates in-order bytes per
 /// direction; drain with [`Reassembler::drain_into`] (bytes + gaps)
 /// or [`take`](Self::take) (bytes only).
 ///
-/// It holds **no out-of-order data**. A segment that arrives ahead of
-/// the expected sequence number is treated as proof that the bytes in
-/// between were lost: the hole is skipped, a gap is recorded, and the
-/// segment is delivered. A segment that later turns up inside that
-/// skipped hole is discarded and counted in
-/// [`dropped_segments`](Self::dropped_segments). This never wedges —
-/// the worst case is a gap per reordering. Use
-/// [`crate::SegmentBufferReassembler`] when reordering is common
-/// (multi-queue capture, tap merges) and holes are worth waiting for.
+/// It holds at most **one** out-of-order segment. A segment that
+/// arrives ahead of the expected sequence number waits for the hole
+/// in front of it; the hole is skipped (and reported as a **gap**)
+/// when a second out-of-order segment arrives, when the peer has
+/// acknowledged the missing bytes for
+/// [`with_ack_grace`](Self::with_ack_grace), after
+/// [`with_reorder_deadline`](Self::with_reorder_deadline), or when the
+/// flow ends. A segment that later turns up inside a skipped hole is
+/// discarded and counted in [`dropped_segments`](Self::dropped_segments).
+/// This never wedges. Use [`crate::SegmentBufferReassembler`] when
+/// reordering is common (multi-queue capture, tap merges).
+///
+/// A segment starting more than
+/// [`with_max_ahead`](Self::with_max_ahead) past the stream position
+/// is not believed on its own (a stray from an earlier connection, an
+/// injected segment): it is dropped and counted in
+/// [`Reassembler::out_of_window_segments`] unless a second such
+/// segment or an ACK corroborates it, in which case the stream skips
+/// to it (massive capture loss, [`Reassembler::origin_resets`]).
 ///
 /// Optionally bounded via [`with_max_buffer`](Self::with_max_buffer).
 /// When the cap is reached the [`OverflowPolicy`] decides whether to
@@ -470,13 +833,14 @@ impl<K> ReassemblerFactory<K> for NoopReassemblerFactory {
 #[derive(Debug, Default)]
 pub struct BufferedReassembler {
     ready: StreamChunks,
-    expected_seq: Option<u32>,
-    /// Sequence range of the most recently skipped hole — lets a
-    /// late segment be told apart from a genuine retransmit.
-    last_gap: Option<(u32, u32)>,
+    track: Track,
+    rules: StreamRules,
+    /// The one segment waiting for the hole in front of it.
+    reorder: Option<Box<Candidate>>,
     dropped_segments: u64,
     gaps: u64,
     gap_bytes: u64,
+    ack_confirmed_gaps: u64,
     bytes_dropped_oversize: u64,
     max_buffer: Option<usize>,
     overflow_policy: OverflowPolicy,
@@ -532,12 +896,34 @@ impl BufferedReassembler {
         self
     }
 
+    /// How far ahead of the stream position a segment may start and
+    /// still be believed without corroboration. Default 1 MiB.
+    pub fn with_max_ahead(mut self, bytes: u64) -> Self {
+        self.rules.max_ahead = bytes;
+        self
+    }
+
+    /// How long a hole the peer already acknowledged is still waited
+    /// for. Default 10 ms.
+    pub fn with_ack_grace(mut self, grace: std::time::Duration) -> Self {
+        self.rules.ack_grace = grace;
+        self
+    }
+
+    /// How long a hole may block the stream before it is skipped.
+    /// Default 1 s.
+    pub fn with_reorder_deadline(mut self, deadline: std::time::Duration) -> Self {
+        self.rules.deadline = deadline;
+        self
+    }
+
     /// Drain accumulated in-order bytes, leaving the buffer empty.
     /// **Gap markers are discarded** — use
     /// [`Reassembler::drain_into`] to observe them.
     ///
-    /// `expected_seq` is preserved so subsequent in-order segments
-    /// keep accumulating. Also re-arms the high-watermark threshold.
+    /// The stream position is preserved so subsequent in-order
+    /// segments keep accumulating. Also re-arms the high-watermark
+    /// threshold.
     pub fn take(&mut self) -> Vec<u8> {
         self.above_threshold = false;
         self.ready.take_bytes()
@@ -596,12 +982,10 @@ impl BufferedReassembler {
         self.high_watermark_crossings
     }
 
-    fn in_last_gap(&self, seq: u32, end: u32) -> bool {
-        self.last_gap
-            .is_some_and(|(from, to)| seq_lt(seq, to) && seq_lt(from, end))
-    }
-
     fn append_with_cap(&mut self, payload: &[u8]) {
+        if self.stop.is_some() || payload.is_empty() {
+            return;
+        }
         let Some(cap) = self.max_buffer else {
             self.ready.push_data(payload);
             self.update_watermark();
@@ -620,6 +1004,8 @@ impl BufferedReassembler {
                 // it is abandoned.
                 self.bytes_dropped_oversize += payload.len() as u64;
                 self.stop = Some(ReassemblyStop::Overflow);
+                self.reorder = None;
+                self.track.drop_stray();
             }
             OverflowPolicy::SlidingWindow => {
                 let to_drop = projected - cap;
@@ -641,6 +1027,19 @@ impl BufferedReassembler {
         }
     }
 
+    /// Bytes let through count as momentarily buffered: the peak and
+    /// threshold crossings match what buffering and draining them
+    /// right away would have recorded.
+    fn note_passthrough(&mut self, len: usize) {
+        self.high_watermark = self.high_watermark.max(len as u64);
+        if let (Some(pct), Some(cap)) = (self.high_watermark_threshold_pct, self.max_buffer)
+            && len as u64 >= (cap as u64).saturating_mul(pct as u64) / 100
+        {
+            self.high_watermark_crossings = self.high_watermark_crossings.saturating_add(1);
+        }
+        self.above_threshold = false;
+    }
+
     #[inline]
     fn update_watermark(&mut self) {
         let len = self.ready.len() as u64;
@@ -659,50 +1058,198 @@ impl BufferedReassembler {
             }
         }
     }
-}
 
-impl Reassembler for BufferedReassembler {
-    fn segment(&mut self, seq: u32, payload: &[u8], ts: Timestamp) {
-        if payload.is_empty() || self.stop.is_some() {
+    /// Skip the hole in front of `to` (report a gap).
+    fn skip_to(&mut self, to: u64, ts: Timestamp) {
+        let from = self.track.next_off;
+        if to <= from {
             return;
         }
-        let end = seq.wrapping_add(payload.len() as u32);
-        let Some(exp) = self.expected_seq else {
-            self.expected_seq = Some(end);
-            self.append_with_cap(payload);
+        let missing = to - from;
+        self.gaps += 1;
+        self.gap_bytes += missing;
+        self.track.record_skip(from, to);
+        self.ready.push_gap(missing);
+        self.track.advance_to(to, ts);
+    }
+
+    /// Deliver in-order bytes that start at or before the stream
+    /// position (the part before it is a retransmitted head).
+    fn deliver_at(&mut self, off: u64, data: &[u8], ts: Timestamp) {
+        let next = self.track.next_off;
+        let end = off + data.len() as u64;
+        if end <= next {
             return;
-        };
-        if seq == exp {
-            self.expected_seq = Some(end);
-            self.append_with_cap(payload);
-        } else if seq_lte(end, exp) {
-            // Wholly behind `exp`: either a late segment from a hole
-            // we already skipped, or bytes we already delivered.
-            if self.in_last_gap(seq, end) {
+        }
+        let skip = (next.saturating_sub(off)) as usize;
+        self.track.advance_to(end, ts);
+        self.append_with_cap(&data[skip..]);
+    }
+
+    /// Give up on the hole in front of the reorder candidate and
+    /// deliver it.
+    fn release_reorder(&mut self, ts: Timestamp) {
+        if let Some(c) = self.reorder.take() {
+            self.skip_to(c.off, ts);
+            self.deliver_at(c.off, &c.data, ts);
+        }
+    }
+
+    /// Deliver the reorder candidate if the stream reached it.
+    fn try_reorder(&mut self, ts: Timestamp) {
+        if self
+            .reorder
+            .as_ref()
+            .is_some_and(|c| c.off <= self.track.next_off)
+        {
+            let c = self.reorder.take().expect("checked");
+            self.deliver_at(c.off, &c.data, ts);
+        }
+    }
+
+    fn resync(&mut self, c: &Candidate, ts: Timestamp) {
+        self.release_reorder(ts);
+        self.skip_to(c.off, ts);
+        self.deliver_at(c.off, &c.data, ts);
+    }
+
+    /// Deadlines: an acknowledged hole after the grace period, any
+    /// hole after the reorder deadline, a lone stray after four.
+    fn check_timers(&mut self, now: Timestamp) {
+        if self.stop.is_some() {
+            return;
+        }
+        if let Some(frontier) = self.track.evidence_due(now, self.rules.ack_grace) {
+            match self.reorder.as_ref().map(|c| c.off) {
+                Some(off) if off <= frontier => {
+                    self.ack_confirmed_gaps += 1;
+                    self.release_reorder(now);
+                }
+                Some(_) => {}
+                None => {
+                    self.ack_confirmed_gaps += 1;
+                    self.skip_to(frontier, now);
+                }
+            }
+        }
+        if self
+            .reorder
+            .as_ref()
+            .is_some_and(|c| now.saturating_sub(c.ts) > self.rules.deadline)
+        {
+            self.release_reorder(now);
+        }
+        self.track.expire_stray(now, self.rules.deadline * 4);
+    }
+
+    fn feed(&mut self, seq: u32, payload: &[u8], ts: Timestamp, pass: bool) -> SegmentOutcome {
+        if payload.is_empty() || self.stop.is_some() {
+            return SegmentOutcome::Buffered;
+        }
+        self.track.anchor(seq, ts);
+        let start = self.track.offset_of(seq);
+        let end = start + payload.len() as i64;
+        let next = self.track.next_off as i64;
+        let max_ahead = self.rules.max_ahead as i64;
+
+        if start - next > max_ahead {
+            if let FarOutcome::Resync(c) =
+                self.track
+                    .far_ahead(start as u64, payload, ts, self.rules.max_ahead)
+            {
+                self.resync(&c, ts);
+                return self.feed(seq, payload, ts, false);
+            }
+            return SegmentOutcome::Buffered;
+        }
+        if end <= next {
+            if end < next - max_ahead {
+                self.track.out_of_window += 1;
+            } else if start >= 0 && self.track.in_skipped(start as u64, end as u64) {
                 self.dropped_segments += 1;
             } else {
                 self.retransmits += 1;
                 self.on_duplicate(seq, payload, ts);
             }
-        } else if seq_lt(seq, exp) {
-            // Straddles `exp`: the head was already delivered, the
-            // tail is new. Deliver only the tail.
+            self.check_timers(ts);
+            return SegmentOutcome::Buffered;
+        }
+        let skip = if start < next {
             self.retransmits += 1;
             self.on_duplicate(seq, payload, ts);
-            let skip = exp.wrapping_sub(seq) as usize;
-            self.expected_seq = Some(end);
-            self.append_with_cap(&payload[skip..]);
+            (next - start) as usize
         } else {
-            // Strictly ahead: the bytes in [exp, seq) were never seen
-            // and this reassembler cannot wait for them. Skip the
-            // hole, say so, and carry on.
-            let missing = seq.wrapping_sub(exp) as u64;
-            self.gaps += 1;
-            self.gap_bytes += missing;
-            self.last_gap = Some((exp, seq));
-            self.ready.push_gap(missing);
-            self.expected_seq = Some(end);
-            self.append_with_cap(payload);
+            0
+        };
+        if start > next {
+            // Ahead of the stream: wait for the hole, unless another
+            // segment is already waiting — then give up on that hole.
+            if self.reorder.is_some() {
+                self.release_reorder(ts);
+                return self.feed(seq, payload, ts, false);
+            }
+            self.reorder = Some(Box::new(Candidate {
+                off: start as u64,
+                data: payload.to_vec(),
+                ts,
+            }));
+            self.track.last_progress = ts;
+            self.check_timers(ts);
+            return SegmentOutcome::Buffered;
+        }
+        // In order.
+        let len = payload.len() - skip;
+        if pass
+            && self.ready.is_empty()
+            && self.reorder.is_none()
+            && self.max_buffer.is_none_or(|cap| len <= cap)
+        {
+            self.track.advance_to(end as u64, ts);
+            self.note_passthrough(len);
+            return SegmentOutcome::Passthrough { skip };
+        }
+        self.track.advance_to(end as u64, ts);
+        self.append_with_cap(&payload[skip..]);
+        self.try_reorder(ts);
+        self.check_timers(ts);
+        SegmentOutcome::Buffered
+    }
+}
+
+impl Reassembler for BufferedReassembler {
+    fn segment(&mut self, seq: u32, payload: &[u8], ts: Timestamp) {
+        self.feed(seq, payload, ts, false);
+    }
+
+    fn segment_into(&mut self, seq: u32, payload: &[u8], ts: Timestamp) -> SegmentOutcome {
+        self.feed(seq, payload, ts, true)
+    }
+
+    fn set_origin(&mut self, seq: u32) {
+        self.track.anchor(seq, Timestamp::default());
+    }
+
+    fn peer_ack(&mut self, ack: u32, ts: Timestamp) {
+        if self.stop.is_some() {
+            return;
+        }
+        // An ACK covers this side's FIN too (one sequence number): be
+        // conservative by one byte until the FIN position is known.
+        if let Some(c) = self
+            .track
+            .evidence(ack.wrapping_sub(1), ts, self.rules.max_ahead)
+        {
+            self.resync(&c, ts);
+        }
+        self.check_timers(ts);
+    }
+
+    fn fin_seen(&mut self, end: u32, ts: Timestamp) {
+        if self.stop.is_some() {
+            return;
+        }
+        if let Some(c) = self.track.fin(end, ts, self.rules.max_ahead) {
+            self.resync(&c, ts);
         }
     }
 
@@ -712,6 +1259,25 @@ impl Reassembler for BufferedReassembler {
         if let Some(stop) = self.stop {
             out.set_stop(stop);
         }
+    }
+
+    fn flush_pending(&mut self) {
+        if self.stop.is_some() {
+            return;
+        }
+        let ts = self.track.last_progress;
+        self.release_reorder(ts);
+        // Bytes acknowledged (or before this side's FIN) but never
+        // seen: a trailing gap.
+        if let Some(frontier) = self.track.evidence_frontier() {
+            self.ack_confirmed_gaps += 1;
+            self.skip_to(frontier, ts);
+        }
+        self.track.drop_stray();
+    }
+
+    fn advance_time(&mut self, now: Timestamp) {
+        self.check_timers(now);
     }
 
     fn dropped_segments(&self) -> u64 {
@@ -766,26 +1332,30 @@ impl Reassembler for BufferedReassembler {
     fn release(&mut self) {
         self.ready.clear();
         self.ready.release();
+        self.reorder = None;
+        self.track.drop_stray();
         self.stop.get_or_insert(ReassemblyStop::Memcap);
     }
 
     fn current_bytes(&self) -> u64 {
-        self.ready.len() as u64
+        let held = self
+            .reorder
+            .as_ref()
+            .map_or(0, |c| std::mem::size_of::<Candidate>() + c.data.capacity());
+        (self.ready.len() + held + self.track.heap_bytes()) as u64
     }
-}
 
-/// `a < b` in TCP sequence-space (wrap-aware). Treats `a` and `b`
-/// as `u32` sequence numbers; differences exceeding 2^31 are
-/// interpreted as backward via two's-complement.
-#[inline]
-pub(crate) fn seq_lt(a: u32, b: u32) -> bool {
-    (a.wrapping_sub(b) as i32) < 0
-}
+    fn out_of_window_segments(&self) -> u64 {
+        self.track.out_of_window
+    }
 
-/// `a <= b` in TCP sequence-space.
-#[inline]
-pub(crate) fn seq_lte(a: u32, b: u32) -> bool {
-    a == b || seq_lt(a, b)
+    fn ack_confirmed_gaps(&self) -> u64 {
+        self.ack_confirmed_gaps
+    }
+
+    fn origin_resets(&self) -> u64 {
+        self.track.origin_resets
+    }
 }
 
 /// Default factory that builds a fresh [`BufferedReassembler`] per
@@ -995,15 +1565,61 @@ mod tests {
         assert_eq!(r.gap_bytes(), 5);
     }
 
+    /// One reordered segment waits for its hole instead of costing a
+    /// gap (issue #182).
+    #[test]
+    fn a_single_reordering_is_repaired() {
+        let mut r = BufferedReassembler::new();
+        r.segment(0, b"hello", t());
+        r.segment(10, b"world", t()); // waits for 5..10
+        r.segment(5, b"MIDDL", t());
+        assert_eq!(r.gaps(), 0);
+        assert_eq!(r.take(), b"helloMIDDLworld");
+    }
+
     #[test]
     fn late_segment_inside_a_skipped_hole_is_dropped_not_a_retransmit() {
         let mut r = BufferedReassembler::new();
         r.segment(0, b"hello", t());
-        r.segment(10, b"world", t()); // skips 5..10
+        r.segment(10, b"world", t()); // waits for 5..10
+        r.segment(20, b"again", t()); // second OOO: skip 5..10
         r.segment(5, b"MIDDL", t()); // arrives late
         assert_eq!(r.dropped_segments(), 1);
         assert_eq!(r.retransmits(), 0);
         assert_eq!(r.take(), b"helloworld");
+    }
+
+    #[test]
+    fn stray_beyond_the_window_is_dropped() {
+        let mut r = BufferedReassembler::new().with_max_ahead(1000);
+        r.segment(0, b"abc", t());
+        r.segment(5_000_000, b"STRAY", t());
+        r.segment(3, b"def", t());
+        assert_eq!(r.take(), b"abcdef");
+        assert_eq!(r.out_of_window_segments(), 1);
+        assert_eq!(r.gaps(), 0);
+    }
+
+    #[test]
+    fn syn_origin_repairs_reordered_first_segments() {
+        let mut r = BufferedReassembler::new();
+        r.set_origin(100);
+        r.segment(105, b"world", t());
+        r.segment(100, b"hello", t());
+        assert_eq!(r.take(), b"helloworld");
+        assert_eq!(r.retransmits(), 0);
+    }
+
+    #[test]
+    fn acked_hole_is_skipped_after_the_grace() {
+        let mut r = BufferedReassembler::new();
+        r.segment(0, b"abc", Timestamp::new(1, 0));
+        r.segment(6, b"ghi", Timestamp::new(1, 0));
+        r.peer_ack(9, Timestamp::new(1, 0));
+        assert_eq!(r.gaps(), 0);
+        r.advance_time(Timestamp::new(2, 0));
+        assert_eq!(r.ack_confirmed_gaps(), 1);
+        assert_eq!(r.take(), b"abcghi");
     }
 
     #[test]
@@ -1020,7 +1636,7 @@ mod tests {
     fn empty_payload_ignored() {
         let mut r = BufferedReassembler::new();
         r.segment(0, b"", t());
-        assert_eq!(r.expected_seq, None);
+        assert!(!r.track.anchored());
     }
 
     #[test]

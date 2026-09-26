@@ -56,7 +56,7 @@ use crate::{
     segment_reassembler::SegmentBufferReassemblerFactory,
     session::{
         DatagramParser, SessionParser, TemplateFactory,
-        core::{Ctx, DEFAULT_PROBE_PACKETS, DatagramCore, Ports, Selector, SessionCore},
+        core::{Ctx, DEFAULT_PROBE_PACKETS, DatagramCore, Ports, Selector, SessionCore, Stream},
         engine::{Dispatch, Engine},
     },
     tracker::{FlowTracker, FlowTrackerConfig},
@@ -444,7 +444,7 @@ where
         &mut self,
         cx: &Ctx<'_, K>,
         ports: Ports,
-        chunks: &StreamChunks,
+        chunks: &Stream<'_>,
         out: &mut Self::Out,
     ) {
         for slot in &mut self.list {
@@ -475,12 +475,13 @@ where
     fn on_tick(
         &mut self,
         now: Timestamp,
+        stamp: Timestamp,
         orientation_of: &dyn Fn(&K) -> Orientation,
         anomalies: bool,
         out: &mut Self::Out,
     ) {
         for slot in &mut self.list {
-            slot.on_tick(now, orientation_of, anomalies, out);
+            slot.on_tick(now, stamp, orientation_of, anomalies, out);
         }
     }
     fn retain(&mut self, alive: &dyn Fn(&K) -> bool) {
@@ -582,8 +583,12 @@ where
     }
 
     /// Append-only finish.
+    ///
+    /// Every flow ends. Parsers' `on_tick` sees `Timestamp::MAX`;
+    /// output is stamped with the latest packet timestamp (never
+    /// `Timestamp::MAX`) and the monotonic clock is left alone.
     pub fn finish_into(&mut self, out: &mut Vec<Event<E::Key>>) {
-        self.sweep_into(Timestamp::MAX, out);
+        self.engine.finish(&mut self.slots, out);
     }
 
     /// One-call iterator over a pcap file — drives every packet

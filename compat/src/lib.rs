@@ -35,8 +35,12 @@ pub struct Outcome {
 pub struct Cost {
     /// Heap blocks allocated during the run.
     pub blocks: u64,
-    /// Peak live heap during the run, relative to its start.
+    /// Peak live heap during the run, relative to its start
+    /// (includes transient reallocation copies).
     pub peak_bytes: u64,
+    /// Highest live heap observed *between* packets — what the
+    /// driver holds at rest.
+    pub resident_bytes: u64,
     /// Live heap at the scenario's measuring point (see `Scenario`),
     /// relative to the run's start.
     pub retained_bytes: u64,
@@ -238,12 +242,14 @@ macro_rules! runner {
                 let t0 = std::time::Instant::now();
                 let (mut d, mut handles) = build(s);
                 let mut retained = None;
+                let mut resident = 0u64;
                 for (i, p) in cap.packets.iter().enumerate() {
                     if Some(i) == cap.measure_at {
                         retained = Some(alloc::live_delta());
                     }
                     let ts = Timestamp::new(p.sec, p.nsec);
                     d.track_into(PacketView::new(&p.frame, ts), &mut events);
+                    resident = resident.max(alloc::live_delta());
                     if i % 64 == 63 {
                         for e in events.drain(..) {
                             match e {
@@ -283,6 +289,7 @@ macro_rules! runner {
                     Cost {
                         blocks: stats.blocks,
                         peak_bytes: stats.peak,
+                        resident_bytes: resident,
                         retained_bytes: retained.unwrap_or(0),
                         time,
                     },

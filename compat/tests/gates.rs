@@ -7,8 +7,10 @@ use flowscope_compat::{Outcome, Scenario, alloc::Counting, run_new, run_old, tra
 static A: Counting = Counting;
 
 /// Out-of-order budget per side (flowscope default) + one segment +
-/// the allowed slack.
+/// the allowed slack: the most the driver may hold at rest.
 const S8_BUDGET: u64 = 256 * 1024 + 1500 + 64 * 1024;
+/// Transient peak (a buffer reallocating while its data is copied).
+const S8_PEAK: u64 = 2 * 256 * 1024 + 64 * 1024;
 
 fn superset(s: Scenario, new: &Outcome, old: &Outcome) {
     assert!(new.lines_initiator >= old.lines_initiator, "{}: initiator lines {new:?} < {old:?}", s.name());
@@ -90,9 +92,11 @@ fn s8(cap: traffic::Capture) {
     let base = run_new::run(Scenario::S8ReverseOoo, &traffic::reverse_ooo(1)).1;
     let (on, cn) = run_new::run(Scenario::S8ReverseOoo, &cap);
     let (oo, _) = run_old::run(Scenario::S8ReverseOoo, &cap);
+    let resident = cn.resident_bytes.saturating_sub(base.resident_bytes);
+    let peak = cn.peak_bytes.saturating_sub(base.peak_bytes);
+    eprintln!("S8 resident growth {resident} B, peak growth {peak} B, time {:?}", cn.time);
+    assert!(resident <= S8_BUDGET, "S8 resident growth {resident} > {S8_BUDGET}");
+    assert!(peak <= S8_PEAK, "S8 peak growth {peak} > {S8_PEAK}");
     superset(Scenario::S8ReverseOoo, &on, &oo);
-    let grew = cn.peak_bytes.saturating_sub(base.peak_bytes);
-    eprintln!("S8 peak growth {grew} B, time {:?}", cn.time);
-    assert!(grew <= S8_BUDGET, "S8 peak growth {grew} > {S8_BUDGET}");
     assert!(cn.time.as_secs() < 5, "S8 took {:?}", cn.time);
 }

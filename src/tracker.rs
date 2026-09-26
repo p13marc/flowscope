@@ -207,13 +207,32 @@ pub struct FlowTrackerConfig {
     ///
     /// Default 256 KiB. New in 0.25.0.
     pub reassembly_ooo_buffer: usize,
-    /// How long an out-of-order segment may wait (in packet time)
-    /// for the hole in front of it to fill before the hole is
-    /// skipped and reported as a gap. Checked on every segment of
-    /// the side and on every sweep.
+    /// How long a stream may make no progress (in packet time) with a
+    /// hole open before the hole is skipped and reported as a gap —
+    /// when at least two out-of-order segments or an ACK corroborate
+    /// the hole; four times as long otherwise. Checked on every
+    /// segment of the side and on every sweep.
     ///
     /// Default 1 s. New in 0.25.0.
     pub reassembly_ooo_deadline: Duration,
+    /// How far (bytes) ahead of the expected sequence number a TCP
+    /// segment may start and still be believed on its own. A segment
+    /// further ahead — a stray from an earlier connection on the same
+    /// ports, an injected segment — is dropped
+    /// ([`crate::AnomalyKind::OutOfWindowSegment`]) unless a second
+    /// segment or an ACK corroborates it (massive capture loss), in
+    /// which case the stream resyncs with a gap.
+    ///
+    /// Default 1 MiB. New in 0.25.0.
+    pub reassembly_max_ahead: u64,
+    /// How long (packet time) a hole the peer has already
+    /// acknowledged is still waited for before it is skipped. The
+    /// receiver got those bytes, so the capture lost them; the grace
+    /// only covers reordering between the two directions in the
+    /// capture.
+    ///
+    /// Default 10 ms. New in 0.25.0.
+    pub reassembly_ack_grace: Duration,
     /// Tracker-wide reassembly memcap — total bytes of
     /// reassembly buffering across every live flow. When the
     /// running sum trips this cap on a `track` call, the
@@ -311,6 +330,8 @@ impl Default for FlowTrackerConfig {
             tcp_overlap_policy: crate::event::TcpOverlapPolicy::First,
             reassembly_ooo_buffer: 256 * 1024,
             reassembly_ooo_deadline: Duration::from_secs(1),
+            reassembly_max_ahead: crate::reassembler::DEFAULT_MAX_AHEAD,
+            reassembly_ack_grace: crate::reassembler::DEFAULT_ACK_GRACE,
             reassembly_memcap: None,
             reassembly_memcap_policy: crate::event::MemcapPolicy::Ignore,
             active_idle_threshold: Some(Duration::from_secs(1)),
@@ -402,6 +423,14 @@ pub struct FlowTracker<E: FlowExtractor, S = ()> {
     /// [`Self::pause_events`] / [`Self::resume_events`]; orthogonal
     /// to the per-variant [`FlowTrackerConfig::suppress_events`] mask.
     events_paused: bool,
+    /// Owned by a driver ([`crate::FlowDriver`]): `Ended` is always
+    /// built (the driver needs it to release per-flow state; it
+    /// applies the mask / pause to its own output) and the driver
+    /// runs auto-sweeps itself.
+    driver_owned: bool,
+    /// Flows removed by [`Self::forget`] (no `Ended`), so a driver
+    /// can tell its per-flow state went stale.
+    forgotten: u64,
 }
 
 impl<E: FlowExtractor, S: Send + 'static> FlowTracker<E, S> {
@@ -430,7 +459,32 @@ impl<E: FlowExtractor, S: Send + 'static> FlowTracker<E, S> {
             idle_timeout_fn: None,
             last_sweep_ts: None,
             events_paused: false,
+            driver_owned: false,
+            forgotten: 0,
         }
+    }
+
+    /// Hand event gating and auto-sweeps to the owning driver (see
+    /// the `driver_owned` field).
+    pub(crate) fn set_driver_owned(&mut self, owned: bool) {
+        self.driver_owned = owned;
+    }
+
+    /// Whether an auto-sweep is due at packet time `ts`
+    /// ([`FlowTrackerConfig::auto_sweep_interval`]).
+    pub(crate) fn auto_sweep_due(&self, ts: Timestamp) -> bool {
+        match (self.config.auto_sweep_interval, self.last_sweep_ts) {
+            (None, _) => false,
+            (Some(_), None) => true,
+            (Some(interval), Some(last)) => {
+                ts.to_duration().saturating_sub(last.to_duration()) >= interval
+            }
+        }
+    }
+
+    /// Flows removed by [`Self::forget`] so far.
+    pub(crate) fn forgotten(&self) -> u64 {
+        self.forgotten
     }
 
     /// Enable packet-clock-driven implicit sweeps.
@@ -494,7 +548,8 @@ impl<E: FlowExtractor, S: Send + 'static> FlowTracker<E, S> {
     /// this so suppressed events are never constructed.
     #[inline]
     fn emits(&self, variant: EventMask) -> bool {
-        !self.events_paused && !self.config.suppress_events.contains(variant)
+        (self.driver_owned && variant == EventMask::ENDED)
+            || (!self.events_paused && !self.config.suppress_events.contains(variant))
     }
 
     /// Process a packet. Returns 0–3 events.
@@ -680,7 +735,11 @@ impl<E: FlowExtractor, S: Send + 'static> FlowTracker<E, S> {
         // are `Copy` and can't change within this call.
         let events_paused = self.events_paused;
         let suppress = self.config.suppress_events;
-        let should_emit = |variant: EventMask| !events_paused && !suppress.contains(variant);
+        let driver_owned = self.driver_owned;
+        let should_emit = |variant: EventMask| {
+            (driver_owned && variant == EventMask::ENDED)
+                || (!events_paused && !suppress.contains(variant))
+        };
         let emit_packet_source_idx = self.config.emit_packet_source_idx;
 
         // SAFETY-style invariant: we just ensured the entry exists.
@@ -899,15 +958,11 @@ impl<E: FlowExtractor, S: Send + 'static> FlowTracker<E, S> {
         // time has elapsed since the last sweep, run one now and
         // merge its events. Saturating arithmetic guards against
         // out-of-order timestamps.
-        if let Some(interval) = self.config.auto_sweep_interval {
-            let should_sweep = match self.last_sweep_ts {
-                None => true,
-                Some(last) => ts.to_duration().saturating_sub(last.to_duration()) >= interval,
-            };
-            if should_sweep {
-                let swept = self.sweep(ts);
-                events.extend(swept);
-            }
+        // A driver-owned tracker leaves this to the driver, which
+        // must also advance its reassemblers and parsers.
+        if !self.driver_owned && self.auto_sweep_due(ts) {
+            let swept = self.sweep(ts);
+            events.extend(swept);
         }
 
         events
@@ -1232,8 +1287,11 @@ impl<E: FlowExtractor, S: Send + 'static> FlowTracker<E, S> {
     /// flow. Returns `true` if a flow was removed.
     pub fn forget(&mut self, key: &E::Key) -> bool {
         let removed = self.flows.pop(key).is_some();
-        if removed && self.hot.as_ref() == Some(key) {
-            self.hot = None;
+        if removed {
+            self.forgotten += 1;
+            if self.hot.as_ref() == Some(key) {
+                self.hot = None;
+            }
         }
         removed
     }
