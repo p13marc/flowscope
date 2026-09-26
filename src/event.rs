@@ -55,6 +55,31 @@ pub enum FlowSide {
     Responder,
 }
 
+impl FlowSide {
+    /// Stable snake-case label: `"initiator"` / `"responder"`. Same
+    /// vocabulary as the `serde` representation. New in 0.25.0.
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            FlowSide::Initiator => "initiator",
+            FlowSide::Responder => "responder",
+        }
+    }
+
+    /// The other side of the flow. New in 0.25.0.
+    pub const fn opposite(self) -> FlowSide {
+        match self {
+            FlowSide::Initiator => FlowSide::Responder,
+            FlowSide::Responder => FlowSide::Initiator,
+        }
+    }
+}
+
+impl std::fmt::Display for FlowSide {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 /// Why a flow ended.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -687,12 +712,35 @@ pub enum FlowState {
 }
 
 impl FlowState {
+    /// Stable snake-case label, same vocabulary as the `serde`
+    /// representation (`"syn_sent"`, `"established"`, …). New in
+    /// 0.25.0.
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            FlowState::SynSent => "syn_sent",
+            FlowState::SynReceived => "syn_received",
+            FlowState::Established => "established",
+            FlowState::FinWait => "fin_wait",
+            FlowState::ClosingTcp => "closing_tcp",
+            FlowState::Active => "active",
+            FlowState::Closed => "closed",
+            FlowState::Reset => "reset",
+            FlowState::Aborted => "aborted",
+        }
+    }
+
     /// True if the state means "this flow won't see more packets".
     pub fn is_terminal(self) -> bool {
         matches!(
             self,
             FlowState::Closed | FlowState::Reset | FlowState::Aborted
         )
+    }
+}
+
+impl std::fmt::Display for FlowState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
     }
 }
 
