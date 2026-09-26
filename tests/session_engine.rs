@@ -1134,3 +1134,32 @@ fn emit_packet_source_idx_is_order_independent() {
     let d = b.build();
     assert!(d.tracker().config().emit_packet_source_idx);
 }
+
+/// A pending `poll_recv` is woken by the next message (netring's
+/// `EventStream` hung forever without this).
+#[test]
+fn broadcast_handle_wakes_a_pending_receiver() {
+    use std::sync::atomic::AtomicBool;
+    use std::task::{Context, Poll, Wake, Waker};
+    struct Flag(AtomicBool);
+    impl Wake for Flag {
+        fn wake(self: Arc<Self>) {
+            self.0.store(true, Ordering::SeqCst);
+        }
+    }
+    let flag = Arc::new(Flag(AtomicBool::new(false)));
+    let waker = Waker::from(Arc::clone(&flag));
+    let mut cx = Context::from_waker(&waker);
+
+    let mut b = Driver::builder(FiveTuple::bidirectional());
+    let mut sub = b.session_on_ports_broadcast_each(Collect::default(), [9000]);
+    let mut d = b.build();
+    assert!(sub.poll_recv(&mut cx).is_pending());
+    let frames = flow(&[(0, b"x".to_vec())]);
+    let mut events = Vec::new();
+    for (t, f) in &frames {
+        d.track_into(PacketView::new(f, *t), &mut events);
+    }
+    assert!(flag.0.load(Ordering::SeqCst), "woken by the push");
+    assert!(matches!(sub.poll_recv(&mut cx), Poll::Ready(_)));
+}
