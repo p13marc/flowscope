@@ -521,7 +521,9 @@ where
 
     /// Filter incoming `PacketView`s through a content-hash
     /// [`crate::Dedup`] before extraction. Views the dedup
-    /// classifies as duplicates produce zero events. Useful for
+    /// classifies as duplicates produce zero events; they count in
+    /// [`Self::dedup`]`().dropped()` and in
+    /// `flowscope_packets_deduplicated_total`. Useful for
     /// loopback captures (`tcpdump -i lo`) where every packet
     /// arrives twice via the kernel's outgoing/host reinjection.
     pub fn with_dedup(mut self, dedup: crate::dedup::Dedup) -> Self {
@@ -745,6 +747,7 @@ where
         if let Some(d) = self.dedup.as_mut()
             && !d.keep(view)
         {
+            crate::obs::record_packet_deduplicated();
             return FlowEvents::new();
         }
         let view = self.clamp_view(view);

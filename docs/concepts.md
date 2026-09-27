@@ -469,6 +469,14 @@ when:
 - both of its sides were stopped (see below) → `ParserClosed` with
   detail "both sides stopped"
 
+Those are the early closes — `reason.is_parser()`. On the typed
+`Driver` a parser still open at flow end *also* gets a `ParserClosed`,
+carrying the flow's transport reason (`reason.is_transport()`) right
+before `Ended`; `SessionDriver` / `DatagramDriver` fold that case into
+`Closed` and emit nothing extra. A handler that reacts to "the parser
+gave up" should therefore test `reason.is_parser()`, not the event's
+presence.
+
 A **side** of a parser is stopped — `ParserSideStopped { side,
 reason, .. }`, the other side keeps being parsed — when:
 
@@ -513,7 +521,8 @@ side, per-parser dispatch), so they agree on what a flow is:
   flow (`session_broadcast`); each slot's `SlotHandle<M, K>` yields
   typed messages while the driver emits the flow-lifecycle
   `Event<K>` stream. Builder settings (`config`, `idle_timeout_fn`,
-  `dedup`, `monotonic_timestamps`) apply to every slot, in any order.
+  `dedup`, `monotonic_timestamps`) apply to every slot, in any order
+  (`Driver::dedup()` reads the drop count back).
 - **`session::SessionDriver<E, F>` / `DatagramDriver<E, F>`** — one
   parser type, ordered `SessionEvent<K, M>` output (lifecycle,
   messages, parser closes, anomalies interleaved). What netring's
@@ -544,7 +553,7 @@ the typed parser messages drained from each protocol's `SlotHandle`.
 | `Packet { key, side, len, ts, tcp }` | Per-packet (opt-in) |
 | `Ended { key, reason, stats, history, l4, ts }` | Flow concluded |
 | `StateChange { key, from, to, ts }` | TCP state transition |
-| `ParserClosed { key, slot, parser_kind, reason, detail, ts }` | A slot's parser was closed early (poison, done, gap `Stop`, both sides stopped) |
+| `ParserClosed { key, slot, parser_kind, reason, detail, ts }` | A slot's parser was closed: early (poison, done, gap `Stop`, both sides stopped — `reason.is_parser()`) or with its flow's end (`reason.is_transport()`, right before `Ended`) |
 | `ParserSideStopped { key, slot, parser_kind, side, reason, detail, ts }` | One side of a slot's parser stopped (gap, reassembly stop); the other side goes on |
 | `FlowAnomaly { key, kind, ts }` | Per-flow anomaly (opt-in) |
 | `TrackerAnomaly { kind, ts }` | Tracker-global anomaly (opt-in) |

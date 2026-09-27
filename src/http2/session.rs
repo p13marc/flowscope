@@ -48,7 +48,10 @@ use crate::{FlowSide, ParserKind, Timestamp};
 /// [`EndReason::ParseError`](crate::EndReason::ParseError) rather than
 /// keep feeding a parser whose HPACK state is already meaningless.
 /// The TCP flow itself keeps going — flowscope does not own the
-/// socket, so closing the connection is the caller's decision.
+/// socket, so closing the connection is the caller's decision. React
+/// to `reason.is_parser()` (here always `ParseError`): the typed
+/// `Driver` also emits a `ParserClosed` carrying the flow's transport
+/// reason when the connection itself ends.
 ///
 /// ```
 /// use flowscope::http2::{Http2Event, Http2Session};

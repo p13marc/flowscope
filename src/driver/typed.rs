@@ -78,8 +78,12 @@ type IdleTimeoutFn<K> =
 ///
 /// Plan 121: no `M` parameter, no `Message` variant — per-parser
 /// typed messages flow through [`SlotHandle`] returned by the
-/// builder. `ParserClosed` stays as a lifecycle marker for when
-/// a parser self-terminates.
+/// builder. `ParserClosed` is the per-(slot, flow) parser lifecycle
+/// marker: an early close (`reason.is_parser()` — poison, done, gap
+/// `Stop`, both sides stopped) or, right before `Ended`, the close
+/// that comes with the flow's own end (`reason.is_transport()`).
+/// [`SessionEvent`](crate::session::SessionEvent) reports only the
+/// former.
 ///
 /// `Serialize`able under the `serde` feature with the same
 /// `tag = "type"` / `snake_case` shape as
@@ -210,6 +214,14 @@ pub enum Event<K> {
     ///   and `detail` says why.
     /// - At the flow's end: `reason` is the flow's end reason, and the
     ///   event comes right before that flow's [`Self::Ended`].
+    ///
+    /// [`EndReason::is_parser`] / [`EndReason::is_transport`] tell the
+    /// two apart — a handler for "the parser gave up" tests
+    /// `reason.is_parser()`. Unlike
+    /// [`SessionEvent::ParserClosed`](crate::session::SessionEvent::ParserClosed),
+    /// the flow-end close *is* reported here (one per slot, `detail:
+    /// None`), because several slots can share one flow and `Ended`
+    /// alone would not say which of them had a parser on it.
     ///
     /// `#[non_exhaustive]` — match with a trailing `..`.
     #[non_exhaustive]
@@ -757,6 +769,21 @@ where
         self.engine.flow.set_config(config);
     }
 
+    /// Borrow the dedup state ([`DriverBuilder::dedup`]); `None` when
+    /// none is configured. [`Dedup::dropped`] / [`Dedup::seen`] are
+    /// the counts. New in 0.25.1.
+    pub fn dedup(&self) -> Option<&Dedup> {
+        self.engine.flow.dedup()
+    }
+
+    /// Install, replace or (`None`) remove the dedup at runtime — the
+    /// in-place counterpart of [`DriverBuilder::dedup`], like
+    /// [`Self::set_config`] / [`Self::set_idle_timeout_fn`]. A new
+    /// instance starts counting from zero. New in 0.25.1.
+    pub fn set_dedup(&mut self, dedup: Option<Dedup>) {
+        self.engine.flow.set_dedup(dedup);
+    }
+
     /// Stop emitting lifecycle events (overload shunt); parsers keep
     /// running and flows keep being released.
     pub fn pause_events(&mut self) {
@@ -847,6 +874,11 @@ where
 
     /// Content-hash duplicate filtering before tracking. Duplicates
     /// reach neither the lifecycle nor any parser.
+    ///
+    /// Read the counts back through [`Driver::dedup`]
+    /// (`dropped()` / `seen()`), replace at runtime with
+    /// [`Driver::set_dedup`], or watch
+    /// `flowscope_packets_deduplicated_total` (`metrics` feature).
     pub fn dedup(&mut self, dedup: Dedup) -> &mut Self {
         self.dedup = Some(dedup);
         self

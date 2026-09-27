@@ -8,7 +8,9 @@
 //!
 //! Note the signal is `Event::ParserClosed`, not `Event::Ended`: the
 //! TCP flow is not flowscope's to close. An inline proxy owns the
-//! socket and tears the connection down on this event.
+//! socket and tears the connection down on this event when
+//! `reason.is_parser()` — a `ParserClosed` with a transport reason
+//! merely accompanies the flow's own `Ended`.
 
 #![cfg(all(
     feature = "http2",

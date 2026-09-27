@@ -146,7 +146,7 @@ impl From<crate::EndReason> for FlowEndReason {
     /// - `Fin` / `Rst` → `EndOfFlowDetected`
     /// - `IdleTimeout` → `IdleTimeout`
     /// - `Evicted` → `LackOfResources`
-    /// - `BufferOverflow` / `ParseError` / `ParserDone` /
+    /// - `BufferOverflow` / `ParseError` / `ParserDone` / `StreamGap` /
     ///   `ForceClosed` → `ForcedEnd`
     fn from(r: crate::EndReason) -> Self {
         use crate::EndReason as E;

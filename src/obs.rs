@@ -20,6 +20,7 @@
 //! | `flowscope_flows_ended_total` | counter | `reason` (`fin`/`rst`/`idle`/`evicted`/`force_closed`) |
 //! | `flowscope_flows_active` | gauge | — |
 //! | `flowscope_packets_unmatched_total` | counter | — |
+//! | `flowscope_packets_deduplicated_total` | counter | — |
 //! | `flowscope_bytes_total` | counter | `side` (`initiator`/`responder`) |
 //! | `flowscope_flow_duration_seconds` | histogram | — |
 //! | `flowscope_flow_packets` | histogram | — |
@@ -62,6 +63,11 @@ pub const METRIC_FLOWS_ACTIVE: &str = "flowscope_flows_active";
 /// `flowscope_packets_unmatched_total` — counter of packets the
 /// extractor couldn't classify.
 pub const METRIC_PACKETS_UNMATCHED: &str = "flowscope_packets_unmatched_total";
+/// `flowscope_packets_deduplicated_total` — packets a configured
+/// [`crate::Dedup`] dropped as duplicates before flow tracking (the
+/// same count as `Dedup::dropped()`, summed over every driver in the
+/// process). New in 0.25.1.
+pub const METRIC_PACKETS_DEDUPLICATED: &str = "flowscope_packets_deduplicated_total";
 /// `flowscope_bytes_total{side=...}` — total bytes per side
 /// (cumulative across all ended flows).
 pub const METRIC_BYTES: &str = "flowscope_bytes_total";
@@ -91,9 +97,12 @@ pub const METRIC_RETRANSMITS: &str = "flowscope_retransmits_total";
 /// `flowscope_parser_closed_total{parser_kind=..., reason=...}` — a
 /// session / datagram parser was closed for a flow: early
 /// (`parse_error` / `parser_done` / `stream_gap` / `buffer_overflow`)
-/// or at the flow's end (the transport reason). Replaces the
-/// parser-related `reason` labels `flowscope_flows_ended_total` had
-/// before 0.25 (a parser close no longer ends a flow). New in 0.25.0.
+/// or at the flow's end (the transport reason — counted on every
+/// engine, including the session drivers, which report that close
+/// only as `Closed`; `EndReason::is_parser()` is the early set).
+/// Replaces the parser-related `reason` labels
+/// `flowscope_flows_ended_total` had before 0.25 (a parser close no
+/// longer ends a flow). New in 0.25.0.
 pub const METRIC_PARSER_CLOSED: &str = "flowscope_parser_closed_total";
 /// `flowscope_parser_side_stopped_total{parser_kind=..., side=...,
 /// reason=...}` — a session parser stopped reading one side of a
@@ -254,6 +263,11 @@ pub(crate) fn record_packet_unmatched() {
     metrics::counter!(METRIC_PACKETS_UNMATCHED).increment(1);
 }
 
+#[cfg(feature = "metrics")]
+pub(crate) fn record_packet_deduplicated() {
+    metrics::counter!(METRIC_PACKETS_DEDUPLICATED).increment(1);
+}
+
 #[cfg(all(
     feature = "metrics",
     feature = "session",
@@ -338,6 +352,10 @@ pub(crate) fn record_flow_ended(_reason: EndReason, _stats: &FlowStats) {}
 #[cfg(not(feature = "metrics"))]
 #[inline(always)]
 pub(crate) fn record_packet_unmatched() {}
+
+#[cfg(not(feature = "metrics"))]
+#[inline(always)]
+pub(crate) fn record_packet_deduplicated() {}
 
 #[cfg(all(not(feature = "metrics"), feature = "reassembler"))]
 #[inline(always)]

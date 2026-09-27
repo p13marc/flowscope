@@ -296,6 +296,25 @@ fn force_close_emits_flow_ended_with_force_closed_reason() {
     );
 }
 
+/// `Driver::set_dedup` installs / removes a dedup after `build()`;
+/// `Driver::dedup` reads its counters (#203).
+#[test]
+fn driver_set_dedup_at_runtime() {
+    let mut driver = Driver::builder(FiveTuple::bidirectional()).build();
+    assert!(driver.dedup().is_none());
+    driver.set_dedup(Some(flowscope::Dedup::loopback()));
+    let frame = ipv4_udp([10, 0, 0, 1], [10, 0, 0, 2], 33000, 53, b"query");
+    let ts = Timestamp::new(1, 0);
+    let a = driver.track(PacketView::new(&frame, ts));
+    let b = driver.track(PacketView::new(&frame, ts));
+    assert!(!a.is_empty(), "first copy starts the flow");
+    assert!(b.is_empty(), "duplicate produces no events");
+    let d = driver.dedup().expect("installed");
+    assert_eq!((d.seen(), d.dropped()), (2, 1));
+    driver.set_dedup(None);
+    assert!(driver.dedup().is_none());
+}
+
 #[test]
 fn force_close_on_unknown_flow_is_noop() {
     use flowscope::FlowExtractor;

@@ -1271,7 +1271,8 @@ for owned in source.views() {
     for ev in &events {
         match ev {
             Event::Started { key, .. } => /* lifecycle */ {}
-            Event::ParserClosed { parser_kind, .. } => /* parser gave up / finished */ {}
+            Event::ParserClosed { reason, .. } if reason.is_parser() => /* parser gave up / finished early; the flow goes on */ {}
+            Event::ParserClosed { .. } => /* closed with the flow's own end; `Ended` follows */ {}
             Event::ParserSideStopped { side, .. } => /* one side stopped (gap) */ {}
             Event::Ended { key, reason, stats, .. } => /* lifecycle (transport reason) */ {}
             _ => {}

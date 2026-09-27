@@ -134,6 +134,12 @@ impl EndReason {
     /// trustworthy and parsers should flush (`fin_*`): `Fin`,
     /// `IdleTimeout`, `ForceClosed`, `ParserDone`. `false` for
     /// aborts (`Rst`, `Evicted`) and failures. New in 0.25.0.
+    ///
+    /// Of the parser-level reasons only `ParserDone` is graceful, and
+    /// a flow end (`Ended` / `Closed`) never carries a parser-level
+    /// reason — so that arm only matters on `ParserClosed`. For the
+    /// transport-vs-parser split itself see [`Self::is_transport`] /
+    /// [`Self::is_parser`].
     pub const fn is_graceful(&self) -> bool {
         matches!(
             self,
@@ -142,6 +148,53 @@ impl EndReason {
                 | EndReason::ForceClosed
                 | EndReason::ParserDone
         )
+    }
+
+    /// `true` for the reasons a *flow* ends with — the ones `Ended` /
+    /// `Closed` carry: `Fin`, `Rst`, `IdleTimeout`, `Evicted`,
+    /// `ForceClosed`.
+    ///
+    /// A `ParserClosed` with such a reason is a parser closed because
+    /// its flow ended: the typed [`Driver`](crate::driver::Driver)
+    /// emits one per slot right before `Ended`; the session drivers
+    /// fold that case into `Closed` and emit no `ParserClosed` for it.
+    /// Exact complement of [`Self::is_parser`]. New in 0.25.1.
+    pub const fn is_transport(&self) -> bool {
+        match self {
+            EndReason::Fin
+            | EndReason::Rst
+            | EndReason::IdleTimeout
+            | EndReason::Evicted
+            | EndReason::ForceClosed => true,
+            EndReason::BufferOverflow
+            | EndReason::ParseError
+            | EndReason::ParserDone
+            | EndReason::StreamGap => false,
+        }
+    }
+
+    /// `true` for the parser-level reasons — a parser (or one of its
+    /// sides) stopped while the flow went on: `BufferOverflow`,
+    /// `ParseError`, `ParserDone`, `StreamGap`.
+    ///
+    /// Never seen on `Ended` / `Closed`. On `ParserClosed` /
+    /// `ParserSideStopped` it means "the parser gave up or finished
+    /// early" — the test to use for "react to a parser failure",
+    /// since on the typed `Driver` a `ParserClosed` can also just
+    /// accompany the flow's own end. Exact complement of
+    /// [`Self::is_transport`]. New in 0.25.1.
+    pub const fn is_parser(&self) -> bool {
+        match self {
+            EndReason::BufferOverflow
+            | EndReason::ParseError
+            | EndReason::ParserDone
+            | EndReason::StreamGap => true,
+            EndReason::Fin
+            | EndReason::Rst
+            | EndReason::IdleTimeout
+            | EndReason::Evicted
+            | EndReason::ForceClosed => false,
+        }
     }
 
     /// Snake-case short label for this end reason.
@@ -1376,6 +1429,60 @@ impl<K> FlowEvent<K> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn end_reason_is_exactly_transport_or_parser() {
+        // Every variant is one of the two, never both, never neither;
+        // the exhaustive `match`es in the methods catch a new variant
+        // at compile time, this pins the partition itself.
+        let all = [
+            EndReason::Fin,
+            EndReason::Rst,
+            EndReason::IdleTimeout,
+            EndReason::Evicted,
+            EndReason::BufferOverflow,
+            EndReason::ParseError,
+            EndReason::ParserDone,
+            EndReason::ForceClosed,
+            EndReason::StreamGap,
+        ];
+        for r in all {
+            assert_ne!(r.is_transport(), r.is_parser(), "{r:?}");
+        }
+        let transport: Vec<_> = all.into_iter().filter(EndReason::is_transport).collect();
+        let parser: Vec<_> = all.into_iter().filter(EndReason::is_parser).collect();
+        assert_eq!(
+            transport,
+            [
+                EndReason::Fin,
+                EndReason::Rst,
+                EndReason::IdleTimeout,
+                EndReason::Evicted,
+                EndReason::ForceClosed
+            ]
+        );
+        assert_eq!(
+            parser,
+            [
+                EndReason::BufferOverflow,
+                EndReason::ParseError,
+                EndReason::ParserDone,
+                EndReason::StreamGap
+            ]
+        );
+        // `is_graceful` cuts across the split: three transport reasons
+        // and one parser reason.
+        let graceful: Vec<_> = all.into_iter().filter(EndReason::is_graceful).collect();
+        assert_eq!(
+            graceful,
+            [
+                EndReason::Fin,
+                EndReason::IdleTimeout,
+                EndReason::ParserDone,
+                EndReason::ForceClosed
+            ]
+        );
+    }
 
     #[test]
     fn flow_state_terminal() {
