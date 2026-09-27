@@ -17,5 +17,37 @@ jobs:
       - uses: https://github.com/Swatinem/rust-cache@v2
         with:
           cache-targets: false
-      - run: cargo test --all-features --locked
-      - run: cargo publish --locked --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
+      # Job logs cannot be read from outside this Forgejo, so the run keeps
+      # its own output and, on failure, files it as an issue (last step).
+      - name: Test
+        run: |
+          set -o pipefail
+          cargo test --all-features --locked 2>&1 | tee -a publish.log
+      - name: Publish
+        run: |
+          set -o pipefail
+          cargo publish --locked --token ${{ secrets.CARGO_REGISTRY_TOKEN }} 2>&1 | tee -a publish.log
+      - name: Report a failure as an issue
+        if: failure()
+        env:
+          API: ${{ github.api_url }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+          TOKEN: ${{ github.token }}
+        run: |
+          {
+            echo "The publish-crates run on \`${SHA:0:8}\` failed. Last 150 lines of its output:"
+            echo
+            echo '```'
+            tail -150 publish.log | sed 's/\x1b\[[0-9;]*m//g'
+            echo '```'
+          } > body.md
+          python3 - <<'EOF'
+          import json, os, urllib.request
+          body = open('body.md').read()
+          url = f"{os.environ['API']}/repos/{os.environ['REPO']}/issues"
+          req = urllib.request.Request(url, data=json.dumps({"title": f"publish-crates failed on {os.environ['SHA'][:8]}", "body": body}).encode(), method="POST",
+              headers={"Authorization": "token " + os.environ['TOKEN'], "Content-Type": "application/json"})
+          with urllib.request.urlopen(req) as r:
+              print("issue filed:", r.status)
+          EOF
