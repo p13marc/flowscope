@@ -616,23 +616,25 @@ fn shedding_packet_events_does_not_stop_parsing() {
     assert_eq!(data, 2);
 }
 
+/// Reports `is_done()` after its first feed.
+#[derive(Clone, Default)]
+struct OneShot {
+    done: bool,
+}
+impl SessionParser for OneShot {
+    type Message = ();
+    fn feed_initiator(&mut self, _: &[u8], _: Timestamp, out: &mut Vec<()>) {
+        out.push(());
+        self.done = true;
+    }
+    fn feed_responder(&mut self, _: &[u8], _: Timestamp, _: &mut Vec<()>) {}
+    fn is_done(&self) -> bool {
+        self.done
+    }
+}
+
 #[test]
 fn done_parser_is_closed_and_flow_ends_normally() {
-    #[derive(Clone, Default)]
-    struct OneShot {
-        done: bool,
-    }
-    impl SessionParser for OneShot {
-        type Message = ();
-        fn feed_initiator(&mut self, _: &[u8], _: Timestamp, out: &mut Vec<()>) {
-            out.push(());
-            self.done = true;
-        }
-        fn feed_responder(&mut self, _: &[u8], _: Timestamp, _: &mut Vec<()>) {}
-        fn is_done(&self) -> bool {
-            self.done
-        }
-    }
     let frames = flow(&[(0, b"a".to_vec()), (1, b"b".to_vec())]);
     let mut d = SessionDriver::new(FiveTuple::bidirectional(), OneShot::default());
     let events = session_events(&mut d, &frames);
@@ -650,6 +652,92 @@ fn done_parser_is_closed_and_flow_ends_normally() {
         })
         .collect();
     assert_eq!(closes, vec![EndReason::ParserDone, EndReason::Fin]);
+}
+
+/// The typed `Driver` closes every slot's parser at the flow's end
+/// (transport reason, right before `Ended`); an early close carries a
+/// parser reason. `EndReason::is_transport` / `is_parser` are the
+/// exact test for which one it was. #202.
+#[test]
+fn typed_driver_flow_end_close_is_transport_early_close_is_parser() {
+    let frames = flow(&[(0, b"a".to_vec()), (1, b"b".to_vec())]);
+    let mut b = Driver::builder(FiveTuple::bidirectional());
+    let one_shot = b.session_broadcast(OneShot::default());
+    let collect = b.session_broadcast(Collect::default());
+    let mut driver = b.build();
+    let mut events = Vec::new();
+    for (t, f) in &frames {
+        driver.track_into(PacketView::new(f, *t), &mut events);
+    }
+    driver.finish_into(&mut events);
+
+    let closes: Vec<(usize, flowscope::SlotId, EndReason)> = events
+        .iter()
+        .enumerate()
+        .filter_map(|(i, e)| match e {
+            Event::ParserClosed { slot, reason, .. } => Some((i, *slot, *reason)),
+            _ => None,
+        })
+        .collect();
+    let (ended_idx, ended_reason) = events
+        .iter()
+        .enumerate()
+        .find_map(|(i, e)| match e {
+            Event::Ended { reason, .. } => Some((i, *reason)),
+            _ => None,
+        })
+        .expect("flow ends");
+    assert_eq!(ended_reason, EndReason::Fin);
+    assert!(ended_reason.is_transport());
+
+    assert_eq!(closes.len(), 2, "one close per slot: {closes:?}");
+    let (early_idx, _, early) = closes
+        .iter()
+        .find(|(_, s, _)| *s == one_shot.slot_id())
+        .copied()
+        .expect("OneShot slot closed");
+    assert_eq!(early, EndReason::ParserDone);
+    assert!(early.is_parser() && !early.is_transport());
+    let (late_idx, _, late) = closes
+        .iter()
+        .find(|(_, s, _)| *s == collect.slot_id())
+        .copied()
+        .expect("Collect slot closed");
+    assert_eq!(
+        late,
+        EndReason::Fin,
+        "flow-end close carries the transport reason"
+    );
+    assert!(late.is_transport() && !late.is_parser());
+    assert!(
+        early_idx < ended_idx && late_idx < ended_idx,
+        "closes precede Ended"
+    );
+}
+
+/// The session drivers report a parser still open at flow end through
+/// `Closed` alone (no `ParserClosed`); early closes are pinned by
+/// `done_parser_is_closed_and_flow_ends_normally` and side stops by
+/// `responder_keeps_parsing_and_fins_after_an_initiator_gap`. #202.
+#[test]
+fn session_driver_reports_no_flow_end_parser_closed() {
+    let frames = flow(&[(0, b"ping".to_vec())]);
+    let mut d = SessionDriver::new(FiveTuple::bidirectional(), Collect::default());
+    let events = session_events(&mut d, &frames);
+    assert!(
+        !events
+            .iter()
+            .any(|e| matches!(e, SessionEvent::ParserClosed { .. })),
+        "{events:?}"
+    );
+    let closed = events
+        .iter()
+        .find_map(|e| match e {
+            SessionEvent::Closed { reason, .. } => Some(*reason),
+            _ => None,
+        })
+        .expect("Closed");
+    assert!(closed.is_transport() && !closed.is_parser());
 }
 
 #[test]

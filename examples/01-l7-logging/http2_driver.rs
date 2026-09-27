@@ -193,9 +193,12 @@ fn main() {
         Http2Event::Head(h) => h.authority(),
         _ => None,
     });
+    // Only an early close means "the parser gave up": the typed
+    // `Driver` also emits a `ParserClosed` (transport reason) when a
+    // flow ends normally.
     let torn_down = late_events
         .iter()
-        .any(|e| matches!(e, Event::ParserClosed { .. }));
+        .any(|e| matches!(e, Event::ParserClosed { reason, .. } if reason.is_parser()));
 
     println!("\n== a flow picked up mid-connection ==\n");
     println!("  routed to: {}", routed.unwrap_or("(nothing)"));

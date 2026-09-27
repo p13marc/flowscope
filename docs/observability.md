@@ -141,7 +141,12 @@ PrometheusBuilder::new()
 - **Parsers giving up early**, by protocol:
   `sum by (parser_kind, reason) (rate(flowscope_parser_closed_total{reason=~"parse_error|stream_gap|buffer_overflow"}[5m]))`
   plus `flowscope_parser_side_stopped_total` for one-sided stops
-  (capture loss usually shows up here as `stream_gap`).
+  (capture loss usually shows up here as `stream_gap`). That regex is
+  exactly the `EndReason::is_parser()` set; the complement
+  (`reason=~"fin|rst|idle|evicted|force_closed"`, `is_transport()`)
+  counts parsers closed by their flow's end — recorded on every
+  engine, including `SessionDriver` / `DatagramDriver`, which report
+  that close only as `Closed`.
 - **Buffer-cap pressure**:
   `rate(flowscope_anomalies_total{kind="buffer_overflow"}[1m])`
   — persistent non-zero means stuck parsers or undersized cap.

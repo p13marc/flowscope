@@ -58,6 +58,11 @@
 //!   close never ends the flow; `Ended` / `Closed` always carries a
 //!   transport reason (`Fin`, `Rst`, `IdleTimeout`, `Evicted`,
 //!   `ForceClosed`).
+//! - The one reporting difference: a parser still open when its flow
+//!   ends. `SessionDriver` / `DatagramDriver` say so with `Closed`
+//!   alone; the typed `Driver` also emits one `Event::ParserClosed`
+//!   per slot carrying the transport reason
+//!   ([`EndReason::is_transport`]) right before `Ended`.
 //! - Missing bytes are reported through [`SessionParser::on_gap`].
 //!   The default answer, [`GapResponse::StopSide`], stops feeding
 //!   **that side** only (a parser side-stopped event with
@@ -924,7 +929,11 @@ pub enum SessionEvent<K, M> {
     /// `"both sides stopped"`, reason of the last side stop). The flow
     /// stays tracked and ends later with `Closed`; the parser is not
     /// fed again for it. (A parser still open when its flow ends gets
-    /// no `ParserClosed`: `Closed` says so.)
+    /// no `ParserClosed`: `Closed` says so — so `reason.is_parser()`
+    /// always holds here. The typed [`crate::driver::Driver`] differs:
+    /// it emits an `Event::ParserClosed` with the transport reason per
+    /// slot right before `Ended`; [`EndReason::is_transport`] /
+    /// [`EndReason::is_parser`] tell the two apart.)
     ParserClosed {
         key: K,
         parser_kind: ParserKind,

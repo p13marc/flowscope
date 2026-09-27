@@ -91,9 +91,12 @@ pub const METRIC_RETRANSMITS: &str = "flowscope_retransmits_total";
 /// `flowscope_parser_closed_total{parser_kind=..., reason=...}` — a
 /// session / datagram parser was closed for a flow: early
 /// (`parse_error` / `parser_done` / `stream_gap` / `buffer_overflow`)
-/// or at the flow's end (the transport reason). Replaces the
-/// parser-related `reason` labels `flowscope_flows_ended_total` had
-/// before 0.25 (a parser close no longer ends a flow). New in 0.25.0.
+/// or at the flow's end (the transport reason — counted on every
+/// engine, including the session drivers, which report that close
+/// only as `Closed`; `EndReason::is_parser()` is the early set).
+/// Replaces the parser-related `reason` labels
+/// `flowscope_flows_ended_total` had before 0.25 (a parser close no
+/// longer ends a flow). New in 0.25.0.
 pub const METRIC_PARSER_CLOSED: &str = "flowscope_parser_closed_total";
 /// `flowscope_parser_side_stopped_total{parser_kind=..., side=...,
 /// reason=...}` — a session parser stopped reading one side of a

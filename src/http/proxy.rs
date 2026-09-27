@@ -402,7 +402,9 @@ impl HttpProxyParser {
 /// than continuing to feed a parser that has lost track of where
 /// messages end. The TCP flow itself keeps going — closing the
 /// connection is the caller's decision, since the caller owns the
-/// socket.
+/// socket. React to `reason.is_parser()` (here always `ParseError`):
+/// the typed `Driver` also emits a `ParserClosed` carrying the flow's
+/// transport reason when the connection itself ends.
 #[derive(Debug, Clone)]
 pub struct HttpProxySession {
     inner: HttpProxyParser,

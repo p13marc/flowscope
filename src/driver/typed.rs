@@ -78,8 +78,12 @@ type IdleTimeoutFn<K> =
 ///
 /// Plan 121: no `M` parameter, no `Message` variant — per-parser
 /// typed messages flow through [`SlotHandle`] returned by the
-/// builder. `ParserClosed` stays as a lifecycle marker for when
-/// a parser self-terminates.
+/// builder. `ParserClosed` is the per-(slot, flow) parser lifecycle
+/// marker: an early close (`reason.is_parser()` — poison, done, gap
+/// `Stop`, both sides stopped) or, right before `Ended`, the close
+/// that comes with the flow's own end (`reason.is_transport()`).
+/// [`SessionEvent`](crate::session::SessionEvent) reports only the
+/// former.
 ///
 /// `Serialize`able under the `serde` feature with the same
 /// `tag = "type"` / `snake_case` shape as
@@ -210,6 +214,14 @@ pub enum Event<K> {
     ///   and `detail` says why.
     /// - At the flow's end: `reason` is the flow's end reason, and the
     ///   event comes right before that flow's [`Self::Ended`].
+    ///
+    /// [`EndReason::is_parser`] / [`EndReason::is_transport`] tell the
+    /// two apart — a handler for "the parser gave up" tests
+    /// `reason.is_parser()`. Unlike
+    /// [`SessionEvent::ParserClosed`](crate::session::SessionEvent::ParserClosed),
+    /// the flow-end close *is* reported here (one per slot, `detail:
+    /// None`), because several slots can share one flow and `Ended`
+    /// alone would not say which of them had a parser on it.
     ///
     /// `#[non_exhaustive]` — match with a trailing `..`.
     #[non_exhaustive]
