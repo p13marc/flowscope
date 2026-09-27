@@ -239,7 +239,9 @@ macro_rules! shared_driver_api {
 
         /// Drop duplicate packets (content hash) before tracking — see
         /// [`crate::Dedup`]. Applies to the flow table and to the
-        /// parser alike.
+        /// parser alike. Read the counts back through [`Self::dedup`],
+        /// or watch `flowscope_packets_deduplicated_total` (`metrics`
+        /// feature).
         pub fn with_dedup(mut self, dedup: crate::Dedup) -> Self {
             self.engine.flow.set_dedup(Some(dedup));
             self
@@ -248,6 +250,13 @@ macro_rules! shared_driver_api {
         /// In-place variant of [`Self::with_dedup`]; `None` removes it.
         pub fn set_dedup(&mut self, dedup: Option<crate::Dedup>) {
             self.engine.flow.set_dedup(dedup);
+        }
+
+        /// Borrow the dedup state; `None` when none is configured.
+        /// [`crate::Dedup::dropped`] / [`crate::Dedup::seen`] are the
+        /// counts. New in 0.25.1.
+        pub fn dedup(&self) -> Option<&crate::Dedup> {
+            self.engine.flow.dedup()
         }
 
         /// Clamp packet timestamps (and sweep times) to a running max

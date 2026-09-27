@@ -23,7 +23,16 @@
 //! // Same frame 500 µs later — duplicate.
 //! assert!(!d.keep(PacketView::new(&frame, Timestamp::new(0, 500_000))));
 //! assert_eq!(d.dropped(), 1);
+//! assert_eq!(d.seen(), 2);
 //! ```
+//!
+//! # Counting
+//!
+//! Every instance counts what it saw ([`Dedup::seen`]) and what it
+//! dropped ([`Dedup::dropped`]); the drivers hand the instance back
+//! (`Driver::dedup()`, `SessionDriver::dedup()`, `FlowDriver::dedup()`)
+//! and the engine also counts drops in the
+//! `flowscope_packets_deduplicated_total` metric (`metrics` feature).
 //!
 //! # Cost
 //!
@@ -54,6 +63,7 @@ pub struct Dedup {
     capacity: usize,
     ring: VecDeque<Entry>,
     dropped: u64,
+    seen: u64,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -80,6 +90,7 @@ impl Dedup {
             capacity,
             ring: VecDeque::with_capacity(capacity),
             dropped: 0,
+            seen: 0,
         }
     }
 
@@ -97,6 +108,7 @@ impl Dedup {
     /// `false` to drop it as a duplicate. Updates the internal
     /// ring either way.
     pub fn keep(&mut self, view: PacketView<'_>) -> bool {
+        self.seen += 1;
         let hash = hash_frame(view.frame);
         let len = view.frame.len() as u32;
         let is_dup = self.ring.iter().any(|entry| {
@@ -116,8 +128,19 @@ impl Dedup {
     }
 
     /// Number of views dropped as duplicates since construction.
+    ///
+    /// Monotonic, like every other flowscope counter — take deltas
+    /// for a rate; a fresh instance (`set_dedup(Some(..))`) starts
+    /// from zero.
     pub fn dropped(&self) -> u64 {
         self.dropped
+    }
+
+    /// Number of views offered to [`Self::keep`] since construction
+    /// (kept + dropped). `dropped() / seen()` is the duplicate rate.
+    /// New in 0.25.1.
+    pub fn seen(&self) -> u64 {
+        self.seen
     }
 
     /// Current ring occupancy.
@@ -148,6 +171,15 @@ fn hash_frame(frame: &[u8]) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn seen_counts_every_keep_call() {
+        let mut d = Dedup::loopback();
+        let frame = [1u8, 2, 3, 4];
+        assert!(d.keep(PacketView::new(&frame, Timestamp::new(0, 0))));
+        assert!(!d.keep(PacketView::new(&frame, Timestamp::new(0, 500_000))));
+        assert_eq!((d.seen(), d.dropped(), d.buffered()), (2, 1, 2));
+    }
 
     fn ts(sec: u32, nsec: u32) -> Timestamp {
         Timestamp::new(sec, nsec)

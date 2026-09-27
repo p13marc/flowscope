@@ -29,6 +29,7 @@ on by default).
 | `flowscope_flows_ended_total` | counter | `reason` (`fin` / `rst` / `idle` / `evicted` / `force_closed`) — transport reasons only since 0.25 | Every `FlowEvent::Ended` |
 | `flowscope_flows_active` | gauge | — | Live entries in the tracker |
 | `flowscope_packets_unmatched_total` | counter | — | Extractor returned `None` |
+| `flowscope_packets_deduplicated_total` | counter | — | A configured `Dedup` dropped the packet as a duplicate (0.25.1) |
 | `flowscope_bytes_total` | counter | `side` (`initiator` / `responder`) | Cumulative on `Ended`, summed across flows |
 | `flowscope_flow_duration_seconds` | histogram | — | Per-flow duration on `Ended` |
 | `flowscope_flow_packets` | histogram | — | Per-flow packet count on `Ended` |
@@ -149,6 +150,11 @@ PrometheusBuilder::new()
   that close only as `Closed`.
 - **Buffer-cap pressure**:
   `rate(flowscope_anomalies_total{kind="buffer_overflow"}[1m])`
+- **Loopback duplicate rate**:
+  `rate(flowscope_packets_deduplicated_total[1m])` — about half of
+  the input rate on a `tcpdump -i lo`-shaped capture; near zero with
+  dedup configured on a non-loopback capture means the window is too
+  short (or there was nothing to drop).
   — persistent non-zero means stuck parsers or undersized cap.
 - **HTTP framing refusals** (inline paths):
   `sum by (reason) (rate(flowscope_http_poisoned_total[5m]))`

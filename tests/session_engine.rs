@@ -320,6 +320,38 @@ fn f1_dedup_applies_to_parsers() {
     let mut msgs = Vec::new();
     slot.drain(&mut msgs);
     assert_eq!(msgs.len(), 1, "the duplicate never reaches the parser");
+    let d = driver.dedup().expect("configured through the builder");
+    assert_eq!((d.seen(), d.dropped()), (2, 1));
+}
+
+/// The session drivers hand their dedup back too (#203).
+#[test]
+fn session_and_datagram_drivers_expose_dedup_counts() {
+    let frames = flow(&[]);
+    let mut d = SessionDriver::new(FiveTuple::bidirectional(), Collect::default())
+        .with_dedup(Dedup::loopback());
+    assert_eq!(d.dedup().map(Dedup::seen), Some(0));
+    let mut out = Vec::new();
+    for (t, f) in &frames {
+        d.track_into(PacketView::new(f, *t), &mut out);
+        d.track_into(PacketView::new(f, *t), &mut out);
+    }
+    let dd = d.dedup().expect("configured");
+    assert_eq!(
+        (dd.seen(), dd.dropped()),
+        (2 * frames.len() as u64, frames.len() as u64)
+    );
+    d.set_dedup(None);
+    assert!(d.dedup().is_none());
+
+    let f = ipv4_udp([10, 0, 0, 1], [10, 0, 0, 2], 5000, 53, b"query");
+    let mut d = flowscope::session::DatagramDriver::new(FiveTuple::bidirectional(), CountDatagrams)
+        .with_dedup(Dedup::loopback());
+    let mut out = Vec::new();
+    d.track_into(PacketView::new(&f, ts_ms(1)), &mut out);
+    d.track_into(PacketView::new(&f, ts_ms(1)), &mut out);
+    let dd = d.dedup().expect("configured");
+    assert_eq!((dd.seen(), dd.dropped()), (2, 1));
 }
 
 // ── X1: builder order ──────────────────────────────────────────

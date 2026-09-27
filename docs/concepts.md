@@ -521,7 +521,8 @@ side, per-parser dispatch), so they agree on what a flow is:
   flow (`session_broadcast`); each slot's `SlotHandle<M, K>` yields
   typed messages while the driver emits the flow-lifecycle
   `Event<K>` stream. Builder settings (`config`, `idle_timeout_fn`,
-  `dedup`, `monotonic_timestamps`) apply to every slot, in any order.
+  `dedup`, `monotonic_timestamps`) apply to every slot, in any order
+  (`Driver::dedup()` reads the drop count back).
 - **`session::SessionDriver<E, F>` / `DatagramDriver<E, F>`** — one
   parser type, ordered `SessionEvent<K, M>` output (lifecycle,
   messages, parser closes, anomalies interleaved). What netring's

@@ -769,6 +769,21 @@ where
         self.engine.flow.set_config(config);
     }
 
+    /// Borrow the dedup state ([`DriverBuilder::dedup`]); `None` when
+    /// none is configured. [`Dedup::dropped`] / [`Dedup::seen`] are
+    /// the counts. New in 0.25.1.
+    pub fn dedup(&self) -> Option<&Dedup> {
+        self.engine.flow.dedup()
+    }
+
+    /// Install, replace or (`None`) remove the dedup at runtime — the
+    /// in-place counterpart of [`DriverBuilder::dedup`], like
+    /// [`Self::set_config`] / [`Self::set_idle_timeout_fn`]. A new
+    /// instance starts counting from zero. New in 0.25.1.
+    pub fn set_dedup(&mut self, dedup: Option<Dedup>) {
+        self.engine.flow.set_dedup(dedup);
+    }
+
     /// Stop emitting lifecycle events (overload shunt); parsers keep
     /// running and flows keep being released.
     pub fn pause_events(&mut self) {
@@ -859,6 +874,11 @@ where
 
     /// Content-hash duplicate filtering before tracking. Duplicates
     /// reach neither the lifecycle nor any parser.
+    ///
+    /// Read the counts back through [`Driver::dedup`]
+    /// (`dropped()` / `seen()`), replace at runtime with
+    /// [`Driver::set_dedup`], or watch
+    /// `flowscope_packets_deduplicated_total` (`metrics` feature).
     pub fn dedup(&mut self, dedup: Dedup) -> &mut Self {
         self.dedup = Some(dedup);
         self
