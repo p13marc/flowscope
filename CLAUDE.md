@@ -22,7 +22,7 @@ the core.
 
 ## Implementation Status
 
-**0.25.1** (unreleased — additive patch, CHANGELOG `## 0.25.1`;
+**0.25.1** (published to crates.io 2026-09-27, tag `0.25.1` — additive patch, CHANGELOG `## 0.25.1`;
 des-capture follow-ups #202 / #203, milestone "0.25.1"):
 `EndReason::is_transport` / `is_parser` (exact transport-vs-parser
 split, `const fn`, exhaustive). The typed `Driver` emits a flow-end

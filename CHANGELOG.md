@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.25.1 (unreleased)
+## 0.25.1 (2026-09-27)
 
 Two follow-ups from des-capture's move to 0.25.0 (milestone "0.25.1 —
 des-capture upgrade follow-ups"). Additive; no migration.
