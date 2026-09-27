@@ -22,6 +22,20 @@ the core.
 
 ## Implementation Status
 
+**0.25.1** (unreleased — additive patch, CHANGELOG `## 0.25.1`;
+des-capture follow-ups #202 / #203, milestone "0.25.1"):
+`EndReason::is_transport` / `is_parser` (exact transport-vs-parser
+split, `const fn`, exhaustive). The typed `Driver` emits a flow-end
+`ParserClosed { reason: <transport> }` per slot right before `Ended`
+while `SessionDriver` / `DatagramDriver` report that case as `Closed`
+only — deliberate (shared core flag `at_flow_end`,
+`src/session/core.rs`; dropped in `src/session/driver.rs`, kept in
+`src/driver/typed_slot.rs`), now documented everywhere and pinned by
+`tests/session_engine.rs`. `Driver::{dedup, set_dedup}`,
+session-driver `dedup()`, `Dedup::seen()`,
+`flowscope_packets_deduplicated_total` (`tests/metrics_dedup.rs`).
+Open: #204 (`ParserClosed` not gated by `EventMask::ENDED`).
+
 **0.25.0** (published to crates.io 2026-09-26, tag `0.25.0` — session-engine redesign, breaking;
 `docs/migration-0.24-to-0.25.md`, CHANGELOG `## 0.25.0`). Driven by a
 downstream report (des-capture) against 0.24.1 and the audit that

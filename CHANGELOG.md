@@ -1,5 +1,47 @@
 # Changelog
 
+## 0.25.1 (unreleased)
+
+Two follow-ups from des-capture's move to 0.25.0 (milestone "0.25.1 —
+des-capture upgrade follow-ups"). Additive; no migration.
+
+### Added
+
+- `EndReason::is_transport()` / `EndReason::is_parser()` (#202) — the
+  exact split between the reasons a *flow* ends with (`Fin`, `Rst`,
+  `IdleTimeout`, `Evicted`, `ForceClosed`) and the parser-level
+  reasons (`BufferOverflow`, `ParseError`, `ParserDone`, `StreamGap`).
+  `const fn`, exhaustive: a new variant fails to compile. The test to
+  use for "the parser gave up" on a `ParserClosed`.
+- `Driver::dedup()` / `Driver::set_dedup(Option<Dedup>)`,
+  `SessionDriver::dedup()` / `DatagramDriver::dedup()`, and
+  `Dedup::seen()` (#203) — the drop count was reachable only as
+  `flow_driver().dedup().map(Dedup::dropped)` and nothing said so.
+- `flowscope_packets_deduplicated_total`
+  (`obs::METRIC_PACKETS_DEDUPLICATED`, #203): duplicates a configured
+  `Dedup` dropped before flow tracking.
+
+### Fixed (docs)
+
+- The typed `Driver` emits `Event::ParserClosed` with the flow's
+  transport reason for every slot still open at flow end, right before
+  `Ended`; `SessionDriver` / `DatagramDriver` report that case through
+  `Closed` only. Both behaviours are unchanged since 0.25.0, but the
+  `driver` module docs, the `session` module docs, `concepts.md`,
+  `recipes.md`, the http-proxy / http2 teardown advice and the h2
+  example described `ParserClosed` as an early close only (#202). The
+  example now tears down on `reason.is_parser()`.
+  `flowscope_parser_closed_total` counts flow-end closes on every
+  engine, including the session drivers that emit no event for them;
+  `observability.md` says so.
+- `ipfix::FlowEndReason` doc list includes `StreamGap`.
+
+### Known
+
+- `ParserClosed` is not gated by `EventMask::ENDED` / `pause_events`,
+  so the typed `Driver` still emits the flow-end close while the
+  `Ended` it mirrors is suppressed (#204).
+
 ## 0.25.0 (2026-09-26)
 
 One session engine, explicit gaps, and no more flow resurrection. A
