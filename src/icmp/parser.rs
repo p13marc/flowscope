@@ -171,11 +171,12 @@ fn translate_v6(slice: &etherparse::Icmpv6Slice, full_payload: &[u8]) -> Icmpv6T
             id: h.id,
             seq: h.seq,
         },
-        E::Unknown {
-            type_u8,
-            code_u8,
-            bytes5to8,
-        } => {
+        // `Unknown`, and the NDP types newer etherparse decodes itself
+        // (router / neighbor solicitation and advertisement, redirect):
+        // translated from the raw header, as when all of them were `Unknown`.
+        _ => {
+            let (type_u8, code_u8, bytes5to8) =
+                (slice.type_u8(), slice.code_u8(), slice.bytes5to8());
             // Special-case NS / NA before falling back to Other.
             if let Some(parsed) = parse_v6_neighbor_message(type_u8, code_u8, &bytes5to8, body) {
                 return parsed;

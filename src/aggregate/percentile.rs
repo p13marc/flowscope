@@ -63,7 +63,9 @@ impl Percentile {
         if self.samples == 0 {
             return 0.0;
         }
-        self.digest.estimate_quantile(q.clamp(0.0, 1.0))
+        self.digest
+            .estimate_quantile(q.clamp(0.0, 1.0))
+            .unwrap_or(0.0)
     }
 
     /// Total samples recorded.

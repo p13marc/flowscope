@@ -81,11 +81,14 @@ fn parse_from_sliced<'a>(
                 v6.payload().ip_number.into(),
             )
         }
+        // ARP has no IP endpoints, so no flow (etherparse >= 0.17 parses it).
+        etherparse::NetSlice::Arp(_) => return None,
     };
 
     let l4_payload_slice: &[u8] = match net {
         etherparse::NetSlice::Ipv4(v4) => v4.payload().payload,
         etherparse::NetSlice::Ipv6(v6) => v6.payload().payload,
+        etherparse::NetSlice::Arp(_) => return None,
     };
 
     // Offset of the L4 payload region (header + body for TCP/UDP)
@@ -296,6 +299,18 @@ pub mod test_frames {
         ip.write(&mut out).unwrap();
         tcp.write(&mut out).unwrap();
         out.extend_from_slice(payload);
+        out
+    }
+
+    /// Insert 802.1Q / 802.1ad tags, outermost first, into an Ethernet II
+    /// `frame` after its MAC addresses. Each tag is `(tpid, tci)`.
+    pub fn with_vlan_tags(frame: &[u8], tags: &[(u16, u16)]) -> Vec<u8> {
+        let mut out = frame[..12].to_vec();
+        for &(tpid, tci) in tags {
+            out.extend_from_slice(&tpid.to_be_bytes());
+            out.extend_from_slice(&tci.to_be_bytes());
+        }
+        out.extend_from_slice(&frame[12..]);
         out
     }
 }

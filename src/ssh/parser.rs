@@ -303,7 +303,7 @@ mod tests {
         let m = parse_kexinit_payload(&payload, true).unwrap();
         assert!(m.kex_algorithms.is_empty());
         // HASSH of all-empty is md5(";;;").
-        assert_eq!(m.hassh, format!("{:x}", Md5::digest(";;;".as_bytes())));
+        assert_eq!(m.hassh, "95420f9d932ddd22833f17b96a80bedb");
     }
 
     #[test]

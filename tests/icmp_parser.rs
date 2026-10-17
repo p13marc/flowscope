@@ -294,6 +294,37 @@ fn unknown_v4_type_surfaces_as_other() {
     assert!(raw_body.starts_with(&[0x11, 0x22, 0x33, 0x44]));
 }
 
+#[test]
+fn v6_ndp_types_without_a_variant_surface_as_other() {
+    // Router Solicitation / Advertisement and Redirect have no flowscope
+    // variant, and a Neighbor Solicitation too short for its target address
+    // cannot be decoded: all four stay `Other` with the raw header bytes 5-8
+    // and the body — even though etherparse (>= 0.21) decodes the NDP types.
+    let target = Ipv6Addr::LOCALHOST.octets();
+    let redirect_body = [target, target].concat();
+    let cases: [(u8, [u8; 4], &[u8]); 4] = [
+        (133, [0, 0, 0, 0], &[1, 1, 0, 0, 0, 0, 0, 0]),
+        (134, [64, 0xC0, 0x07, 0x08], &[0, 0, 0, 1, 0, 0, 0, 2]),
+        (137, [0, 0, 0, 0], &redirect_body),
+        (135, [0, 0, 0, 0], &target[..8]),
+    ];
+    for (ty, bytes4, body) in cases {
+        let mut payload = v6_header(ty, 0, bytes4);
+        payload.extend_from_slice(body);
+        let msg = parse_v6(&payload).expect("parses");
+        let IcmpType::V6(Icmpv6Type::Other {
+            raw_type,
+            raw_code,
+            raw_body,
+        }) = msg.ty
+        else {
+            panic!("type {ty}: expected Other, got {:?}", msg.ty);
+        };
+        assert_eq!((raw_type, raw_code), (ty, 0));
+        assert_eq!(raw_body[..], [&bytes4[..], body].concat()[..], "type {ty}");
+    }
+}
+
 // ── DatagramParser integration ─────────────────────────────────────
 
 #[test]

@@ -247,11 +247,11 @@ impl LayerParser {
         }
 
         if want(LayerKind::Vlan)
-            && let Some(vlan) = &sp.vlan
+            && let Some(vlan) = sp.vlan()
         {
             let bytes = match vlan {
                 etherparse::VlanSlice::SingleVlan(v) => v.slice(),
-                etherparse::VlanSlice::DoubleVlan(d) => &d.slice()[..4.min(d.slice().len())],
+                etherparse::VlanSlice::DoubleVlan(d) => d.outer.slice(),
             };
             if bytes.len() >= 4 {
                 out.store_vlan(&bytes[..4]);

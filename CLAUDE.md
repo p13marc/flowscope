@@ -22,6 +22,18 @@ the core.
 
 ## Implementation Status
 
+**0.25.3 — unreleased** (dependency refresh, #215, milestone "0.25.3 —
+dependency refresh"; patch, CHANGELOG `## 0.25.3`). Every direct
+requirement on its latest release: etherparse 0.21 (VLANs are
+`SlicedPacket::link_exts` / `vlan()`; `NetSlice::Arp`,
+`TransportSlice::Igmp` and the NDP `Icmpv6Type`s are decoded by
+etherparse now — flowscope keeps its 0.16 output for them, see the tests
+in `layers::tests` and `tests/icmp_parser.rs`), RustCrypto 0.11 (digest
+output has no `LowerHex`; hex goes through the `hex` crate), simple-dns
+0.12, tdigest 1.0 (`estimate_quantile` returns `Option`), base64 0.23,
+criterion 0.8 (`std::hint::black_box`). #214: the `Arp` layer comes from
+etherparse's ARP slice (it was read at offset 14, wrong behind VLAN tags).
+
 **0.25.2** (published to crates.io 2026-10-17, tag `0.25.2` — bug-fix patch, CHANGELOG `## 0.25.2`; #209 IPFIX
 flowEndReason encoded the enum index, #210 `CaptureReader` rejected
 truncated records of snaplen captures (reads raw records now), #211 NBNS

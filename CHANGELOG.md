@@ -1,5 +1,50 @@
 # Changelog
 
+## 0.25.3 — unreleased
+
+Dependency refresh (#215): every direct dependency onto its latest
+release. None of them appears in flowscope's public API, so there is no
+API change and no migration.
+
+### Changed
+
+- etherparse 0.16 → 0.21, base64 0.22 → 0.23, md-5 / sha1 / sha2
+  0.10 → 0.11, simple-dns 0.10 → 0.12, tdigest 0.2 → 1.0; criterion
+  0.5 → 0.8 (benchmarks only). netring has been on etherparse 0.21 since
+  0.30, so its tree now carries one copy.
+- What etherparse 0.21 itself changes in what flowscope sees:
+  - Frames with an integrity-only (unencrypted) MACsec header are parsed
+    through to their IP / L4 headers, so they produce flows and layers;
+    parsing used to stop at the unknown EtherType. Encrypted MACsec still
+    stops there.
+  - ARP bodies, IGMP messages and MACsec headers are validated now. A
+    frame whose ARP body is shorter than its declared address lengths,
+    whose IGMP message is under 8 bytes or has an IGMPv3 source list
+    running past the end, or whose MACsec header is malformed fails as a
+    whole, as a malformed TCP / UDP / ICMP header already did:
+    `Layers::parse_ethernet` returns an error and the extractors skip the
+    packet (such an IGMP packet no longer yields an IP-pair or five-tuple
+    flow; cf. #212).
+- Unchanged, and now pinned by tests: ARP yields no flow; IGMP (now
+  decoded by etherparse) adds no L4 layer; ICMPv6 Router Solicitation /
+  Advertisement and Redirect (now decoded by etherparse) stay
+  `Icmpv6Type::Other` with the same raw bytes, and Neighbor Solicitation /
+  Advertisement decode as before; `Percentile::quantile` is 0.0 with no
+  samples.
+
+### Fixed
+
+- **`Layers::parse_ethernet` read a VLAN-tagged ARP frame's `Arp` layer
+  from the VLAN tag** (#214): it sliced the frame at a fixed offset 14, so
+  the tag's TCI and EtherType were read as the ARP hardware and protocol
+  types and every address was shifted. It now takes etherparse's ARP
+  slice, after any number of tags. (`arp::parse_frame` was not affected.)
+
+### Added
+
+- `test_frames::with_vlan_tags` (feature `test-helpers`): insert 802.1Q /
+  802.1ad tags into a synthetic Ethernet frame.
+
 ## 0.25.2 (2026-10-17)
 
 Bug fixes found by netring's 0.31.2 pre-release audit. No API change;

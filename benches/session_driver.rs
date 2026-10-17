@@ -10,7 +10,9 @@
 //!     cargo bench --bench session_driver \
 //!         --features session,reassembler,extractors,test-helpers
 
-use criterion::{Criterion, Throughput, black_box, criterion_group, criterion_main};
+use std::hint::black_box;
+
+use criterion::{Criterion, Throughput, criterion_group, criterion_main};
 use flowscope::{
     FlowSide, PacketView, SessionParser, Timestamp,
     driver::{Driver, Event, SlotMessage},

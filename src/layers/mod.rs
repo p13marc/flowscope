@@ -301,7 +301,7 @@ impl<'a> Layers<'a> {
         }
         // LinuxSll / EthPayload — no Ethernet II header to expose.
 
-        if let Some(vlan) = &sp.vlan {
+        if let Some(vlan) = sp.vlan() {
             match vlan {
                 etherparse::VlanSlice::SingleVlan(v) => {
                     let s = v.slice();
@@ -312,10 +312,10 @@ impl<'a> Layers<'a> {
                     }
                 }
                 etherparse::VlanSlice::DoubleVlan(d) => {
-                    let bytes = d.slice();
-                    if bytes.len() >= 8 {
-                        stack.push(Layer::Vlan(VlanSlice::new(&bytes[..4])));
-                        let inner = VlanSlice::new(&bytes[4..8]);
+                    let (outer, inner) = (d.outer.slice(), d.inner.slice());
+                    if outer.len() >= 4 && inner.len() >= 4 {
+                        stack.push(Layer::Vlan(VlanSlice::new(&outer[..4])));
+                        let inner = VlanSlice::new(&inner[..4]);
                         outer_ether_type = inner.inner_ether_type();
                         stack.push(Layer::Vlan(inner));
                     }
@@ -323,18 +323,13 @@ impl<'a> Layers<'a> {
             }
         }
 
-        // ARP detection — etherparse stops at the link layer for
-        // ARP frames, so detect via outer EtherType and synthesise
-        // an ArpSlice. (etherparse 0.16 doesn't expose ARP.)
-        if outer_ether_type == 0x0806
-            && let Some(eth_layer) = stack.iter().find_map(|l| match l {
-                Layer::Ethernet(e) => Some(e),
-                _ => None,
-            })
-        {
-            let eth_bytes = eth_layer.bytes();
-            if eth_bytes.len() >= 14 + 28 {
-                stack.push(Layer::Arp(ArpSlice::new(&eth_bytes[14..14 + 28])));
+        // ARP — etherparse slices it after any VLAN tags (the layer
+        // covers the 28-byte Ethernet/IPv4 form). Reading it at a fixed
+        // offset 14 took a tagged frame's VLAN header for ARP.
+        if let Some(etherparse::NetSlice::Arp(arp)) = &sp.net {
+            let bytes = arp.slice();
+            if bytes.len() >= 28 {
+                stack.push(Layer::Arp(ArpSlice::new(&bytes[..28])));
             }
             // ARP frames have no L3/L4 stages.
             let payload: &[u8] = &[];
@@ -443,6 +438,8 @@ impl<'a> Layers<'a> {
                         stack.push(Layer::Ipv6(Ipv6Slice::new(bytes, 40)));
                     }
                 }
+                // Returned above.
+                etherparse::NetSlice::Arp(_) => {}
             }
         }
 
@@ -490,6 +487,9 @@ impl<'a> Layers<'a> {
                     stack.push(Layer::Icmpv6(Icmpv6Slice::new(bytes)));
                     payload = icmp.payload();
                 }
+                // No IGMP layer: handled like any other unknown IP
+                // protocol, as before etherparse 0.21 parsed it.
+                etherparse::TransportSlice::Igmp(_) => {}
             }
         }
 
@@ -778,7 +778,7 @@ fn byte_offset(outer: &[u8], inner: &[u8]) -> Option<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::extract::parse::test_frames::{ipv4_tcp, ipv4_udp, ipv6_tcp};
+    use crate::extract::parse::test_frames::{ipv4_tcp, ipv4_udp, ipv6_tcp, with_vlan_tags};
 
     #[test]
     fn parse_eth_ipv4_tcp() {
@@ -996,5 +996,67 @@ mod tests {
         let layers = Layers::parse_ethernet(&f).unwrap();
         assert_eq!(layers.payload(), payload);
         assert_eq!(layers.tcp().unwrap().payload(), payload);
+    }
+
+    fn kinds(layers: &Layers<'_>) -> Vec<LayerKind> {
+        layers.iter().map(|l| l.kind()).collect()
+    }
+
+    #[test]
+    fn qinq_frame_keeps_both_tags_in_order() {
+        let f = with_vlan_tags(
+            &ipv4_udp([10, 0, 0, 1], [10, 0, 0, 2], 5353, 53, b"hi"),
+            &[(0x88a8, 100), (0x8100, 200)],
+        );
+        let layers = Layers::parse_ethernet(&f).unwrap();
+        use LayerKind::*;
+        assert_eq!(kinds(&layers), [Ethernet, Vlan, Vlan, Ipv4, Udp, Payload]);
+        let vids: Vec<u16> = layers
+            .find_all(Vlan)
+            .map(|l| match l {
+                Layer::Vlan(v) => v.vid(),
+                _ => unreachable!(),
+            })
+            .collect();
+        assert_eq!(vids, [100, 200]);
+        assert_eq!(layers.udp().unwrap().dst_port(), 53);
+    }
+
+    /// Ethernet II + an ARP request (Ethernet/IPv4, 28 bytes).
+    fn arp_request() -> Vec<u8> {
+        let mut f = vec![0xff; 6];
+        f.extend_from_slice(&[0x02, 0, 0, 0, 0, 0x01]);
+        f.extend_from_slice(&0x0806u16.to_be_bytes());
+        f.extend_from_slice(&[0, 1, 0x08, 0, 6, 4, 0, 1]); // htype, ptype, hlen, plen, op
+        f.extend_from_slice(&[0x02, 0, 0, 0, 0, 0x01, 10, 0, 0, 1]); // sender
+        f.extend_from_slice(&[0, 0, 0, 0, 0, 0, 10, 0, 0, 2]); // target
+        f
+    }
+
+    #[test]
+    fn arp_layer_is_read_after_any_vlan_tags() {
+        for tags in [&[][..], &[(0x8100, 7)][..], &[(0x88a8, 7), (0x8100, 8)][..]] {
+            let f = with_vlan_tags(&arp_request(), tags);
+            let layers = Layers::parse_ethernet(&f).unwrap();
+            let arp = layers.arp().expect("Arp layer");
+            assert_eq!(arp.bytes(), &f[f.len() - 28..], "{} tag(s)", tags.len());
+            assert_eq!(layers.payload(), b"", "{} tag(s)", tags.len());
+        }
+    }
+
+    #[test]
+    fn igmp_adds_no_transport_layer() {
+        // IPv4 protocol 2 (IGMPv2 membership query): etherparse >= 0.21
+        // decodes it, but the stack stays what it was before — IP, no L4,
+        // no payload — like any IP protocol without a layer type.
+        let igmp = [0x11, 100, 0, 0, 224, 0, 0, 1];
+        let mut f = ipv4_udp([10, 0, 0, 1], [224, 0, 0, 1], 1, 1, &[]);
+        f.truncate(14 + 20);
+        f[14 + 9] = 2; // protocol = IGMP
+        f[14 + 2..14 + 4].copy_from_slice(&((20 + igmp.len()) as u16).to_be_bytes());
+        f.extend_from_slice(&igmp);
+        let layers = Layers::parse_ethernet(&f).unwrap();
+        assert_eq!(kinds(&layers), [LayerKind::Ethernet, LayerKind::Ipv4]);
+        assert_eq!(layers.ipv4().unwrap().protocol(), 2);
     }
 }
