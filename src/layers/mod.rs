@@ -323,17 +323,13 @@ impl<'a> Layers<'a> {
             }
         }
 
-        // ARP detection — detect via the (inner) EtherType and
-        // synthesise an ArpSlice.
-        if outer_ether_type == 0x0806
-            && let Some(eth_layer) = stack.iter().find_map(|l| match l {
-                Layer::Ethernet(e) => Some(e),
-                _ => None,
-            })
-        {
-            let eth_bytes = eth_layer.bytes();
-            if eth_bytes.len() >= 14 + 28 {
-                stack.push(Layer::Arp(ArpSlice::new(&eth_bytes[14..14 + 28])));
+        // ARP — etherparse slices it after any VLAN tags (the layer
+        // covers the 28-byte Ethernet/IPv4 form). Reading it at a fixed
+        // offset 14 took a tagged frame's VLAN header for ARP.
+        if let Some(etherparse::NetSlice::Arp(arp)) = &sp.net {
+            let bytes = arp.slice();
+            if bytes.len() >= 28 {
+                stack.push(Layer::Arp(ArpSlice::new(&bytes[..28])));
             }
             // ARP frames have no L3/L4 stages.
             let payload: &[u8] = &[];
@@ -442,8 +438,7 @@ impl<'a> Layers<'a> {
                         stack.push(Layer::Ipv6(Ipv6Slice::new(bytes, 40)));
                     }
                 }
-                // Ethernet ARP returned above; ARP behind another link
-                // type has no L3 layer here.
+                // Returned above.
                 etherparse::NetSlice::Arp(_) => {}
             }
         }
@@ -1025,6 +1020,28 @@ mod tests {
             .collect();
         assert_eq!(vids, [100, 200]);
         assert_eq!(layers.udp().unwrap().dst_port(), 53);
+    }
+
+    /// Ethernet II + an ARP request (Ethernet/IPv4, 28 bytes).
+    fn arp_request() -> Vec<u8> {
+        let mut f = vec![0xff; 6];
+        f.extend_from_slice(&[0x02, 0, 0, 0, 0, 0x01]);
+        f.extend_from_slice(&0x0806u16.to_be_bytes());
+        f.extend_from_slice(&[0, 1, 0x08, 0, 6, 4, 0, 1]); // htype, ptype, hlen, plen, op
+        f.extend_from_slice(&[0x02, 0, 0, 0, 0, 0x01, 10, 0, 0, 1]); // sender
+        f.extend_from_slice(&[0, 0, 0, 0, 0, 0, 10, 0, 0, 2]); // target
+        f
+    }
+
+    #[test]
+    fn arp_layer_is_read_after_any_vlan_tags() {
+        for tags in [&[][..], &[(0x8100, 7)][..], &[(0x88a8, 7), (0x8100, 8)][..]] {
+            let f = with_vlan_tags(&arp_request(), tags);
+            let layers = Layers::parse_ethernet(&f).unwrap();
+            let arp = layers.arp().expect("Arp layer");
+            assert_eq!(arp.bytes(), &f[f.len() - 28..], "{} tag(s)", tags.len());
+            assert_eq!(layers.payload(), b"", "{} tag(s)", tags.len());
+        }
     }
 
     #[test]
