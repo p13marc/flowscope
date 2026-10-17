@@ -201,3 +201,44 @@ fn pcapng_epb_flags_give_the_direction() {
     use flowscope::pcap::CaptureDirection::{Inbound, Outbound};
     assert_eq!(dirs, vec![Some(Inbound), Some(Outbound)]);
 }
+
+/// A classic pcap taken with a snap length (`tcpdump -s 96 -w x.pcap`)
+/// stores truncated records whose original length exceeds the header's
+/// snaplen. That is the format working as intended, so every record must
+/// replay — pcap-file's validating reader rejected each one as "orig_len >
+/// snap_len", ending the replay at the first full-size packet.
+#[test]
+fn truncated_records_of_a_snaplen_capture_replay() {
+    use pcap_file::pcap::{PcapHeader, PcapPacket, PcapWriter};
+    let mut frame = ipv4_udp([10, 0, 0, 1], [10, 0, 0, 2], 1000, 53, &[0x42; 1400]);
+    frame.truncate(frame.len().min(1514));
+    let header = PcapHeader {
+        snaplen: 96,
+        ..Default::default()
+    };
+    let mut w = PcapWriter::with_header(Vec::new(), header).unwrap();
+    for i in 0..3u64 {
+        w.write_packet(&PcapPacket::new(
+            Duration::new(1 + i, 500_000),
+            frame.len() as u32,
+            &frame[..96],
+        ))
+        .unwrap();
+    }
+    let bytes = w.into_writer();
+
+    let mut r = CaptureReader::new(Cursor::new(bytes.clone())).unwrap();
+    let mut n = 0;
+    while let Some(p) = r.next_packet() {
+        let p = p.expect("a truncated record is valid pcap");
+        assert_eq!(p.data.len(), 96);
+        assert_eq!(p.original_len as usize, frame.len());
+        assert_eq!(p.timestamp, Duration::new(1 + n, 500_000));
+        n += 1;
+    }
+    assert_eq!(n, 3);
+    // (The extractors still skip a record cut inside its IP payload: they
+    // slice strictly. Records that fit the snap length are tracked as
+    // before, and a truncated one no longer ends the replay.)
+    let _ = bytes;
+}

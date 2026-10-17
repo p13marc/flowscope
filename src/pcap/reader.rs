@@ -233,22 +233,45 @@ impl<R: Read> CaptureReader<R> {
     pub fn next_packet(&mut self) -> Option<crate::Result<CapturedPacket>> {
         match &mut self.inner {
             ReaderInner::Pcap(reader) => {
-                let datalink = reader.header().datalink;
-                Some(
-                    reader
-                        .next_packet()?
-                        .map(|p| {
-                            let data = p.data.into_owned();
-                            CapturedPacket {
-                                timestamp: p.timestamp,
-                                original_len: p.orig_len,
-                                direction: cooked_direction(datalink, &data),
-                                data,
-                                datalink,
-                            }
-                        })
-                        .map_err(|e| Error::parse_with(Module::Pcap, "malformed pcap record", e)),
-                )
+                let header = reader.header();
+                // Raw records: pcap-file's validating `next_packet` rejects
+                // `orig_len > snaplen`, which is every truncated record of a
+                // capture taken with a snap length (`tcpdump -s 96`) — the
+                // format working as intended. Only the timestamp needs
+                // checking here; the record's bytes are already bounded.
+                let raw = match reader.next_raw_packet()? {
+                    Ok(raw) => raw,
+                    Err(e) => {
+                        return Some(Err(Error::parse_with(
+                            Module::Pcap,
+                            "malformed pcap record",
+                            e,
+                        )));
+                    }
+                };
+                let nanos = match header.ts_resolution {
+                    pcap_file::TsResolution::MicroSecond => raw.ts_frac.checked_mul(1000),
+                    pcap_file::TsResolution::NanoSecond => Some(raw.ts_frac),
+                }
+                .filter(|&ns| ns < 1_000_000_000);
+                let Some(nanos) = nanos else {
+                    return Some(Err(Error::parse_with(
+                        Module::Pcap,
+                        "malformed pcap record",
+                        pcap_file::PcapError::InvalidField(
+                            "PacketHeader ts_nanosecond >= 1_000_000_000",
+                        ),
+                    )));
+                };
+                let data = raw.data.into_owned();
+                Some(Ok(CapturedPacket {
+                    timestamp: Duration::new(u64::from(raw.ts_sec), nanos),
+                    // Never report fewer bytes on the wire than were captured.
+                    original_len: raw.orig_len.max(raw.incl_len),
+                    direction: cooked_direction(header.datalink, &data),
+                    data,
+                    datalink: header.datalink,
+                }))
             }
             ReaderInner::PcapNg { reader, interfaces } => {
                 use pcap_file::pcapng::Block;
