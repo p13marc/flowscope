@@ -130,6 +130,42 @@ fn data_record_encodes_protocol_and_ports_correctly() {
     );
 }
 
+/// flowEndReason (IE 136) carries the IANA code — 1 idle timeout, 2 active
+/// timeout, 3 end of flow detected, 4 forced end, 5 lack of resources —
+/// not the Rust enum's declaration index (which is one lower, so every
+/// record used to report the wrong reason and idle timeouts encoded the
+/// reserved value 0).
+#[test]
+fn flow_end_reason_encodes_the_iana_code() {
+    use flowscope::ipfix::FlowEndReason;
+    let reg = registry();
+    for (reason, code) in [
+        (FlowEndReason::IdleTimeout, 1u8),
+        (FlowEndReason::ActiveTimeout, 2),
+        (FlowEndReason::EndOfFlowDetected, 3),
+        (FlowEndReason::ForcedEnd, 4),
+        (FlowEndReason::LackOfResources, 5),
+    ] {
+        let mut rec = build_record();
+        rec.flow_end_reason = Some(reason);
+        let mut b = MessageBuilder::new(&reg, 1, 0);
+        b.add_data_record(&rec, TEMPLATE_ID_FLOW_IPV4).unwrap();
+        let msg = b.finalize().unwrap();
+        // flowEndReason is the last octet of the 64-octet record.
+        let data_start = MESSAGE_HEADER_LEN + SET_HEADER_LEN;
+        assert_eq!(msg[data_start + 63], code, "{reason:?}");
+        assert_eq!(FlowEndReason::from_u8(msg[data_start + 63]), Some(reason));
+    }
+    // A FIN-closed flow (`EndReason::Fin`) is "end of flow detected".
+    let msg = {
+        let mut b = MessageBuilder::new(&reg, 1, 0);
+        b.add_data_record(&build_record(), TEMPLATE_ID_FLOW_IPV4)
+            .unwrap();
+        b.finalize().unwrap()
+    };
+    assert_eq!(msg[MESSAGE_HEADER_LEN + SET_HEADER_LEN + 63], 3);
+}
+
 #[test]
 fn sequence_and_observation_domain_propagate() {
     let reg = registry();

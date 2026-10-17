@@ -308,7 +308,11 @@ fn encode_flow_record_into(
             152 => put_padded_u64(out, rec.flow_start_milliseconds, len),
             153 => put_padded_u64(out, rec.flow_end_milliseconds, len),
             6 => put_padded_u64(out, rec.tcp_control_bits_initiator.unwrap_or(0) as u64, len),
-            136 => put_padded_u64(out, rec.flow_end_reason.map(|r| r as u64).unwrap_or(0), len),
+            136 => put_padded_u64(
+                out,
+                rec.flow_end_reason.map_or(0, |r| u64::from(r.as_u8())),
+                len,
+            ),
             5 => put_padded_u64(out, rec.ip_class_of_service.unwrap_or(0) as u64, len),
             56 => match rec.source_mac_address {
                 Some(mac) if len == 6 => out.extend_from_slice(&mac),
