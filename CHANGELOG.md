@@ -183,6 +183,8 @@ orientation & bounded tables"). A breaking release; migration guide:
   after the extension headers, so the slice (and its `payload()`) ended
   that many bytes early. It now spans the extension headers, like
   `Layers::ipv6()`.
+- The `http2` fuzz target no longer warns about a doc comment on a
+  macro invocation.
 - **pcapng records could report fewer bytes on the wire than they
   captured** (#219): an EPB with a smaller `original_len` than its data
   now reports the captured length, as classic pcap records already did.
