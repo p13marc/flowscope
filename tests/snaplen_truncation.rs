@@ -581,3 +581,42 @@ fn udp_length_beyond_the_ip_payload_is_not_parsed() {
         );
     }
 }
+
+/// IP octets never exceed the wire length: a forged total length on a
+/// cut frame (the source reported 1514 bytes on the wire, 96 captured)
+/// cannot inflate them past what the source says was there.
+#[test]
+fn ip_bytes_are_bounded_by_the_wire_length() {
+    use flowscope::{FlowEvent, FlowTracker};
+    let mut f = ipv4_tcp(
+        M,
+        M,
+        C,
+        S,
+        CP,
+        SP,
+        CISN + 1,
+        SISN + 1,
+        PSH | ACK,
+        &[b'x'; 1460],
+    );
+    f[16..18].copy_from_slice(&65_535u16.to_be_bytes());
+    f.truncate(96);
+    let mut tracker: FlowTracker<FiveTuple> = FlowTracker::new(FiveTuple::bidirectional());
+    tracker.track(PacketView::new(&f, ts_ms(1)).with_wire_len(1514));
+    let stats = tracker
+        .finish()
+        .into_iter()
+        .find_map(|e| match e {
+            FlowEvent::Ended { stats, .. } => Some(stats),
+            _ => None,
+        })
+        .expect("Ended");
+    assert_eq!(stats.bytes_initiator, 1514);
+    assert!(
+        stats.ip_bytes_initiator <= stats.bytes_initiator,
+        "ip_bytes {} > bytes {}",
+        stats.ip_bytes_initiator,
+        stats.bytes_initiator
+    );
+}

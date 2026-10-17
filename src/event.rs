@@ -676,7 +676,8 @@ pub struct FlowStats {
     /// datagram's behind a decap combinator) — IPFIX `octetDeltaCount`,
     /// Zeek `orig_ip_bytes`. A packet whose extractor reports no IP
     /// length (a custom extractor, [`crate::extract::MacPair`]) adds
-    /// its wire length instead. New in 0.26.0 (#219).
+    /// its wire length instead; a packet never adds more than its wire
+    /// length. New in 0.26.0 (#219).
     pub ip_bytes_initiator: u64,
     /// IP octets the responder sent; see
     /// [`ip_bytes_initiator`](Self::ip_bytes_initiator). New in 0.26.0.

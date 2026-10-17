@@ -700,8 +700,9 @@ impl<E: FlowExtractor, S: Send + 'static> FlowTracker<E, S> {
         let captured_len = view.frame.len();
         let len = view.wire_len().max(captured_len.saturating_add(header_cut));
         // IP octets: the datagram's own length when the extractor
-        // knows it, else the wire length.
-        let ip_len = l3_len.map_or(len as u64, u64::from);
+        // knows it, else the wire length — never more than the wire
+        // length (a forged total length on a cut frame).
+        let ip_len = l3_len.map_or(len as u64, |l| u64::from(l).min(len as u64));
         let ts = view.timestamp;
         // Physical capture leg (issue #120). `0` is the documented
         // "unused" sentinel (`RxMetadata::source_idx`), so a zero here

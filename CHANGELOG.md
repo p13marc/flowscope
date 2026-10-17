@@ -112,7 +112,8 @@ orientation & bounded tables"). A breaking release; migration guide:
 - **IP octets and truncated-packet counts on `FlowStats`** (#219):
   `ip_bytes_initiator` / `ip_bytes_responder` (the packets' IP datagram
   lengths — IPFIX `octetDeltaCount`, Zeek `*_ip_bytes`; a packet whose
-  extractor reports no IP length adds its wire length),
+  extractor reports no IP length adds its wire length, and none adds
+  more than its wire length),
   `packets_truncated_initiator` / `packets_truncated_responder`,
   `total_ip_bytes()`, `ip_bytes_for(side)`, `total_packets_truncated()`.
   `PacketContext` gains `captured_len` and `truncated`.
