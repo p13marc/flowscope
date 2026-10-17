@@ -385,15 +385,16 @@ impl FlowRecord {
     }
 
     /// Wire L2 bytes of the initiator direction: IE 352 when the
-    /// record carries it, else the IP octets (IE 1).
-    pub(crate) fn layer2_octets_initiator(&self) -> u64 {
+    /// record carries it, else the IP octets (IE 1) — what the Zeek /
+    /// CSV / EVE `bytes` columns report. New in 0.26.0.
+    pub fn layer2_octets_initiator(&self) -> u64 {
         self.layer2_octet_delta_count_initiator
             .unwrap_or(self.octet_delta_count_initiator)
     }
 
     /// Wire L2 bytes of the responder direction (see
-    /// [`Self::layer2_octets_initiator`]).
-    pub(crate) fn layer2_octets_responder(&self) -> u64 {
+    /// [`Self::layer2_octets_initiator`]). New in 0.26.0.
+    pub fn layer2_octets_responder(&self) -> u64 {
         self.layer2_octet_delta_count_responder
             .unwrap_or(self.octet_delta_count_responder)
     }

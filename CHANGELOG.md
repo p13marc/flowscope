@@ -28,7 +28,8 @@ orientation & bounded tables"). A breaking release; migration guide:
   7012 defines `octetDeltaCount` — instead of the captured L2 frame
   bytes. The wire L2 bytes move to the new IE 352 / 353 fields
   (`layer2_octet_delta_count_*`, `layer2_octet_total_count`, not encoded
-  by the wire builder). Zeek rows gain `orig_ip_bytes` / `resp_ip_bytes`
+  by the wire builder; `layer2_octets_initiator()` /
+  `layer2_octets_responder()` fall back to IE 1 when they are absent). Zeek rows gain `orig_ip_bytes` / `resp_ip_bytes`
   in Zeek's column order (after `orig_pkts` / `resp_pkts`; `orig_bytes`
   stays the wire L2 bytes), EVE `flow` / `stats` objects gain
   `ip_bytes_toserver` / `ip_bytes_toclient` (`bytes_to*` stay wire L2,
