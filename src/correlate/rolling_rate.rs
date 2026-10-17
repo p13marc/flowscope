@@ -126,6 +126,12 @@ impl<K: Hash + Eq, V: RateValue> Bucket<K, V> {
 /// bucket is missing from that bucket in [`Self::rate`],
 /// [`Self::sum`], [`Self::snapshot`] and [`Self::top_k`].
 /// [`Self::new_unbounded`] keeps every key. New in 0.26.0 (#220).
+///
+/// Timestamps may go backwards (several capture queues, a replay): a
+/// record goes to the bucket of its own time, and one older than the
+/// window ending at the newest time recorded is dropped, so the table
+/// never holds more than about `window / bucket_width` buckets (before
+/// 0.26 a timestamp that went back opened a new bucket on every call).
 #[derive(Debug)]
 pub struct RollingRate<K, V>
 where
@@ -203,15 +209,43 @@ where
     /// exists in that bucket — the same trick
     /// [`crate::correlate::TimeBucketedCounter`] uses.
     pub fn record(&mut self, k: K, v: V, now: Timestamp) {
-        self.evict_expired(now);
+        // Timestamps may go backwards (several capture queues, a
+        // replayed file): the window ends at the newest time seen, a
+        // record older than it is dropped, and a record lands in the
+        // bucket of its own start — one bucket per start, so the
+        // table stays within `window / bucket_width` buckets.
+        let horizon = self.buckets.back().map_or(now, |b| b.start.max(now));
+        self.evict_expired(horizon);
         let bucket_start = self.bucket_start_for(now);
-
-        let fresh = !matches!(self.buckets.back(), Some(b) if b.start == bucket_start);
-        if fresh {
-            self.buckets.push_back(Bucket::new(bucket_start));
+        if bucket_start < self.cutoff_for(horizon) {
+            return;
         }
-        let bucket = self.buckets.back_mut().expect("just ensured");
-        if bucket.add(k, v, self.max_keys) {
+
+        let pos = match self.buckets.back() {
+            // The common case: the newest bucket.
+            Some(b) if b.start == bucket_start => self.buckets.len() - 1,
+            Some(b) if b.start < bucket_start => {
+                self.buckets.push_back(Bucket::new(bucket_start));
+                self.buckets.len() - 1
+            }
+            None => {
+                self.buckets.push_back(Bucket::new(bucket_start));
+                0
+            }
+            // Out of order: find or insert its bucket.
+            Some(_) => match self.buckets.iter().rposition(|b| b.start <= bucket_start) {
+                Some(i) if self.buckets[i].start == bucket_start => i,
+                Some(i) => {
+                    self.buckets.insert(i + 1, Bucket::new(bucket_start));
+                    i + 1
+                }
+                None => {
+                    self.buckets.push_front(Bucket::new(bucket_start));
+                    0
+                }
+            },
+        };
+        if self.buckets[pos].add(k, v, self.max_keys) {
             self.overflowed = self.overflowed.saturating_add(1);
         }
     }
@@ -423,8 +457,9 @@ pub(crate) fn top_n<K>(mut v: Vec<(K, f64)>, n: usize) -> Vec<(K, f64)> {
     if n == 0 {
         return Vec::new();
     }
-    let desc =
-        |a: &(K, f64), b: &(K, f64)| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal);
+    // `total_cmp`: a total order even with NaN rates (an inconsistent
+    // comparator may make the std sort and select functions panic).
+    let desc = |a: &(K, f64), b: &(K, f64)| b.1.total_cmp(&a.1);
     if n < v.len() {
         v.select_nth_unstable_by(n - 1, desc);
         v.truncate(n);
@@ -853,5 +888,51 @@ mod tests {
                 proptest::prop_assert_eq!(r.rate(k, now), *rate);
             }
         }
+    }
+
+    // Review findings: timestamps that go backwards.
+
+    #[test]
+    fn out_of_order_timestamps_reuse_their_bucket() {
+        let mut r: RollingRate<u32, u64> =
+            RollingRate::new(Duration::from_secs(60), Duration::from_secs(1), 10);
+        // Two capture queues interleaving across a bucket boundary.
+        for i in 0..1_000u32 {
+            let now = if i % 2 == 0 {
+                Timestamp::new(10, 0)
+            } else {
+                Timestamp::new(9, 999_000_000)
+            };
+            r.record(i % 20, 1, now);
+        }
+        assert_eq!(r.bucket_count(), 2, "one bucket per start");
+        assert!(r.stored_entries() <= 2 * 10);
+        let now = Timestamp::new(10, 1);
+        assert_eq!(r.sum(&0, now) + r.sum(&1, now), 100);
+    }
+
+    #[test]
+    fn backwards_timestamps_stay_within_the_window() {
+        let mut r: RollingRate<u32, u64> =
+            RollingRate::new(Duration::from_secs(10), Duration::from_secs(1), 10);
+        r.record(1, 1, Timestamp::new(1_000, 0));
+        for back in 1..500u32 {
+            r.record(1, 1, Timestamp::new(1_000 - back, 0));
+        }
+        assert!(r.bucket_count() <= 11, "{} buckets", r.bucket_count());
+        // Everything inside [990, 1000] is counted.
+        assert_eq!(r.sum(&1, Timestamp::new(1_000, 0)), 11);
+    }
+
+    #[test]
+    fn top_k_with_nan_rates_does_not_panic() {
+        let mut r: RollingRate<u32, f64> =
+            RollingRate::new_unbounded(Duration::from_secs(1), Duration::from_secs(1));
+        for k in 0..200u32 {
+            let v = if k % 7 == 0 { f64::NAN } else { f64::from(k) };
+            r.record(k, v, Timestamp::new(0, k));
+        }
+        let top = r.top_k(10, Timestamp::new(0, 999));
+        assert_eq!(top.len(), 10);
     }
 }
