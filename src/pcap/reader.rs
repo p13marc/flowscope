@@ -157,6 +157,8 @@ fn cooked_direction(datalink: DataLink, data: &[u8]) -> Option<CaptureDirection>
 #[derive(Debug, Clone, Copy)]
 struct PcapNgInterface {
     datalink: DataLink,
+    /// The interface's snap length (`0`: none).
+    snaplen: u32,
     /// Timestamp units per second.
     units_per_sec: u64,
     /// `if_tsoffset`, seconds added to every timestamp.
@@ -299,6 +301,7 @@ impl<R: Read> CaptureReader<R> {
                         Block::InterfaceDescription(idb) => {
                             let mut iface = PcapNgInterface {
                                 datalink: idb.linktype,
+                                snaplen: idb.snaplen,
                                 units_per_sec: 1_000_000,
                                 offset_secs: 0,
                             };
@@ -329,6 +332,7 @@ impl<R: Read> CaptureReader<R> {
                                 .copied()
                                 .unwrap_or(PcapNgInterface {
                                     datalink: DataLink::ETHERNET,
+                                    snaplen: 0,
                                     units_per_sec: 1_000_000,
                                     offset_secs: 0,
                                 });
@@ -356,15 +360,17 @@ impl<R: Read> CaptureReader<R> {
                             }));
                         }
                         Block::SimplePacket(spb) => {
-                            let datalink = interfaces
+                            let (datalink, snaplen) = interfaces
                                 .first()
-                                .map_or(DataLink::ETHERNET, |i| i.datalink);
+                                .map_or((DataLink::ETHERNET, 0), |i| (i.datalink, i.snaplen));
                             // An SPB has no captured-length field: its
-                            // data is min(original length, snap length)
-                            // bytes padded to 32 bits, and pcap-file hands
-                            // back the padded body. Cut the padding.
+                            // data is min(original length, interface snap
+                            // length) bytes padded to 32 bits, and
+                            // pcap-file hands back the padded body. Cut
+                            // the padding.
+                            let snaplen = if snaplen == 0 { u32::MAX } else { snaplen };
                             let mut data = spb.data.into_owned();
-                            data.truncate(spb.original_len as usize);
+                            data.truncate(spb.original_len.min(snaplen) as usize);
                             return Some(Ok(CapturedPacket {
                                 timestamp: Duration::ZERO,
                                 original_len: spb.original_len,
@@ -453,6 +459,7 @@ mod tests {
     fn hostile_timestamp_offset_saturates() {
         let iface = PcapNgInterface {
             datalink: DataLink::ETHERNET,
+            snaplen: 0,
             units_per_sec: 1,
             offset_secs: i64::MAX,
         };

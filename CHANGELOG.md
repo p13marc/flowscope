@@ -163,7 +163,8 @@ orientation & bounded tables"). A breaking release; migration guide:
   now reports the captured length, as classic pcap records already did.
   A Simple Packet Block's frame no longer carries the block's 0–3 bytes
   of 32-bit padding (an SPB has no captured-length field; its data is
-  the original length).
+  min(original length, the interface's snap length), so a cut SPB
+  reports its whole cut).
 
 ## 0.25.3 (2026-10-17)
 

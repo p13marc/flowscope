@@ -348,3 +348,39 @@ fn pcapng_original_len_is_at_least_the_captured_length() {
         vec![(frame.len(), frame.len()), (frame.len(), frame.len())]
     );
 }
+
+/// An SPB of a capture with a snap length holds min(original length,
+/// interface snaplen) bytes, padded to 32 bits: the padding is not frame
+/// data, so the cut is reported in full.
+#[test]
+fn pcapng_spb_cut_by_the_interface_snaplen() {
+    use pcap_file::pcapng::blocks::simple_packet::SimplePacketBlock;
+    let frame = ipv4_udp([10, 0, 0, 1], [10, 0, 0, 2], 1, 53, &[3; 30]);
+    assert_eq!(frame.len(), 72);
+    let mut w = PcapNgWriter::new(Vec::new()).unwrap();
+    w.write_pcapng_block(InterfaceDescriptionBlock {
+        linktype: DataLink::ETHERNET,
+        snaplen: 41,
+        options: vec![],
+    })
+    .unwrap();
+    w.write_pcapng_block(SimplePacketBlock {
+        original_len: frame.len() as u32,
+        data: Cow::Borrowed(&frame[..41]), // written with 3 bytes of padding
+    })
+    .unwrap();
+    let bytes = w.into_inner();
+    let p = CaptureReader::new(Cursor::new(bytes.clone()))
+        .unwrap()
+        .next_packet()
+        .unwrap()
+        .unwrap();
+    assert_eq!(p.data, &frame[..41]);
+    assert_eq!(p.original_len as usize, frame.len());
+    let views: Vec<_> = PcapFlowSource::from_reader(Cursor::new(bytes))
+        .unwrap()
+        .views()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    assert_eq!(views[0].snap_cut, 31);
+}
