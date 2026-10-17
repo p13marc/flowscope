@@ -34,7 +34,9 @@
 //!
 //! - `mac` (caller-provided source MAC — NBNS payloads carry
 //!   no L2).
-//! - `hostname` (the decoded NetBIOS name).
+//! - `hostname` (the decoded NetBIOS name) — from registrations,
+//!   refreshes and responses only: a name query names the host being
+//!   looked up, not the sender.
 //! - `ipv4` (every address in the answer section).
 //! - `seen_via |= AssetSourceSet::NBNS`.
 //!
