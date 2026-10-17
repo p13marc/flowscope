@@ -178,6 +178,11 @@ orientation & bounded tables"). A breaking release; migration guide:
 - **`--features ipfix,tracker` without `extractors` did not compile**:
   `FlowRecord::from_parts` takes a `FiveTupleKey` and now requires
   `extractors` too (`from_key_fields` works without it).
+- **`LayerStack::ipv6()` was short by the extension headers**: the
+  fast-path parser sized the IPv6 layer as 40 bytes plus the payload
+  after the extension headers, so the slice (and its `payload()`) ended
+  that many bytes early. It now spans the extension headers, like
+  `Layers::ipv6()`.
 - **pcapng records could report fewer bytes on the wire than they
   captured** (#219): an EPB with a smaller `original_len` than its data
   now reports the captured length, as classic pcap records already did.
