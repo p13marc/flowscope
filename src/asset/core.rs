@@ -691,11 +691,21 @@ impl Asset {
         nb: &crate::netbios_ns::NbnsMessage,
         source_mac: MacAddr,
     ) -> Option<Self> {
-        if nb.queried_name.is_none() && nb.answer_addresses.is_empty() {
+        // A name *query* asks about someone else's name (RFC 1002 §4.2.12:
+        // the question names the host being resolved), so it says nothing
+        // about the sender: a workstation looking up "WPAD" is not WPAD.
+        // Registrations, refreshes and responses carry the sender's own
+        // name.
+        let own_name = if nb.opcode == crate::netbios_ns::NbnsOpcode::Query && !nb.is_response {
+            None
+        } else {
+            nb.queried_name.as_deref()
+        };
+        if own_name.is_none() && nb.answer_addresses.is_empty() {
             return None;
         }
         let mut a = Self::new(source_mac);
-        if let Some(name) = nb.queried_name.as_deref() {
+        if let Some(name) = own_name {
             a.set_hostname(name.to_string());
         }
         for v4 in nb.answer_addresses.iter() {

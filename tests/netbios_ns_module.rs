@@ -101,7 +101,8 @@ mod asset {
 
     #[test]
     fn from_netbios_ns_extracts_hostname() {
-        let payload = build_query("CLIENT01", 0x00, 0, 0);
+        // A name registration announces the sender's own name.
+        let payload = build_query("CLIENT01", 0x00, 0, 5);
         let msg = parse(&payload).expect("parse");
         let mac = MacAddr([0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0x01]);
         let asset = Asset::from_netbios_ns(&msg, mac).expect("populated");
@@ -135,6 +136,17 @@ mod asset {
         );
     }
 
+    /// A name query names the host being looked up, not the sender: a
+    /// workstation querying "WPAD" must not be renamed WPAD.
+    #[test]
+    fn from_netbios_ns_query_does_not_name_the_sender() {
+        let payload = build_query("WPAD", 0x00, 0, 0);
+        let msg = parse(&payload).expect("parse");
+        assert_eq!(msg.opcode, NbnsOpcode::Query);
+        assert!(!msg.is_response);
+        assert!(Asset::from_netbios_ns(&msg, MacAddr([2; 6])).is_none());
+    }
+
     #[test]
     fn from_netbios_ns_returns_none_when_neither_name_nor_address() {
         // Pure header with qdcount=0, ancount=0.
@@ -147,7 +159,7 @@ mod asset {
     #[test]
     fn inventory_absorbs_netbios_ns_asset() {
         let mut inv = Inventory::new(8);
-        let payload = build_query("LAPTOP", 0x00, 0, 0);
+        let payload = build_query("LAPTOP", 0x00, 0, 8); // refresh
         let msg = parse(&payload).expect("parse");
         let mac = MacAddr([3; 6]);
         let asset = Asset::from_netbios_ns(&msg, mac).expect("populated");

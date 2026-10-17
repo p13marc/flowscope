@@ -22,6 +22,13 @@ the core.
 
 ## Implementation Status
 
+**0.25.2** (unreleased — bug-fix patch, CHANGELOG `## 0.25.2`; #209 IPFIX
+flowEndReason encoded the enum index, #210 `CaptureReader` rejected
+truncated records of snaplen captures (reads raw records now), #211 NBNS
+queries named their sender in the asset inventory). Found by netring's
+0.31.2 audit. Open: #212 (extractors slice strictly, so packets cut by a
+snap length are skipped — needs a design for truncated payloads).
+
 **0.25.1** (published to crates.io 2026-09-27, tag `0.25.1` — additive patch, CHANGELOG `## 0.25.1`;
 des-capture follow-ups #202 / #203, milestone "0.25.1"):
 `EndReason::is_transport` / `is_parser` (exact transport-vs-parser
