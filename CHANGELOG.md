@@ -154,6 +154,10 @@ orientation & bounded tables"). A breaking release; migration guide:
   header-only capture (`-s 54`) yields one gap per segment instead of a
   stall. A cut datagram (UDP payload, ICMP message) is tracked but not
   handed to datagram parsers.
+- **`InnerGtpU` panicked on a short GTP-U header with the E flag set**
+  (index 11 of an 8–11-byte payload). It now rejects it. The panic
+  predates 0.26 for malformed frames; lax parsing would also have let
+  GTP-U frames cut by a snap length reach it.
 - **pcapng records could report fewer bytes on the wire than they
   captured** (#219): an EPB with a smaller `original_len` than its data
   now reports the captured length, as classic pcap records already did.
