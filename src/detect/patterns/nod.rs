@@ -152,8 +152,16 @@ impl<K: KeyFields + Send> crate::detect::Detector<K> for NewlyObservedDomainDete
         DetectorKind::NewlyObservedDomain
     }
 
-    fn on_dns_query(&mut self, key: &K, qname: &str, ts: Timestamp, out: &mut Vec<OwnedAnomaly>) {
-        if let Some(score) = self.observe(key.src_ip(), qname, ts) {
+    fn on_dns_query(
+        &mut self,
+        key: &K,
+        sender: crate::Orientation,
+        qname: &str,
+        ts: Timestamp,
+        out: &mut Vec<OwnedAnomaly>,
+    ) {
+        let src = crate::Directed::new(key, sender).src_ip();
+        if let Some(score) = self.observe(src, qname, ts) {
             out.push(score.into_anomaly(ts));
         }
     }

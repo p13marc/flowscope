@@ -214,7 +214,8 @@ impl<K: KeyFields + Send> crate::detect::Detector<K> for DataExfilDetector {
         ts: Timestamp,
         out: &mut Vec<OwnedAnomaly>,
     ) {
-        let Some(src) = key.src_ip() else {
+        // The initiator sent `bytes_initiator`.
+        let Some(src) = crate::Directed::initiator(key, stats).src_ip() else {
             return;
         };
         if let Some(score) = self.observe(src, stats.bytes_initiator, ts) {

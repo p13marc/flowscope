@@ -139,8 +139,15 @@ impl<K: KeyFields + Send> crate::detect::Detector<K> for ConnectionFloodDetector
         DetectorKind::ConnectionFlood
     }
 
-    fn on_flow_start(&mut self, key: &K, ts: Timestamp, out: &mut Vec<OwnedAnomaly>) {
-        let Some(src) = key.src_ip() else {
+    /// One observation per new flow, for its initiator.
+    fn on_flow_start(
+        &mut self,
+        key: &K,
+        initiator: crate::Orientation,
+        ts: Timestamp,
+        out: &mut Vec<OwnedAnomaly>,
+    ) {
+        let Some(src) = crate::Directed::new(key, initiator).src_ip() else {
             return;
         };
         if let Some(score) = self.observe(src, ts) {

@@ -17,7 +17,7 @@ use flowscope::detect::patterns::{
 use flowscope::detect::{DetectorRegistry, HostPair, SrcHost};
 use flowscope::event::{EndReason, FlowStats, Severity};
 use flowscope::extract::FiveTupleKey;
-use flowscope::extractor::L4Proto;
+use flowscope::extractor::{L4Proto, Orientation};
 use flowscope::history::HistoryString;
 use flowscope::{DetectorKind, DetectorScore, FlowEvent, OwnedAnomaly, Timestamp};
 
@@ -189,7 +189,7 @@ fn registry_drives_flood_and_exfil_and_dns() {
     let dk = key([10, 0, 0, 7], 5000, [8, 8, 8, 8], 53);
     for i in 0..30u32 {
         let q = format!("{i:0>54}.tunnel.example");
-        reg.observe_dns(&dk, &q, t(i), &mut out);
+        reg.observe_dns(&dk, Orientation::Forward, &q, t(i), &mut out);
     }
     assert!(
         out.iter().any(|a| a.kind == DetectorKind::DnsTunnel),

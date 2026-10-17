@@ -119,6 +119,12 @@ impl<W: Write> ZeekConnLogWriter<W> {
 
     /// Write one event. Only `FlowEvent::Ended` emits a row; all
     /// other variants are skipped silently.
+    ///
+    /// `id.orig_*` is the flow's initiator and `id.resp_*` its
+    /// responder (the key read through
+    /// [`Directed::initiator`](crate::Directed::initiator)) — Zeek's
+    /// meaning. Before 0.26 they were the key's address-sorted
+    /// endpoints (#217).
     pub fn write_event<K>(&mut self, ev: &FlowEvent<K>) -> io::Result<()>
     where
         K: KeyFields,
@@ -133,6 +139,7 @@ impl<W: Write> ZeekConnLogWriter<W> {
         else {
             return Ok(());
         };
+        let key = &crate::Directed::initiator(key, stats);
 
         self.uid_seq += 1;
         let uid = format!("{}{:016x}", self.options.uid_prefix, self.uid_seq);

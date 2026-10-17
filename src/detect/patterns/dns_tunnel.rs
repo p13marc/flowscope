@@ -193,8 +193,15 @@ impl<K: KeyFields + Send> crate::detect::Detector<K> for DnsTunnelDetector {
         DetectorKind::DnsTunnel
     }
 
-    fn on_dns_query(&mut self, key: &K, qname: &str, ts: Timestamp, out: &mut Vec<OwnedAnomaly>) {
-        let Some(src) = key.src_ip() else {
+    fn on_dns_query(
+        &mut self,
+        key: &K,
+        sender: crate::Orientation,
+        qname: &str,
+        ts: Timestamp,
+        out: &mut Vec<OwnedAnomaly>,
+    ) {
+        let Some(src) = crate::Directed::new(key, sender).src_ip() else {
             return;
         };
         if let Some(score) = self.observe(src, qname, ts) {

@@ -247,6 +247,11 @@ impl FlowRecord {
     /// pure views over it.
     ///
     /// Defaults:
+    /// - Source / destination are the flow's **initiator** /
+    ///   responder: the key is read through
+    ///   [`Directed::initiator`](crate::Directed::initiator) (a
+    ///   bidirectional key is address-sorted; before 0.26 the lower
+    ///   address was reported as the source, #217).
     /// - IPv4 / IPv6 addresses populate from `K::src_ip`/
     ///   `K::dest_ip`; absent → fields stay `None`.
     /// - Ports from `K::src_port`/`K::dest_port`; absent → `0`.
@@ -267,6 +272,9 @@ impl FlowRecord {
     where
         K: crate::KeyFields + ?Sized,
     {
+        use crate::KeyFields as _;
+        // Initiator → responder, whatever order the key stores.
+        let key = crate::Directed::initiator(key, stats);
         // If the key didn't override protocol_identifier, derive
         // it from the proto_str string label so emit writers
         // routed through FlowRecord don't drop the L4 protocol

@@ -492,7 +492,7 @@ pub use view::{AsPacketView, OwnedPacketView, PacketView};
 // (issue #139) — use the typed [`ParserKind`] enum instead; its
 // `.as_str()` yields the same slug vocabulary.
 
-pub use anomaly_fields::{AnomalyFields, KeyFields};
+pub use anomaly_fields::{AnomalyFields, Directed, KeyFields};
 #[cfg(feature = "tracker")]
 pub use dedup::Dedup;
 #[cfg(feature = "tracker")]

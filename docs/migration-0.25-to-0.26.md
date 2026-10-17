@@ -151,3 +151,70 @@ instead — the flow-end close now follows it. If you mask
 `FLOW_ANOMALY` and still want to see parse errors, look at the early
 `ParserClosed { reason: ParseError, detail, .. }`, which carries the
 same reason text.
+
+## 6. Flows are reported from their initiator (#217, #218)
+
+A bidirectional `FiveTupleKey` stores its endpoints address-sorted
+(`a < b`), and its `KeyFields::src_ip()` is `a`. Through 0.25 every
+consumer that reports a flow as *source → destination* used those
+accessors directly, so the "source" was the lower address, whoever
+opened the connection. 0.26 reads keys from the flow's **initiator**:
+
+| Output | 0.25 `src` | 0.26 `src` |
+|---|---|---|
+| Zeek `id.orig_*` / `id.resp_*` | lower address | initiator / responder |
+| CSV `src_*` / `dst_*` (`Ended`, `Started` rows) | lower address | initiator / responder |
+| EVE `flow`, `stats`, analyzed-flow `src_*` / `dest_*` | lower address | initiator (`*_toserver` = its direction) |
+| `FlowRecord::from_key_fields` / `from_parts` IPFIX source / destination | lower address | initiator / responder |
+| Port-scan, beacon, RITA, flood, exfil detectors | lower address | initiator |
+| DGA, DNS-tunnel, NOD detectors | lower address | the DNS query's sender |
+
+Byte and packet counters were always per side (initiator /
+responder); now the addresses next to them agree. Community ID and
+`stable_hash` are direction-independent and unchanged. EVE `anomaly`
+records (a `FlowAnomaly` comes without the flow's stats) still carry
+the key as stored.
+
+To do the same in your own code, wrap the key:
+
+```rust
+use flowscope::{Directed, KeyFields};
+let from_initiator = Directed::initiator(&key, &stats);
+let client = from_initiator.src_ip();
+// or, with an event's orientation:
+let from_sender = Directed::new(&key, msg.orientation);
+// raw socket addresses:
+let (initiator, responder) = key.oriented(stats.initiator_orientation);
+```
+
+`OwnedAnomaly::with_flow(&key, initiator)` fills an anomaly's 5-tuple
+from the initiator (`with_key` still copies the key as stored).
+
+**Detector API.** Two hooks gained an orientation argument:
+
+```rust
+// Before
+fn on_flow_start(&mut self, key: &K, ts: Timestamp, out: &mut Vec<OwnedAnomaly>);
+fn on_dns_query(&mut self, key: &K, qname: &str, ts: Timestamp, out: &mut Vec<OwnedAnomaly>);
+registry.observe_dns(&msg.key, qname, msg.ts, &mut out);
+
+// After
+fn on_flow_start(&mut self, key: &K, initiator: Orientation, ts: Timestamp, out: &mut Vec<OwnedAnomaly>);
+fn on_dns_query(&mut self, key: &K, sender: Orientation, qname: &str, ts: Timestamp, out: &mut Vec<OwnedAnomaly>);
+registry.observe_dns(&msg.key, msg.orientation, qname, msg.ts, &mut out);
+```
+
+The registry passes the initiator's orientation to `on_flow_start`
+(also for a flow whose first packet was the responder's); flow-end and
+tick hooks read `stats.initiator_orientation`. For `observe_dns`, pass
+the orientation of the packet that carried the query — a DNS slot
+message's `orientation`. A detector that wants the acting host reads
+`Directed::new(key, initiator).src_ip()`.
+
+**`Event::Started.orientation` (#218).** With
+`FlowTrackerConfig::infer_tcp_initiator`, a flow whose first captured
+packet is the responder's SYN+ACK used to report *that packet's*
+orientation on the typed driver's `Started`. It now reports the
+initiator's, as documented — equal to `FlowStats::initiator_orientation`.
+`FlowEvent::Started` is unchanged: it carries the first packet's
+`side` and `orientation` (`side == Responder` in that case).

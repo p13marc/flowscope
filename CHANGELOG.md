@@ -6,6 +6,27 @@ Truncation, orientation & bounded tables (milestone "0.26 — truncation,
 orientation & bounded tables"). A breaking release; migration guide:
 [`docs/migration-0.25-to-0.26.md`](docs/migration-0.25-to-0.26.md).
 
+### Breaking
+
+- **Outputs and detectors read flows from the initiator** (#217). A
+  bidirectional key is address-sorted, and every writer and detector
+  read its `src_*` as the flow's source: a scanner whose address sorts
+  above its targets was reported as each target, Zeek's `id.orig_h`
+  was the lower address, an EVE `bytes_toserver` could be the server's.
+  Now the Zeek / CSV / EVE writers (`flow`, `stats` and analyzed-flow
+  records), `FlowRecord::from_key_fields` (IPFIX source/destination)
+  and every shipped detector read the key through the new `Directed`
+  adapter from the flow's initiator. `Detector::on_flow_start` gains
+  an `initiator: Orientation` argument and `Detector::on_dns_query` /
+  `DetectorRegistry::observe_dns` a `sender: Orientation` (the DNS
+  slot message's `orientation`); flow-end detectors use
+  `stats.initiator_orientation`. Community ID and `stable_hash` are
+  unchanged (direction-independent).
+- **`Event::Started.orientation` is the initiator's** (#218): with
+  `infer_tcp_initiator`, a flow whose first packet was the responder's
+  SYN+ACK reported that packet's orientation, contradicting its own
+  docs and `FlowStats::initiator_orientation`.
+
 ### Added
 
 - **`PacketView::snap_cut`** (#219): the number of bytes a snap length
@@ -32,6 +53,15 @@ orientation & bounded tables"). A breaking release; migration guide:
   IPv4 total length / IPv6 40 + payload length; the inner datagram's
   behind a decap combinator; `None` for `MacPair`), `with_l3_len()`,
   `is_truncated()`. `payload_len` stays the captured length.
+- **`Directed<'_, K>`** (#217, also in the prelude): a `KeyFields`
+  adapter reading a key from one endpoint — `Directed::new(key,
+  orientation)`, `Directed::initiator(key, &stats)`, `key()`, `from()`;
+  swaps `src_*` / `dest_*` for `Reverse`, delegates the protocol
+  accessors, `stable_hash`, `shard_index` and `community_id`.
+  `FiveTupleKey::oriented(o)` (the endpoints as `(source, destination)`
+  of orientation `o`) and `FiveTupleKey::canonical()` (a directional key
+  to its bidirectional form plus orientation).
+  `OwnedAnomaly::with_flow(key, initiator)`.
 - **`flowscope_datagrams_truncated_total`** (`obs::METRIC_DATAGRAMS_TRUNCATED`):
   datagrams a session engine did not parse because the capture cut them.
 - **IP octets and truncated-packet counts on `FlowStats`** (#219):

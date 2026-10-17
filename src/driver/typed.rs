@@ -110,13 +110,17 @@ type IdleTimeoutFn<K> =
 pub enum Event<K> {
     /// First packet of a new flow.
     ///
-    /// `orientation` is the flow's deterministic canonical direction
-    /// ([`Orientation`], issue #118) — equal to the initiator's
-    /// orientation and to [`FlowStats::initiator_orientation`].
+    /// `orientation` is the canonical direction ([`Orientation`],
+    /// issue #118) of the flow's **initiator** — equal to
+    /// [`FlowStats::initiator_orientation`] on the flow's later events.
     Started {
         key: K,
         /// Canonical (address-sorted) orientation of the flow's
-        /// first packet. Deterministic regardless of arrival order.
+        /// initiator: `Forward` when it is `key`'s `a` endpoint. Since
+        /// 0.26 (#218) this holds when
+        /// [`crate::FlowTrackerConfig::infer_tcp_initiator`] decided the
+        /// first packet (a `SYN+ACK`) came from the responder too —
+        /// before, it was that first packet's orientation.
         orientation: Orientation,
         ts: Timestamp,
         l4: Option<L4Proto>,
@@ -425,15 +429,21 @@ impl<K> From<FlowEvent<K>> for Event<K> {
     /// driver's `emit_packet_details`, not this conversion).
     fn from(ev: FlowEvent<K>) -> Self {
         match ev {
+            // `Event::Started.orientation` is the initiator's: the
+            // first packet's own unless it came from the responder
+            // (initiator inference, #218).
             FlowEvent::Started {
                 key,
+                side,
                 orientation,
                 ts,
                 l4,
-                ..
             } => Event::Started {
                 key,
-                orientation,
+                orientation: match side {
+                    FlowSide::Initiator => orientation,
+                    FlowSide::Responder => orientation.flipped(),
+                },
                 ts,
                 l4,
             },

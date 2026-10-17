@@ -7,6 +7,9 @@ use crate::{FlowEvent, KeyFields};
 
 /// CSV writer for [`FlowEvent`] streams.
 ///
+/// `src_*` is the flow's initiator, `dst_*` its responder (0.26,
+/// #217 — before, the key's address-sorted endpoints).
+///
 /// Output schema (per [`FlowEvent::Ended`](FlowEvent::Ended)
 /// row):
 ///
@@ -119,6 +122,8 @@ impl<W: Write> FlowEventCsvWriter<W> {
                 }
                 #[cfg(not(feature = "ipfix"))]
                 {
+                    // Initiator → responder (#217).
+                    let key = &crate::Directed::initiator(key, stats);
                     let sep = self.options.sep();
                     if self.options.emit_started {
                         write!(self.sink, "ended{sep}")?;
@@ -150,7 +155,20 @@ impl<W: Write> FlowEventCsvWriter<W> {
                     )?;
                 }
             }
-            FlowEvent::Started { key, ts, .. } if self.options.emit_started => {
+            FlowEvent::Started {
+                key,
+                side,
+                orientation,
+                ts,
+                ..
+            } if self.options.emit_started => {
+                // Initiator → responder (#217): the first packet is the
+                // responder's when initiator inference flipped it.
+                let initiator = match side {
+                    crate::FlowSide::Initiator => *orientation,
+                    crate::FlowSide::Responder => orientation.flipped(),
+                };
+                let key = &crate::Directed::new(key, initiator);
                 let sep = self.options.sep();
                 let start = ts.to_unix_f64();
                 let proto = key.proto_str().unwrap_or("").to_lowercase();

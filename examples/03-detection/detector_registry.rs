@@ -59,7 +59,7 @@ fn pump(
         if let DnsMessage::Query(q) | DnsMessage::Unanswered(q) = &m.message
             && let Some(question) = q.questions.first()
         {
-            registry.observe_dns(&m.key, &question.name, m.ts, anomalies);
+            registry.observe_dns(&m.key, m.orientation, &question.name, m.ts, anomalies);
         }
     }
 

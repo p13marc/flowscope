@@ -124,9 +124,10 @@ impl OwnedAnomaly {
         }
     }
 
-    /// Populate 5-tuple fields from any [`KeyFields`] impl. Each
-    /// field independently `None` if the key returns `None` for
-    /// it.
+    /// Populate 5-tuple fields from any [`KeyFields`] impl, as the
+    /// key reports them. Each field independently `None` if the key
+    /// returns `None` for it. For a bidirectional flow key use
+    /// [`Self::with_flow`], which puts the initiator first.
     pub fn with_key<K: KeyFields + ?Sized>(mut self, key: &K) -> Self {
         self.src_ip = key.src_ip();
         self.src_port = key.src_port();
@@ -136,6 +137,17 @@ impl OwnedAnomaly {
             self.proto = Some(p);
         }
         self
+    }
+
+    /// Populate the 5-tuple fields from a flow key **read from its
+    /// initiator** — `src_*` is the endpoint of orientation
+    /// `initiator` (the flow's
+    /// [`FlowStats::initiator_orientation`](crate::FlowStats::initiator_orientation)
+    /// or a `Started` event's orientation). [`Self::with_key`] copies
+    /// the key as stored, which for a bidirectional key is
+    /// address-sorted. New in 0.26.0 (#217).
+    pub fn with_flow<K: KeyFields + ?Sized>(self, key: &K, initiator: crate::Orientation) -> Self {
+        self.with_key(&crate::Directed::new(key, initiator))
     }
 
     /// Append a `(label, value)` observation. Label is a

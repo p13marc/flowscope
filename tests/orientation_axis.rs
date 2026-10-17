@@ -424,3 +424,155 @@ fn per_packet_source_idx_zero_sentinel_yields_none() {
     assert_eq!(stats.source_idx_forward, None);
     assert_eq!(stats.source_idx_reverse, None);
 }
+
+// ── #217 / #218 — outputs and detectors read flows from the initiator ──
+
+/// A TCP flow `client → server` as frames: SYN, SYN-ACK, ACK, a
+/// request, the FIN exchange.
+fn tcp_conversation(client: [u8; 4], cport: u16, server: [u8; 4], sport: u16) -> Vec<Vec<u8>> {
+    let c = |seq: u32, ack: u32, flags: u8, p: &[u8]| {
+        test_frames::ipv4_tcp(
+            [0; 6], [0; 6], client, server, cport, sport, seq, ack, flags, p,
+        )
+    };
+    let s = |seq: u32, ack: u32, flags: u8| {
+        test_frames::ipv4_tcp(
+            [0; 6], [0; 6], server, client, sport, cport, seq, ack, flags, b"",
+        )
+    };
+    const ACK: u8 = 0x10;
+    const FIN: u8 = 0x01;
+    vec![
+        c(100, 0, SYN, b""),
+        s(500, 101, SYN_ACK),
+        c(101, 501, ACK, b""),
+        c(101, 501, ACK | 0x08, b"GET / HTTP/1.1\r\n\r\n"),
+        c(119, 501, FIN | ACK, b""),
+        s(501, 120, FIN | ACK),
+        c(120, 502, ACK, b""),
+    ]
+}
+
+/// A scanner whose address sorts *above* its targets: every flow key
+/// puts the target first. The port-scan detector must name the scanner
+/// — before 0.26 it scored each target as the source of the failed
+/// connections, and flagged the targets.
+#[test]
+fn scanner_with_higher_address_is_the_source() {
+    use flowscope::detect::patterns::PortScanDetector;
+    use flowscope::detect::{DetectorRegistry, SrcHost};
+    use flowscope::extract::FiveTupleKey;
+
+    let mut tracker: FlowTracker<_, ()> = FlowTracker::new(FiveTuple::bidirectional());
+    let mut registry: DetectorRegistry<FiveTupleKey> = DetectorRegistry::new();
+    registry.register(PortScanDetector::<SrcHost>::new());
+    let mut anomalies = Vec::new();
+    let mut t = 0;
+    // 10.0.0.9 probes six ports on each of 10.0.0.1 ..= 10.0.0.5, all
+    // unanswered SYNs.
+    for target in 1..=5u8 {
+        for port in 22..28u16 {
+            t += 1;
+            let syn = test_frames::ipv4_tcp(
+                [0; 6],
+                [0; 6],
+                [10, 0, 0, 9],
+                [10, 0, 0, target],
+                40_000 + t as u16,
+                port,
+                1,
+                0,
+                SYN,
+                b"",
+            );
+            for ev in tracker.track(PacketView::new(&syn, Timestamp::new(t, 0))) {
+                registry.observe(&ev, &mut anomalies);
+            }
+        }
+    }
+    for ev in tracker.sweep(Timestamp::MAX) {
+        registry.observe(&ev, &mut anomalies);
+    }
+    let scanners: Vec<_> = anomalies.iter().filter_map(|a| a.src_ip).collect();
+    assert!(
+        !scanners.is_empty(),
+        "30 failed connections from one host is a scan"
+    );
+    assert!(
+        scanners
+            .iter()
+            .all(|ip| *ip == "10.0.0.9".parse::<std::net::IpAddr>().unwrap()),
+        "the scanner is 10.0.0.9: {scanners:?}"
+    );
+}
+
+/// Zeek's `id.orig_*` is the connection's originator, also when its
+/// address sorts above the responder's.
+#[cfg(feature = "emit")]
+#[test]
+fn zeek_orig_is_the_initiator_with_the_higher_address() {
+    use flowscope::emit::{ZeekConnLogWriter, ZeekOptions};
+
+    let frames = tcp_conversation([10, 0, 0, 9], 40000, [10, 0, 0, 1], 80);
+    let mut tracker: FlowTracker<_, ()> = FlowTracker::new(FiveTuple::bidirectional());
+    let mut opts = ZeekOptions::default();
+    opts.emit_headers = false;
+    let mut w = ZeekConnLogWriter::with_options(Vec::new(), opts).unwrap();
+    for (t, f) in frames.iter().enumerate() {
+        for ev in tracker.track(PacketView::new(f, Timestamp::new(t as u32 + 1, 0))) {
+            w.write_event(&ev).unwrap();
+        }
+    }
+    let out = String::from_utf8(w.finish().unwrap()).unwrap();
+    let cols: Vec<&str> = out.trim_end().split('\t').collect();
+    assert_eq!(
+        (cols[2], cols[3], cols[4], cols[5]),
+        ("10.0.0.9", "40000", "10.0.0.1", "80"),
+        "id.orig_h/p id.resp_h/p: {out}"
+    );
+    // orig_pkts / resp_pkts follow the same orientation.
+    assert_eq!(cols[cols.len() - 2..], ["5", "2"], "{out}");
+}
+
+/// #218: with initiator inference, a flow whose first captured packet
+/// is the server's SYN+ACK reports the *client's* orientation on the
+/// typed driver's `Started`, the one `FlowStats::initiator_orientation`
+/// carries.
+#[cfg(all(feature = "reassembler", feature = "session"))]
+#[test]
+fn started_orientation_is_the_initiators_after_inference() {
+    use flowscope::FlowTrackerConfig;
+    use flowscope::driver::{Driver, Event};
+
+    // B (server, higher address) answers before A's SYN is seen.
+    let frames = [tcp_b_to_a(SYN_ACK, b""), tcp_a_to_b(SYN, b"")];
+    let mut cfg = FlowTrackerConfig::default();
+    cfg.infer_tcp_initiator = true;
+    let mut b = Driver::builder(FiveTuple::bidirectional());
+    b.config(cfg);
+    let mut d = b.build();
+    let mut events = Vec::new();
+    for (t, f) in frames.iter().enumerate() {
+        d.track_into(
+            PacketView::new(f, Timestamp::new(t as u32 + 1, 0)),
+            &mut events,
+        );
+    }
+    d.finish_into(&mut events);
+    let started = events
+        .iter()
+        .find_map(|e| match e {
+            Event::Started { orientation, .. } => Some(*orientation),
+            _ => None,
+        })
+        .expect("Started");
+    let initiator = events
+        .iter()
+        .find_map(|e| match e {
+            Event::Ended { stats, .. } => Some(stats.initiator_orientation),
+            _ => None,
+        })
+        .expect("Ended");
+    assert_eq!(initiator, Orientation::Forward, "A sent the SYN");
+    assert_eq!(started, initiator, "Started names the initiator");
+}

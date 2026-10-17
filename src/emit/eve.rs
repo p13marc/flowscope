@@ -23,6 +23,12 @@
 //!
 //! Per-message `"dns"` / `"tls"` records remain out of scope — add
 //! them when a consumer asks.
+//!
+//! `flow` / `stats` records put the flow's initiator in `src_*` (so
+//! `*_toserver` is the initiator's direction, Suricata's meaning), read
+//! through [`crate::Directed::initiator`]; before 0.26 they carried the
+//! key's address-sorted endpoints (#217). `anomaly` records carry the
+//! key as stored (a flow anomaly comes without the flow's stats).
 
 use std::io::{self, Write};
 
@@ -359,7 +365,7 @@ where
         if !self.options.in_iface.is_empty() {
             obj.insert("in_iface".into(), json!(self.options.in_iface));
         }
-        insert_5tuple(&mut obj, &af.key);
+        insert_5tuple(&mut obj, &crate::Directed::initiator(&af.key, stats));
         // The detected app proto is more accurate than the port-based
         // label insert_5tuple derives — prefer it when observed.
         if let Some(ap) = af.l7.app_proto {
@@ -612,7 +618,9 @@ where
             if !self.options.in_iface.is_empty() {
                 obj.insert("in_iface".into(), json!(self.options.in_iface));
             }
-            insert_5tuple(&mut obj, key);
+            // Initiator → responder (#217): `toserver` is the
+            // initiator's direction.
+            insert_5tuple(&mut obj, &crate::Directed::initiator(key, stats));
             obj.insert(
                 "flow".into(),
                 json!({
@@ -646,7 +654,7 @@ where
         if !self.options.in_iface.is_empty() {
             obj.insert("in_iface".into(), json!(self.options.in_iface));
         }
-        insert_5tuple(&mut obj, key);
+        insert_5tuple(&mut obj, &crate::Directed::initiator(key, stats));
         obj.insert(
             "stats".into(),
             json!({
@@ -710,7 +718,10 @@ fn ms_to_iso8601(ms: u64) -> String {
     buf
 }
 
-fn insert_5tuple<K: KeyFields>(obj: &mut serde_json::Map<String, serde_json::Value>, key: &K) {
+fn insert_5tuple<K: KeyFields + ?Sized>(
+    obj: &mut serde_json::Map<String, serde_json::Value>,
+    key: &K,
+) {
     if let Some(ip) = key.src_ip() {
         obj.insert("src_ip".into(), json!(ip.to_string()));
     }

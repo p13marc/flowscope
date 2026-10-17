@@ -84,7 +84,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         for m in &msgs {
             if let DnsMessage::Query(q) | DnsMessage::Unanswered(q) = &m.message {
                 for question in &q.questions {
-                    registry.observe_dns(&m.key, &question.name, m.ts, &mut anomalies);
+                    registry.observe_dns(
+                        &m.key,
+                        m.orientation,
+                        &question.name,
+                        m.ts,
+                        &mut anomalies,
+                    );
                 }
             }
         }
