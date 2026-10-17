@@ -29,8 +29,16 @@ orientation & bounded tables"; CHANGELOG `## 0.26.0 — unreleased`,
 - **Wire length** (#219): `PacketView::snap_cut` (bytes missing from the
   *end* of the frame — invariant across front rewrites, kept by
   `with_frame`), `with_wire_len` / `wire_len()` / `is_truncated()`;
-  `PcapFlowSource` sets it. pcapng EPB original length ≥ captured, SPB
-  padding stripped.
+  `PcapFlowSource` sets it. `wire_len_known()` (set by the builders): a
+  frame known complete whose IP header claims more is skipped by the
+  tracker (forged-length insertion), a reported cut bounds the header
+  claim. pcapng EPB original length ≥ captured, SPB data cut to
+  min(original, IDB snaplen).
+- **Review fixes**: far-ahead `missing` ranges are held as stray
+  candidates (`Track::far_missing`, `Candidate::missing`) — a truncated
+  stray never corroborates itself; UDP surplus bytes are not a cut;
+  `RollingRate` buckets by start under out-of-order time; GTP-U short
+  E-flag header no longer panics.
 - **Truncated packets** (#212): `extract/parse.rs` slices with
   `LaxSlicedPacket`; only a length stop inside the transport of an
   *incomplete* IP payload is tolerated, a cut TCP/UDP header is still
