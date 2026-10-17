@@ -104,3 +104,27 @@ captured one). If yours knows a datagram was cut, say so —
 so the session engines do not parse it; set
 `Extracted::with_l3_len(ip_len)` so the tracker can count IP octets
 (section 4).
+
+## 4. Byte counters count the wire, and IP octets are separate (#219)
+
+`FlowStats::bytes_initiator` / `bytes_responder` — and everything
+derived from them: `total_bytes()`, `bytes_for()`,
+`throughput_bps*()`, `direction_skew()`, `mean_pkt_size_for()`, the
+`flowscope_bytes_total` / `flowscope_flow_bytes` metrics — plus
+`FlowEvent::Packet.len`, the typed `Event::Packet.len` and
+`PacketContext::len` now count each packet's **wire length**: the
+captured frame plus what a snap length cut from it. Before 0.26 they
+counted the captured bytes, so a `tcpdump -s 96` capture reported at
+most 96 bytes per packet. For captures without a snap length nothing
+changes. `PacketContext::captured_len` is the old `len`.
+
+The wire length is the L2 length: Ethernet header and trailer padding
+included. NetFlow / IPFIX octet counters and Zeek's `*_ip_bytes` count
+IP octets instead; those are the new `FlowStats::ip_bytes_initiator` /
+`ip_bytes_responder` (`total_ip_bytes()`, `ip_bytes_for(side)`), summed
+from the IP header's own length (the inner datagram behind a decap
+combinator). The exporters switch to them (sections 6–7).
+
+`FlowStats::packets_truncated_initiator` / `_responder` count the
+packets that were cut. All new `FlowStats` fields deserialize as 0
+from data written by 0.25.

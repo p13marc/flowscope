@@ -240,6 +240,19 @@ fn truncated_records_of_a_snaplen_capture_replay() {
 
     // #212: the truncated records are tracked — one flow, not none.
     assert_eq!(flows_of(bytes.clone()), 1);
+    // #219: counted at their wire length, not the 96 bytes captured.
+    let stats = PcapFlowSource::from_reader(Cursor::new(bytes.clone()))
+        .unwrap()
+        .with_extractor(flowscope::extract::FiveTuple::bidirectional())
+        .find_map(|e| match e {
+            Ok(flowscope::FlowEvent::Ended { stats, .. }) => Some(stats),
+            _ => None,
+        })
+        .expect("the flow ends");
+    assert_eq!(stats.packets_initiator, 3);
+    assert_eq!(stats.bytes_initiator, 3 * frame.len() as u64);
+    assert_eq!(stats.ip_bytes_initiator, 3 * (frame.len() - 14) as u64);
+    assert_eq!(stats.packets_truncated_initiator, 3);
 
     // #219: the replayed views carry what the snap length cut, so the
     // packet's wire length is known.

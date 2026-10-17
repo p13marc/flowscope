@@ -34,9 +34,25 @@ orientation & bounded tables"). A breaking release; migration guide:
   `is_truncated()`. `payload_len` stays the captured length.
 - **`flowscope_datagrams_truncated_total`** (`obs::METRIC_DATAGRAMS_TRUNCATED`):
   datagrams a session engine did not parse because the capture cut them.
+- **IP octets and truncated-packet counts on `FlowStats`** (#219):
+  `ip_bytes_initiator` / `ip_bytes_responder` (the packets' IP datagram
+  lengths — IPFIX `octetDeltaCount`, Zeek `*_ip_bytes`; a packet whose
+  extractor reports no IP length adds its wire length),
+  `packets_truncated_initiator` / `packets_truncated_responder`,
+  `total_ip_bytes()`, `ip_bytes_for(side)`, `total_packets_truncated()`.
+  `PacketContext` gains `captured_len` and `truncated`.
 
 ### Changed
 
+- **Byte counts are wire lengths** (#219): `FlowStats::bytes_initiator`
+  / `bytes_responder` (and `total_bytes()`, `bytes_for()`, the rates
+  built on them, `flowscope_bytes_total`), `FlowEvent::Packet.len`, the
+  typed `Event::Packet.len` and `PacketContext::len` count each packet's
+  wire L2 length — the frame plus what a snap length cut, as the source
+  reported it (`PacketView::snap_cut`) or, when it did not, as the IP
+  header claims it. They were the captured length. Unchanged for a
+  capture without a snap length. The TCP history's data flag (`D` /
+  `d`) follows the segment's wire payload too.
 - **The extractors parse laxly** (#212): `etherparse::LaxSlicedPacket`
   instead of `SlicedPacket`. A packet the capture cut short (its IP
   header claims more bytes than were captured) is extracted as far as

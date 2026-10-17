@@ -170,6 +170,8 @@ pub enum Event<K> {
         /// [`FlowStats::initiator_orientation`] it recovers `side`
         /// deterministically.
         orientation: Orientation,
+        /// The packet's wire length: the frame plus what a snap
+        /// length cut (see [`FlowStats::bytes_initiator`]).
         len: usize,
         ts: Timestamp,
         tcp: Option<TcpInfo>,

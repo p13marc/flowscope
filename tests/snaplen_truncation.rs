@@ -381,3 +381,75 @@ fn snap_cut_in_trailer_padding_is_not_a_truncation() {
     d.finish_into(&mut out);
     assert_eq!(*seen.lock().unwrap(), vec![2]);
 }
+
+/// #219: bytes count the wire length (what the snap length cut
+/// included), IP octets the datagram's own length (no Ethernet header
+/// or padding), and the cut packets are counted.
+#[test]
+fn truncated_segment_counts_wire_and_ip_bytes() {
+    use flowscope::{FlowEvent, FlowTracker};
+    let mut frames = flow(&[(0, vec![b'a'; 100]), (100, b"bbbb".to_vec())]);
+    // The 100-byte segment (154 bytes on the wire) cut after 10.
+    frames[3].1.truncate(HEADERS + 10);
+    // The final ACK padded to the 60-byte Ethernet minimum.
+    frames.last_mut().unwrap().1.resize(60, 0);
+    let mut tracker: FlowTracker<FiveTuple> = FlowTracker::new(FiveTuple::bidirectional());
+    let mut packet_lens = Vec::new();
+    let mut stats = None;
+    for (t, f) in &frames {
+        for ev in tracker.track(PacketView::new(f, *t)) {
+            match ev {
+                FlowEvent::Packet { len, .. } => packet_lens.push(len),
+                FlowEvent::Ended { stats: s, .. } => stats = Some(s),
+                _ => {}
+            }
+        }
+    }
+    let stats = stats.expect("the flow ends with the last ACK");
+    // Initiator: SYN 54, ACK 54, data 154 (cut), data 58, FIN 54, ACK 60.
+    assert_eq!(stats.packets_initiator, 6, "the cut segment is counted");
+    assert_eq!(stats.bytes_initiator, 54 + 54 + 154 + 58 + 54 + 60);
+    // Responder: SYN-ACK 54, FIN-ACK 54.
+    assert_eq!(stats.bytes_responder, 54 + 54);
+    assert_eq!(packet_lens[3], 154, "Packet.len is the wire length");
+    // IP octets: 40-byte headers, + payload; no Ethernet, no padding.
+    assert_eq!(stats.ip_bytes_initiator, 40 + 40 + 140 + 44 + 40 + 40);
+    assert_eq!(stats.ip_bytes_responder, 40 + 40);
+    assert_eq!(stats.total_ip_bytes(), 344 + 80);
+    assert_eq!(stats.ip_bytes_for(FlowSide::Responder), 80);
+    assert_eq!(
+        (
+            stats.packets_truncated_initiator,
+            stats.packets_truncated_responder
+        ),
+        (1, 0)
+    );
+}
+
+/// #219: a source that knows the wire length counts it even when the
+/// cut fell in the Ethernet padding (the IP datagram is complete).
+#[test]
+fn reported_wire_length_is_counted() {
+    use flowscope::{FlowEvent, FlowTracker};
+    let mut f = ipv4_udp(C, S, 5000, 53, b"hi");
+    f.resize(60, 0);
+    let mut tracker: FlowTracker<FiveTuple> = FlowTracker::new(FiveTuple::bidirectional());
+    let mut len = None;
+    for ev in tracker.track(PacketView::new(&f[..50], ts_ms(1)).with_wire_len(60)) {
+        if let FlowEvent::Packet { len: l, .. } = ev {
+            len = Some(l);
+        }
+    }
+    assert_eq!(len, Some(60));
+    let stats = tracker
+        .finish()
+        .into_iter()
+        .find_map(|e| match e {
+            FlowEvent::Ended { stats, .. } => Some(stats),
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!(stats.bytes_initiator, 60);
+    assert_eq!(stats.ip_bytes_initiator, 30);
+    assert_eq!(stats.packets_truncated_initiator, 1, "the source cut it");
+}
