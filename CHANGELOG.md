@@ -175,6 +175,9 @@ orientation & bounded tables"). A breaking release; migration guide:
   no-op `obs::record_packet_deduplicated` hook is only compiled with
   `reassembler` (the only caller, `FlowDriver`); `cargo hack check
   --each-feature` is warning-free, also under `RUSTFLAGS=-D warnings`.
+- **`--features ipfix,tracker` without `extractors` did not compile**:
+  `FlowRecord::from_parts` takes a `FiveTupleKey` and now requires
+  `extractors` too (`from_key_fields` works without it).
 - **pcapng records could report fewer bytes on the wire than they
   captured** (#219): an EPB with a smaller `original_len` than its data
   now reports the captured length, as classic pcap records already did.

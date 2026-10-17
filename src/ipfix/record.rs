@@ -248,7 +248,7 @@ impl FlowRecord {
     /// interface, application id, VLAN, segment id, CoS)
     /// stay `None`; consumers populate them themselves
     /// from per-packet metadata.
-    #[cfg(feature = "tracker")]
+    #[cfg(all(feature = "tracker", feature = "extractors"))]
     pub fn from_parts(
         stats: &crate::FlowStats,
         key: &crate::extract::FiveTupleKey,
