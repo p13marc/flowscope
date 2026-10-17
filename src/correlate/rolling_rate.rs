@@ -121,8 +121,9 @@ impl<K: Hash + Eq, V: RateValue> Bucket<K, V> {
 /// values of further new keys are summed into that bucket's
 /// **overflow** total ([`Self::other_rate`] / [`Self::other_sum`]) and
 /// counted in [`Self::overflowed`], so the table holds at most
-/// `max_keys × buckets` entries, where `buckets` is about
-/// `window / bucket_width`. A key folded into the overflow total in a
+/// `max_keys × buckets` entries, where `buckets` is at most
+/// `window / bucket_width + 1` (see below for out-of-order time). A
+/// key folded into the overflow total in a
 /// bucket is missing from that bucket in [`Self::rate`],
 /// [`Self::sum`], [`Self::snapshot`] and [`Self::top_k`].
 /// [`Self::new_unbounded`] keeps every key. New in 0.26.0 (#220).
@@ -452,8 +453,9 @@ where
         seen.len()
     }
 
-    /// Number of active buckets currently tracked. Bounded
-    /// to `ceil(window / bucket_width)` once the window fills.
+    /// Number of active buckets currently tracked: at most
+    /// `window / bucket_width + 1` for time that only moves forward,
+    /// `2 × window / bucket_width + 1` in any order.
     pub fn bucket_count(&self) -> usize {
         self.buckets.len()
     }

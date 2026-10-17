@@ -141,11 +141,14 @@ impl OwnedAnomaly {
 
     /// Populate the 5-tuple fields from a flow key **read from its
     /// initiator** — `src_*` is the endpoint of orientation
-    /// `initiator` (the flow's
-    /// [`FlowStats::initiator_orientation`](crate::FlowStats::initiator_orientation)
-    /// or a `Started` event's orientation). [`Self::with_key`] copies
-    /// the key as stored, which for a bidirectional key is
-    /// address-sorted. New in 0.26.0 (#217).
+    /// `initiator`: the flow's
+    /// [`FlowStats::initiator_orientation`](crate::FlowStats::initiator_orientation),
+    /// or the typed driver's `Event::Started` orientation. (A tracker
+    /// `FlowEvent::Started` carries its *first packet's* orientation —
+    /// the initiator's only when its `side` is `Initiator`; flip it
+    /// otherwise.) [`Self::with_key`] copies the key as stored, which
+    /// for a bidirectional key is address-sorted. New in 0.26.0
+    /// (#217).
     pub fn with_flow<K: KeyFields + ?Sized>(self, key: &K, initiator: crate::Orientation) -> Self {
         self.with_key(&crate::Directed::new(key, initiator))
     }

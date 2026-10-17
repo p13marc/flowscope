@@ -37,8 +37,12 @@ use crate::{Timestamp, rx_metadata::RxMetadata};
 /// or [`with_snap_cut`](Self::with_snap_cut). The tracker then counts
 /// the packet's wire length, and the reassemblers report the cut
 /// payload as a gap instead of waiting for it. A view whose source
-/// does not know (`snap_cut == 0`) is taken to be complete. New in
-/// 0.26.0 (#219, #212).
+/// reports nothing (`snap_cut == 0`,
+/// [`wire_len_known`](Self::wire_len_known) false) is not assumed
+/// complete: where its IP header claims more bytes than the frame
+/// holds, the packet is taken to be cut there. A source that reports
+/// the wire length of every frame, complete ones included, makes a
+/// frame without a cut known complete. New in 0.26.0 (#219, #212).
 #[derive(Debug, Clone, Copy)]
 #[non_exhaustive]
 pub struct PacketView<'a> {
