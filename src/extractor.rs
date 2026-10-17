@@ -84,11 +84,22 @@ pub struct Extracted<K> {
     /// Ethernet (wrong for tunnelled traffic). Built-in extractors
     /// fill it. New in 0.25.0.
     pub l4_meta: Option<L4Meta>,
+
+    /// Length of the packet's IP datagram on the wire, header
+    /// included (IPv4 total length / IPv6 40 + payload length) — the
+    /// "IP octets" NetFlow / IPFIX and Zeek's `*_ip_bytes` count. For
+    /// a tunnelled packet, the inner datagram's. Built-in IP
+    /// extractors fill it; `None` for non-IP keys
+    /// ([`crate::extract::MacPair`]) and custom extractors that do not
+    /// set it, in which case the tracker counts the packet's wire
+    /// length. New in 0.26.0 (#219).
+    pub l3_len: Option<u32>,
 }
 
 impl<K> Extracted<K> {
-    /// Construct an extraction result (no [`L4Meta`]; add it with
-    /// [`Self::with_l4_meta`]).
+    /// Construct an extraction result (no [`L4Meta`] and no
+    /// [`l3_len`](Self::l3_len); add them with [`Self::with_l4_meta`] /
+    /// [`Self::with_l3_len`]).
     pub fn new(
         key: K,
         orientation: Orientation,
@@ -101,6 +112,7 @@ impl<K> Extracted<K> {
             l4,
             tcp,
             l4_meta: None,
+            l3_len: None,
         }
     }
 
@@ -108,6 +120,22 @@ impl<K> Extracted<K> {
     pub fn with_l4_meta(mut self, meta: L4Meta) -> Self {
         self.l4_meta = Some(meta);
         self
+    }
+
+    /// Attach the IP datagram's length on the wire (see
+    /// [`Self::l3_len`]). New in 0.26.0.
+    pub fn with_l3_len(mut self, l3_len: u32) -> Self {
+        self.l3_len = Some(l3_len);
+        self
+    }
+
+    /// `true` when the extractor saw that the capture cut this
+    /// packet's payload short: its TCP payload or L4 payload is
+    /// shorter on capture than on the wire. (A cut in the frame's
+    /// tail padding, or one only the source knew about, shows on
+    /// [`PacketView::is_truncated`] instead.) New in 0.26.0.
+    pub fn is_truncated(&self) -> bool {
+        self.tcp.is_some_and(|t| t.is_truncated()) || self.l4_meta.is_some_and(|m| m.is_truncated())
     }
 
     /// Shift every frame offset (`tcp.payload_offset`,
@@ -147,18 +175,39 @@ pub struct L4Meta {
     /// Offset of the L4 payload in the frame: after the TCP / UDP
     /// header, or the start of the whole ICMP message.
     pub payload_offset: usize,
-    /// L4 payload length.
+    /// L4 payload length — the bytes captured.
     pub payload_len: usize,
+    /// L4 payload length on the wire, as the IP header claims it:
+    /// larger than [`payload_len`](Self::payload_len) when the
+    /// capture cut the packet ([`Self::is_truncated`]), equal
+    /// otherwise. New in 0.26.0 (#212).
+    pub wire_payload_len: usize,
 }
 
 impl L4Meta {
-    /// Construct.
+    /// Construct. The wire length is the captured length (a complete
+    /// payload); see [`Self::with_wire_payload_len`].
     pub fn new(ports: Option<(u16, u16)>, payload_offset: usize, payload_len: usize) -> Self {
         Self {
             ports,
             payload_offset,
             payload_len,
+            wire_payload_len: payload_len,
         }
+    }
+
+    /// Set the payload's length on the wire (clamped to at least
+    /// [`payload_len`](Self::payload_len)). New in 0.26.0.
+    pub fn with_wire_payload_len(mut self, wire_payload_len: usize) -> Self {
+        self.wire_payload_len = wire_payload_len.max(self.payload_len);
+        self
+    }
+
+    /// `true` when the capture holds less of the payload than was on
+    /// the wire: a datagram parser would see a cut message. New in
+    /// 0.26.0.
+    pub fn is_truncated(&self) -> bool {
+        self.wire_payload_len > self.payload_len
     }
 
     /// The payload bytes inside `frame` (empty when out of range).
@@ -363,7 +412,9 @@ pub struct TcpInfo {
     /// Offset into the frame where the TCP payload begins.
     /// Relative to the frame the extractor was called with.
     pub payload_offset: usize,
-    /// Number of payload bytes (zero for pure SYN/ACK/FIN).
+    /// Number of payload bytes **captured** (zero for pure
+    /// SYN/ACK/FIN, and for a segment whose payload the capture cut
+    /// entirely).
     pub payload_len: usize,
     /// TCP receive window from the header (host byte order). Not
     /// scaled — the SYN/SYN-ACK window-scale option is per-flow and
@@ -371,6 +422,32 @@ pub struct TcpInfo {
     /// should pair this with their own wscale tracking until a
     /// per-flow `wscale` lands.
     pub window: u16,
+    /// Number of payload bytes **on the wire**, as the IP header
+    /// claims them: larger than [`payload_len`](Self::payload_len)
+    /// when a snap length cut the segment ([`Self::is_truncated`]),
+    /// equal otherwise. The segment occupies
+    /// `[seq, seq + wire_payload_len)` of the sequence space whatever
+    /// was captured. `0` in values serialized before 0.26 (read as
+    /// "same as `payload_len`"). New in 0.26.0 (#212).
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub wire_payload_len: usize,
+}
+
+impl TcpInfo {
+    /// `true` when the capture cut the segment's payload: fewer bytes
+    /// were captured than were on the wire. New in 0.26.0.
+    #[inline]
+    pub fn is_truncated(&self) -> bool {
+        self.wire_payload_len > self.payload_len
+    }
+
+    /// Payload bytes on the wire — [`wire_payload_len`](Self::wire_payload_len),
+    /// never less than [`payload_len`](Self::payload_len). New in
+    /// 0.26.0.
+    #[inline]
+    pub fn wire_len(&self) -> usize {
+        self.wire_payload_len.max(self.payload_len)
+    }
 }
 
 bitflags! {
@@ -428,8 +505,10 @@ mod tests {
                 payload_offset: 54,
                 payload_len: 0,
                 window: 8192,
+                wire_payload_len: 0,
             }),
             l4_meta: None,
+            l3_len: Some(40),
         };
         let cloned = e.clone();
         assert_eq!(cloned.key, 42);

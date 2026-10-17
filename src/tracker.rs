@@ -647,6 +647,7 @@ impl<E: FlowExtractor, S: Send + 'static> FlowTracker<E, S> {
             l4,
             tcp,
             l4_meta,
+            l3_len: _,
         } = extracted;
         let len = view.frame.len();
         let ts = view.timestamp;

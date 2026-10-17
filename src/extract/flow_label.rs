@@ -70,6 +70,7 @@ where
             l4: inner.l4,
             tcp: inner.tcp,
             l4_meta: inner.l4_meta,
+            l3_len: inner.l3_len,
         })
     }
 }
@@ -84,11 +85,12 @@ fn read_flow_label(frame: &[u8]) -> Option<u32> {
         return None;
     }
     // Re-parse to walk past VLANs and locate the IPv6 header bytes.
-    // etherparse does this for us.
-    let sp = etherparse::SlicedPacket::from_ethernet(frame).ok()?;
+    // etherparse does this for us — laxly, like `parse_eth`, so a
+    // packet the capture cut keeps its label.
+    let sp = etherparse::LaxSlicedPacket::from_ethernet(frame).ok()?;
     let net = sp.net?;
     let v6 = match net {
-        etherparse::NetSlice::Ipv6(v6) => v6,
+        etherparse::LaxNetSlice::Ipv6(v6) => v6,
         _ => return None,
     };
     let header = v6.header();

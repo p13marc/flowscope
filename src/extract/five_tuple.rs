@@ -369,12 +369,14 @@ pub(crate) fn extract_from_parsed(
                 payload_offset: t.payload_offset,
                 payload_len: t.payload_len,
                 window: t.window,
+                wire_payload_len: t.wire_payload_len,
             }),
             L4Meta::new(
                 Some((t.src_port, t.dst_port)),
                 t.payload_offset,
                 t.payload_len,
-            ),
+            )
+            .with_wire_payload_len(t.wire_payload_len),
         ),
         Some(ParsedL4::Udp(u)) => (
             u.src_port,
@@ -385,7 +387,8 @@ pub(crate) fn extract_from_parsed(
                 Some((u.src_port, u.dst_port)),
                 u.payload_offset,
                 u.payload_len,
-            ),
+            )
+            .with_wire_payload_len(u.wire_payload_len),
         ),
         Some(ParsedL4::Other) | None => {
             // ICMP / ICMPv6 / SCTP / unknown — keep the flow but
@@ -397,7 +400,8 @@ pub(crate) fn extract_from_parsed(
                 132 => L4Proto::Sctp,
                 p => L4Proto::Other(p),
             };
-            let meta = L4Meta::new(None, ip.l4_offset, ip.l4_payload.len());
+            let meta = L4Meta::new(None, ip.l4_offset, ip.l4_payload.len())
+                .with_wire_payload_len(ip.l4_wire_len);
             (0u16, 0u16, l4, None, meta)
         }
     };
@@ -417,6 +421,7 @@ pub(crate) fn extract_from_parsed(
         l4: Some(l4),
         tcp: tcp_info,
         l4_meta: Some(meta),
+        l3_len: Some(ip.l3_len),
     })
 }
 

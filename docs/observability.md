@@ -30,6 +30,7 @@ on by default).
 | `flowscope_flows_active` | gauge | — | Live entries in the tracker |
 | `flowscope_packets_unmatched_total` | counter | — | Extractor returned `None` |
 | `flowscope_packets_deduplicated_total` | counter | — | A configured `Dedup` dropped the packet as a duplicate (0.25.1) |
+| `flowscope_datagrams_truncated_total` | counter | — | A session engine did not hand a datagram (UDP payload, ICMP message) to its parsers because the capture cut it short (0.26) |
 | `flowscope_bytes_total` | counter | `side` (`initiator` / `responder`) | Cumulative on `Ended`, summed across flows |
 | `flowscope_flow_duration_seconds` | histogram | — | Per-flow duration on `Ended` |
 | `flowscope_flow_packets` | histogram | — | Per-flow packet count on `Ended` |

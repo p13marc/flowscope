@@ -26,9 +26,9 @@ impl<E: FlowExtractor> FlowExtractor for StripMpls<E> {
         // Ethernet header so L2-based extractors (FiveTuple etc.)
         // can call SlicedPacket::from_ethernet on it.
         let synthetic = synthesize_eth_for_ip(inner)?;
-        let e = self.0.extract(
-            PacketView::new(&synthetic, view.timestamp).with_rx_metadata(view.rx_metadata),
-        )?;
+        // `with_frame` keeps the timestamp, rx metadata and snap cut
+        // (the inner datagram ends where the outer frame ends).
+        let e = self.0.extract(view.with_frame(&synthetic))?;
         Some(super::rebase(e, view.frame, inner, 14))
     }
 }

@@ -66,3 +66,41 @@ reassembler that ignores it sees a hole after each truncated segment
 and handles it as it handles capture loss. Implement it if your
 reassembler can do better — a push-style reassembler can, for example,
 forward a gap marker immediately.
+
+## 3. Truncated packets are tracked and reassembled (#212)
+
+Before 0.26 the extractors sliced every frame strictly, so a packet
+whose IP header claimed more bytes than were captured — anything
+longer than the snap length of `tcpdump -s N`, or of a ring whose
+frames are smaller than the packets — was skipped: no flow, and a gap
+in the stream nobody reported. Now:
+
+- **The packet is extracted and tracked.** Expect flows (and packets)
+  that 0.25 did not report for snap-length captures. What is still
+  skipped: a malformed packet that was *not* cut short (as before), a
+  packet cut inside its IP / TCP / UDP header or IP extension headers
+  (no flow key).
+- **TCP:** the captured bytes are reassembled and the cut bytes are
+  reported as a gap at once, with the packet that carried them
+  (`SessionParser::on_gap`, `StreamChunks` gap marks,
+  `FlowStats::reassembly_gap_bytes_*`, the `StreamGap` anomaly). A
+  parser that keeps the default `GapResponse::StopSide` stops reading
+  that side at the first truncated segment — the right thing for
+  framed protocols, since its framing is lost. A FIN in a cut segment
+  ends the stream after the segment's wire length.
+- **Datagrams:** a cut UDP payload / ICMP message is tracked but not
+  handed to `DatagramParser`s (counted in
+  `flowscope_datagrams_truncated_total`).
+- **New fields** say what was cut: `TcpInfo::payload_len` stays the
+  number of bytes **captured**; `TcpInfo::wire_payload_len` (and
+  `is_truncated()`) is what was on the wire. The same pair is on
+  `L4Meta` (`payload_len` / `wire_payload_len`). `Extracted::l3_len` is
+  the IP datagram's length on the wire.
+
+Custom extractors keep compiling (`Extracted`, `L4Meta` and `TcpInfo`
+are `#[non_exhaustive]`; `L4Meta::new` sets the wire length to the
+captured one). If yours knows a datagram was cut, say so —
+`L4Meta::new(ports, offset, captured).with_wire_payload_len(on_wire)` —
+so the session engines do not parse it; set
+`Extracted::with_l3_len(ip_len)` so the tracker can count IP octets
+(section 4).

@@ -59,13 +59,16 @@ impl FlowExtractor for IpPair {
                 Some((t.src_port, t.dst_port)),
                 t.payload_offset,
                 t.payload_len,
-            ),
+            )
+            .with_wire_payload_len(t.wire_payload_len),
             Some(parse::ParsedL4::Udp(u)) => L4Meta::new(
                 Some((u.src_port, u.dst_port)),
                 u.payload_offset,
                 u.payload_len,
-            ),
-            _ => L4Meta::new(None, ip.l4_offset, ip.l4_payload.len()),
+            )
+            .with_wire_payload_len(u.wire_payload_len),
+            _ => L4Meta::new(None, ip.l4_offset, ip.l4_payload.len())
+                .with_wire_payload_len(ip.l4_wire_len),
         });
         Some(Extracted {
             key: IpPairKey { a, b },
@@ -73,6 +76,7 @@ impl FlowExtractor for IpPair {
             l4: Some(l4),
             tcp: None, // IpPair never populates TCP info
             l4_meta,
+            l3_len: Some(ip.l3_len),
         })
     }
 }

@@ -125,15 +125,29 @@ pub(crate) fn ports_of(frame: &[u8]) -> Ports {
 /// The payload a datagram parser receives: the UDP payload, or the
 /// whole ICMPv4 / ICMPv6 message (0.14.1: ICMP parsers ride the
 /// datagram path). Fallback for extractors that report no
-/// [`crate::L4Meta`].
-fn datagram_payload(frame: &[u8]) -> Option<&[u8]> {
-    let sp = etherparse::SlicedPacket::from_ethernet(frame).ok()?;
-    match sp.transport? {
-        etherparse::TransportSlice::Udp(udp) => Some(udp.payload()),
-        etherparse::TransportSlice::Icmpv4(icmp) => Some(icmp.slice()),
-        etherparse::TransportSlice::Icmpv6(icmp) => Some(icmp.slice()),
-        _ => None,
+/// [`crate::L4Meta`]. `Err(())` when the capture cut the datagram
+/// short (the IP header claims more than was captured).
+fn datagram_payload(frame: &[u8]) -> Result<Option<&[u8]>, ()> {
+    let Ok(sp) = etherparse::LaxSlicedPacket::from_ethernet(frame) else {
+        return Ok(None);
+    };
+    if sp
+        .net
+        .as_ref()
+        .and_then(|n| n.ip_payload_ref())
+        .is_some_and(|p| p.incomplete)
+    {
+        return Err(());
     }
+    if sp.stop_err.is_some() {
+        return Ok(None);
+    }
+    Ok(match sp.transport {
+        Some(etherparse::TransportSlice::Udp(udp)) => Some(udp.payload()),
+        Some(etherparse::TransportSlice::Icmpv4(icmp)) => Some(icmp.slice()),
+        Some(etherparse::TransportSlice::Icmpv6(icmp)) => Some(icmp.slice()),
+        _ => None,
+    })
 }
 
 /// Flow driver + scratch buffers. See the [module docs](self).
@@ -348,12 +362,17 @@ where
                 }
             }
             _ if dispatch.wants_datagram(ports, p.l4) => {
+                // A datagram the capture cut short is not parsed: the
+                // parser would read a damaged message (#212).
                 let payload = match p.l4_meta {
-                    Some(m) => Some(m.payload(view.frame)),
+                    Some(m) if m.is_truncated() => Err(()),
+                    Some(m) => Ok(Some(m.payload(view.frame))),
                     None => datagram_payload(view.frame),
                 };
-                if let Some(payload) = payload {
-                    dispatch.on_datagram(&cx, ports, payload, out);
+                match payload {
+                    Ok(Some(payload)) => dispatch.on_datagram(&cx, ports, payload, out),
+                    Ok(None) => {}
+                    Err(()) => crate::obs::record_datagram_truncated(),
                 }
             }
             _ => {}

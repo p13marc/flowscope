@@ -24,8 +24,48 @@ orientation & bounded tables"). A breaking release; migration guide:
   them), and otherwise take them as proof that the stream reaches
   `seq + len`, like an acknowledgement. Defaulted to a no-op; the model
   test `tests/sbr_model.rs` covers it.
+- **Wire lengths from the extractors** (#212): `TcpInfo::wire_payload_len`
+  (`#[serde(default)]`), `TcpInfo::is_truncated()` / `wire_len()`;
+  `L4Meta::wire_payload_len`, `with_wire_payload_len()`,
+  `is_truncated()` (`L4Meta::new` keeps its three arguments: wire =
+  captured); `Extracted::l3_len` (the IP datagram's length on the wire —
+  IPv4 total length / IPv6 40 + payload length; the inner datagram's
+  behind a decap combinator; `None` for `MacPair`), `with_l3_len()`,
+  `is_truncated()`. `payload_len` stays the captured length.
+- **`flowscope_datagrams_truncated_total`** (`obs::METRIC_DATAGRAMS_TRUNCATED`):
+  datagrams a session engine did not parse because the capture cut them.
+
+### Changed
+
+- **The extractors parse laxly** (#212): `etherparse::LaxSlicedPacket`
+  instead of `SlicedPacket`. A packet the capture cut short (its IP
+  header claims more bytes than were captured) is extracted as far as
+  its headers go. Everything else the strict parse rejected is still
+  skipped — a malformed header or body in a packet that was *not* cut
+  (bad TCP data offset, a short IGMP message, a short ARP body, a broken
+  MACsec header), IP extension headers cut by the snap length, and a
+  packet cut inside its TCP / UDP header (no ports, no key). An IPv4
+  total length of 0 (TCP segmentation offload) or an IPv6 jumbogram now
+  takes its length from the frame instead of being skipped.
+- `InnerGtpU` / `InnerGre` / `StripMpls` hand their inner extractor
+  `view.with_frame(..)`, keeping the snap cut (they built a fresh view);
+  `InnerVxlan` / `InnerGtpU` read the outer ports from the one parse
+  instead of slicing the frame a second time.
 
 ### Fixed
+
+- **Packets cut by a capture snap length were skipped** (#212): the
+  extractors sliced strictly, so a `tcpdump -s 96` capture, or a live
+  ring whose frames are smaller than the packets, produced no flow for
+  any packet longer than the snap length — and a stream that silently
+  lost those segments. Now such a packet is tracked; `FlowDriver` feeds
+  its captured bytes to the reassembler (never through the passthrough)
+  and reports the rest with `Reassembler::missing`, so the session
+  parsers see the bytes and a gap of the right size right away, a FIN
+  in the segment ends the stream after its wire length, and a
+  header-only capture (`-s 54`) yields one gap per segment instead of a
+  stall. A cut datagram (UDP payload, ICMP message) is tracked but not
+  handed to datagram parsers.
 
 - **pcapng records could report fewer bytes on the wire than they
   captured** (#219): an EPB with a smaller `original_len` than its data

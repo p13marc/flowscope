@@ -238,6 +238,9 @@ fn truncated_records_of_a_snaplen_capture_replay() {
     }
     assert_eq!(n, 3);
 
+    // #212: the truncated records are tracked — one flow, not none.
+    assert_eq!(flows_of(bytes.clone()), 1);
+
     // #219: the replayed views carry what the snap length cut, so the
     // packet's wire length is known.
     let views: Vec<_> = PcapFlowSource::from_reader(Cursor::new(bytes))
