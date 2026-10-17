@@ -171,6 +171,10 @@ orientation & bounded tables"). A breaking release; migration guide:
   `sbr_model.rs` and the `well_known` unit tests default features,
   without gating on them. They are gated now (per file, or per test where
   the rest applies), and `error_chain.rs` gains a default-feature test.
+- **Single-feature builds warned about a dead function**: the
+  no-op `obs::record_packet_deduplicated` hook is only compiled with
+  `reassembler` (the only caller, `FlowDriver`); `cargo hack check
+  --each-feature` is warning-free, also under `RUSTFLAGS=-D warnings`.
 - **pcapng records could report fewer bytes on the wire than they
   captured** (#219): an EPB with a smaller `original_len` than its data
   now reports the captured length, as classic pcap records already did.

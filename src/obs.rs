@@ -272,7 +272,8 @@ pub(crate) fn record_packet_unmatched() {
     metrics::counter!(METRIC_PACKETS_UNMATCHED).increment(1);
 }
 
-#[cfg(feature = "metrics")]
+// Only `FlowDriver` (the `reassembler` feature) deduplicates.
+#[cfg(all(feature = "metrics", feature = "reassembler"))]
 pub(crate) fn record_packet_deduplicated() {
     metrics::counter!(METRIC_PACKETS_DEDUPLICATED).increment(1);
 }
@@ -381,7 +382,7 @@ pub(crate) fn record_flow_ended(_reason: EndReason, _stats: &FlowStats) {}
 #[inline(always)]
 pub(crate) fn record_packet_unmatched() {}
 
-#[cfg(not(feature = "metrics"))]
+#[cfg(all(not(feature = "metrics"), feature = "reassembler"))]
 #[inline(always)]
 pub(crate) fn record_packet_deduplicated() {}
 
