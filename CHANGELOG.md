@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.25.3 — unreleased
+## 0.25.3 (2026-10-17)
 
 Dependency refresh (#215): every direct dependency onto its latest
 release. None of them appears in flowscope's public API, so there is no

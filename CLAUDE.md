@@ -22,8 +22,8 @@ the core.
 
 ## Implementation Status
 
-**0.25.3 — unreleased** (dependency refresh, #215, milestone "0.25.3 —
-dependency refresh"; patch, CHANGELOG `## 0.25.3`). Every direct
+**0.25.3** (published to crates.io 2026-10-17, tag `0.25.3` — dependency refresh, #215,
+milestone "0.25.3 — dependency refresh"; patch, CHANGELOG `## 0.25.3`; PR #216). Every direct
 requirement on its latest release: etherparse 0.21 (VLANs are
 `SlicedPacket::link_exts` / `vlan()`; `NetSlice::Arp`,
 `TransportSlice::Igmp` and the NDP `Icmpv6Type`s are decoded by
