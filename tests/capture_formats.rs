@@ -237,8 +237,98 @@ fn truncated_records_of_a_snaplen_capture_replay() {
         n += 1;
     }
     assert_eq!(n, 3);
-    // (The extractors still skip a record cut inside its IP payload: they
-    // slice strictly. Records that fit the snap length are tracked as
-    // before, and a truncated one no longer ends the replay.)
-    let _ = bytes;
+
+    // #219: the replayed views carry what the snap length cut, so the
+    // packet's wire length is known.
+    let views: Vec<_> = PcapFlowSource::from_reader(Cursor::new(bytes))
+        .unwrap()
+        .views()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    assert_eq!(views.len(), 3);
+    for v in &views {
+        assert_eq!(v.frame.len(), 96);
+        assert_eq!(v.snap_cut as usize, frame.len() - 96);
+        assert_eq!(v.wire_len(), frame.len());
+        assert!(v.is_truncated());
+        assert_eq!(v.as_view().wire_len(), frame.len());
+    }
+}
+
+/// #219: a snap-length cut survives link-header normalisation — the
+/// cooked header is replaced at the front, the cut is at the end.
+#[test]
+fn snap_cut_survives_link_normalisation() {
+    use pcap_file::pcap::{PcapHeader, PcapPacket, PcapWriter};
+    let frame = ipv4_udp([10, 0, 0, 1], [10, 0, 0, 2], 1000, 53, &[0x42; 400]);
+    // SLL: outgoing (4), ARPHRD_ETHER, 6-byte address, IPv4.
+    let mut sll = vec![0, 4, 0, 1, 0, 6, 2, 2, 2, 2, 2, 2, 0, 0, 0x08, 0x00];
+    sll.extend_from_slice(&ip_of(&frame));
+    let header = PcapHeader {
+        datalink: DataLink::LINUX_SLL,
+        snaplen: 80,
+        ..Default::default()
+    };
+    let mut w = PcapWriter::with_header(Vec::new(), header).unwrap();
+    w.write_packet(&PcapPacket::new(
+        Duration::from_secs(1),
+        sll.len() as u32,
+        &sll[..80],
+    ))
+    .unwrap();
+    let views: Vec<_> = PcapFlowSource::from_reader(Cursor::new(w.into_writer()))
+        .unwrap()
+        .views()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    assert_eq!(views.len(), 1);
+    // 16-byte cooked header → 14-byte Ethernet header.
+    assert_eq!(views[0].frame.len(), 78);
+    assert_eq!(views[0].snap_cut as usize, sll.len() - 80);
+    // The wire length is the Ethernet frame's: 14 + the IP packet.
+    assert_eq!(views[0].wire_len(), frame.len());
+}
+
+/// #219: a pcapng EPB never reports fewer bytes on the wire than it
+/// captured (an `original_len` of 0 from a broken writer), as the
+/// classic-pcap arm already did. An SPB has no captured length: its data
+/// is the original length, padded to 32 bits — the padding is not part of
+/// the frame.
+#[test]
+fn pcapng_original_len_is_at_least_the_captured_length() {
+    use pcap_file::pcapng::blocks::simple_packet::SimplePacketBlock;
+    let frame = ipv4_udp([10, 0, 0, 1], [10, 0, 0, 2], 1, 53, b"q");
+    let mut w = PcapNgWriter::new(Vec::new()).unwrap();
+    w.write_pcapng_block(InterfaceDescriptionBlock {
+        linktype: DataLink::ETHERNET,
+        snaplen: 65535,
+        options: vec![],
+    })
+    .unwrap();
+    w.write_pcapng_block(EnhancedPacketBlock {
+        interface_id: 0,
+        timestamp: Duration::from_nanos(1),
+        original_len: 0,
+        data: Cow::Borrowed(&frame),
+        options: vec![],
+    })
+    .unwrap();
+    // 43 bytes: written with one byte of padding.
+    assert_eq!(frame.len() % 4, 3);
+    w.write_pcapng_block(SimplePacketBlock {
+        original_len: frame.len() as u32,
+        data: Cow::Borrowed(&frame),
+    })
+    .unwrap();
+    let lens: Vec<_> = CaptureReader::new(Cursor::new(w.into_inner()))
+        .unwrap()
+        .map(|p| {
+            let p = p.unwrap();
+            (p.original_len as usize, p.data.len())
+        })
+        .collect();
+    assert_eq!(
+        lens,
+        vec![(frame.len(), frame.len()), (frame.len(), frame.len())]
+    );
 }

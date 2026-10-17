@@ -50,7 +50,10 @@ pub struct CapturedPacket {
     /// the interface's link-layer format ([`Self::datalink`]); see
     /// [`Self::into_ethernet`].
     pub data: Vec<u8>,
-    /// Length of the packet on the wire.
+    /// Length of the packet on the wire (never less than
+    /// `data.len()`). `original_len - data.len()` is what the snap
+    /// length cut; the `pcap` feature's `PcapFlowSource` carries it as
+    /// [`PacketView::snap_cut`](crate::PacketView::snap_cut).
     pub original_len: u32,
     /// Link type of the interface the packet was captured on.
     pub datalink: DataLink,
@@ -129,6 +132,11 @@ fn to_ethernet(datalink: DataLink, data: &[u8]) -> Option<Cow<'_, [u8]>> {
         }
         _ => None,
     }
+}
+
+/// A record's captured length as a `u32` (records are far smaller).
+fn captured_len(data: &[u8]) -> u32 {
+    u32::try_from(data.len()).unwrap_or(u32::MAX)
 }
 
 /// Direction recorded by a Linux cooked header's packet type.
@@ -339,7 +347,9 @@ impl<R: Read> CaptureReader<R> {
                                 flagged.or_else(|| cooked_direction(iface.datalink, &data));
                             return Some(Ok(CapturedPacket {
                                 timestamp: iface.timestamp(raw),
-                                original_len: epb.original_len,
+                                // Never report fewer bytes on the wire
+                                // than were captured.
+                                original_len: epb.original_len.max(captured_len(&data)),
                                 data,
                                 datalink: iface.datalink,
                                 direction,
@@ -349,7 +359,12 @@ impl<R: Read> CaptureReader<R> {
                             let datalink = interfaces
                                 .first()
                                 .map_or(DataLink::ETHERNET, |i| i.datalink);
-                            let data = spb.data.into_owned();
+                            // An SPB has no captured-length field: its
+                            // data is min(original length, snap length)
+                            // bytes padded to 32 bits, and pcap-file hands
+                            // back the padded body. Cut the padding.
+                            let mut data = spb.data.into_owned();
+                            data.truncate(spb.original_len as usize);
                             return Some(Ok(CapturedPacket {
                                 timestamp: Duration::ZERO,
                                 original_len: spb.original_len,

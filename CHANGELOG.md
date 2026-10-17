@@ -6,6 +6,26 @@ Truncation, orientation & bounded tables (milestone "0.26 — truncation,
 orientation & bounded tables"). A breaking release; migration guide:
 [`docs/migration-0.25-to-0.26.md`](docs/migration-0.25-to-0.26.md).
 
+### Added
+
+- **`PacketView::snap_cut`** (#219): the number of bytes a snap length
+  cut from the end of the frame (0 = complete or unknown), with
+  `with_wire_len(len)`, `with_snap_cut(n)`, `wire_len()` and
+  `is_truncated()`; the same on `OwnedPacketView` (`as_view()` carries
+  it). Counted from the end because every frame rewrite (decap
+  combinators, link-header normalisation, netring's VLAN re-insertion)
+  changes only the front, so `with_frame` keeps it. `PcapFlowSource`
+  sets it from each record's original length.
+
+### Fixed
+
+- **pcapng records could report fewer bytes on the wire than they
+  captured** (#219): an EPB with a smaller `original_len` than its data
+  now reports the captured length, as classic pcap records already did.
+  A Simple Packet Block's frame no longer carries the block's 0–3 bytes
+  of 32-bit padding (an SPB has no captured-length field; its data is
+  the original length).
+
 ## 0.25.3 (2026-10-17)
 
 Dependency refresh (#215): every direct dependency onto its latest
