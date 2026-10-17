@@ -254,14 +254,31 @@ where
     /// rate for `k`. Returns `0.0` if `k` has no samples in
     /// the window.
     pub fn rate(&self, k: &K, now: Timestamp) -> f64 {
-        self.sum(k, now).as_f64() / self.window.as_secs_f64()
+        // Buckets add in `f64`: their sum may not fit `V`.
+        let cutoff = self.cutoff_for(now);
+        let total: f64 = self
+            .buckets
+            .iter()
+            .filter(|b| b.start >= cutoff)
+            .filter_map(|b| b.sums.get(k))
+            .map(|v| v.as_f64())
+            .sum();
+        total / self.window.as_secs_f64()
     }
 
     /// Per-second rate of the values folded into the overflow total
     /// over the window — the keys the cap refused, summed. `0.0`
     /// when nothing overflowed. New in 0.26.0.
     pub fn other_rate(&self, now: Timestamp) -> f64 {
-        self.other_sum(now).as_f64() / self.window.as_secs_f64()
+        let cutoff = self.cutoff_for(now);
+        let total: f64 = self
+            .buckets
+            .iter()
+            .filter(|b| b.start >= cutoff)
+            .filter_map(|b| b.other)
+            .map(|v| v.as_f64())
+            .sum();
+        total / self.window.as_secs_f64()
     }
 
     /// Raw sum of the overflow total over the window (see
@@ -934,5 +951,20 @@ mod tests {
         }
         let top = r.top_k(10, Timestamp::new(0, 999));
         assert_eq!(top.len(), 10);
+    }
+
+    /// Rates add the buckets in `f64` (as 0.25 did): two buckets whose
+    /// sum overflows `V` still give the right rate.
+    #[test]
+    fn rates_do_not_overflow_the_value_type() {
+        let mut r: RollingRate<&'static str, u32> =
+            RollingRate::new(Duration::from_secs(10), Duration::from_secs(1), 1);
+        for s in 0..2 {
+            r.record("a", 3_000_000_000, Timestamp::new(s, 0));
+            r.record("b", 3_000_000_000, Timestamp::new(s, 0)); // overflow total
+        }
+        let now = Timestamp::new(1, 0);
+        assert!((r.rate(&"a", now) - 6e8).abs() < 1e-3);
+        assert!((r.other_rate(now) - 6e8).abs() < 1e-3);
     }
 }
