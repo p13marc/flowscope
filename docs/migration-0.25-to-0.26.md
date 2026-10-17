@@ -44,3 +44,25 @@ reassembled with a gap where the cut bytes were.
 A related pcapng fix: a Simple Packet Block's frame no longer ends in
 the block's 32-bit padding, and an Enhanced Packet Block never reports
 an original length smaller than what it captured.
+
+## 2. Custom reassemblers: `Reassembler::missing` (#212)
+
+The `Reassembler` trait has a new defaulted method:
+
+```rust
+fn missing(&mut self, seq: u32, len: u32, ts: Timestamp) {}
+```
+
+`FlowDriver` calls it for a TCP segment the capture truncated: first
+`segment(seq, captured)` with the bytes that were captured, then
+`missing(seq + captured, wire - captured)` for the rest. Truncated
+segments never go through `segment_into`, so they are never let
+through.
+
+The built-in reassemblers skip those bytes as a gap at once when the
+stream has reached them, so a snap-length capture does not stall on a
+hole that can never fill. The default does nothing: a custom
+reassembler that ignores it sees a hole after each truncated segment
+and handles it as it handles capture loss. Implement it if your
+reassembler can do better — a push-style reassembler can, for example,
+forward a gap marker immediately.

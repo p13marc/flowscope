@@ -335,6 +335,23 @@ pub trait Reassembler: Send + 'static {
     /// stream ends there. Default: no-op. New in 0.25.0.
     fn fin_seen(&mut self, _end: u32, _ts: Timestamp) {}
 
+    /// Bytes `[seq, seq + len)` of this direction were on the wire but
+    /// were not captured — a snap length cut them off the end of
+    /// their packet ([`crate::PacketView::snap_cut`], or an IP length
+    /// beyond the captured frame). They will never arrive, so there
+    /// is nothing to wait for: report them as a gap without waiting
+    /// for a deadline.
+    ///
+    /// [`crate::FlowDriver`] calls it right after
+    /// [`Self::segment`] with the captured part of a truncated
+    /// segment (never [`Self::segment_into`]). The built-in
+    /// reassemblers skip the bytes at once when the stream has
+    /// reached `seq` (around any out-of-order data they hold), and
+    /// otherwise take them as proof that the stream extends to
+    /// `seq + len`, like an acknowledgement. Default: no-op — the
+    /// hole is then treated like any other. New in 0.26.0 (#212).
+    fn missing(&mut self, _seq: u32, _len: u32, _ts: Timestamp) {}
+
     /// Move the reassembled output produced since the last call
     /// (in-order bytes, gap markers, and a stop reason if the
     /// reassembler stopped) onto the end of `out`. Default: no-op,
@@ -1247,6 +1264,36 @@ impl Reassembler for BufferedReassembler {
         }
     }
 
+    fn missing(&mut self, seq: u32, len: u32, ts: Timestamp) {
+        if self.stop.is_some() || len == 0 {
+            return;
+        }
+        self.track.anchor(seq, ts);
+        let start = self.track.offset_of(seq);
+        let end = start + i64::from(len);
+        if end <= self.track.next_off as i64 {
+            return;
+        }
+        if start <= self.track.next_off as i64 {
+            // The stream has reached the cut bytes: skip them now,
+            // delivering the held segment where it falls inside them.
+            let end = end as u64;
+            while self.stop.is_none() && self.track.next_off < end {
+                let to = self.reorder.as_ref().map_or(end, |c| c.off.min(end));
+                self.skip_to(to, ts);
+                self.try_reorder(ts);
+            }
+        } else if let Some(c) = self
+            .track
+            .evidence(seq.wrapping_add(len), ts, self.rules.max_ahead)
+        {
+            // A hole before them: they prove the stream reaches
+            // `seq + len`, like an acknowledgement would.
+            self.resync(&c, ts);
+        }
+        self.check_timers(ts);
+    }
+
     fn drain_into(&mut self, out: &mut StreamChunks) {
         self.above_threshold = false;
         out.append(&mut self.ready);
@@ -1864,5 +1911,61 @@ mod tests {
             fn segment(&mut self, _: u32, _: &[u8], _: Timestamp) {}
         }
         assert_eq!(P.stop_reason(), None);
+    }
+
+    // ── #212: bytes a snap length cut ───────────────────────────
+
+    #[test]
+    fn buffered_missing_at_the_stream_position_is_an_immediate_gap() {
+        let mut r = BufferedReassembler::new();
+        r.set_origin(1000);
+        r.segment(1000, b"0123456789", t());
+        r.missing(1010, 90, t());
+        let out = drain(&mut r);
+        let parts: Vec<_> = out.iter().collect();
+        assert_eq!(parts, vec![Chunk::Data(b"0123456789"), Chunk::Gap(90)]);
+        assert_eq!((r.gaps(), r.gap_bytes()), (1, 90));
+        r.segment(1100, b"bbbb", t());
+        assert_eq!(r.take(), b"bbbb");
+    }
+
+    #[test]
+    fn buffered_missing_delivers_the_held_segment_inside_it() {
+        let mut r = BufferedReassembler::new();
+        r.set_origin(0);
+        r.segment(50, b"FFFFFFFFFF", t()); // held, waiting for [0, 50)
+        r.missing(0, 100, t());
+        let out = drain(&mut r);
+        let parts: Vec<_> = out.iter().collect();
+        assert_eq!(
+            parts,
+            vec![Chunk::Gap(50), Chunk::Data(b"FFFFFFFFFF"), Chunk::Gap(40)]
+        );
+        r.segment(100, b"x", t());
+        assert_eq!(r.take(), b"x");
+    }
+
+    #[test]
+    fn buffered_missing_behind_a_hole_waits_like_an_acknowledgement() {
+        let mut r = BufferedReassembler::new().with_ack_grace(std::time::Duration::from_millis(10));
+        r.set_origin(0);
+        r.missing(100, 50, t()); // hole [0, 100) first
+        assert!(drain(&mut r).is_empty());
+        r.segment(0, &[b'a'; 100], t());
+        assert_eq!(drain(&mut r).len(), 100);
+        r.advance_time(Timestamp::new(0, 20_000_000));
+        let out = drain(&mut r);
+        assert_eq!(out.iter().collect::<Vec<_>>(), vec![Chunk::Gap(50)]);
+    }
+
+    #[test]
+    fn default_missing_is_a_no_op() {
+        struct P;
+        impl Reassembler for P {
+            fn segment(&mut self, _: u32, _: &[u8], _: Timestamp) {}
+        }
+        let mut p = P;
+        p.missing(0, 10, t());
+        assert_eq!(p.gaps(), 0);
     }
 }
