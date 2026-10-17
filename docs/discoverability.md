@@ -18,8 +18,8 @@ For the conceptual layer-by-layer reference, see
 | Primitive | Pitch |
 |---|---|
 | [`TimeBucketedCounter<K>`](https://docs.rs/flowscope/latest/flowscope/correlate/struct.TimeBucketedCounter.html) | Bumps `+= 1` per call; window + bucket-width split. Pre-built for rate-based anomaly thresholds. |
-| [`RollingRate<K, V>`](https://docs.rs/flowscope/latest/flowscope/correlate/struct.RollingRate.html) | Generic `V` increments (bytes/sec, custom units); `rate()` returns `f64` per-second. Bucket-reuse zero-alloc. **0.14, plan 164.** |
-| [`BandwidthByKey<K>`](https://docs.rs/flowscope/latest/flowscope/correlate/struct.BandwidthByKey.html) | Per-owner **tx/rx** byte-rate over a window — bandwidth grouped by an opaque owner key (PID / cgroup / `Attribution`). `tx_bps` / `rx_bps` / `top_k`, `ByteSemantics` (wire vs goodput) tag. **0.22, #141.** |
+| [`RollingRate<K, V>`](https://docs.rs/flowscope/latest/flowscope/correlate/struct.RollingRate.html) | Generic `V` increments (bytes/sec, custom units); `rate()` returns `f64` per-second. Bucket-reuse zero-alloc. `new(window, bucket, max_keys)` caps the keys per bucket (overflow total + count, 0.26 #220). **0.14, plan 164.** |
+| [`BandwidthByKey<K>`](https://docs.rs/flowscope/latest/flowscope/correlate/struct.BandwidthByKey.html) | Per-owner **tx/rx** byte-rate over a window — bandwidth grouped by an opaque owner key (PID / cgroup / `Attribution`). `tx_bps` / `rx_bps` / `top_k`, `ByteSemantics` (wire vs goodput) tag; bounded `new(window, bucket, max_keys)` (0.26, #220). **0.22, #141.** |
 | [`Ewma<K>`](https://docs.rs/flowscope/latest/flowscope/correlate/struct.Ewma.html) | Exponential moving average — smoothed view for latency / throughput dashboards. |
 
 ## "I want to track unique things per key over time"

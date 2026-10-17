@@ -201,12 +201,22 @@ they are a hazard when keys come from the network.
 
 | Bounded available | Unbounded only |
 |---|---|
-| `KeyIndexed`, `FirstSeen`, `NeighborTable`, `TopK`, `BitStore`, `TimeBucketedCounter`*, `TimeBucketedSet`* | `RollingRate`, `BurstDetector`, `Ewma`, `EwmaVar`, `FlowStateMap` |
+| `KeyIndexed`, `FirstSeen`, `NeighborTable`, `TopK`, `BitStore`, `TimeBucketedCounter`*, `TimeBucketedSet`*, `RollingRate`†, `BandwidthByKey`† | `BurstDetector`, `Ewma`, `EwmaVar`, `FlowStateMap` |
 
 \* `TimeBucketedCounter` / `TimeBucketedSet` capacity is a **soft**
 cap: eviction applies to the oldest bucket, so a burst of unique keys
 lands in the newest bucket untouched. Size for
 `(window / bucket_width) × keys-per-bucket`.
+
+† Since 0.26 (#220): `RollingRate::new(window, bucket, max_keys)` /
+`BandwidthByKey::new(window, bucket, max_keys)` hold at most `max_keys`
+keys per time bucket (per direction for `BandwidthByKey`), so at most
+`max_keys × (window / bucket_width + 1)` entries. The bytes or counts
+of keys a full bucket refuses are not dropped: they sum into an
+overflow total (`other_rate` / `other_sum`, `other_tx_bps` /
+`other_rx_bps`), and `overflowed()` counts the folded records — a
+rising count means the cap is too small or someone is spraying keys.
+`new_unbounded` keeps every key.
 
 `Ewma`, `EwmaVar`, and the beacon detectors expose `evict_stale(now,
 ttl)` but do not call it themselves — drive it from your tick loop.

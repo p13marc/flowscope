@@ -253,3 +253,24 @@ values. If you build a `FlowRecord` yourself (`Default` + mutate) and
 fill `octet_delta_count_*`, those are IP octets; set the
 `layer2_octet_*` fields too if you want the Zeek / CSV / EVE `bytes`
 columns to show L2 bytes (they fall back to the IP octets otherwise).
+
+## 8. Bounded rate tables (#220)
+
+Additive: nothing to change to keep compiling. `RollingRate<K, V>` and
+`BandwidthByKey<K>` gain a bounded constructor:
+
+```rust
+// Before (still available): one entry per key per bucket, unbounded.
+let r = RollingRate::<IpAddr, u64>::new_unbounded(window, bucket);
+// After: at most 10 000 keys per one-second bucket.
+let r = RollingRate::<IpAddr, u64>::new(window, bucket, 10_000);
+let bw = BandwidthByKey::<Attribution>::new(window, bucket, 10_000);
+```
+
+When a bucket is full, a new key's values go to that bucket's overflow
+total instead of a new entry: read it with `other_rate(now)` /
+`other_sum(now)` (`other_tx_bps` / `other_rx_bps`), and watch
+`overflowed()` — the number of records that were folded. A folded key
+is missing from that bucket's `rate`, `sum`, `snapshot` and `top_k`.
+If those tables are keyed by anything the network controls
+(addresses, ports, owners), switch to `new`.

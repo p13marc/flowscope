@@ -74,6 +74,15 @@ orientation & bounded tables"). A breaking release; migration guide:
   of orientation `o`) and `FiveTupleKey::canonical()` (a directional key
   to its bidirectional form plus orientation).
   `OwnedAnomaly::with_flow(key, initiator)`.
+- **Bounded `RollingRate` / `BandwidthByKey`** (#220): `new(window,
+  bucket_width, max_keys)` holds at most `max_keys` keys per time bucket
+  (per direction for `BandwidthByKey`); values of further keys sum into
+  the bucket's overflow total — `other_rate()` / `other_sum()`,
+  `BandwidthByKey::other_tx_bps()` / `other_rx_bps()` — and are counted
+  by `overflowed()`. Also `max_keys()`, `RollingRate::stored_entries()`,
+  `BandwidthByKey::with_byte_semantics()`. `new_unbounded` is the
+  uncapped form. `top_k` selects the top `n` in linear time and sorts
+  only those.
 - **`flowscope_datagrams_truncated_total`** (`obs::METRIC_DATAGRAMS_TRUNCATED`):
   datagrams a session engine did not parse because the capture cut them.
 - **IP octets and truncated-packet counts on `FlowStats`** (#219):
