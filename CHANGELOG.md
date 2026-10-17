@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.25.2 (unreleased)
+## 0.25.2 (2026-10-17)
 
 Bug fixes found by netring's 0.31.2 pre-release audit. No API change;
 no migration.

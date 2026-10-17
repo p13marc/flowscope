@@ -22,7 +22,7 @@ the core.
 
 ## Implementation Status
 
-**0.25.2** (unreleased — bug-fix patch, CHANGELOG `## 0.25.2`; #209 IPFIX
+**0.25.2** (published to crates.io 2026-10-17, tag `0.25.2` — bug-fix patch, CHANGELOG `## 0.25.2`; #209 IPFIX
 flowEndReason encoded the enum index, #210 `CaptureReader` rejected
 truncated records of snaplen captures (reads raw records now), #211 NBNS
 queries named their sender in the asset inventory). Found by netring's
