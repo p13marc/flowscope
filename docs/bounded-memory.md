@@ -211,7 +211,9 @@ lands in the newest bucket untouched. Size for
 † Since 0.26 (#220): `RollingRate::new(window, bucket, max_keys)` /
 `BandwidthByKey::new(window, bucket, max_keys)` hold at most `max_keys`
 keys per time bucket (per direction for `BandwidthByKey`), so at most
-`max_keys × (window / bucket_width + 1)` entries. The bytes or counts
+`max_keys × (window / bucket_width + 1)` entries — twice that when
+record timestamps go backwards (each record keeps the buckets within a
+window either side of its own time). The bytes or counts
 of keys a full bucket refuses are not dropped: they sum into an
 overflow total (`other_rate` / `other_sum`, `other_tx_bps` /
 `other_rx_bps`), and `overflowed()` counts the folded records — a

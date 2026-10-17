@@ -102,11 +102,13 @@ orientation & bounded tables"). A breaking release; migration guide:
   by `overflowed()`. Also `max_keys()`, `RollingRate::stored_entries()`,
   `BandwidthByKey::with_byte_semantics()`. `new_unbounded` is the
   uncapped form. `top_k` selects the top `n` in linear time and sorts
-  only those (in a total order, NaN included). A record whose
-  timestamp went back lands in the bucket of its own time instead of
-  opening a new bucket on every call, and one older than the window
-  ending at the newest record is dropped — the table stays within
-  `window / bucket_width` buckets whatever the timestamp order.
+  only those (in a total order, NaN included). Timestamps may go
+  backwards: a record lands in the bucket of its own time (one bucket
+  per start) and evicts the buckets outside a window either side of it,
+  so the table holds at most `window / bucket_width + 1` buckets for
+  time that moves forward and `2 × window / bucket_width + 1` in any
+  order, and one wild future timestamp cannot hold the window (0.25
+  opened a new bucket on every call whose time went back).
 - **`flowscope_datagrams_truncated_total`** (`obs::METRIC_DATAGRAMS_TRUNCATED`):
   datagrams a session engine did not parse because the capture cut them.
 - **IP octets and truncated-packet counts on `FlowStats`** (#219):

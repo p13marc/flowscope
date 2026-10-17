@@ -128,10 +128,14 @@ impl<K: Hash + Eq, V: RateValue> Bucket<K, V> {
 /// [`Self::new_unbounded`] keeps every key. New in 0.26.0 (#220).
 ///
 /// Timestamps may go backwards (several capture queues, a replay): a
-/// record goes to the bucket of its own time, and one older than the
-/// window ending at the newest time recorded is dropped, so the table
-/// never holds more than about `window / bucket_width` buckets (before
-/// 0.26 a timestamp that went back opened a new bucket on every call).
+/// record goes to the bucket of its own time, and evicts the buckets
+/// before the window ending at its time *and* those more than a window
+/// after it. The table therefore holds at most
+/// `window / bucket_width + 1` buckets for time that only moves
+/// forward, `2 × window / bucket_width + 1` in any order, and one wild
+/// future timestamp is gone as soon as a record more than a window
+/// earlier arrives (before 0.26 a timestamp that went back opened a
+/// new bucket on every call).
 #[derive(Debug)]
 pub struct RollingRate<K, V>
 where
@@ -210,16 +214,24 @@ where
     /// [`crate::correlate::TimeBucketedCounter`] uses.
     pub fn record(&mut self, k: K, v: V, now: Timestamp) {
         // Timestamps may go backwards (several capture queues, a
-        // replayed file): the window ends at the newest time seen, a
-        // record older than it is dropped, and a record lands in the
-        // bucket of its own start — one bucket per start, so the
-        // table stays within `window / bucket_width` buckets.
-        let horizon = self.buckets.back().map_or(now, |b| b.start.max(now));
-        self.evict_expired(horizon);
-        let bucket_start = self.bucket_start_for(now);
-        if bucket_start < self.cutoff_for(horizon) {
-            return;
+        // replayed file, a corrupt record): a record lands in the
+        // bucket of its own start — one bucket per start — and the
+        // window ends at its own time. Buckets before that window
+        // expire; buckets more than a window after it (time went back
+        // further than a window, or an earlier record carried a wild
+        // future timestamp) belong to no window ending here and go
+        // too. So at most two windows' worth of buckets are held, and
+        // one wild timestamp never holds the window.
+        self.evict_expired(now);
+        let future = now.to_duration().saturating_add(self.window);
+        while self
+            .buckets
+            .back()
+            .is_some_and(|b| b.start.to_duration() > future)
+        {
+            self.buckets.pop_back();
         }
+        let bucket_start = self.bucket_start_for(now);
 
         let pos = match self.buckets.back() {
             // The common case: the newest bucket.
@@ -935,10 +947,11 @@ mod tests {
         r.record(1, 1, Timestamp::new(1_000, 0));
         for back in 1..500u32 {
             r.record(1, 1, Timestamp::new(1_000 - back, 0));
+            // At most two windows around the latest record.
+            assert!(r.bucket_count() <= 21, "{} buckets", r.bucket_count());
         }
-        assert!(r.bucket_count() <= 11, "{} buckets", r.bucket_count());
-        // Everything inside [990, 1000] is counted.
-        assert_eq!(r.sum(&1, Timestamp::new(1_000, 0)), 11);
+        // The window ending at the last record (501) holds 501 ..= 511.
+        assert_eq!(r.sum(&1, Timestamp::new(511, 0)), 11);
     }
 
     #[test]
@@ -966,5 +979,21 @@ mod tests {
         let now = Timestamp::new(1, 0);
         assert!((r.rate(&"a", now) - 6e8).abs() < 1e-3);
         assert!((r.other_rate(now) - 6e8).abs() < 1e-3);
+    }
+
+    /// One record far in the future (a corrupt timestamp) does not
+    /// blind the table: the next record more than a window before it
+    /// evicts its bucket, and later records count.
+    #[test]
+    fn a_far_future_record_does_not_drop_later_ones() {
+        let mut r: RollingRate<u32, u64> =
+            RollingRate::new(Duration::from_secs(10), Duration::from_secs(1), 10);
+        r.record(1, 1, Timestamp::new(1_000_000, 0));
+        for s in 0..20u32 {
+            r.record(1, 1, Timestamp::new(s, 0));
+        }
+        let now = Timestamp::new(19, 0);
+        assert_eq!(r.sum(&1, now), 11, "records at 9 ..= 19");
+        assert!(r.bucket_count() <= 21);
     }
 }
