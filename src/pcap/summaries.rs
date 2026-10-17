@@ -26,6 +26,10 @@ pub type FlowSummary = (FiveTupleKey, FlowStats, EndReason);
 /// final shape) — for a streaming version use
 /// `PcapFlowSource::open(...).views()` + your own tracker loop.
 ///
+/// Byte counts are wire L2 bytes (`FlowStats::bytes_*`; a record cut
+/// by the capture's snap length counts its original length since
+/// 0.26); `FlowStats::ip_bytes_*` are the IP octets.
+///
 /// ```no_run
 /// for (key, stats, reason) in flowscope::pcap::flow_summaries("trace.pcap")? {
 ///     println!(

@@ -22,6 +22,18 @@ orientation & bounded tables"). A breaking release; migration guide:
   slot message's `orientation`); flow-end detectors use
   `stats.initiator_orientation`. Community ID and `stable_hash` are
   unchanged (direction-independent).
+- **Exported octet counts are IP octets** (#219): `FlowRecord`'s IE 1
+  / 85 (`octet_delta_count_*`, `octet_total_count`, and so the IPFIX wire
+  export) carry `FlowStats::ip_bytes_*` — IP header and payload, as RFC
+  7012 defines `octetDeltaCount` — instead of the captured L2 frame
+  bytes. The wire L2 bytes move to the new IE 352 / 353 fields
+  (`layer2_octet_delta_count_*`, `layer2_octet_total_count`, not encoded
+  by the wire builder). Zeek rows gain `orig_ip_bytes` / `resp_ip_bytes`
+  in Zeek's column order (after `orig_pkts` / `resp_pkts`; `orig_bytes`
+  stays the wire L2 bytes), EVE `flow` / `stats` objects gain
+  `ip_bytes_toserver` / `ip_bytes_toclient` (`bytes_to*` stay wire L2,
+  Suricata's convention), CSV rows gain trailing `ip_bytes_init` /
+  `ip_bytes_resp` columns. `CicFlowFeatures` keeps wire L2 bytes.
 - **`Event::Started.orientation` is the initiator's** (#218): with
   `infer_tcp_initiator`, a flow whose first packet was the responder's
   SYN+ACK reported that packet's orientation, contradicting its own

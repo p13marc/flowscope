@@ -76,7 +76,9 @@ pub const METRIC_PACKETS_DEDUPLICATED: &str = "flowscope_packets_deduplicated_to
 /// (#212).
 pub const METRIC_DATAGRAMS_TRUNCATED: &str = "flowscope_datagrams_truncated_total";
 /// `flowscope_bytes_total{side=...}` — total bytes per side
-/// (cumulative across all ended flows).
+/// (cumulative across all ended flows): wire L2 bytes,
+/// [`FlowStats::bytes_initiator`](crate::FlowStats::bytes_initiator)
+/// (the captured length before 0.26).
 pub const METRIC_BYTES: &str = "flowscope_bytes_total";
 /// `flowscope_flow_duration_seconds` — histogram of per-flow
 /// durations.

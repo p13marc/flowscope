@@ -109,6 +109,45 @@ fn emit_started_adds_kind_column() {
     assert!(lines[2].starts_with("ended,"));
 }
 
+/// #219: bytes columns are wire L2 bytes, the trailing
+/// `ip_bytes_init` / `ip_bytes_resp` IP octets; every row has the
+/// header's column count. #217: a `Started` row is read from the
+/// initiator (here the second endpoint of the sorted key).
+#[test]
+fn ip_byte_columns_and_initiator_first() {
+    let mut buf = Vec::new();
+    let mut opts = CsvOptions::default();
+    opts.emit_started = true;
+    let mut csv = FlowEventCsvWriter::with_options(&mut buf, opts).unwrap();
+    let started = FlowEvent::Started {
+        key: key("10.0.0.1:80", "10.0.0.9:40000", L4Proto::Tcp),
+        side: flowscope::FlowSide::Initiator,
+        orientation: flowscope::Orientation::Reverse,
+        ts: Timestamp::new(100, 0),
+        l4: Some(L4Proto::Tcp),
+    };
+    csv.write_event(&started).unwrap();
+    let mut ended = sample_ended();
+    if let FlowEvent::Ended { stats, .. } = &mut ended {
+        stats.ip_bytes_initiator = 884;
+        stats.ip_bytes_responder = 1936;
+    }
+    csv.write_event(&ended).unwrap();
+    csv.finish().unwrap();
+    let text = String::from_utf8(buf).unwrap();
+    let rows: Vec<Vec<&str>> = text.lines().map(|l| l.split(',').collect()).collect();
+    assert_eq!(
+        rows[0][rows[0].len() - 2..],
+        ["ip_bytes_init", "ip_bytes_resp"]
+    );
+    assert!(rows.iter().all(|r| r.len() == rows[0].len()), "{text}");
+    // Started: src = the initiator 10.0.0.9:40000.
+    assert_eq!((rows[1][5], rows[1][6]), ("10.0.0.9", "40000"), "{text}");
+    // Ended: bytes_init/resp wire, ip_bytes_init/resp IP octets.
+    assert_eq!((rows[2][11], rows[2][12]), ("1024", "2048"), "{text}");
+    assert_eq!(rows[2][rows[2].len() - 2..], ["884", "1936"], "{text}");
+}
+
 // Custom-key regression test for plan 130: emit writers are
 // generic over `K: KeyFields`. A user-defined key type that
 // implements `KeyFields` flows through the writer end-to-end.

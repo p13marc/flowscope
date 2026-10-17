@@ -123,7 +123,7 @@ included. NetFlow / IPFIX octet counters and Zeek's `*_ip_bytes` count
 IP octets instead; those are the new `FlowStats::ip_bytes_initiator` /
 `ip_bytes_responder` (`total_ip_bytes()`, `ip_bytes_for(side)`), summed
 from the IP header's own length (the inner datagram behind a decap
-combinator). The exporters switch to them (sections 6–7).
+combinator). The exporters switch to them (section 7).
 
 `FlowStats::packets_truncated_initiator` / `_responder` count the
 packets that were cut. All new `FlowStats` fields deserialize as 0
@@ -218,3 +218,38 @@ orientation on the typed driver's `Started`. It now reports the
 initiator's, as documented — equal to `FlowStats::initiator_orientation`.
 `FlowEvent::Started` is unchanged: it carries the first packet's
 `side` and `orientation` (`side == Responder` in that case).
+
+## 7. Exporters report IP octets (#219)
+
+What each output counts since 0.26 (L2 = the packet's wire length,
+Ethernet header and padding included; IP = the IP datagram, header
+included):
+
+| Output | Field | 0.25 | 0.26 |
+|---|---|---|---|
+| `FlowRecord` (IPFIX) | `octet_delta_count_*` (IE 1), `octet_total_count` (IE 85) | captured L2 | **IP octets** (`FlowStats::ip_bytes_*`) |
+| `FlowRecord` | `layer2_octet_delta_count_*` (IE 352), `layer2_octet_total_count` (IE 353) | — | **new**: wire L2 (`Option`, set by `from_key_fields`) |
+| IPFIX wire export | IE 1 / IE 85 | captured L2 | IP octets (template unchanged) |
+| Zeek | `orig_bytes` / `resp_bytes` | captured L2 | wire L2 |
+| Zeek | `orig_ip_bytes` / `resp_ip_bytes` | — | **new columns**: IP octets |
+| EVE `flow` / `stats` | `bytes_toserver` / `bytes_toclient` | captured L2 | wire L2 |
+| EVE `flow` / `stats` | `ip_bytes_toserver` / `ip_bytes_toclient` | — | **new**: IP octets |
+| CSV | `bytes_init` / `bytes_resp` | captured L2 | wire L2 |
+| CSV | `ip_bytes_init` / `ip_bytes_resp` | — | **new trailing columns**: IP octets |
+| `CicFlowFeatures` | byte features | captured L2 | wire L2 (IE 352 / 353, else IE 1 / 85) |
+
+**Zeek column order.** The two new columns sit where Zeek puts them:
+`… history orig_pkts orig_ip_bytes resp_pkts resp_ip_bytes`. A reader
+that takes `resp_pkts` by position (column 14 in 0.25) finds
+`orig_ip_bytes` there now — read by the `#fields` header, which lists
+the new names. `orig_bytes` remains flowscope's wire L2 count, not
+Zeek's TCP-payload byte count.
+
+**CSV.** `ip_bytes_init` / `ip_bytes_resp` are appended after
+`end_reason`; `end_reason` is no longer the last column.
+
+**IPFIX.** Collectors now receive RFC-correct `octetDeltaCount`
+values. If you build a `FlowRecord` yourself (`Default` + mutate) and
+fill `octet_delta_count_*`, those are IP octets; set the
+`layer2_octet_*` fields too if you want the Zeek / CSV / EVE `bytes`
+columns to show L2 bytes (they fall back to the IP octets otherwise).

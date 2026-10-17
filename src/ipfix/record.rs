@@ -85,22 +85,39 @@ pub struct FlowRecord {
     /// IANA IE 11 — `destinationTransportPort`.
     pub destination_transport_port: u16,
 
-    // ── Counters (IEs 1 / 2 / 23 / 24 / 85 / 86) ────────────
+    // ── Counters (IEs 1 / 2 / 23 / 24 / 85 / 86 / 352 / 353) ─
     /// IANA IE 1 — `octetDeltaCount` initiator → responder
     /// direction. Per RFC 5103 biflow this is the forward-
-    /// direction byte count.
+    /// direction byte count. **IP octets** (IP header and payload,
+    /// RFC 7012): [`crate::FlowStats::ip_bytes_initiator`] since 0.26
+    /// (#219) — before, the captured L2 frame bytes.
     pub octet_delta_count_initiator: u64,
-    /// IANA IE 1 reverse — responder → initiator octets.
+    /// IANA IE 1 reverse — responder → initiator IP octets.
     pub octet_delta_count_responder: u64,
     /// IANA IE 2 — `packetDeltaCount` initiator direction.
     pub packet_delta_count_initiator: u64,
     /// IANA IE 2 reverse — responder direction.
     pub packet_delta_count_responder: u64,
     /// IANA IE 85 — `octetTotalCount` (both directions
-    /// summed). Convenience, populated by [`Self::from_parts`].
+    /// summed, IP octets). Convenience, populated by
+    /// [`Self::from_parts`].
     pub octet_total_count: u64,
     /// IANA IE 86 — `packetTotalCount`.
     pub packet_total_count: u64,
+    /// IANA IE 352 — `layer2OctetDeltaCount`, initiator direction:
+    /// the flow's wire L2 bytes ([`crate::FlowStats::bytes_initiator`],
+    /// Ethernet header and padding included). `None` when the
+    /// producer did not count them; [`Self::from_key_fields`] sets
+    /// it. The Zeek / CSV / EVE `bytes` columns read it (falling back
+    /// to the IP octets). Not encoded by the IPFIX wire builder. New
+    /// in 0.26.0 (#219).
+    pub layer2_octet_delta_count_initiator: Option<u64>,
+    /// IE 352 reverse — responder-direction wire L2 bytes. New in
+    /// 0.26.0.
+    pub layer2_octet_delta_count_responder: Option<u64>,
+    /// IANA IE 353 — `layer2OctetTotalCount` (both directions). New
+    /// in 0.26.0.
+    pub layer2_octet_total_count: Option<u64>,
 
     // ── Timing (IEs 152 / 153 / 154 / 155) ──────────────────
     /// IANA IE 152 — `flowStartMilliseconds` (absolute time
@@ -261,6 +278,9 @@ impl FlowRecord {
     ///   tracking systems).
     /// - `application_name` from `K::app_proto_str` when
     ///   present.
+    /// - Octet counters (IE 1 / 85) are the flow's IP octets
+    ///   ([`crate::FlowStats::ip_bytes_initiator`] …), the wire L2
+    ///   bytes go to the IE 352 / 353 fields (0.26, #219).
     ///
     /// Issue #16.
     #[cfg(feature = "tracker")]
@@ -294,12 +314,17 @@ impl FlowRecord {
             protocol_identifier: proto_id,
             source_transport_port: key.src_port().unwrap_or(0),
             destination_transport_port: key.dest_port().unwrap_or(0),
-            octet_delta_count_initiator: stats.bytes_initiator,
-            octet_delta_count_responder: stats.bytes_responder,
+            // IE 1 / 85 count IP octets; the wire L2 bytes go to IE 352
+            // / 353 (#219).
+            octet_delta_count_initiator: stats.ip_bytes_initiator,
+            octet_delta_count_responder: stats.ip_bytes_responder,
             packet_delta_count_initiator: stats.packets_initiator,
             packet_delta_count_responder: stats.packets_responder,
-            octet_total_count: stats.bytes_initiator + stats.bytes_responder,
+            octet_total_count: stats.total_ip_bytes(),
             packet_total_count: stats.packets_initiator + stats.packets_responder,
+            layer2_octet_delta_count_initiator: Some(stats.bytes_initiator),
+            layer2_octet_delta_count_responder: Some(stats.bytes_responder),
+            layer2_octet_total_count: Some(stats.total_bytes()),
             flow_start_milliseconds: timestamp_to_unix_ms(stats.started),
             flow_end_milliseconds: timestamp_to_unix_ms(stats.last_seen),
             flow_end_reason: end_reason.map(FlowEndReason::from),
@@ -357,6 +382,20 @@ impl FlowRecord {
             &mut self.tcp_control_bits_responder
         };
         *slot = Some(slot.unwrap_or(0) | bits);
+    }
+
+    /// Wire L2 bytes of the initiator direction: IE 352 when the
+    /// record carries it, else the IP octets (IE 1).
+    pub(crate) fn layer2_octets_initiator(&self) -> u64 {
+        self.layer2_octet_delta_count_initiator
+            .unwrap_or(self.octet_delta_count_initiator)
+    }
+
+    /// Wire L2 bytes of the responder direction (see
+    /// [`Self::layer2_octets_initiator`]).
+    pub(crate) fn layer2_octets_responder(&self) -> u64 {
+        self.layer2_octet_delta_count_responder
+            .unwrap_or(self.octet_delta_count_responder)
     }
 
     /// IPFIX IE 4 alias — convenience for emitters routing
@@ -496,6 +535,8 @@ mod tests {
             FlowStats {
                 bytes_initiator: 1000,
                 bytes_responder: 5000,
+                ip_bytes_initiator: 860,
+                ip_bytes_responder: 4832,
                 packets_initiator: 10,
                 packets_responder: 12,
                 started: Timestamp::new(1, 500_000_000), // 1.5 s
@@ -522,10 +563,23 @@ mod tests {
             let key = make_v4_tcp_key();
             let stats = make_stats();
             let r = FlowRecord::from_parts(&stats, &key, None);
-            assert_eq!(r.octet_delta_count_initiator, 1000);
-            assert_eq!(r.octet_delta_count_responder, 5000);
-            assert_eq!(r.octet_total_count, 6000);
+            // IE 1 / 85: IP octets (#219).
+            assert_eq!(r.octet_delta_count_initiator, 860);
+            assert_eq!(r.octet_delta_count_responder, 4832);
+            assert_eq!(r.octet_total_count, 5692);
             assert_eq!(r.packet_total_count, 22);
+            // IE 352 / 353: wire L2 bytes.
+            assert_eq!(r.layer2_octet_delta_count_initiator, Some(1000));
+            assert_eq!(r.layer2_octet_delta_count_responder, Some(5000));
+            assert_eq!(r.layer2_octet_total_count, Some(6000));
+            assert_eq!(
+                (r.layer2_octets_initiator(), r.layer2_octets_responder()),
+                (1000, 5000)
+            );
+            // Without IE 352, the L2 view falls back to the IP octets.
+            let mut bare = r.clone();
+            bare.layer2_octet_delta_count_initiator = None;
+            assert_eq!(bare.layer2_octets_initiator(), 860);
         }
 
         #[test]

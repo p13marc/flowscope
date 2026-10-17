@@ -205,9 +205,11 @@ where
     /// Write one finalised [`crate::FlowRecord`] as an
     /// `event_type: "flow"` EVE JSON record. Same schema
     /// shape as a `FlowEvent::Ended`-derived flow event;
-    /// the per-direction byte/packet counts come from the
-    /// `octet_delta_count_*` / `packet_delta_count_*` IEs
-    /// and the protocol slug from the IPFIX
+    /// the per-direction counts come from the
+    /// `packet_delta_count_*` IEs, `bytes_to*` from the wire L2
+    /// `layer2_octet_delta_count_*` (IE 352, else the IP octets),
+    /// `ip_bytes_to*` (0.26) from the `octet_delta_count_*` IP
+    /// octets (IE 1), and the protocol slug from the IPFIX
     /// `protocolIdentifier`.
     ///
     /// Timestamps are converted from
@@ -245,8 +247,10 @@ where
             json!({
                 "pkts_toserver": rec.packet_delta_count_initiator,
                 "pkts_toclient": rec.packet_delta_count_responder,
-                "bytes_toserver": rec.octet_delta_count_initiator,
-                "bytes_toclient": rec.octet_delta_count_responder,
+                "bytes_toserver": rec.layer2_octets_initiator(),
+                "bytes_toclient": rec.layer2_octets_responder(),
+                "ip_bytes_toserver": rec.octet_delta_count_initiator,
+                "ip_bytes_toclient": rec.octet_delta_count_responder,
                 "start": start_ts,
                 "end": end_ts,
                 "age": age_secs,
@@ -379,6 +383,8 @@ where
                 "pkts_toclient": stats.packets_responder,
                 "bytes_toserver": stats.bytes_initiator,
                 "bytes_toclient": stats.bytes_responder,
+                "ip_bytes_toserver": stats.ip_bytes_initiator,
+                "ip_bytes_toclient": stats.ip_bytes_responder,
                 "start": start_ts,
                 "end": end_ts,
                 "age": stats.duration().as_secs(),
@@ -628,6 +634,8 @@ where
                     "pkts_toclient": stats.packets_responder,
                     "bytes_toserver": stats.bytes_initiator,
                     "bytes_toclient": stats.bytes_responder,
+                    "ip_bytes_toserver": stats.ip_bytes_initiator,
+                    "ip_bytes_toclient": stats.ip_bytes_responder,
                     "start": start_ts,
                     "end": end_ts,
                     "age": stats.duration().as_secs(),
@@ -662,6 +670,8 @@ where
                 "pkts_toclient": stats.packets_responder,
                 "bytes_toserver": stats.bytes_initiator,
                 "bytes_toclient": stats.bytes_responder,
+                "ip_bytes_toserver": stats.ip_bytes_initiator,
+                "ip_bytes_toclient": stats.ip_bytes_responder,
             }),
         );
         self.write_line(&obj)

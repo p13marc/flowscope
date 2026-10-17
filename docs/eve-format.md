@@ -149,6 +149,8 @@ Emitted on `FlowEvent::Ended`:
     "pkts_toclient": 5,
     "bytes_toserver": 2400,
     "bytes_toclient": 14000,
+    "ip_bytes_toserver": 2302,
+    "ip_bytes_toclient": 13930,
     "start": "2026-06-10T12:34:50.000000000Z",
     "end":   "2026-06-10T12:34:56.789012345Z",
     "age": 6,
@@ -157,6 +159,12 @@ Emitted on `FlowEvent::Ended`:
   }
 }
 ```
+
+`bytes_to*` count each packet's wire L2 length (the frame plus what a
+snap length cut — Suricata's packet-length convention);
+`ip_bytes_to*` (0.26) count IP octets, header included — what NetFlow /
+IPFIX and Zeek's `*_ip_bytes` report. `*_toserver` is the initiator's
+direction.
 
 `flow.reason` mapping (matches `EndReason::as_str`):
 
@@ -192,7 +200,9 @@ via `EveOptions::include_stats = true`:
     "pkts_toserver": 7,
     "pkts_toclient": 5,
     "bytes_toserver": 2400,
-    "bytes_toclient": 14000
+    "bytes_toclient": 14000,
+    "ip_bytes_toserver": 2302,
+    "ip_bytes_toclient": 13930
   }
 }
 ```

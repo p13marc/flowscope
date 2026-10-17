@@ -50,7 +50,9 @@ pub struct DataExfilDetector {
 pub struct ExfilScore {
     /// Exfiltrating source.
     pub src: IpAddr,
-    /// Initiator-sent bytes on the flagged flow.
+    /// Initiator-sent bytes on the flagged flow (wire L2 bytes,
+    /// [`FlowStats::bytes_initiator`](crate::FlowStats::bytes_initiator)
+    /// when fed from the registry).
     pub bytes: u64,
     /// Source's EWMA baseline mean at the time of the flow.
     pub mean: f64,

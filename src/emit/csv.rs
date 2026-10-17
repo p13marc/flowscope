@@ -16,8 +16,13 @@ use crate::{FlowEvent, KeyFields};
 /// ```text
 /// start_sec, end_sec, duration_sec, proto, src_ip, src_port,
 /// dst_ip, dst_port, pkts_init, pkts_resp, bytes_init, bytes_resp,
-/// retransmits_init, retransmits_resp, end_reason
+/// retransmits_init, retransmits_resp, end_reason,
+/// ip_bytes_init, ip_bytes_resp
 /// ```
+///
+/// `bytes_*` are wire L2 bytes
+/// ([`FlowStats::bytes_initiator`](crate::FlowStats::bytes_initiator)),
+/// `ip_bytes_*` IP octets (new trailing columns in 0.26, #219).
 ///
 /// When [`CsvOptions::emit_started`] is `true`, every emitted row
 /// is prefixed with a `flow_event_kind` column whose values are
@@ -77,7 +82,7 @@ impl<W: Write> FlowEventCsvWriter<W> {
             self.sink,
             "start_sec{sep}end_sec{sep}duration_sec{sep}proto{sep}src_ip{sep}src_port{sep}\
              dst_ip{sep}dst_port{sep}pkts_init{sep}pkts_resp{sep}bytes_init{sep}bytes_resp{sep}\
-             retransmits_init{sep}retransmits_resp{sep}end_reason",
+             retransmits_init{sep}retransmits_resp{sep}end_reason{sep}ip_bytes_init{sep}ip_bytes_resp",
         )?;
         Ok(())
     }
@@ -139,7 +144,7 @@ impl<W: Write> FlowEventCsvWriter<W> {
                     writeln!(
                         self.sink,
                         "{start:.6}{sep}{end:.6}{sep}{dur:.6}{sep}{}{sep}{}{sep}{}{sep}{}{sep}{}{sep}\
-                         {}{sep}{}{sep}{}{sep}{}{sep}{}{sep}{}{sep}{}",
+                         {}{sep}{}{sep}{}{sep}{}{sep}{}{sep}{}{sep}{}{sep}{}{sep}{}",
                         quote(&proto, sep),
                         quote(&src_ip, sep),
                         src_port,
@@ -152,6 +157,8 @@ impl<W: Write> FlowEventCsvWriter<W> {
                         stats.retransmits_initiator,
                         stats.retransmits_responder,
                         reason.as_str(),
+                        stats.ip_bytes_initiator,
+                        stats.ip_bytes_responder,
                     )?;
                 }
             }
@@ -179,7 +186,7 @@ impl<W: Write> FlowEventCsvWriter<W> {
                 writeln!(
                     self.sink,
                     "started{sep}{start:.6}{sep}{start:.6}{sep}0.000000{sep}{}{sep}{}{sep}{}{sep}{}{sep}{}{sep}\
-                     0{sep}0{sep}0{sep}0{sep}0{sep}0{sep}",
+                     0{sep}0{sep}0{sep}0{sep}0{sep}0{sep}{sep}0{sep}0",
                     quote(&proto, sep),
                     quote(&src_ip, sep),
                     src_port,
@@ -221,7 +228,7 @@ impl<W: Write> FlowEventCsvWriter<W> {
         writeln!(
             self.sink,
             "{start:.6}{sep}{end:.6}{sep}{dur:.6}{sep}{}{sep}{}{sep}{}{sep}{}{sep}{}{sep}\
-             {}{sep}{}{sep}{}{sep}{}{sep}{}{sep}{}{sep}{}",
+             {}{sep}{}{sep}{}{sep}{}{sep}{}{sep}{}{sep}{}{sep}{}{sep}{}",
             quote(&proto, sep),
             quote(&src_ip, sep),
             src_port,
@@ -229,11 +236,13 @@ impl<W: Write> FlowEventCsvWriter<W> {
             dst_port,
             rec.packet_delta_count_initiator,
             rec.packet_delta_count_responder,
-            rec.octet_delta_count_initiator,
-            rec.octet_delta_count_responder,
+            rec.layer2_octets_initiator(),
+            rec.layer2_octets_responder(),
             rec.retransmits_initiator,
             rec.retransmits_responder,
             reason,
+            rec.octet_delta_count_initiator,
+            rec.octet_delta_count_responder,
         )?;
         Ok(())
     }

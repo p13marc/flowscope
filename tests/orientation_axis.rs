@@ -530,8 +530,9 @@ fn zeek_orig_is_the_initiator_with_the_higher_address() {
         ("10.0.0.9", "40000", "10.0.0.1", "80"),
         "id.orig_h/p id.resp_h/p: {out}"
     );
-    // orig_pkts / resp_pkts follow the same orientation.
-    assert_eq!(cols[cols.len() - 2..], ["5", "2"], "{out}");
+    // orig_pkts orig_ip_bytes resp_pkts resp_ip_bytes follow the same
+    // orientation (four 40-byte segments + one carrying 18 bytes).
+    assert_eq!(cols[12..], ["5", "218", "2", "80"], "{out}");
 }
 
 /// #218: with initiator inference, a flow whose first captured packet
