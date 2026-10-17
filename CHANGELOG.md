@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.25.2 (unreleased)
+
+Bug fixes found by netring's 0.31.2 pre-release audit. No API change;
+no migration.
+
+### Fixed
+
+- **IPFIX flowEndReason (IE 136) carried the wrong code** (#209):
+  `MessageBuilder` encoded the `FlowEndReason` declaration index (0–4)
+  instead of the IANA code `as_u8()` returns (1–5), so idle timeouts went
+  out as the reserved 0, FIN-closed flows as "active timeout" and interim
+  records as "idle timeout".
+- **Classic pcaps taken with a snap length replayed only up to the first
+  truncated record** (#210): `CaptureReader` read through pcap-file's
+  validating reader, which rejects `orig_len > snaplen` — every truncated
+  record of a `tcpdump -s N` capture. It now reads raw records and checks
+  only the timestamp. (The extractors still skip a record cut inside its
+  IP payload: #212.)
+- **`Asset::from_netbios_ns` named the sender after the host it looked
+  up** (#211): a name query's question is the name being resolved, so a
+  workstation querying "WPAD" became WPAD in the asset inventory. Queries
+  no longer set a hostname; registrations, refreshes and responses do.
+
 ## 0.25.1 (2026-09-27)
 
 Two follow-ups from des-capture's move to 0.25.0 (milestone "0.25.1 —
