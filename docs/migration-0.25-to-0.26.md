@@ -86,9 +86,14 @@ in the stream nobody reported. Now:
 
 - **The packet is extracted and tracked.** Expect flows (and packets)
   that 0.25 did not report for snap-length captures. What is still
-  skipped: a malformed packet that was *not* cut short (as before), a
-  packet cut inside its IP / TCP / UDP header or IP extension headers
-  (no flow key).
+  skipped: a malformed packet that was *not* cut short, by the same
+  rules as before (including an IPv4 total length below its header's
+  length, a UDP length below 8 or beyond the IP payload, an IP version
+  that does not match the EtherType), and a packet cut inside its IP /
+  TCP / UDP header or IP extension headers (no flow key). One addition:
+  an IPv4 total length of 0 on a captured datagram longer than 65 535
+  bytes (IPv4 BIG TCP, seen on the sending host) takes its length from
+  the frame instead of being skipped.
 - **TCP:** the captured bytes are reassembled and the cut bytes are
   reported as a gap at once, with the packet that carried them
   (`SessionParser::on_gap`, `StreamChunks` gap marks,
@@ -134,7 +139,7 @@ included. NetFlow / IPFIX octet counters and Zeek's `*_ip_bytes` count
 IP octets instead; those are the new `FlowStats::ip_bytes_initiator` /
 `ip_bytes_responder` (`total_ip_bytes()`, `ip_bytes_for(side)`), summed
 from the IP header's own length (the inner datagram behind a decap
-combinator). The exporters switch to them (section 7).
+combinator), never more than the packet's wire length. The exporters switch to them (section 7).
 
 `FlowStats::packets_truncated_initiator` / `_responder` count the
 packets that were cut. All new `FlowStats` fields deserialize as 0
@@ -153,8 +158,10 @@ anomalies regardless of the event mask and of `pause_events()`. Now:
 | `FlowAnomaly { kind: SessionParseError }` | anomalies are enabled, `EventMask::FLOW_ANOMALY` is not masked, not paused |
 
 Only the output is filtered: the parser is closed, its state released
-and the close counted in `flowscope_parser_closed_total` either way,
-and parser *messages* keep flowing during a pause.
+and the close counted in `flowscope_parser_closed_total` either way
+(with anomalies enabled, each parse error is also counted in
+`flowscope_anomalies_total{kind="parse_error"}` whether or not its
+event is shown), and parser *messages* keep flowing during a pause.
 
 If you masked `ENDED` (or paused) and relied on the typed driver's
 flow-end `ParserClosed` to learn that a flow ended, unmask `ENDED`

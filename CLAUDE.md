@@ -42,11 +42,18 @@ orientation & bounded tables"; CHANGELOG `## 0.26.0 — unreleased`,
 - **Truncated packets** (#212): `extract/parse.rs` slices with
   `LaxSlicedPacket`; only a length stop inside the transport of an
   *incomplete* IP payload is tolerated, a cut TCP/UDP header is still
-  skipped. `TcpInfo::wire_payload_len`, `L4Meta::wire_payload_len`,
+  skipped. Complete packets keep the strict length rules (IPv4
+  total_len >= IHL, UDP length 0 or 8..=IP payload, EtherType = IP
+  version; proptest `lax_parse_matches_strict_on_complete_frames`); the
+  one addition is IPv4 total_len 0 when > 65535 bytes were captured
+  (BIG TCP). `TcpInfo::wire_payload_len`, `L4Meta::wire_payload_len`,
   `Extracted::l3_len`. `FlowDriver::feed_tcp` feeds `segment(captured)` +
   `Reassembler::missing(rest)` (never passthrough), FIN at `data_seq +
   wire`; the built-ins skip missing bytes at once when the stream reached
-  them (`tests/sbr_model.rs` Missing op), else record ACK-like evidence.
+  them, else record ACK-like evidence. `tests/sbr_model.rs`: exact
+  per-byte models for both built-ins (Missing / Ack / Fin ops, seq wrap)
+  plus an invariant proptest with timers, small max_ahead, drains and
+  passthrough.
   Cut datagrams are not parsed (`flowscope_datagrams_truncated_total`).
   Tests: `tests/snaplen_truncation.rs`.
 - **Byte counts** (#219): `bytes_*` / `Packet.len` = wire L2 (source cut,
