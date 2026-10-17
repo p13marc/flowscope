@@ -76,7 +76,11 @@ orientation & bounded tables"). A breaking release; migration guide:
   stray segment until an independent segment, cut range or ACK
   corroborates them — the captured part of their own packet never does,
   so one stale or forged truncated segment cannot move the stream.
-  Defaulted to a no-op; the model test `tests/sbr_model.rs` covers it.
+  Defaulted to a no-op. Property tests (`tests/sbr_model.rs`) hold both
+  reassemblers to per-byte models (cut bytes, ACKs, FINs, sequence
+  wrap) and, with ACK grace and reorder deadlines running out, strays,
+  resyncs and passthrough, check that each byte lands at its stream
+  offset and that the gap counters match the gap marks.
 - **Wire lengths from the extractors** (#212): `TcpInfo::wire_payload_len`
   (`#[serde(default)]`), `TcpInfo::is_truncated()` / `wire_len()`;
   `L4Meta::wire_payload_len`, `with_wire_payload_len()`,

@@ -5,3 +5,4 @@
 # It is recommended to check this file in to source control so that
 # everyone who runs the test benefits from these saved cases.
 cc 4f313a214be6894c01bc32aa10a533f9c8e7fc9f8d7aa58aa93a0210dd9dab7a # shrinks to policy = First, ops = [Missing(1, 0)]
+cc e6c3cde0da970bc5666b377122a790cc07995c641db6be9dc3e4858139fe04ea # shrinks to base = 4294967045, ops = [Fin(0), Seg(0, [0]), Seg(0, [0]), Missing(2, 1)]
