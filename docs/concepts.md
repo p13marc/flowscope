@@ -559,6 +559,14 @@ the typed parser messages drained from each protocol's `SlotHandle`.
 | `TrackerAnomaly { kind, ts }` | Tracker-global anomaly (opt-in) |
 | `Tick { key, stats, ts }` | Periodic snapshot (opt-in) |
 
+The event mask and pause cover the parser lifecycle too (0.26): a
+flow-end `ParserClosed` is shown exactly when its `Ended` is (masked
+with `EventMask::ENDED`), a `SessionParseError` anomaly is a
+`FlowAnomaly` (`EventMask::FLOW_ANOMALY`), and early `ParserClosed` /
+`ParserSideStopped` — no mask bit of their own — are dropped only while
+events are paused. Parsers are closed and their state released either
+way.
+
 Typed messages arrive as `SlotMessage { key, side, orientation,
 message, ts, lifecycle_pos, seq }` from the per-parser `SlotHandle` returned at
 registration. Register HTTP on 80/8080, TLS on 443, DNS on 53; drain

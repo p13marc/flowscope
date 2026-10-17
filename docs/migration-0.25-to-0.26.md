@@ -128,3 +128,26 @@ combinator). The exporters switch to them (sections 6–7).
 `FlowStats::packets_truncated_initiator` / `_responder` count the
 packets that were cut. All new `FlowStats` fields deserialize as 0
 from data written by 0.25.
+
+## 5. `EventMask` and pause gate the parser lifecycle (#204)
+
+In 0.25 the session engines (`Driver`, `SessionDriver`,
+`DatagramDriver`) emitted parser closes, side stops and parse-error
+anomalies regardless of the event mask and of `pause_events()`. Now:
+
+| Event | Shown when |
+|---|---|
+| typed `Event::ParserClosed` at a flow's end (`reason.is_transport()`) | its flow's `Ended` is shown — `EventMask::ENDED` not masked, not paused |
+| early `ParserClosed` (`reason.is_parser()`), `ParserSideStopped` | events are not paused (no mask bit; `EventMask` is unchanged) |
+| `FlowAnomaly { kind: SessionParseError }` | anomalies are enabled, `EventMask::FLOW_ANOMALY` is not masked, not paused |
+
+Only the output is filtered: the parser is closed, its state released
+and the close counted in `flowscope_parser_closed_total` either way,
+and parser *messages* keep flowing during a pause.
+
+If you masked `ENDED` (or paused) and relied on the typed driver's
+flow-end `ParserClosed` to learn that a flow ended, unmask `ENDED`
+instead — the flow-end close now follows it. If you mask
+`FLOW_ANOMALY` and still want to see parse errors, look at the early
+`ParserClosed { reason: ParseError, detail, .. }`, which carries the
+same reason text.

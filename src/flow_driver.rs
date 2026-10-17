@@ -631,6 +631,21 @@ where
         !self.tracker.events_paused() && !self.tracker.config().suppress_events.contains(bit)
     }
 
+    /// The gates the session engines apply to parser-lifecycle
+    /// output (#204): parse-error anomalies need anomalies enabled and
+    /// [`EventMask::FLOW_ANOMALY`] unmasked; early parser closes and
+    /// side stops only need the events not paused; a flow-end close
+    /// follows its `Ended` ([`EventMask::ENDED`]) — the engine refines
+    /// that one per flow.
+    #[cfg(all(feature = "session", feature = "extractors"))]
+    pub(crate) fn emit_gate(&self) -> crate::session::core::Emit {
+        crate::session::core::Emit {
+            anomalies: self.emit_anomalies && self.emits_mask(EventMask::FLOW_ANOMALY),
+            parser_events: !self.tracker.events_paused(),
+            flow_end_closes: self.emits_mask(EventMask::ENDED),
+        }
+    }
+
     /// Whether `ev` reaches the caller: the tracker's
     /// [`FlowTrackerConfig::suppress_events`] mask and
     /// [`FlowTracker::pause_events`] apply to the driver's output.

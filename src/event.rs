@@ -1273,12 +1273,21 @@ bitflags! {
     /// [`Self::PACKET`], [`Self::ESTABLISHED`], [`Self::STATE_CHANGE`],
     /// [`Self::ENDED`]); [`Self::TICK`], [`Self::FLOW_ANOMALY`] and
     /// [`Self::TRACKER_ANOMALY`] are produced by the drivers, which honour
-    /// the same mask where they emit them (today: `TICK`).
+    /// the same mask wherever they emit them.
+    ///
+    /// The session engines (`Driver`, `SessionDriver`, `DatagramDriver`)
+    /// apply it to the parser lifecycle as well (0.26, #204): the
+    /// typed driver's flow-end `ParserClosed` rides with its flow's
+    /// `Ended` and is shed with [`Self::ENDED`]; a `SessionParseError`
+    /// is a flow anomaly and is shed with [`Self::FLOW_ANOMALY`]. Early
+    /// `ParserClosed` / `ParserSideStopped` have no bit — only a pause
+    /// sheds them.
     ///
     /// For a *total* shed over the duration of an overload episode use
     /// [`FlowTracker::pause_events`](crate::FlowTracker::pause_events) /
     /// [`resume_events`](crate::FlowTracker::resume_events) instead, which
-    /// gate every variant regardless of the mask.
+    /// gate every variant regardless of the mask (and, in the session
+    /// engines, every parser-lifecycle event).
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
     pub struct EventMask: u8 {
         /// [`FlowEvent::Started`].

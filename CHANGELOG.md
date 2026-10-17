@@ -70,6 +70,17 @@ orientation & bounded tables"). A breaking release; migration guide:
 
 ### Fixed
 
+- **Parser lifecycle output ignored `EventMask` and pause** (#204): the
+  session engines emitted `ParserClosed`, `ParserSideStopped` and the
+  `SessionParseError` anomaly whatever the mask or a pause said — the
+  typed `Driver` even showed a flow-end `ParserClosed` for a flow whose
+  `Ended` was masked. Now a flow-end `ParserClosed` rides with its
+  `Ended` (shown exactly when the `Ended` is); early `ParserClosed` /
+  `ParserSideStopped` (no mask bit of their own — `EventMask` stays
+  `u8`) are dropped while events are paused; `SessionParseError` needs
+  anomalies on, `FLOW_ANOMALY` unmasked and no pause. Parsers are still
+  closed, their state released and every close counted in
+  `flowscope_parser_closed_total`.
 - **Packets cut by a capture snap length were skipped** (#212): the
   extractors sliced strictly, so a `tcpdump -s 96` capture, or a live
   ring whose frames are smaller than the packets, produced no flow for

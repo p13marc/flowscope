@@ -64,7 +64,9 @@ use crate::{
     session::{
         DatagramParser, DatagramParserFactory, SessionParser, SessionParserFactory,
         TemplateFactory,
-        core::{Ctx, DEFAULT_PROBE_PACKETS, DatagramCore, Ports, Selector, SessionCore, Stream},
+        core::{
+            Ctx, DEFAULT_PROBE_PACKETS, DatagramCore, Emit, Ports, Selector, SessionCore, Stream,
+        },
         engine::{Dispatch, Engine},
     },
     tracker::{FlowTracker, FlowTrackerConfig},
@@ -224,6 +226,13 @@ pub enum Event<K> {
     /// the flow-end close *is* reported here (one per slot, `detail:
     /// None`), because several slots can share one flow and `Ended`
     /// alone would not say which of them had a parser on it.
+    ///
+    /// Gating (0.26, #204): a flow-end close rides with its `Ended` —
+    /// it is emitted exactly when that `Ended` is
+    /// ([`crate::EventMask::ENDED`] not masked, events not paused). An
+    /// early close, like [`Self::ParserSideStopped`], has no mask bit
+    /// and is dropped only while events are paused
+    /// ([`Driver::pause_events`]). The parser is closed either way.
     ///
     /// `#[non_exhaustive]` — match with a trailing `..`.
     #[non_exhaustive]
@@ -530,7 +539,7 @@ where
         stats: &FlowStats,
         finals: [&StreamChunks; 2],
         ports: Ports,
-        anomalies: bool,
+        emit: Emit,
         out: &mut Self::Out,
     ) {
         for slot in &mut self.list {
@@ -540,7 +549,7 @@ where
                 stats,
                 finals,
                 ports,
-                anomalies,
+                emit,
                 out,
                 &mut self.order,
             );
@@ -551,11 +560,11 @@ where
         now: Timestamp,
         stamp: Timestamp,
         orientation_of: &dyn Fn(&K) -> Orientation,
-        anomalies: bool,
+        emit: Emit,
         out: &mut Self::Out,
     ) {
         for slot in &mut self.list {
-            slot.on_tick(now, stamp, orientation_of, anomalies, out, &mut self.order);
+            slot.on_tick(now, stamp, orientation_of, emit, out, &mut self.order);
         }
     }
     fn retain(&mut self, alive: &dyn Fn(&K) -> bool) {
@@ -787,7 +796,11 @@ where
     }
 
     /// Stop emitting lifecycle events (overload shunt); parsers keep
-    /// running and flows keep being released.
+    /// running, their messages keep flowing to the slot handles, and
+    /// flows keep being released. Since 0.26 (#204) the pause covers
+    /// the parser lifecycle too: no `ParserClosed`,
+    /// `ParserSideStopped` or `SessionParseError` is emitted while
+    /// paused (the parsers are still closed and counted).
     pub fn pause_events(&mut self) {
         self.engine.flow.pause_events();
     }

@@ -933,7 +933,8 @@ pub enum SessionEvent<K, M> {
     /// always holds here. The typed [`crate::driver::Driver`] differs:
     /// it emits an `Event::ParserClosed` with the transport reason per
     /// slot right before `Ended`; [`EndReason::is_transport`] /
-    /// [`EndReason::is_parser`] tell the two apart.)
+    /// [`EndReason::is_parser`] tell the two apart.) Not emitted while
+    /// events are paused (0.26, #204).
     ParserClosed {
         key: K,
         parser_kind: ParserKind,

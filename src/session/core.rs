@@ -200,6 +200,26 @@ pub(crate) trait Output<K, M> {
     fn anomaly(&mut self, key: &K, kind: AnomalyKind, ts: Timestamp);
 }
 
+/// Which parser-lifecycle output reaches the consumer (#204): the
+/// engine's event gates — `emit_anomalies`, the
+/// [`crate::EventMask`] and pause — applied to what the cores emit.
+/// Gating only filters output: a parser is closed, its state released
+/// and its close counted (`flowscope_parser_closed_total`) whatever
+/// these say.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Emit {
+    /// `SessionParseError` anomalies: anomalies enabled,
+    /// [`crate::EventMask::FLOW_ANOMALY`] not masked, not paused.
+    pub anomalies: bool,
+    /// Early `ParserClosed` (the flow goes on) and
+    /// `ParserSideStopped`: not paused. No mask bit of their own.
+    pub parser_events: bool,
+    /// A flow-end `ParserClosed` rides with its flow's `Ended`:
+    /// emitted only when that `Ended` is
+    /// ([`crate::EventMask::ENDED`] not masked, not paused).
+    pub flow_end_closes: bool,
+}
+
 /// Per-call context from the engine.
 pub(crate) struct Ctx<'a, K> {
     pub key: &'a K,
@@ -207,7 +227,7 @@ pub(crate) struct Ctx<'a, K> {
     pub side: FlowSide,
     pub orientation: Orientation,
     pub ts: Timestamp,
-    pub anomalies: bool,
+    pub emit: Emit,
 }
 
 /// Why a parser closed early, before the flow's end.
@@ -293,7 +313,9 @@ impl<P: SessionParser> Active<P> {
             Some(FeedEnd::StopSide(reason, detail)) => {
                 self.stopped[si] = true;
                 crate::obs::record_parser_side_stopped(kind, cx.side, reason);
-                out.parser_side_stopped(cx.key, kind, cx.side, reason, Some(detail), cx.ts);
+                if cx.emit.parser_events {
+                    out.parser_side_stopped(cx.key, kind, cx.side, reason, Some(detail), cx.ts);
+                }
                 if self.stopped == [true, true] {
                     emit_close(cx, kind, Close::BothSides(reason), out);
                     return true;
@@ -531,7 +553,7 @@ where
         stats: &FlowStats,
         finals: [&StreamChunks; 2],
         ports: Ports,
-        anomalies: bool,
+        emit: Emit,
         out: &mut O,
     ) where
         O: Output<K, <F::Parser as SessionParser>::Message>,
@@ -550,7 +572,7 @@ where
                 side,
                 orientation: stats.orientation_for(side),
                 ts,
-                anomalies,
+                emit,
             };
             self.on_stream(&cx, ports, &Stream::Chunks(chunks), out);
         }
@@ -587,7 +609,9 @@ where
             }
         }
         crate::obs::record_parser_closed(kind, reason);
-        out.parser_closed(key, kind, reason, None, ts, true);
+        if emit.flow_end_closes {
+            out.parser_closed(key, kind, reason, None, ts, true);
+        }
     }
 
     /// Periodic hook: `on_tick` on every live parser, closing those
@@ -597,7 +621,7 @@ where
         now: Timestamp,
         stamp: Timestamp,
         orientation_of: &dyn Fn(&K) -> Orientation,
-        anomalies: bool,
+        emit: Emit,
         out: &mut O,
     ) where
         O: Output<K, <F::Parser as SessionParser>::Message>,
@@ -621,7 +645,7 @@ where
                     side: FlowSide::Initiator,
                     orientation,
                     ts: stamp,
-                    anomalies,
+                    emit,
                 };
                 emit_close(&cx, kind, close, out);
             }
@@ -658,7 +682,7 @@ where
             side: *side,
             orientation: *orientation,
             ts: *ts,
-            anomalies: cx.anomalies,
+            emit: cx.emit,
         };
         if active.feed(&rcx, &Stream::Chunks(chunks), scratch, out) {
             return None;
@@ -682,7 +706,7 @@ where
                 false => cx.orientation.flipped(),
             },
             ts: cx.ts,
-            anomalies: cx.anomalies,
+            emit: cx.emit,
         };
         if active.feed(&rcx, &Stream::Chunks(&gap), scratch, out) {
             return None;
@@ -758,7 +782,7 @@ fn emit_close<K, M, O: Output<K, M>>(cx: &Ctx<'_, K>, kind: ParserKind, close: C
     let reason = close.reason();
     crate::obs::record_parser_closed(kind, reason);
     if let Close::Poison(detail) = &close
-        && cx.anomalies
+        && cx.emit.anomalies
     {
         out.anomaly(
             cx.key,
@@ -771,7 +795,9 @@ fn emit_close<K, M, O: Output<K, M>>(cx: &Ctx<'_, K>, kind: ParserKind, close: C
             cx.ts,
         );
     }
-    out.parser_closed(cx.key, kind, reason, close.detail(), cx.ts, false);
+    if cx.emit.parser_events {
+        out.parser_closed(cx.key, kind, reason, close.detail(), cx.ts, false);
+    }
 }
 
 enum DatagramFlow<P> {
@@ -885,20 +911,23 @@ where
         key: &K,
         reason: EndReason,
         stats: &FlowStats,
+        emit: Emit,
         out: &mut O,
     ) where
         O: Output<K, <F::Parser as DatagramParser>::Message>,
     {
         if let Some(DatagramFlow::Active(parser)) = self.flows.remove(key) {
             crate::obs::record_parser_closed(parser.parser_kind(), reason);
-            out.parser_closed(
-                key,
-                parser.parser_kind(),
-                reason,
-                None,
-                stats.last_seen,
-                true,
-            );
+            if emit.flow_end_closes {
+                out.parser_closed(
+                    key,
+                    parser.parser_kind(),
+                    reason,
+                    None,
+                    stats.last_seen,
+                    true,
+                );
+            }
         }
     }
 
@@ -907,7 +936,7 @@ where
         now: Timestamp,
         stamp: Timestamp,
         orientation_of: &dyn Fn(&K) -> Orientation,
-        anomalies: bool,
+        emit: Emit,
         out: &mut O,
     ) where
         O: Output<K, <F::Parser as DatagramParser>::Message>,
@@ -931,7 +960,7 @@ where
                     side: FlowSide::Initiator,
                     orientation,
                     ts: stamp,
-                    anomalies,
+                    emit,
                 };
                 emit_close(&cx, kind, close, out);
             }

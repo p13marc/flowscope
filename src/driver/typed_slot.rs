@@ -21,7 +21,7 @@ use crate::extractor::Orientation;
 use crate::parser_kind::ParserKind;
 use crate::parser_kind::SlotId;
 use crate::reassembler::StreamChunks;
-use crate::session::core::{Ctx, DatagramCore, Output, Ports, SessionCore, Stream};
+use crate::session::core::{Ctx, DatagramCore, Emit, Output, Ports, SessionCore, Stream};
 use crate::session::{DatagramParser, DatagramParserFactory, SessionParser, SessionParserFactory};
 
 /// Where a slot's typed messages go.
@@ -174,7 +174,7 @@ pub(super) trait ErasedSlot<K>: Send + Sync {
         stats: &FlowStats,
         finals: [&StreamChunks; 2],
         ports: Ports,
-        anomalies: bool,
+        emit: Emit,
         events: &mut Vec<Event<K>>,
         order: &mut Order,
     );
@@ -183,7 +183,7 @@ pub(super) trait ErasedSlot<K>: Send + Sync {
         now: Timestamp,
         stamp: Timestamp,
         orientation_of: &dyn Fn(&K) -> Orientation,
-        anomalies: bool,
+        emit: Emit,
         events: &mut Vec<Event<K>>,
         order: &mut Order,
     );
@@ -252,7 +252,7 @@ where
         stats: &FlowStats,
         finals: [&StreamChunks; 2],
         ports: Ports,
-        anomalies: bool,
+        emit: Emit,
         events: &mut Vec<Event<K>>,
         order: &mut Order,
     ) {
@@ -263,14 +263,14 @@ where
             order,
         };
         self.core
-            .on_flow_end(key, reason, stats, finals, ports, anomalies, &mut out);
+            .on_flow_end(key, reason, stats, finals, ports, emit, &mut out);
     }
     fn on_tick(
         &mut self,
         now: Timestamp,
         stamp: Timestamp,
         orientation_of: &dyn Fn(&K) -> Orientation,
-        anomalies: bool,
+        emit: Emit,
         events: &mut Vec<Event<K>>,
         order: &mut Order,
     ) {
@@ -281,7 +281,7 @@ where
             order,
         };
         self.core
-            .on_tick(now, stamp, orientation_of, anomalies, &mut out);
+            .on_tick(now, stamp, orientation_of, emit, &mut out);
     }
     fn retain(&mut self, alive: &dyn Fn(&K) -> bool) {
         self.core.retain(alive);
@@ -350,7 +350,7 @@ where
         stats: &FlowStats,
         _finals: [&StreamChunks; 2],
         _ports: Ports,
-        _anomalies: bool,
+        emit: Emit,
         events: &mut Vec<Event<K>>,
         order: &mut Order,
     ) {
@@ -360,14 +360,14 @@ where
             slot: self.id,
             order,
         };
-        self.core.on_flow_end(key, reason, stats, &mut out);
+        self.core.on_flow_end(key, reason, stats, emit, &mut out);
     }
     fn on_tick(
         &mut self,
         now: Timestamp,
         stamp: Timestamp,
         orientation_of: &dyn Fn(&K) -> Orientation,
-        anomalies: bool,
+        emit: Emit,
         events: &mut Vec<Event<K>>,
         order: &mut Order,
     ) {
@@ -378,7 +378,7 @@ where
             order,
         };
         self.core
-            .on_tick(now, stamp, orientation_of, anomalies, &mut out);
+            .on_tick(now, stamp, orientation_of, emit, &mut out);
     }
     fn retain(&mut self, alive: &dyn Fn(&K) -> bool) {
         self.core.retain(alive);
