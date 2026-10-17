@@ -167,7 +167,9 @@ orientation & bounded tables"). A breaking release; migration guide:
   in the segment ends the stream after its wire length, and a
   header-only capture (`-s 54`) yields one gap per segment instead of a
   stall. A cut datagram (UDP payload, ICMP message) is tracked but not
-  handed to datagram parsers.
+  handed to datagram parsers — judged by UDP's own length, so bytes cut
+  after a datagram do not count, also when the engine parses the frame
+  itself for an extractor without `L4Meta`.
 - **A reassembler could underflow on evidence past a passed FIN**: once
   a side's stream had gone past its own FIN (data after the FIN, a
   resync), a peer ACK beyond it — or, new in 0.26, a cut segment — made

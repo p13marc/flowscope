@@ -640,3 +640,39 @@ fn cut_segment_after_data_past_the_fin_does_not_panic() {
     }
     let _ = d.finish();
 }
+
+/// An extractor that reports no `L4Meta`, so the session engine falls
+/// back to parsing the frame itself.
+#[derive(Clone, Copy)]
+struct NoMeta;
+
+impl flowscope::FlowExtractor for NoMeta {
+    type Key = flowscope::extract::FiveTupleKey;
+    fn extract(&self, view: PacketView<'_>) -> Option<flowscope::Extracted<Self::Key>> {
+        let mut e = FiveTuple::bidirectional().extract(view)?;
+        e.l4_meta = None;
+        Some(e)
+    }
+}
+
+/// The engine's own datagram parse (no `L4Meta`) judges a datagram by
+/// UDP's length: cutting only bytes after it (a surplus area) leaves it
+/// whole; cutting into it withholds it.
+#[test]
+fn fallback_datagram_parse_follows_the_udp_length() {
+    let mut f = ipv4_udp(C, S, 5000, 53, &[7; 40]);
+    // UDP length 38: a 30-byte datagram and 10 surplus bytes.
+    f[14 + 20 + 4..14 + 20 + 6].copy_from_slice(&38u16.to_be_bytes());
+    for (keep, want) in [(f.len() - 5, vec![30]), (14 + 20 + 8 + 20, vec![])] {
+        let parser = Lengths::default();
+        let seen = parser.seen.clone();
+        let mut d = DatagramDriver::new(NoMeta, TemplateFactory(parser));
+        let mut out = Vec::new();
+        d.track_into(
+            PacketView::new(&f[..keep], ts_ms(1)).with_wire_len(f.len()),
+            &mut out,
+        );
+        d.finish_into(&mut out);
+        assert_eq!(*seen.lock().unwrap(), want, "{keep} bytes captured");
+    }
+}

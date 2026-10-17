@@ -133,29 +133,28 @@ pub(crate) fn ports_of(frame: &[u8]) -> Ports {
 /// The payload a datagram parser receives: the UDP payload, or the
 /// whole ICMPv4 / ICMPv6 message (0.14.1: ICMP parsers ride the
 /// datagram path). Fallback for extractors that report no
-/// [`crate::L4Meta`]. `Err(())` when the capture cut the datagram
-/// short (the IP header claims more than was captured).
+/// [`crate::L4Meta`]: the extractors' own parse, so the same rules
+/// apply. `Err(())` when the capture cut the datagram itself short
+/// (bytes cut after a UDP datagram's length do not count).
 fn datagram_payload(frame: &[u8]) -> Result<Option<&[u8]>, ()> {
-    let Ok(sp) = etherparse::LaxSlicedPacket::from_ethernet(frame) else {
+    let Some(parsed) = parse::parse_eth(frame) else {
         return Ok(None);
     };
-    if sp
-        .net
-        .as_ref()
-        .and_then(|n| n.ip_payload_ref())
-        .is_some_and(|p| p.incomplete)
-    {
-        return Err(());
-    }
-    if sp.stop_err.is_some() {
+    let Some(ip) = parsed.ip else {
         return Ok(None);
+    };
+    let icmp = ip.proto == 1 || ip.proto == 58;
+    match parsed.l4 {
+        Some(ParsedL4::Udp(u)) if u.wire_payload_len > u.payload_len => Err(()),
+        Some(ParsedL4::Udp(u)) => Ok(u
+            .payload_offset
+            .checked_add(u.payload_len)
+            .and_then(|end| frame.get(u.payload_offset..end))),
+        // An ICMP message, cut inside or after its header.
+        Some(ParsedL4::Other) | None if icmp && ip.l4_wire_len > ip.l4_payload.len() => Err(()),
+        Some(ParsedL4::Other) if icmp => Ok(Some(ip.l4_payload)),
+        _ => Ok(None),
     }
-    Ok(match sp.transport {
-        Some(etherparse::TransportSlice::Udp(udp)) => Some(udp.payload()),
-        Some(etherparse::TransportSlice::Icmpv4(icmp)) => Some(icmp.slice()),
-        Some(etherparse::TransportSlice::Icmpv6(icmp)) => Some(icmp.slice()),
-        _ => None,
-    })
 }
 
 /// Flow driver + scratch buffers. See the [module docs](self).
