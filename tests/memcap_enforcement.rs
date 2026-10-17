@@ -6,7 +6,12 @@
 //! declarative API + `Reassembler::current_bytes` hook
 //! shipped in #17; this test suite drives the policy paths.
 
-#![cfg(all(feature = "tracker", feature = "extractors", feature = "reassembler"))]
+#![cfg(all(
+    feature = "tracker",
+    feature = "extractors",
+    feature = "reassembler",
+    feature = "test-helpers"
+))]
 
 use flowscope::{
     AnomalyKind, BufferedReassemblerFactory, EndReason, FlowDriver, FlowEvent, FlowSide,

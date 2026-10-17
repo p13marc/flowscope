@@ -553,6 +553,7 @@ mod tests {
     // above; these exercise the FiveTupleKey wrappers
     // (`protocol_label_with` / `app_label_with`) end-to-end.
 
+    #[cfg(feature = "extractors")]
     fn key(src_port: u16, dst_port: u16) -> crate::extract::FiveTupleKey {
         use std::net::{IpAddr, Ipv4Addr, SocketAddr};
         crate::extract::FiveTupleKey {
@@ -562,6 +563,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "extractors")]
     #[test]
     fn protocol_label_with_override_wins_over_builtin() {
         let mut t = LabelTable::new();
@@ -573,18 +575,21 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "extractors")]
     #[test]
     fn protocol_label_with_falls_back_to_builtin_when_inheriting() {
         let t = LabelTable::new(); // empty overrides, inherits built-in.
         assert_eq!(key(80, 33000).protocol_label_with(&t), Some("http"));
     }
 
+    #[cfg(feature = "extractors")]
     #[test]
     fn protocol_label_with_standalone_returns_none_for_unmapped() {
         let t = LabelTable::standalone(); // strict whitelist.
         assert_eq!(key(80, 33000).protocol_label_with(&t), None);
     }
 
+    #[cfg(feature = "extractors")]
     #[test]
     fn app_label_with_falls_back_to_canonical_name() {
         let t = LabelTable::standalone();
@@ -593,6 +598,7 @@ mod tests {
         assert_eq!(key(33000, 33001).app_label_with(&t), "tcp");
     }
 
+    #[cfg(feature = "extractors")]
     #[test]
     fn app_label_with_override_wins() {
         let mut t = LabelTable::new();

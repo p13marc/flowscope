@@ -4,6 +4,8 @@
 //! segments — and (#212) for bytes a snap length cut
 //! ([`Reassembler::missing`]).
 
+#![cfg(feature = "reassembler")]
+
 use std::collections::BTreeMap;
 
 use flowscope::{Reassembler, SegmentBufferReassembler, StreamChunks, TcpOverlapPolicy, Timestamp};

@@ -5,6 +5,8 @@
 //! sees `Started → Message* → Ended` with nothing left buffered (the
 //! `run_pcap` + separate-slot-drain trailing-drain footgun is gone).
 
+#![cfg(all(feature = "pcap", feature = "session", feature = "reassembler"))]
+
 use std::collections::HashMap;
 
 use flowscope::extract::FiveTupleKey;

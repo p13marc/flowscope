@@ -9,7 +9,7 @@
 //! 3. Manual sweep updates `last_sweep_ts`, so a follow-up
 //!    auto-sweep doesn't double-fire.
 
-#![cfg(all(feature = "tracker", feature = "extractors"))]
+#![cfg(all(feature = "tracker", feature = "extractors", feature = "test-helpers"))]
 
 use std::time::Duration;
 

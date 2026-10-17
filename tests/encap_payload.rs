@@ -3,6 +3,8 @@
 //! applied to the outer frame), and the session engine's port
 //! selectors / datagram payloads come from the inner packet.
 
+#![cfg(all(feature = "extractors", feature = "reassembler", feature = "session"))]
+
 use etherparse::{Ethernet2Header, IpNumber, Ipv4Header, TcpHeader, UdpHeader};
 use flowscope::extract::{FiveTuple, InnerGre, InnerGtpU, InnerVxlan, StripMpls};
 use flowscope::{

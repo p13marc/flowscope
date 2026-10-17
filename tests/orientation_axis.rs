@@ -15,7 +15,7 @@
 //! arrived on (IPFIX biflow-merge model) without splitting into two
 //! flows.
 
-#![cfg(all(feature = "extractors", feature = "tracker"))]
+#![cfg(all(feature = "extractors", feature = "tracker", feature = "test-helpers"))]
 
 use flowscope::{
     FlowEvent, FlowSide, FlowStats, FlowTracker, Orientation, PacketView, Timestamp,

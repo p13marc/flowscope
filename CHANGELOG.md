@@ -163,6 +163,14 @@ orientation & bounded tables"). A breaking release; migration guide:
   (index 11 of an 8–11-byte payload). It now rejects it. The panic
   predates 0.26 for malformed frames; lax parsing would also have let
   GTP-U frames cut by a snap length reach it.
+- **`cargo test` failed to compile with default features** (and with
+  `--no-default-features`): `tests/orientation_axis.rs`, `auto_sweep.rs`
+  and `memcap_enforcement.rs` used the `test-helpers` frame builders,
+  `error_chain.rs` and `pcap_pulses.rs` the `pcap` feature,
+  `quick_wins.rs`, `correlate_mergeable.rs`, `encap_payload.rs`,
+  `sbr_model.rs` and the `well_known` unit tests default features,
+  without gating on them. They are gated now (per file, or per test where
+  the rest applies), and `error_chain.rs` gains a default-feature test.
 - **pcapng records could report fewer bytes on the wire than they
   captured** (#219): an EPB with a smaller `original_len` than its data
   now reports the captured length, as classic pcap records already did.
