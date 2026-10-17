@@ -166,6 +166,12 @@ orientation & bounded tables"). A breaking release; migration guide:
   header-only capture (`-s 54`) yields one gap per segment instead of a
   stall. A cut datagram (UDP payload, ICMP message) is tracked but not
   handed to datagram parsers.
+- **A reassembler could underflow on evidence past a passed FIN**: once
+  a side's stream had gone past its own FIN (data after the FIN, a
+  resync), a peer ACK beyond it — or, new in 0.26, a cut segment — made
+  the evidence bookkeeping subtract below zero: a panic in debug builds,
+  and in release a wrapped distance that could skip open holes early.
+  Such evidence is now ignored.
 - **`InnerGtpU` panicked on a short GTP-U header with the E flag set**
   (index 11 of an 8–11-byte payload). It now rejects it. The panic
   predates 0.26 for malformed frames; lax parsing would also have let

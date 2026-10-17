@@ -620,3 +620,23 @@ fn ip_bytes_are_bounded_by_the_wire_length() {
         stats.bytes_initiator
     );
 }
+
+/// The reviewer's repro: data after this side's FIN, then a cut
+/// segment far beyond it — FlowDriver must not panic (subtraction
+/// underflow in the reassembler's evidence bookkeeping).
+#[test]
+fn cut_segment_after_data_past_the_fin_does_not_panic() {
+    use flowscope::{FlowDriver, SegmentBufferReassemblerFactory};
+    let mut d: FlowDriver<FiveTuple, SegmentBufferReassemblerFactory> = FlowDriver::new(
+        FiveTuple::bidirectional(),
+        SegmentBufferReassemblerFactory::default(),
+    );
+    let fin = ipv4_tcp(M, M, C, S, CP, SP, 1000, 1, FIN | ACK, b"x");
+    let more = ipv4_tcp(M, M, C, S, CP, SP, 1000, 1, ACK, b"xy");
+    let mut cut = ipv4_tcp(M, M, C, S, CP, SP, 2000, 1, ACK, b"z");
+    cut.truncate(HEADERS);
+    for (i, f) in [fin, more, cut].iter().enumerate() {
+        let _ = d.track(PacketView::new(f, ts_ms(i as u64)));
+    }
+    let _ = d.finish();
+}

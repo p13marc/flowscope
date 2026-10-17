@@ -1679,4 +1679,30 @@ mod tests {
             ]
         );
     }
+
+    /// Evidence past this side's FIN once the stream already went past
+    /// the FIN (data after it): no underflow, nothing skipped — through
+    /// a cut segment (`missing`) …
+    #[test]
+    fn evidence_behind_a_passed_fin_via_missing_is_ignored() {
+        let mut r = SegmentBufferReassembler::new();
+        r.segment(1000, b"x", ts(0));
+        r.fin_seen(1001, ts(0));
+        r.segment(1000, b"xy", ts(0)); // data after the FIN
+        r.missing(2000, 1, ts(0));
+        r.advance_time(ts(10));
+        assert_eq!(r.gaps(), 0);
+    }
+
+    /// … and through the peer's ACK (reachable in 0.25 too).
+    #[test]
+    fn evidence_behind_a_passed_fin_via_ack_is_ignored() {
+        let mut r = SegmentBufferReassembler::new();
+        r.segment(1000, b"x", ts(0));
+        r.fin_seen(1001, ts(0));
+        r.segment(1000, b"xy", ts(0));
+        r.peer_ack(1100, ts(0));
+        r.advance_time(ts(10));
+        assert_eq!(r.gaps(), 0);
+    }
 }

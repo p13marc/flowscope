@@ -770,6 +770,11 @@ impl Track {
         if let Some(fin) = self.fin_off {
             off = off.min(fin);
         }
+        // The stream may already be past this side's FIN (data after
+        // it, a resync): then nothing is left to prove.
+        if off <= self.next_off {
+            return None;
+        }
         if off - self.next_off > max_ahead {
             if let Some(c) = &self.oow
                 && off >= c.off
@@ -2062,5 +2067,17 @@ mod tests {
         r.missing(5_001_000, 1000, Timestamp::new(2, 0));
         assert_eq!(drain(&mut r).gap_bytes(), 5_002_000);
         assert_eq!(r.origin_resets(), 1);
+    }
+
+    #[test]
+    fn buffered_evidence_behind_a_passed_fin_is_ignored() {
+        let mut r = BufferedReassembler::new();
+        r.segment(1000, b"x", t());
+        r.fin_seen(1001, t());
+        r.segment(1000, b"xy", t());
+        r.missing(2000, 1, t());
+        r.peer_ack(1100, t());
+        r.advance_time(Timestamp::new(10, 0));
+        assert_eq!(r.gaps(), 0);
     }
 }
