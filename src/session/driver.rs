@@ -81,8 +81,6 @@ impl<K: Clone, M: std::fmt::Debug> Output<K, M> for Vec<SessionEvent<K, M>> {
     }
 
     fn anomaly(&mut self, key: &K, kind: AnomalyKind, ts: Timestamp) {
-        crate::obs::record_anomaly(&kind);
-        crate::obs::trace_anomaly(&kind);
         self.push(SessionEvent::FlowAnomaly {
             key: key.clone(),
             kind,

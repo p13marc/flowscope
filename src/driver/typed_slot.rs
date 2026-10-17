@@ -132,8 +132,6 @@ where
         if let AnomalyKind::SessionParseError { slot, .. } = &mut kind {
             *slot = Some(self.slot);
         }
-        crate::obs::record_anomaly(&kind);
-        crate::obs::trace_anomaly(&kind);
         self.events.push(Event::FlowAnomaly {
             key: key.clone(),
             kind,

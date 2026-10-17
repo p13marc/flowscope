@@ -640,6 +640,7 @@ where
     #[cfg(all(feature = "session", feature = "extractors"))]
     pub(crate) fn emit_gate(&self) -> crate::session::core::Emit {
         crate::session::core::Emit {
+            count_anomalies: self.emit_anomalies,
             anomalies: self.emit_anomalies && self.emits_mask(EventMask::FLOW_ANOMALY),
             parser_events: !self.tracker.events_paused(),
             flow_end_closes: self.emits_mask(EventMask::ENDED),

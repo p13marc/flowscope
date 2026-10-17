@@ -196,7 +196,9 @@ pub(crate) trait Output<K, M> {
         ts: Timestamp,
     );
 
-    /// Called only when the engine emits anomalies.
+    /// Called only when the anomaly is shown (anomalies on, not
+    /// masked, not paused); the caller has already counted and traced
+    /// it.
     fn anomaly(&mut self, key: &K, kind: AnomalyKind, ts: Timestamp);
 }
 
@@ -208,7 +210,11 @@ pub(crate) trait Output<K, M> {
 /// these say.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Emit {
-    /// `SessionParseError` anomalies: anomalies enabled,
+    /// Anomalies are enabled: a `SessionParseError` is counted
+    /// (`flowscope_anomalies_total`) and traced, like the reassembly
+    /// anomalies, whether or not the event is shown.
+    pub count_anomalies: bool,
+    /// `SessionParseError` events: anomalies enabled,
     /// [`crate::EventMask::FLOW_ANOMALY`] not masked, not paused.
     pub anomalies: bool,
     /// Early `ParserClosed` (the flow goes on) and
@@ -782,18 +788,21 @@ fn emit_close<K, M, O: Output<K, M>>(cx: &Ctx<'_, K>, kind: ParserKind, close: C
     let reason = close.reason();
     crate::obs::record_parser_closed(kind, reason);
     if let Close::Poison(detail) = &close
-        && cx.emit.anomalies
+        && cx.emit.count_anomalies
     {
-        out.anomaly(
-            cx.key,
-            AnomalyKind::SessionParseError {
-                side: cx.side,
-                reason: detail.clone(),
-                parser_kind: kind,
-                slot: None,
-            },
-            cx.ts,
-        );
+        let anomaly = AnomalyKind::SessionParseError {
+            side: cx.side,
+            reason: detail.clone(),
+            parser_kind: kind,
+            slot: None,
+        };
+        // Counted whenever anomalies are on; the mask and a pause only
+        // decide whether the event is shown.
+        crate::obs::record_anomaly(&anomaly);
+        crate::obs::trace_anomaly(&anomaly);
+        if cx.emit.anomalies {
+            out.anomaly(cx.key, anomaly, cx.ts);
+        }
     }
     if cx.emit.parser_events {
         out.parser_closed(cx.key, kind, reason, close.detail(), cx.ts, false);

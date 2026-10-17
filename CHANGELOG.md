@@ -153,7 +153,9 @@ orientation & bounded tables"). A breaking release; migration guide:
   `u8`) are dropped while events are paused; `SessionParseError` needs
   anomalies on, `FLOW_ANOMALY` unmasked and no pause. Parsers are still
   closed, their state released and every close counted in
-  `flowscope_parser_closed_total`.
+  `flowscope_parser_closed_total`; with anomalies on, every parse error
+  is counted in `flowscope_anomalies_total{kind="parse_error"}` whether
+  or not its event is shown, as the reassembly anomalies are.
 - **Packets cut by a capture snap length were skipped** (#212): the
   extractors sliced strictly, so a `tcpdump -s 96` capture, or a live
   ring whose frames are smaller than the packets, produced no flow for
