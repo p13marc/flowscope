@@ -17,7 +17,9 @@
 mod counting_allocator;
 
 use counting_allocator::CountingAllocator;
-use criterion::{Criterion, black_box, criterion_group, criterion_main};
+use std::hint::black_box;
+
+use criterion::{Criterion, criterion_group, criterion_main};
 
 #[global_allocator]
 static GLOBAL: CountingAllocator = CountingAllocator;

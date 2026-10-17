@@ -4,7 +4,9 @@
 //!
 //!     cargo bench --bench extractor --features extractors,test-helpers
 
-use criterion::{Criterion, black_box, criterion_group, criterion_main};
+use std::hint::black_box;
+
+use criterion::{Criterion, criterion_group, criterion_main};
 use flowscope::{
     PacketView, Timestamp,
     extract::{
