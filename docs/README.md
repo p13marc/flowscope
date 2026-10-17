@@ -34,6 +34,7 @@ forward.
 
 | File | Cycle |
 |------|-------|
+| [`migration-0.25-to-0.26.md`](migration-0.25-to-0.26.md) | Truncation / orientation cycle: snap-length-truncated packets tracked and reassembled, wire and IP byte counts, parser lifecycle output gated by `EventMask` / pause, outputs and detectors oriented by the initiator, bounded rate tables. |
 | [`migration-0.24-to-0.25.md`](migration-0.24-to-0.25.md) | Session-engine cycle: one engine behind every L7 API, explicit reassembly gaps and per-side parser stops, parser closes that never end a flow, `tracker_mut` / `drain_buffer` / `Reassembler::is_poisoned` removed. (0.23 → 0.24 needed no guide.) |
 | [`migration-0.22-to-0.23.md`](migration-0.22-to-0.23.md) | Inline-proxy cycle: one streaming HTTP engine, `BodyFraming::UntilClose`, and the framing behaviour that changed. |
 | [`migration-0.21-to-0.22.md`](migration-0.21-to-0.22.md) | Stateful `QuicUdpParser`, `parser_kinds` removal. |

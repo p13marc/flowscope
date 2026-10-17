@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.26.0 — unreleased
+
+Truncation, orientation & bounded tables (milestone "0.26 — truncation,
+orientation & bounded tables"). A breaking release; migration guide:
+[`docs/migration-0.25-to-0.26.md`](docs/migration-0.25-to-0.26.md).
+
 ## 0.25.3 (2026-10-17)
 
 Dependency refresh (#215): every direct dependency onto its latest

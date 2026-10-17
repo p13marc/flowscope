@@ -750,13 +750,13 @@ flushes and recovers the sink.
 
 ```toml
 # CSV + Zeek conn.log writers — no extra deps.
-flowscope = { version = "0.23", features = ["emit"] }
+flowscope = { version = "0.26", features = ["emit"] }
 
 # NDJSON writer — adds serde_json.
-flowscope = { version = "0.23", features = ["emit-ndjson"] }
+flowscope = { version = "0.26", features = ["emit-ndjson"] }
 
 # Suricata 7.x EVE JSON — adds serde_json (0.12).
-flowscope = { version = "0.23", features = ["emit-eve"] }
+flowscope = { version = "0.26", features = ["emit-eve"] }
 ```
 
 ```rust,ignore
@@ -1107,7 +1107,7 @@ feature — `Histogram` for explicit-bucket distributions
 reads on unbounded streams.
 
 ```toml
-flowscope = { version = "0.23", features = ["aggregate"] }
+flowscope = { version = "0.26", features = ["aggregate"] }
 ```
 
 ```rust,ignore

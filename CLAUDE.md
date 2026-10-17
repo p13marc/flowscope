@@ -22,6 +22,10 @@ the core.
 
 ## Implementation Status
 
+**0.26.0** (in progress on branch `release-0.26`, milestone "0.26 — truncation,
+orientation & bounded tables"; CHANGELOG `## 0.26.0 — unreleased`,
+`docs/migration-0.25-to-0.26.md`). Issues #212, #204, #217, #218, #219, #220.
+
 **0.25.3** (published to crates.io 2026-10-17, tag `0.25.3` — dependency refresh, #215,
 milestone "0.25.3 — dependency refresh"; patch, CHANGELOG `## 0.25.3`; PR #216). Every direct
 requirement on its latest release: etherparse 0.21 (VLANs are

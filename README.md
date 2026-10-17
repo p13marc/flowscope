@@ -241,7 +241,7 @@ AF_XDP) which consumes flowscope's traits.
 
 ```toml
 [dependencies]
-flowscope = { version = "0.25", features = ["full"] }
+flowscope = { version = "0.26", features = ["full"] }
 ```
 
 MSRV is Rust 1.97. The `full` feature pulls in everything; for production
@@ -268,6 +268,7 @@ Per-feature dependency tree is documented inline in
 | [`docs/discoverability.md`](docs/discoverability.md) | one-page prelude tour grouped by use case |
 | [`docs/performance.md`](docs/performance.md) | criterion bench methodology + numbers |
 | [`docs/design.md`](docs/design.md) | why flowscope is shaped the way it is |
+| [`docs/migration-0.25-to-0.26.md`](docs/migration-0.25-to-0.26.md) | the 0.26 truncation / orientation cycle — snap-length-truncated packets are tracked and reassembled, wire and IP byte counts, parser lifecycle output gated like every event, outputs and detectors oriented by the initiator, bounded rate tables |
 | [`docs/migration-0.24-to-0.25.md`](docs/migration-0.24-to-0.25.md) | the 0.25 session-engine redesign — one engine for `Driver` / `SessionDriver`, explicit reassembly gaps and per-side parser stops, parser closes that no longer end (or re-create) flows, removed `tracker_mut` / `drain_buffer` / `is_poisoned`, datagram transports, pcapng |
 | [`docs/migration-0.22-to-0.23.md`](docs/migration-0.22-to-0.23.md) | the 0.23 inline-proxy cycle — one streaming HTTP engine, `BodyFraming::UntilClose`, and the framing behaviour that changed |
 | [`docs/migration-0.21-to-0.22.md`](docs/migration-0.21-to-0.22.md) | the 0.22 breaks — stateful `QuicUdpParser::new()` (PQ ClientHello reassembly) + `parser_kinds` removal — plus the additive 0.22 surface |
