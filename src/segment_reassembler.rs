@@ -713,6 +713,9 @@ impl SegmentBufferReassembler {
         self.skip_to(c.off, ts);
         let seq = self.track.seq_of(c.off);
         self.feed(seq, &c.data, ts, false);
+        if self.stop.is_none() {
+            self.skip_to(c.end(), ts);
+        }
     }
 
     fn feed(&mut self, seq: u32, payload: &[u8], ts: Timestamp, pass: bool) -> SegmentOutcome {
@@ -830,6 +833,18 @@ impl Reassembler for SegmentBufferReassembler {
         let start = self.track.offset_of(seq);
         let end = start + i64::from(len);
         if end <= self.track.next_off as i64 {
+            return;
+        }
+        if start - self.track.next_off as i64 > self.rules.max_ahead as i64 {
+            // Far ahead: held like a far segment until corroborated.
+            if let Some(c) =
+                self.track
+                    .far_missing(start as u64, u64::from(len), ts, self.rules.max_ahead)
+            {
+                self.resync(&c, ts);
+                return self.missing(seq, len, ts);
+            }
+            self.check_timers(ts);
             return;
         }
         if start <= self.track.next_off as i64 {
@@ -1601,5 +1616,67 @@ mod tests {
         r.release();
         r.missing(2, 10, ts(0));
         assert_eq!(r.gaps(), 0);
+    }
+
+    // Review findings: far-ahead truncated segments.
+
+    #[test]
+    fn a_truncated_stray_does_not_vouch_for_itself() {
+        let mut r = SegmentBufferReassembler::new();
+        r.set_origin(0);
+        r.segment(0, &[b'a'; 10], ts(0));
+        // One stray packet far ahead: 10 bytes captured, 1400 cut.
+        r.segment(50_000_000, &[b's'; 10], ts(0));
+        r.missing(50_000_010, 1400, ts(0));
+        r.segment(10, &[b'b'; 10], ts(0));
+        let out = drain(&mut r);
+        assert_eq!(out.data(), [[b'a'; 10], [b'b'; 10]].concat());
+        assert_eq!(out.gap_count(), 0, "the stream keeps its position");
+        assert_eq!(r.gaps(), 0);
+        assert_eq!(r.out_of_window_segments(), 1);
+    }
+
+    #[test]
+    fn a_header_only_jump_past_max_ahead_resyncs_on_the_next_packet() {
+        let mut r = SegmentBufferReassembler::new();
+        r.set_origin(0);
+        r.missing(0, 1000, ts(0));
+        // Capture loss of ~5 MB, then header-only packets again.
+        r.missing(5_000_000, 1000, ts(1));
+        r.missing(5_001_000, 1000, ts(1));
+        r.missing(5_002_000, 1000, ts(2));
+        let out = drain(&mut r);
+        assert_eq!(out.gap_bytes(), 5_003_000, "nothing is left waiting");
+        assert_eq!(r.gap_bytes(), 5_003_000);
+        assert_eq!(r.origin_resets(), 1);
+    }
+
+    #[test]
+    fn an_ack_corroborates_a_far_missing_range() {
+        let mut r = SegmentBufferReassembler::new().with_ack_grace(Duration::from_millis(10));
+        r.set_origin(0);
+        r.missing(5_000_000, 1000, ts(0));
+        r.peer_ack(5_001_000, ts(0));
+        assert_eq!(drain(&mut r).gap_bytes(), 5_001_000);
+    }
+
+    #[test]
+    fn a_corroborated_truncated_stray_keeps_its_cut() {
+        let mut r = SegmentBufferReassembler::new();
+        r.set_origin(0);
+        r.segment(50_000_000, &[b'x'; 10], ts(0));
+        r.missing(50_000_010, 1390, ts(0));
+        // The next packet of the far stream corroborates the first.
+        r.segment(50_001_400, &[b'y'; 10], ts(1));
+        let out = drain(&mut r);
+        assert_eq!(
+            parts(&out),
+            vec![
+                Chunk::Gap(50_000_000),
+                Chunk::Data(&[b'x'; 10]),
+                Chunk::Gap(1390),
+                Chunk::Data(&[b'y'; 10]),
+            ]
+        );
     }
 }

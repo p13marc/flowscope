@@ -573,6 +573,16 @@ pub(crate) struct Candidate {
     pub(crate) off: u64,
     pub(crate) data: Vec<u8>,
     pub(crate) ts: Timestamp,
+    /// Bytes right after `data` that the capture cut
+    /// ([`Reassembler::missing`]); skipped when the candidate is used.
+    pub(crate) missing: u64,
+}
+
+impl Candidate {
+    /// Stream offset just past the candidate's data and cut bytes.
+    pub(crate) fn end(&self) -> u64 {
+        self.off + self.data.len() as u64 + self.missing
+    }
 }
 
 /// What a far-away (out-of-window) segment led to.
@@ -696,8 +706,49 @@ impl Track {
             off,
             data: payload.to_vec(),
             ts,
+            missing: 0,
         }));
         FarOutcome::Held
+    }
+
+    /// Cut bytes `[start, start + len)` that continue the held stray
+    /// candidate of the **same packet** (it ends at `start` and has the
+    /// packet's timestamp): they extend it, and are no independent
+    /// evidence for it. Returns whether they did.
+    pub(crate) fn extend_stray(&mut self, start: u64, len: u64, ts: Timestamp) -> bool {
+        match self.oow.as_mut() {
+            Some(c) if c.ts == ts && c.end() == start => {
+                c.missing = c.missing.saturating_add(len);
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Cut bytes `[start, start + len)` more than `max_ahead` past the
+    /// stream position. As likely a stray (a forged header, an earlier
+    /// connection) as capture loss, so they are held like a far
+    /// segment ([`Self::far_ahead`]): a later independent segment, cut
+    /// range or ACK corroborates them; the captured part of their own
+    /// packet does not. Returns the candidate to resync to, if this
+    /// corroborated one.
+    pub(crate) fn far_missing(
+        &mut self,
+        start: u64,
+        len: u64,
+        ts: Timestamp,
+        max_ahead: u64,
+    ) -> Option<Box<Candidate>> {
+        if self.extend_stray(start, len, ts) {
+            return None;
+        }
+        match self.far_ahead(start, &[], ts, max_ahead) {
+            FarOutcome::Resync(c) => Some(c),
+            FarOutcome::Held => {
+                self.extend_stray(start, len, ts);
+                None
+            }
+        }
     }
 
     /// Record proof that the stream extends to `seq`. Far-ahead proof
@@ -1122,6 +1173,9 @@ impl BufferedReassembler {
         self.release_reorder(ts);
         self.skip_to(c.off, ts);
         self.deliver_at(c.off, &c.data, ts);
+        if self.stop.is_none() {
+            self.skip_to(c.end(), ts);
+        }
     }
 
     /// Deadlines: an acknowledged hole after the grace period, any
@@ -1203,6 +1257,7 @@ impl BufferedReassembler {
                 off: start as u64,
                 data: payload.to_vec(),
                 ts,
+                missing: 0,
             }));
             self.track.last_progress = ts;
             self.check_timers(ts);
@@ -1272,6 +1327,18 @@ impl Reassembler for BufferedReassembler {
         let start = self.track.offset_of(seq);
         let end = start + i64::from(len);
         if end <= self.track.next_off as i64 {
+            return;
+        }
+        if start - self.track.next_off as i64 > self.rules.max_ahead as i64 {
+            // Far ahead: held like a far segment until corroborated.
+            if let Some(c) =
+                self.track
+                    .far_missing(start as u64, u64::from(len), ts, self.rules.max_ahead)
+            {
+                self.resync(&c, ts);
+                return self.missing(seq, len, ts);
+            }
+            self.check_timers(ts);
             return;
         }
         if start <= self.track.next_off as i64 {
@@ -1967,5 +2034,33 @@ mod tests {
         let mut p = P;
         p.missing(0, 10, t());
         assert_eq!(p.gaps(), 0);
+    }
+
+    // Review findings: far-ahead truncated segments.
+
+    #[test]
+    fn buffered_truncated_stray_does_not_vouch_for_itself() {
+        let mut r = BufferedReassembler::new();
+        r.set_origin(0);
+        r.segment(0, &[b'a'; 10], t());
+        r.segment(50_000_000, &[b's'; 10], t());
+        r.missing(50_000_010, 1400, t());
+        r.segment(10, &[b'b'; 10], t());
+        let out = drain(&mut r);
+        assert_eq!(out.data(), [[b'a'; 10], [b'b'; 10]].concat());
+        assert_eq!(out.gap_count(), 0, "the stream keeps its position");
+        assert_eq!(r.out_of_window_segments(), 1);
+    }
+
+    #[test]
+    fn buffered_header_only_jump_past_max_ahead_resyncs() {
+        let mut r = BufferedReassembler::new();
+        r.set_origin(0);
+        r.missing(0, 1000, Timestamp::new(0, 0));
+        // Two header-only packets (distinct timestamps) past the loss.
+        r.missing(5_000_000, 1000, Timestamp::new(1, 0));
+        r.missing(5_001_000, 1000, Timestamp::new(2, 0));
+        assert_eq!(drain(&mut r).gap_bytes(), 5_002_000);
+        assert_eq!(r.origin_resets(), 1);
     }
 }

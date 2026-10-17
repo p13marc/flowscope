@@ -66,8 +66,12 @@ orientation & bounded tables"). A breaking release; migration guide:
   `BufferedReassembler` skip them as a gap at once when the stream has
   reached them (delivering any held out-of-order data that falls inside
   them), and otherwise take them as proof that the stream reaches
-  `seq + len`, like an acknowledgement. Defaulted to a no-op; the model
-  test `tests/sbr_model.rs` covers it.
+  `seq + len`, like an acknowledgement. Cut bytes more than
+  `reassembly_max_ahead` past the stream position are held like a far
+  stray segment until an independent segment, cut range or ACK
+  corroborates them — the captured part of their own packet never does,
+  so one stale or forged truncated segment cannot move the stream.
+  Defaulted to a no-op; the model test `tests/sbr_model.rs` covers it.
 - **Wire lengths from the extractors** (#212): `TcpInfo::wire_payload_len`
   (`#[serde(default)]`), `TcpInfo::is_truncated()` / `wire_len()`;
   `L4Meta::wire_payload_len`, `with_wire_payload_len()`,
