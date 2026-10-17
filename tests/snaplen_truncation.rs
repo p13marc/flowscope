@@ -528,3 +528,56 @@ fn a_reported_cut_bounds_the_header_claim() {
     }
     assert_eq!(len, Some(f.len() + 40), "the cut the source reported");
 }
+
+// ── Malformed complete packets stay skipped (as in 0.25) ──────────
+
+/// An insertion attempt: a segment whose IPv4 total length is 0 (less
+/// than its own header) is dropped by the receiver, so it must not
+/// take the place of the real bytes in the reassembled stream.
+#[test]
+fn ipv4_total_len_below_header_is_not_inserted() {
+    let mut frames = flow(&[(0, b"GOOD".to_vec())]);
+    let mut evil = ipv4_tcp(M, M, C, S, CP, SP, CISN + 1, SISN + 1, PSH | ACK, b"EVIL");
+    evil[16..18].copy_from_slice(&0u16.to_be_bytes());
+    frames.insert(3, (ts_ms(1_002), evil));
+    let mut d = collector();
+    let mut out = Events::new();
+    for (t, f) in &frames {
+        d.track_into(PacketView::new(f, *t).with_wire_len(f.len()), &mut out);
+    }
+    d.finish_into(&mut out);
+    let data: Vec<u8> = pieces(&out)
+        .into_iter()
+        .filter_map(|p| match p {
+            Piece::Data(FlowSide::Initiator, b) => Some(b),
+            _ => None,
+        })
+        .flatten()
+        .collect();
+    assert_eq!(data, b"GOOD");
+}
+
+/// A complete datagram whose UDP length claims more than its IP payload
+/// (or less than its own header) is malformed: receivers drop it, so
+/// datagram parsers must not see it (forged DNS answers).
+#[test]
+fn udp_length_beyond_the_ip_payload_is_not_parsed() {
+    for udp_len in [900u16, 5] {
+        let mut f = ipv4_udp(S, C, 53, 5000, &[0x42; 40]);
+        f[14 + 20 + 4..14 + 20 + 6].copy_from_slice(&udp_len.to_be_bytes());
+        let parser = Lengths::default();
+        let seen = parser.seen.clone();
+        let mut d = DatagramDriver::new(FiveTuple::bidirectional(), TemplateFactory(parser));
+        let mut out = Vec::new();
+        d.track_into(
+            PacketView::new(&f, ts_ms(1)).with_wire_len(f.len()),
+            &mut out,
+        );
+        d.finish_into(&mut out);
+        assert!(
+            seen.lock().unwrap().is_empty(),
+            "UDP length {udp_len}: {:?}",
+            seen.lock().unwrap()
+        );
+    }
+}

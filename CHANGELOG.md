@@ -126,9 +126,15 @@ orientation & bounded tables"). A breaking release; migration guide:
   skipped — a malformed header or body in a packet that was *not* cut
   (bad TCP data offset, a short IGMP message, a short ARP body, a broken
   MACsec header), IP extension headers cut by the snap length, and a
-  packet cut inside its TCP / UDP header (no ports, no key). An IPv4
-  total length of 0 (TCP segmentation offload) or an IPv6 jumbogram now
-  takes its length from the frame instead of being skipped.
+  packet cut inside its TCP / UDP header (no ports, no key) — and so are
+  the length fields lax slicing would overrule, which receivers drop: an
+  IPv4 total length below the header's own length, a UDP length below 8
+  or beyond the IP payload, an IP version that does not match the
+  EtherType. A property test checks that, on a frame the capture did not
+  cut, the extractors read exactly what 0.25's strict parse did. The one
+  addition: an IPv4 total length of 0 on a datagram longer than 65 535
+  bytes (IPv4 BIG TCP on the sending host's capture) takes its length
+  from the frame.
 - `InnerGtpU` / `InnerGre` / `StripMpls` hand their inner extractor
   `view.with_frame(..)`, keeping the snap cut (they built a fresh view);
   `InnerVxlan` / `InnerGtpU` read the outer ports from the one parse
