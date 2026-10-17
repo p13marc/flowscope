@@ -415,8 +415,11 @@ impl<'a> Layers<'a> {
                     let header_slice = v4.header().slice();
                     let header_len = header_slice.len();
                     if let Some(off) = byte_offset(frame, header_slice) {
+                        // `.payload()` starts after an Authentication
+                        // Header: the layer spans it too.
+                        let ah_len = v4.extensions().auth.map_or(0, |a| a.slice().len());
                         let payload_len = v4.payload().payload.len();
-                        let end = off + header_len + payload_len;
+                        let end = off + header_len + ah_len + payload_len;
                         let bytes = &frame[off..end.min(frame.len())];
                         stack.push(Layer::Ipv4(Ipv4Slice::new(bytes, header_len)));
                     }

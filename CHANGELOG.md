@@ -202,6 +202,10 @@ orientation & bounded tables"). A breaking release; migration guide:
   after the extension headers, so the slice (and its `payload()`) ended
   that many bytes early. It now spans the extension headers, like
   `Layers::ipv6()`.
+- **IPv4 layers were short by an Authentication Header**: `Layers::ipv4()`
+  and `LayerStack::ipv4()` ended the layer at the header plus the payload
+  after the AH, so with an AH the slice (and its `payload()`) missed
+  that many bytes (90 of a 106-byte datagram). Both span the AH now.
 - The `http2` fuzz target no longer warns about a doc comment on a
   macro invocation.
 - **pcapng records could report fewer bytes on the wire than they
