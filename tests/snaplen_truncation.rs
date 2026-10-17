@@ -479,3 +479,52 @@ fn udp_surplus_area_is_parsed() {
     assert_eq!(stats.packets_truncated_initiator, 0);
     assert_eq!(stats.bytes_initiator, f.len() as u64);
 }
+
+/// A frame its source reports complete (`with_wire_len` = its length)
+/// whose IP header claims more bytes is not a truncated packet but a
+/// lying one — receivers drop it — so it is skipped, as before 0.26,
+/// instead of making the reassembler skip what the header claims.
+#[test]
+fn a_complete_frame_overrules_a_lying_ip_header() {
+    use flowscope::{FlowEvent, FlowTracker};
+    let mut f = ipv4_tcp(M, M, C, S, CP, SP, CISN + 1, SISN + 1, PSH | ACK, b"x");
+    // IPv4 total length: claim 60 000 bytes.
+    f[16..18].copy_from_slice(&60_000u16.to_be_bytes());
+    let mut tracker: FlowTracker<FiveTuple> = FlowTracker::new(FiveTuple::bidirectional());
+    let evs = tracker.track(PacketView::new(&f, ts_ms(1)).with_wire_len(f.len()));
+    assert!(evs.is_empty(), "{evs:?}");
+    assert_eq!(tracker.stats().packets_unmatched, 1);
+    // A source that does not know trusts the header (snap length
+    // unknown): the packet is tracked as cut.
+    let evs = tracker.track(PacketView::new(&f, ts_ms(2)));
+    assert!(evs.iter().any(|e| matches!(e, FlowEvent::Started { .. })));
+}
+
+/// A reported snap cut bounds what the IP header may claim was cut.
+#[test]
+fn a_reported_cut_bounds_the_header_claim() {
+    use flowscope::{FlowEvent, FlowTracker};
+    let mut f = ipv4_tcp(
+        M,
+        M,
+        C,
+        S,
+        CP,
+        SP,
+        CISN + 1,
+        SISN + 1,
+        PSH | ACK,
+        &[b'x'; 100],
+    );
+    // The header claims 10 000 more bytes than the 100-byte payload.
+    f[16..18].copy_from_slice(&(20u16 + 20 + 10_100).to_be_bytes());
+    f.truncate(HEADERS + 60); // the source cut 40 bytes
+    let mut tracker: FlowTracker<FiveTuple> = FlowTracker::new(FiveTuple::bidirectional());
+    let mut len = None;
+    for ev in tracker.track(PacketView::new(&f, ts_ms(1)).with_snap_cut(40)) {
+        if let FlowEvent::Packet { len: l, .. } = ev {
+            len = Some(l);
+        }
+    }
+    assert_eq!(len, Some(f.len() + 40), "the cut the source reported");
+}

@@ -36,6 +36,15 @@ front (strip or synthesise a link header, re-insert a VLAN tag): the
 cut is measured at the end, so it stays valid across such rewrites and
 `with_frame` keeps it. `PcapFlowSource` does this for every record.
 
+Report it for **every** frame, complete ones included
+(`with_wire_len(frame.len())`, or `with_snap_cut(0)`):
+`PacketView::wire_len_known()` then tells flowscope that a frame with
+no cut is complete. A complete frame whose IP header claims more bytes
+than it holds is a lie (receivers drop it, an evasion tool may send it)
+and is skipped as in 0.25; a frame from a source that reports nothing
+gets the benefit of the doubt and is treated as cut where its header
+says so. A reported cut also bounds what the header may claim.
+
 Nothing else is required to keep compiling — both structs are
 `#[non_exhaustive]`. What a source gains is described in the sections
 below: truncated packets are tracked, counted at their wire length, and

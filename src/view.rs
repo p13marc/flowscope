@@ -69,6 +69,12 @@ pub struct PacketView<'a> {
     ///
     /// New in 0.26.0 (#219).
     pub snap_cut: u32,
+
+    /// Whether the source reported the wire length
+    /// ([`with_wire_len`](Self::with_wire_len) /
+    /// [`with_snap_cut`](Self::with_snap_cut)): then `snap_cut == 0`
+    /// means "complete", not "unknown".
+    wire_known: bool,
 }
 
 impl<'a> PacketView<'a> {
@@ -83,6 +89,7 @@ impl<'a> PacketView<'a> {
             timestamp,
             rx_metadata: RxMetadata::default(),
             snap_cut: 0,
+            wire_known: false,
         }
     }
 
@@ -94,6 +101,14 @@ impl<'a> PacketView<'a> {
     /// Call it with the length of the same frame the view holds,
     /// before any rewrite of its front: for a pcap record, its
     /// `original_len`; for a live ring frame, the packet's length.
+    ///
+    /// Call it for complete frames too (`wire_len == frame.len()`): a
+    /// view whose source reported its wire length is known complete
+    /// when nothing was cut, and an IP header claiming more bytes than
+    /// such a frame holds is a lie, not a truncation — the extractors'
+    /// packet is skipped, as receivers drop it. A view without a
+    /// reported length trusts the IP header. See
+    /// [`wire_len_known`](Self::wire_len_known).
     ///
     /// ```
     /// use flowscope::{PacketView, Timestamp};
@@ -109,15 +124,29 @@ impl<'a> PacketView<'a> {
     #[inline]
     pub fn with_wire_len(mut self, wire_len: usize) -> Self {
         self.snap_cut = snap_cut_of(self.frame.len(), wire_len);
+        self.wire_known = true;
         self
     }
 
     /// Builder — set [`snap_cut`](Self::snap_cut) directly: the number
-    /// of bytes missing from the end of the frame. New in 0.26.0.
+    /// of bytes missing from the end of the frame (`0`: the frame is
+    /// complete). Like [`with_wire_len`](Self::with_wire_len), it marks
+    /// the wire length as known. New in 0.26.0.
     #[inline]
     pub fn with_snap_cut(mut self, snap_cut: u32) -> Self {
         self.snap_cut = snap_cut;
+        self.wire_known = true;
         self
+    }
+
+    /// `true` when the source reported the packet's wire length
+    /// ([`with_wire_len`](Self::with_wire_len) /
+    /// [`with_snap_cut`](Self::with_snap_cut)), so `snap_cut == 0`
+    /// means the frame is complete rather than "unknown". New in
+    /// 0.26.0.
+    #[inline]
+    pub fn wire_len_known(&self) -> bool {
+        self.wire_known
     }
 
     /// Length of the packet on the wire: the captured frame plus
@@ -195,6 +224,7 @@ impl<'a> PacketView<'a> {
             timestamp: self.timestamp,
             rx_metadata: self.rx_metadata,
             snap_cut: self.snap_cut,
+            wire_known: self.wire_known,
         }
     }
 }
@@ -260,6 +290,8 @@ pub struct OwnedPacketView {
     /// Bytes of the original packet missing from the end of `frame`;
     /// see [`PacketView::snap_cut`]. New in 0.26.0 (#219).
     pub snap_cut: u32,
+    /// See [`PacketView::wire_len_known`].
+    wire_known: bool,
 }
 
 impl OwnedPacketView {
@@ -272,6 +304,7 @@ impl OwnedPacketView {
             timestamp,
             rx_metadata: RxMetadata::default(),
             snap_cut: 0,
+            wire_known: false,
         }
     }
 
@@ -280,6 +313,7 @@ impl OwnedPacketView {
     #[inline]
     pub fn with_wire_len(mut self, wire_len: usize) -> Self {
         self.snap_cut = snap_cut_of(self.frame.len(), wire_len);
+        self.wire_known = true;
         self
     }
 
@@ -288,7 +322,14 @@ impl OwnedPacketView {
     #[inline]
     pub fn with_snap_cut(mut self, snap_cut: u32) -> Self {
         self.snap_cut = snap_cut;
+        self.wire_known = true;
         self
+    }
+
+    /// Owned mirror of [`PacketView::wire_len_known`]. New in 0.26.0.
+    #[inline]
+    pub fn wire_len_known(&self) -> bool {
+        self.wire_known
     }
 
     /// Length of the packet on the wire; owned mirror of
@@ -327,9 +368,11 @@ impl OwnedPacketView {
     /// Borrow as a [`PacketView`]. Carries the rx_metadata and
     /// [`snap_cut`](Self::snap_cut) through.
     pub fn as_view(&self) -> PacketView<'_> {
-        PacketView::new(&self.frame, self.timestamp)
-            .with_rx_metadata(self.rx_metadata)
-            .with_snap_cut(self.snap_cut)
+        let mut view =
+            PacketView::new(&self.frame, self.timestamp).with_rx_metadata(self.rx_metadata);
+        view.snap_cut = self.snap_cut;
+        view.wire_known = self.wire_known;
+        view
     }
 }
 
@@ -395,7 +438,15 @@ mod tests {
         assert_eq!(inner.snap_cut, 1418);
         assert_eq!(inner.wire_len(), 1500);
 
+        assert!(!PacketView::new(&buf, Timestamp::new(0, 0)).wire_len_known());
+        assert!(v.wire_len_known() && inner.wire_len_known());
         let ov = OwnedPacketView::new(vec![0u8; 96], Timestamp::new(0, 0)).with_wire_len(100);
+        assert!(ov.as_view().wire_len_known());
+        assert!(
+            !OwnedPacketView::new(vec![0u8; 4], Timestamp::new(0, 0))
+                .as_view()
+                .wire_len_known()
+        );
         assert_eq!(
             (ov.snap_cut, ov.wire_len(), ov.is_truncated()),
             (4, 100, true)

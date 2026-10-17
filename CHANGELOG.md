@@ -59,7 +59,12 @@ orientation & bounded tables"). A breaking release; migration guide:
   it). Counted from the end because every frame rewrite (decap
   combinators, link-header normalisation, netring's VLAN re-insertion)
   changes only the front, so `with_frame` keeps it. `PcapFlowSource`
-  sets it from each record's original length.
+  sets it from each record's original length. `wire_len_known()` says
+  whether the source reported the wire length (the two builders set
+  it): then `snap_cut == 0` means "complete", an IP header claiming more
+  than such a frame holds is treated as a lie — the packet is skipped,
+  as receivers drop it — and a reported cut bounds what the headers may
+  claim was cut. Without a reported length the IP header is trusted.
 - **`Reassembler::missing(seq, len, ts)`** (#212): bytes of a direction
   that were on the wire but not in the capture (cut by a snap length).
   They never arrive, so `SegmentBufferReassembler` and

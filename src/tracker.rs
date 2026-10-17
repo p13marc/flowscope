@@ -658,6 +658,24 @@ impl<E: FlowExtractor, S: Send + 'static> FlowTracker<E, S> {
                 return events;
             }
         };
+        let mut extracted = extracted;
+        if view.snap_cut > 0 {
+            // A reported cut bounds what the headers may claim was cut.
+            let cut = view.snap_cut as usize;
+            if let Some(t) = extracted.tcp.as_mut() {
+                t.wire_payload_len = t.wire_payload_len.min(t.payload_len.saturating_add(cut));
+            }
+            if let Some(m) = extracted.l4_meta.as_mut() {
+                m.wire_payload_len = m.wire_payload_len.min(m.payload_len.saturating_add(cut));
+            }
+        } else if view.wire_len_known() && extracted.is_truncated() {
+            // The source knows the frame is complete, yet its IP header
+            // claims more: a lying header (receivers drop the packet),
+            // not a capture cut. Skip it, as before 0.26.
+            self.stats.packets_unmatched += 1;
+            crate::obs::record_packet_unmatched();
+            return events;
+        }
         let truncated = view.is_truncated() || extracted.is_truncated();
         // Bytes the headers say were cut from the payload — what a
         // source that does not report its snap cut still lets us see.
