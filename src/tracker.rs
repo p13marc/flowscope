@@ -607,6 +607,12 @@ impl<E: FlowExtractor, S: Send + 'static> FlowTracker<E, S> {
     ///
     /// `payload_cb` is called at most once per packet (TCP only). See
     /// [`Self::track_with`] for a hook that fires for every packet.
+    ///
+    /// `payload` is the **captured** payload. For a segment a snap
+    /// length cut, the bytes after it were on the wire but are not
+    /// passed (nor reported): use [`Self::track_with`] and
+    /// [`PacketContext::truncated`] / [`TcpInfo::wire_payload_len`] to
+    /// see the cut, as [`crate::FlowDriver`] does.
     pub fn track_with_payload<'v, F>(
         &mut self,
         view: impl Into<PacketView<'v>>,

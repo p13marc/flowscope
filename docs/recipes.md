@@ -762,14 +762,17 @@ flowscope = { version = "0.26", features = ["emit-eve"] }
 ```rust,ignore
 use flowscope::emit::{FlowEventCsvWriter, ZeekConnLogWriter};
 
-// CSV — `start_sec, end_sec, duration_sec, proto, src_ip, …, end_reason`
+// CSV — `start_sec, end_sec, duration_sec, proto, src_ip, …, end_reason,
+// ip_bytes_init, ip_bytes_resp`. `src_*` is the flow's initiator; `bytes_*`
+// are wire L2 bytes, `ip_bytes_*` IP octets (0.26).
 let mut csv = FlowEventCsvWriter::new(file)?;
 for ev in driver.track(view) {
     csv.write_event(&ev)?;
 }
 csv.finish()?;
 
-// Zeek conn.log — tab-separated, `zeek-cut`-compatible
+// Zeek conn.log — tab-separated, `zeek-cut`-compatible; `id.orig_*` is the
+// initiator, `orig_ip_bytes` / `resp_ip_bytes` are IP octets (0.26)
 let mut zeek = ZeekConnLogWriter::new(file)?;
 for ev in driver.track(view) { zeek.write_event(&ev)?; }
 zeek.finish()?;

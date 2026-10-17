@@ -26,6 +26,38 @@ the core.
 orientation & bounded tables"; CHANGELOG `## 0.26.0 — unreleased`,
 `docs/migration-0.25-to-0.26.md`). Issues #212, #204, #217, #218, #219, #220.
 
+- **Wire length** (#219): `PacketView::snap_cut` (bytes missing from the
+  *end* of the frame — invariant across front rewrites, kept by
+  `with_frame`), `with_wire_len` / `wire_len()` / `is_truncated()`;
+  `PcapFlowSource` sets it. pcapng EPB original length ≥ captured, SPB
+  padding stripped.
+- **Truncated packets** (#212): `extract/parse.rs` slices with
+  `LaxSlicedPacket`; only a length stop inside the transport of an
+  *incomplete* IP payload is tolerated, a cut TCP/UDP header is still
+  skipped. `TcpInfo::wire_payload_len`, `L4Meta::wire_payload_len`,
+  `Extracted::l3_len`. `FlowDriver::feed_tcp` feeds `segment(captured)` +
+  `Reassembler::missing(rest)` (never passthrough), FIN at `data_seq +
+  wire`; the built-ins skip missing bytes at once when the stream reached
+  them (`tests/sbr_model.rs` Missing op), else record ACK-like evidence.
+  Cut datagrams are not parsed (`flowscope_datagrams_truncated_total`).
+  Tests: `tests/snaplen_truncation.rs`.
+- **Byte counts** (#219): `bytes_*` / `Packet.len` = wire L2 (source cut,
+  else header-inferred); new `ip_bytes_*` (from `l3_len`),
+  `packets_truncated_*`. FlowRecord IE 1/85 = IP octets, IE 352/353
+  (`layer2_octet_*`) = wire L2; Zeek `orig_ip_bytes`/`resp_ip_bytes`, EVE
+  `ip_bytes_to*`, CSV trailing `ip_bytes_*` columns.
+- **#204**: `session::core::Emit { anomalies, parser_events,
+  flow_end_closes }` from `FlowDriver::emit_gate()`; the engine decides a
+  flow-end close's visibility from its `Ended` before closing.
+- **#217/#218**: `Directed<'_, K>` (KeyFields adapter, `initiator(key,
+  &stats)`); writers, `FlowRecord::from_key_fields` and detectors read
+  keys from the initiator; `Detector::on_flow_start(.., initiator, ..)`,
+  `on_dns_query(.., sender, ..)`, `observe_dns(.., sender, ..)`; typed
+  `Event::Started.orientation` is the initiator's.
+- **#220**: `RollingRate::new(window, bucket, max_keys)` /
+  `BandwidthByKey::new(..)` — per-bucket key cap, overflow total
+  (`other_*`), `overflowed()`.
+
 **0.25.3** (published to crates.io 2026-10-17, tag `0.25.3` — dependency refresh, #215,
 milestone "0.25.3 — dependency refresh"; patch, CHANGELOG `## 0.25.3`; PR #216). Every direct
 requirement on its latest release: etherparse 0.21 (VLANs are

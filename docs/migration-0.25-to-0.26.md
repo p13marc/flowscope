@@ -113,7 +113,9 @@ derived from them: `total_bytes()`, `bytes_for()`,
 `flowscope_bytes_total` / `flowscope_flow_bytes` metrics — plus
 `FlowEvent::Packet.len`, the typed `Event::Packet.len` and
 `PacketContext::len` now count each packet's **wire length**: the
-captured frame plus what a snap length cut from it. Before 0.26 they
+captured frame plus what a snap length cut from it — as the source
+reported it (`PacketView::snap_cut`, section 1) or, when it did not,
+as the IP header claims it. Before 0.26 they
 counted the captured bytes, so a `tcpdump -s 96` capture reported at
 most 96 bytes per packet. For captures without a snap length nothing
 changes. `PacketContext::captured_len` is the old `len`.
@@ -274,3 +276,23 @@ total instead of a new entry: read it with `other_rate(now)` /
 is missing from that bucket's `rate`, `sum`, `snapshot` and `top_k`.
 If those tables are keyed by anything the network controls
 (addresses, ports, owners), switch to `new`.
+
+## 9. Compile breaks at a glance
+
+Everything else in this release is additive (new fields on
+`#[non_exhaustive]` structs, new methods, a defaulted trait method).
+What can stop code from compiling:
+
+| 0.25 | 0.26 |
+|---|---|
+| `impl Detector<K>`: `fn on_flow_start(&mut self, key, ts, out)` | `fn on_flow_start(&mut self, key, initiator: Orientation, ts, out)` |
+| `impl Detector<K>`: `fn on_dns_query(&mut self, key, qname, ts, out)` | `fn on_dns_query(&mut self, key, sender: Orientation, qname, ts, out)` |
+| `registry.observe_dns(&key, qname, ts, &mut out)` | `registry.observe_dns(&key, msg.orientation, qname, ts, &mut out)` |
+
+Behaviour changes that compile unchanged but change output — the ones
+to check before upgrading a pipeline: byte counts (section 4),
+exported octets and the Zeek / CSV columns (section 7), the endpoint
+order of every writer and detector (section 6), the typed driver's
+`Started.orientation` with initiator inference (section 6), parser
+lifecycle events under a mask or pause (section 5), and flows that
+appear for snap-length captures (section 3).

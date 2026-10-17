@@ -22,6 +22,15 @@ orientation & bounded tables"). A breaking release; migration guide:
   slot message's `orientation`); flow-end detectors use
   `stats.initiator_orientation`. Community ID and `stable_hash` are
   unchanged (direction-independent).
+- **Byte counts are wire lengths** (#219): `FlowStats::bytes_initiator`
+  / `bytes_responder` (and `total_bytes()`, `bytes_for()`, the rates
+  built on them, `flowscope_bytes_total`), `FlowEvent::Packet.len`, the
+  typed `Event::Packet.len` and `PacketContext::len` count each packet's
+  wire L2 length — the frame plus what a snap length cut, as the source
+  reported it (`PacketView::snap_cut`) or, when it did not, as the IP
+  header claims it. They were the captured length. Unchanged for a
+  capture without a snap length. The TCP history's data flag (`D` /
+  `d`) follows the segment's wire payload too.
 - **Exported octet counts are IP octets** (#219): `FlowRecord`'s IE 1
   / 85 (`octet_delta_count_*`, `octet_total_count`, and so the IPFIX wire
   export) carry `FlowStats::ip_bytes_*` — IP header and payload, as RFC
@@ -29,9 +38,10 @@ orientation & bounded tables"). A breaking release; migration guide:
   bytes. The wire L2 bytes move to the new IE 352 / 353 fields
   (`layer2_octet_delta_count_*`, `layer2_octet_total_count`, not encoded
   by the wire builder; `layer2_octets_initiator()` /
-  `layer2_octets_responder()` fall back to IE 1 when they are absent). Zeek rows gain `orig_ip_bytes` / `resp_ip_bytes`
-  in Zeek's column order (after `orig_pkts` / `resp_pkts`; `orig_bytes`
-  stays the wire L2 bytes), EVE `flow` / `stats` objects gain
+  `layer2_octets_responder()` fall back to IE 1 when they are absent).
+  Zeek rows gain `orig_ip_bytes` / `resp_ip_bytes` in Zeek's column
+  order (after `orig_pkts` / `resp_pkts`; `orig_bytes` stays the wire
+  L2 bytes), EVE `flow` / `stats` objects gain
   `ip_bytes_toserver` / `ip_bytes_toclient` (`bytes_to*` stay wire L2,
   Suricata's convention), CSV rows gain trailing `ip_bytes_init` /
   `ip_bytes_resp` columns. `CicFlowFeatures` keeps wire L2 bytes.
@@ -96,15 +106,6 @@ orientation & bounded tables"). A breaking release; migration guide:
 
 ### Changed
 
-- **Byte counts are wire lengths** (#219): `FlowStats::bytes_initiator`
-  / `bytes_responder` (and `total_bytes()`, `bytes_for()`, the rates
-  built on them, `flowscope_bytes_total`), `FlowEvent::Packet.len`, the
-  typed `Event::Packet.len` and `PacketContext::len` count each packet's
-  wire L2 length — the frame plus what a snap length cut, as the source
-  reported it (`PacketView::snap_cut`) or, when it did not, as the IP
-  header claims it. They were the captured length. Unchanged for a
-  capture without a snap length. The TCP history's data flag (`D` /
-  `d`) follows the segment's wire payload too.
 - **The extractors parse laxly** (#212): `etherparse::LaxSlicedPacket`
   instead of `SlicedPacket`. A packet the capture cut short (its IP
   header claims more bytes than were captured) is extracted as far as
@@ -145,7 +146,6 @@ orientation & bounded tables"). A breaking release; migration guide:
   header-only capture (`-s 54`) yields one gap per segment instead of a
   stall. A cut datagram (UDP payload, ICMP message) is tracked but not
   handed to datagram parsers.
-
 - **pcapng records could report fewer bytes on the wire than they
   captured** (#219): an EPB with a smaller `original_len` than its data
   now reports the captured length, as classic pcap records already did.
