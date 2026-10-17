@@ -161,7 +161,8 @@ fn parse_from_lax<'a>(
     } else {
         captured_l3
     };
-    let l4_wire_len = if payload.incomplete {
+    let incomplete = payload.incomplete;
+    let l4_wire_len = if incomplete {
         l3_wire
             .saturating_sub(l3_header)
             .max(l4_payload_slice.len())
@@ -216,12 +217,25 @@ fn parse_from_lax<'a>(
         Some(etherparse::TransportSlice::Udp(udp)) => {
             let payload = udp.payload();
             let payload_offset = byte_offset(frame, payload).unwrap_or(l4_region_offset);
+            // A complete datagram is what UDP's length field delimits
+            // (bytes after it in the IP payload — UDP options, trailing
+            // data — are no truncation). A cut one is as long as that
+            // field says, when it is plausible, else as the IP header
+            // says.
+            let wire_payload_len = if incomplete {
+                match usize::from(udp.length()) {
+                    claimed @ 8.. if claimed <= l4_wire_len => claimed - 8,
+                    _ => l4_wire_len.saturating_sub(8),
+                }
+            } else {
+                payload.len()
+            };
             Some(ParsedL4::Udp(ParsedUdp {
                 src_port: udp.source_port(),
                 dst_port: udp.destination_port(),
                 payload_offset,
                 payload_len: payload.len(),
-                wire_payload_len: l4_wire_len.saturating_sub(8).max(payload.len()),
+                wire_payload_len: wire_payload_len.max(payload.len()),
             }))
         }
         Some(_) => Some(ParsedL4::Other),
@@ -647,6 +661,25 @@ mod tests {
             panic!("expected udp")
         };
         assert_eq!((u.payload_len, u.wire_payload_len), (2, 2));
+    }
+
+    #[test]
+    fn udp_surplus_area_is_not_a_truncation() {
+        // UDP length 38 (30-byte payload) inside a 48-byte IP payload:
+        // 10 bytes after the datagram (UDP options / trailing data).
+        let mut f = ipv4_udp([10, 0, 0, 1], [10, 0, 0, 2], 5353, 53, &[1; 40]);
+        f[14 + 20 + 4..14 + 20 + 6].copy_from_slice(&38u16.to_be_bytes());
+        let parsed = parse_eth(&f).unwrap();
+        let ParsedL4::Udp(u) = parsed.l4.unwrap() else {
+            panic!("expected udp")
+        };
+        assert_eq!((u.payload_len, u.wire_payload_len), (30, 30));
+        // Cut: the UDP length field gives the datagram's wire size.
+        f.truncate(14 + 20 + 8 + 5);
+        let ParsedL4::Udp(u) = parse_eth(&f).unwrap().l4.unwrap() else {
+            panic!("expected udp")
+        };
+        assert_eq!((u.payload_len, u.wire_payload_len), (5, 30));
     }
 
     #[test]

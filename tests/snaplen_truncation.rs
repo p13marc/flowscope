@@ -453,3 +453,29 @@ fn reported_wire_length_is_counted() {
     assert_eq!(stats.ip_bytes_initiator, 30);
     assert_eq!(stats.packets_truncated_initiator, 1, "the source cut it");
 }
+
+/// Bytes after a UDP datagram inside its IP payload (UDP options,
+/// trailing data) are not a truncation: the datagram is parsed, as
+/// before 0.26, and not counted as cut.
+#[test]
+fn udp_surplus_area_is_parsed() {
+    let mut f = ipv4_udp(C, S, 5000, 53, &[7; 40]);
+    // UDP length 38: a 30-byte datagram, 10 surplus bytes after it.
+    f[14 + 20 + 4..14 + 20 + 6].copy_from_slice(&38u16.to_be_bytes());
+    let parser = Lengths::default();
+    let seen = parser.seen.clone();
+    let mut d = DatagramDriver::new(FiveTuple::bidirectional(), TemplateFactory(parser));
+    let mut out = Vec::new();
+    d.track_into(PacketView::new(&f, ts_ms(1)), &mut out);
+    d.finish_into(&mut out);
+    assert_eq!(*seen.lock().unwrap(), vec![30]);
+    let stats = out
+        .iter()
+        .find_map(|e| match e {
+            SessionEvent::Closed { stats, .. } => Some(stats.clone()),
+            _ => None,
+        })
+        .expect("the flow ends");
+    assert_eq!(stats.packets_truncated_initiator, 0);
+    assert_eq!(stats.bytes_initiator, f.len() as u64);
+}
