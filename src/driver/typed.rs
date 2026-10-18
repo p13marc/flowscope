@@ -64,7 +64,9 @@ use crate::{
     session::{
         DatagramParser, DatagramParserFactory, SessionParser, SessionParserFactory,
         TemplateFactory,
-        core::{Ctx, DEFAULT_PROBE_PACKETS, DatagramCore, Ports, Selector, SessionCore, Stream},
+        core::{
+            Ctx, DEFAULT_PROBE_PACKETS, DatagramCore, Emit, Ports, Selector, SessionCore, Stream,
+        },
         engine::{Dispatch, Engine},
     },
     tracker::{FlowTracker, FlowTrackerConfig},
@@ -108,13 +110,17 @@ type IdleTimeoutFn<K> =
 pub enum Event<K> {
     /// First packet of a new flow.
     ///
-    /// `orientation` is the flow's deterministic canonical direction
-    /// ([`Orientation`], issue #118) — equal to the initiator's
-    /// orientation and to [`FlowStats::initiator_orientation`].
+    /// `orientation` is the canonical direction ([`Orientation`],
+    /// issue #118) of the flow's **initiator** — equal to
+    /// [`FlowStats::initiator_orientation`] on the flow's later events.
     Started {
         key: K,
         /// Canonical (address-sorted) orientation of the flow's
-        /// first packet. Deterministic regardless of arrival order.
+        /// initiator: `Forward` when it is `key`'s `a` endpoint. Since
+        /// 0.26 (#218) this holds when
+        /// [`crate::FlowTrackerConfig::infer_tcp_initiator`] decided the
+        /// first packet (a `SYN+ACK`) came from the responder too —
+        /// before, it was that first packet's orientation.
         orientation: Orientation,
         ts: Timestamp,
         l4: Option<L4Proto>,
@@ -170,6 +176,8 @@ pub enum Event<K> {
         /// [`FlowStats::initiator_orientation`] it recovers `side`
         /// deterministically.
         orientation: Orientation,
+        /// The packet's wire length: the frame plus what a snap
+        /// length cut (see [`FlowStats::bytes_initiator`]).
         len: usize,
         ts: Timestamp,
         tcp: Option<TcpInfo>,
@@ -222,6 +230,13 @@ pub enum Event<K> {
     /// the flow-end close *is* reported here (one per slot, `detail:
     /// None`), because several slots can share one flow and `Ended`
     /// alone would not say which of them had a parser on it.
+    ///
+    /// Gating (0.26, #204): a flow-end close rides with its `Ended` —
+    /// it is emitted exactly when that `Ended` is
+    /// ([`crate::EventMask::ENDED`] not masked, events not paused). An
+    /// early close, like [`Self::ParserSideStopped`], has no mask bit
+    /// and is dropped only while events are paused
+    /// ([`Driver::pause_events`]). The parser is closed either way.
     ///
     /// `#[non_exhaustive]` — match with a trailing `..`.
     #[non_exhaustive]
@@ -414,15 +429,21 @@ impl<K> From<FlowEvent<K>> for Event<K> {
     /// driver's `emit_packet_details`, not this conversion).
     fn from(ev: FlowEvent<K>) -> Self {
         match ev {
+            // `Event::Started.orientation` is the initiator's: the
+            // first packet's own unless it came from the responder
+            // (initiator inference, #218).
             FlowEvent::Started {
                 key,
+                side,
                 orientation,
                 ts,
                 l4,
-                ..
             } => Event::Started {
                 key,
-                orientation,
+                orientation: match side {
+                    FlowSide::Initiator => orientation,
+                    FlowSide::Responder => orientation.flipped(),
+                },
                 ts,
                 l4,
             },
@@ -528,7 +549,7 @@ where
         stats: &FlowStats,
         finals: [&StreamChunks; 2],
         ports: Ports,
-        anomalies: bool,
+        emit: Emit,
         out: &mut Self::Out,
     ) {
         for slot in &mut self.list {
@@ -538,7 +559,7 @@ where
                 stats,
                 finals,
                 ports,
-                anomalies,
+                emit,
                 out,
                 &mut self.order,
             );
@@ -549,11 +570,11 @@ where
         now: Timestamp,
         stamp: Timestamp,
         orientation_of: &dyn Fn(&K) -> Orientation,
-        anomalies: bool,
+        emit: Emit,
         out: &mut Self::Out,
     ) {
         for slot in &mut self.list {
-            slot.on_tick(now, stamp, orientation_of, anomalies, out, &mut self.order);
+            slot.on_tick(now, stamp, orientation_of, emit, out, &mut self.order);
         }
     }
     fn retain(&mut self, alive: &dyn Fn(&K) -> bool) {
@@ -785,7 +806,11 @@ where
     }
 
     /// Stop emitting lifecycle events (overload shunt); parsers keep
-    /// running and flows keep being released.
+    /// running, their messages keep flowing to the slot handles, and
+    /// flows keep being released. Since 0.26 (#204) the pause covers
+    /// the parser lifecycle too: no `ParserClosed`,
+    /// `ParserSideStopped` or `SessionParseError` is emitted while
+    /// paused (the parsers are still closed and counted).
     pub fn pause_events(&mut self) {
         self.engine.flow.pause_events();
     }

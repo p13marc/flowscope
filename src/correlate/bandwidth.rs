@@ -30,10 +30,12 @@
 //! use flowscope::Timestamp;
 //! use flowscope::correlate::{BandwidthByKey, Attribution};
 //!
-//! // Owner key = a PID the consumer joined externally.
-//! let mut bw = BandwidthByKey::<Attribution>::new_unbounded(
+//! // Owner key = a PID the consumer joined externally; at most
+//! // 4 096 owners per one-second bucket.
+//! let mut bw = BandwidthByKey::<Attribution>::new(
 //!     Duration::from_secs(10),
 //!     Duration::from_secs(1),
+//!     4096,
 //! );
 //! for s in 0..10 {
 //!     let now = Timestamp::new(s, 0);
@@ -46,6 +48,17 @@
 //! let top = bw.top_k(5, now);
 //! assert_eq!(top[0].0, Attribution(1234));
 //! ```
+//!
+//! # Bounded memory
+//!
+//! Owner keys can be numerous (or chosen by whoever generates the
+//! traffic). [`BandwidthByKey::new`] caps the keys each time bucket
+//! holds, per direction; bytes of further keys go to an overflow
+//! total ([`BandwidthByKey::other_tx_bps`] /
+//! [`BandwidthByKey::other_rx_bps`], counted in
+//! [`BandwidthByKey::overflowed`]) — see
+//! [`RollingRate`](crate::correlate::RollingRate#bounded-memory).
+//! [`BandwidthByKey::new_unbounded`] keeps every key. (0.26, #220.)
 
 use std::hash::Hash;
 use std::time::Duration;
@@ -106,23 +119,62 @@ where
 {
     /// New aggregator with the given `window` and `bucket_width`
     /// (e.g. 60 s window, 1 s buckets — Prometheus `rate()`
-    /// defaults). Bytes are tagged [`ByteSemantics::Wire`].
+    /// defaults), holding at most `max_keys` keys per time bucket and
+    /// direction (see [`RollingRate`](crate::correlate::RollingRate#bounded-memory)). Bytes
+    /// are tagged [`ByteSemantics::Wire`]. New in 0.26.0 (#220).
+    pub fn new(window: Duration, bucket_width: Duration, max_keys: usize) -> Self {
+        Self {
+            tx: RollingRate::new(window, bucket_width, max_keys),
+            rx: RollingRate::new(window, bucket_width, max_keys),
+            semantics: ByteSemantics::Wire,
+        }
+    }
+
+    /// Unbounded aggregator: [`Self::new`] without a key cap. Only
+    /// for key spaces the caller controls.
     pub fn new_unbounded(window: Duration, bucket_width: Duration) -> Self {
-        Self::with_semantics(window, bucket_width, ByteSemantics::Wire)
+        Self::new(window, bucket_width, usize::MAX)
     }
 
     /// Like [`new_unbounded`](Self::new_unbounded) but with an
-    /// explicit [`ByteSemantics`] tag.
+    /// explicit [`ByteSemantics`] tag. For a bounded aggregator use
+    /// [`Self::new`] and [`Self::with_byte_semantics`].
     pub fn with_semantics(
         window: Duration,
         bucket_width: Duration,
         semantics: ByteSemantics,
     ) -> Self {
-        Self {
-            tx: RollingRate::new_unbounded(window, bucket_width),
-            rx: RollingRate::new_unbounded(window, bucket_width),
-            semantics,
-        }
+        Self::new_unbounded(window, bucket_width).with_byte_semantics(semantics)
+    }
+
+    /// Builder — set the [`ByteSemantics`] tag. New in 0.26.0.
+    pub fn with_byte_semantics(mut self, semantics: ByteSemantics) -> Self {
+        self.semantics = semantics;
+        self
+    }
+
+    /// `record_tx` / `record_rx` calls whose key went to an overflow
+    /// total because its bucket was full (both directions). New in
+    /// 0.26.0.
+    pub fn overflowed(&self) -> u64 {
+        self.tx.overflowed().saturating_add(self.rx.overflowed())
+    }
+
+    /// Transmit rate (bytes/sec) of the keys the cap refused,
+    /// summed. New in 0.26.0.
+    pub fn other_tx_bps(&self, now: Timestamp) -> f64 {
+        self.tx.other_rate(now)
+    }
+
+    /// Receive rate (bytes/sec) of the keys the cap refused, summed.
+    /// New in 0.26.0.
+    pub fn other_rx_bps(&self, now: Timestamp) -> f64 {
+        self.rx.other_rate(now)
+    }
+
+    /// The per-bucket key cap ([`Self::new`]). New in 0.26.0.
+    pub fn max_keys(&self) -> usize {
+        self.tx.max_keys()
     }
 
     /// Record `bytes` transmitted by `key` at `now`.
@@ -161,10 +213,7 @@ where
         for (k, r) in self.rx.snapshot(now) {
             *totals.entry(k).or_default() += r;
         }
-        let mut v: Vec<(K, f64)> = totals.into_iter().collect();
-        v.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-        v.truncate(n);
-        v
+        crate::correlate::rolling_rate::top_n(totals.into_iter().collect(), n)
     }
 
     /// Drop buckets older than the window on both directions.
@@ -183,7 +232,8 @@ where
         self.tx.is_empty() && self.rx.is_empty()
     }
 
-    /// Reset all recorded state (keeps window / semantics config).
+    /// Reset all recorded state and the overflow count (keeps
+    /// window / cap / semantics config).
     pub fn clear(&mut self) {
         self.tx.clear();
         self.rx.clear();
@@ -258,5 +308,24 @@ mod tests {
         bw.record_tx(1, 500, t(100));
         bw.clear();
         assert!(bw.is_empty());
+    }
+
+    #[test]
+    fn key_cap_bounds_owners_and_reports_the_rest() {
+        let mut bw =
+            BandwidthByKey::<u32>::new(Duration::from_secs(10), Duration::from_secs(1), 100);
+        for k in 0..10_000u32 {
+            bw.record_tx(k, 10, t(0));
+            bw.record_rx(k, 5, t(0));
+        }
+        assert_eq!(bw.max_keys(), 100);
+        assert_eq!(bw.overflowed(), 2 * 9_900);
+        let now = t(1);
+        assert!((bw.other_tx_bps(now) - 99_000.0 / 10.0).abs() < 1e-9);
+        assert!((bw.other_rx_bps(now) - 49_500.0 / 10.0).abs() < 1e-9);
+        assert_eq!(bw.top_k(1_000, now).len(), 100);
+        let gp = BandwidthByKey::<u32>::new(Duration::from_secs(10), Duration::from_secs(1), 1)
+            .with_byte_semantics(ByteSemantics::Goodput);
+        assert_eq!(gp.semantics(), ByteSemantics::Goodput);
     }
 }

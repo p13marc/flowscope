@@ -44,6 +44,9 @@ fn build_record() -> FlowRecord {
     stats.packets_responder = 12;
     stats.bytes_initiator = 1500;
     stats.bytes_responder = 2100;
+    // IE 1 / 85 carry IP octets (#219).
+    stats.ip_bytes_initiator = 1500;
+    stats.ip_bytes_responder = 2100;
     stats.started = Timestamp::new(1_700_000_000, 0);
     stats.last_seen = Timestamp::new(1_700_000_005, 0);
     FlowRecord::from_parts(&stats, &key, Some(EndReason::Fin))

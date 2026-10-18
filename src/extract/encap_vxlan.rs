@@ -62,27 +62,14 @@ fn peel_vxlan(frame: &[u8], expected_port: u16) -> Option<&[u8]> {
         _ => return None,
     };
     // Either side may be the VXLAN port (active dst, but be tolerant).
+    if udp.dst_port != expected_port && udp.src_port != expected_port {
+        return None;
+    }
     if udp.payload_len < 8 {
         return None;
     }
-    // We only need the payload offset; the port check is sufficient.
-    // Read parent payload offset and slice forward.
     let payload_start = udp.payload_offset;
     let frame_after_udp = &frame[payload_start..payload_start + udp.payload_len];
-    // Check ports indirectly: parse_eth gave us src/dst inside parsed.l4,
-    // but we don't have them here. Re-parse just the UDP for the
-    // port. Cheaper: extract port from frame at known offset.
-    // Use etherparse again — small cost.
-    let sp = etherparse::SlicedPacket::from_ethernet(frame).ok()?;
-    let udp_slice = match sp.transport {
-        Some(etherparse::TransportSlice::Udp(u)) => u,
-        _ => return None,
-    };
-    let dst_port = udp_slice.destination_port();
-    let src_port = udp_slice.source_port();
-    if dst_port != expected_port && src_port != expected_port {
-        return None;
-    }
     // Skip 8-byte VXLAN header
     if frame_after_udp.len() < 8 {
         return None;

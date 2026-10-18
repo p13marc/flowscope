@@ -28,6 +28,13 @@
 //! ([`Reassembler::fin_seen`]). RST payloads (diagnostic text) are not
 //! stream data and are ignored.
 //!
+//! A segment a snap length cut ([`TcpInfo::is_truncated`]) is fed as
+//! its captured bytes ([`Reassembler::segment`], never
+//! [`Reassembler::segment_into`]) followed by
+//! [`Reassembler::missing`] for the rest, so the built-in reassemblers
+//! report the cut bytes as a gap right away; a FIN in it ends the
+//! stream after its wire length. (0.26.0, #212.)
+//!
 //! # Event gating
 //!
 //! The driver owns its tracker's `Ended` events: they are always
@@ -622,6 +629,22 @@ where
     )]
     pub(crate) fn emits_mask(&self, bit: EventMask) -> bool {
         !self.tracker.events_paused() && !self.tracker.config().suppress_events.contains(bit)
+    }
+
+    /// The gates the session engines apply to parser-lifecycle
+    /// output (#204): parse-error anomalies need anomalies enabled and
+    /// [`EventMask::FLOW_ANOMALY`] unmasked; early parser closes and
+    /// side stops only need the events not paused; a flow-end close
+    /// follows its `Ended` ([`EventMask::ENDED`]) — the engine refines
+    /// that one per flow.
+    #[cfg(all(feature = "session", feature = "extractors"))]
+    pub(crate) fn emit_gate(&self) -> crate::session::core::Emit {
+        crate::session::core::Emit {
+            count_anomalies: self.emit_anomalies,
+            anomalies: self.emit_anomalies && self.emits_mask(EventMask::FLOW_ANOMALY),
+            parser_events: !self.tracker.events_paused(),
+            flow_end_closes: self.emits_mask(EventMask::ENDED),
+        }
     }
 
     /// Whether `ev` reaches the caller: the tracker's
@@ -1445,15 +1468,21 @@ where
     } else {
         tcp.seq
     };
-    let payload: &[u8] = if flags.contains(TcpFlags::RST) {
-        &[]
+    let rst = flags.contains(TcpFlags::RST);
+    let payload: &[u8] = if rst { &[] } else { p.tcp_payload };
+    // The segment's length on the wire. More than `payload` when a
+    // snap length cut it (#212): the rest is reported to the
+    // reassembler as missing, and the FIN sits after all of it.
+    let wire = if rst {
+        0
     } else {
-        p.tcp_payload
+        tcp.wire_payload_len.max(payload.len())
     };
+    let truncated = wire > payload.len();
     let flow = match streams.get_mut(p.key) {
         Some(f) => f,
         None => {
-            if !(syn || !payload.is_empty()) || !want(p) {
+            if !(syn || wire > 0) || !want(p) {
                 return None;
             }
             streams
@@ -1484,8 +1513,8 @@ where
 
     let fin_end = flags
         .contains(TcpFlags::FIN)
-        .then(|| data_seq.wrapping_add(payload.len() as u32));
-    if payload.is_empty() {
+        .then(|| data_seq.wrapping_add(wire as u32));
+    if wire == 0 {
         if let (Some(end), SideSlot::Live(l)) = (fin_end, &mut flow.sides[si]) {
             l.r.fin_seen(end, p.ts);
             resync(global, l);
@@ -1521,10 +1550,18 @@ where
     }
 
     let before = cfg.emit_anomalies.then(|| Counters::of(&l.r));
-    let outcome = if cfg.passthrough {
+    let outcome = if cfg.passthrough && !truncated {
         l.r.segment_into(data_seq, payload, p.ts)
     } else {
-        l.r.segment(data_seq, payload, p.ts);
+        // A truncated segment is never let through: its captured part
+        // is followed by a gap the consumer must see in order.
+        if !payload.is_empty() {
+            l.r.segment(data_seq, payload, p.ts);
+        }
+        if truncated {
+            let cut = u32::try_from(wire - payload.len()).unwrap_or(u32::MAX);
+            l.r.missing(data_seq.wrapping_add(payload.len() as u32), cut, p.ts);
+        }
         SegmentOutcome::Buffered
     };
     if let Some(end) = fin_end {

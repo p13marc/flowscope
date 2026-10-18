@@ -16,7 +16,7 @@ use flowscope::{
     detect::{DgaDetector, HostPair, SrcHost},
     event::{EndReason, FlowStats},
     extract::FiveTupleKey,
-    extractor::L4Proto,
+    extractor::{L4Proto, Orientation},
 };
 
 fn key(src: [u8; 4], sport: u16, dst: [u8; 4], dport: u16) -> FiveTupleKey {
@@ -70,7 +70,13 @@ impl<K> Detector<K> for SharedProbe {
     fn kind(&self) -> DetectorKind {
         DetectorKind::Other("test/probe")
     }
-    fn on_flow_start(&mut self, _k: &K, _ts: Timestamp, _out: &mut Vec<OwnedAnomaly>) {
+    fn on_flow_start(
+        &mut self,
+        _k: &K,
+        _initiator: Orientation,
+        _ts: Timestamp,
+        _out: &mut Vec<OwnedAnomaly>,
+    ) {
         self.0.lock().unwrap().starts += 1;
     }
     fn on_flow_established(&mut self, _k: &K, _ts: Timestamp, _out: &mut Vec<OwnedAnomaly>) {
@@ -96,7 +102,14 @@ impl<K> Detector<K> for SharedProbe {
     ) {
         self.0.lock().unwrap().ticks += 1;
     }
-    fn on_dns_query(&mut self, _k: &K, _q: &str, _ts: Timestamp, _out: &mut Vec<OwnedAnomaly>) {
+    fn on_dns_query(
+        &mut self,
+        _k: &K,
+        _sender: Orientation,
+        _q: &str,
+        _ts: Timestamp,
+        _out: &mut Vec<OwnedAnomaly>,
+    ) {
         self.0.lock().unwrap().dns += 1;
     }
 }
@@ -121,7 +134,7 @@ fn registry_fans_events_to_the_right_hooks() {
         },
         &mut out,
     );
-    reg.observe_dns(&k, "example.com", ts, &mut out);
+    reg.observe_dns(&k, Orientation::Forward, "example.com", ts, &mut out);
 
     let p = cell.lock().unwrap();
     assert_eq!(
@@ -229,9 +242,27 @@ fn dga_via_observe_dns_with_suppression() {
 
     let k = key([10, 0, 0, 1], 40000, [8, 8, 8, 8], 53);
     let mut out = Vec::new();
-    reg.observe_dns(&k, "kq3v9z7xj2wq.com", Timestamp::new(0, 0), &mut out);
-    reg.observe_dns(&k, "kq3v9z7xj2wq.com", Timestamp::new(1, 0), &mut out);
-    reg.observe_dns(&k, "www.google.com", Timestamp::new(2, 0), &mut out);
+    reg.observe_dns(
+        &k,
+        Orientation::Forward,
+        "kq3v9z7xj2wq.com",
+        Timestamp::new(0, 0),
+        &mut out,
+    );
+    reg.observe_dns(
+        &k,
+        Orientation::Forward,
+        "kq3v9z7xj2wq.com",
+        Timestamp::new(1, 0),
+        &mut out,
+    );
+    reg.observe_dns(
+        &k,
+        Orientation::Forward,
+        "www.google.com",
+        Timestamp::new(2, 0),
+        &mut out,
+    );
     assert_eq!(out.len(), 1, "one alert per (src, domain)");
     assert_eq!(out[0].kind, DetectorKind::Dga);
     assert!(
@@ -241,6 +272,71 @@ fn dga_via_observe_dns_with_suppression() {
             .any(|(l, v)| *l == "qname" && v == "kq3v9z7xj2wq.com"),
         "qname observation carried"
     );
+}
+
+/// #217: the query's sender is the source, whichever endpoint the
+/// address-sorted key puts first. A client above its resolver sorts
+/// second (`8.8.8.8 < 192.168.1.10`).
+#[test]
+fn dns_detectors_name_the_querying_host() {
+    use flowscope::detect::patterns::DnsTunnelDetector;
+    let client: IpAddr = Ipv4Addr::new(192, 168, 1, 10).into();
+    let k = key([8, 8, 8, 8], 53, [192, 168, 1, 10], 40000);
+    let mut reg: DetectorRegistry<FiveTupleKey> = DetectorRegistry::new();
+    reg.register(DgaDetector::new())
+        .register(DnsTunnelDetector::new().with_subdomain_threshold(10));
+    let mut out = Vec::new();
+    reg.observe_dns(
+        &k,
+        Orientation::Reverse,
+        "kq3v9z7xj2wq.com",
+        Timestamp::new(0, 0),
+        &mut out,
+    );
+    for i in 0..12u32 {
+        let q = format!("{i:0>54}.tunnel.example");
+        reg.observe_dns(&k, Orientation::Reverse, &q, Timestamp::new(i, 0), &mut out);
+    }
+    let dga = out
+        .iter()
+        .find(|a| a.kind == DetectorKind::Dga)
+        .expect("DGA");
+    assert_eq!(dga.src_ip, Some(client), "the querying host");
+    assert_eq!(dga.src_port, Some(40000));
+    assert_eq!(dga.dest_port, Some(53));
+    let tunnel = out
+        .iter()
+        .find(|a| a.kind == DetectorKind::DnsTunnel)
+        .expect("tunnel");
+    assert_eq!(tunnel.src_ip, Some(client));
+}
+
+/// #217: a flood is counted for the hosts that open flows — the
+/// initiators — even when they sort above their peer.
+#[test]
+fn connection_flood_counts_initiators() {
+    use flowscope::detect::patterns::ConnectionFloodDetector;
+    let mut reg: DetectorRegistry<FiveTupleKey> = DetectorRegistry::new();
+    reg.register(ConnectionFloodDetector::with_params(
+        Duration::from_secs(10),
+        Duration::from_secs(1),
+        50,
+    ));
+    let mut out = Vec::new();
+    for i in 0..60u16 {
+        // 10.0.0.200 opens flows to 10.0.0.1; the key puts 10.0.0.1 first.
+        let k = key([10, 0, 0, 1], 80, [10, 0, 0, 200], 30000 + i);
+        let mut ev = flowscope::test_helpers::events::started(k, Timestamp::new(0, u32::from(i)));
+        if let FlowEvent::Started { orientation, .. } = &mut ev {
+            *orientation = Orientation::Reverse;
+        }
+        reg.observe(&ev, &mut out);
+    }
+    let flood = out
+        .iter()
+        .find(|a| a.kind == DetectorKind::ConnectionFlood)
+        .expect("flood");
+    assert_eq!(flood.src_ip, Some(Ipv4Addr::new(10, 0, 0, 200).into()));
 }
 
 // ─── eviction fan-out + Send ─────────────────────────────────────

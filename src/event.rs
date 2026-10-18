@@ -515,7 +515,16 @@ impl MemcapPolicy {
 pub struct FlowStats {
     pub packets_initiator: u64,
     pub packets_responder: u64,
+    /// Bytes each side sent, counted as **wire L2 length**: the
+    /// frame as the source handed it over (Ethernet header and any
+    /// trailer padding included) plus what a snap length cut from it
+    /// — as the source reported it ([`crate::PacketView::wire_len`])
+    /// or, when it did not, as the IP header claims it. Before 0.26
+    /// this was the captured length. For IP octets — what NetFlow / IPFIX and
+    /// Zeek's `*_ip_bytes` count — read
+    /// [`ip_bytes_initiator`](Self::ip_bytes_initiator).
     pub bytes_initiator: u64,
+    /// See [`bytes_initiator`](Self::bytes_initiator).
     pub bytes_responder: u64,
     pub started: Timestamp,
     pub last_seen: Timestamp,
@@ -661,13 +670,59 @@ pub struct FlowStats {
     pub fin_initiator: bool,
     /// A TCP FIN was seen from the responder. New in 0.25.0.
     pub fin_responder: bool,
+    /// IP octets the initiator sent: the sum of its packets' IP
+    /// datagram lengths on the wire (IPv4 total length / IPv6 40 +
+    /// payload length, from [`crate::Extracted::l3_len`]; the inner
+    /// datagram's behind a decap combinator) — IPFIX `octetDeltaCount`,
+    /// Zeek `orig_ip_bytes`. A packet whose extractor reports no IP
+    /// length (a custom extractor, [`crate::extract::MacPair`]) adds
+    /// its wire length instead; a packet never adds more than its wire
+    /// length. New in 0.26.0 (#219).
+    pub ip_bytes_initiator: u64,
+    /// IP octets the responder sent; see
+    /// [`ip_bytes_initiator`](Self::ip_bytes_initiator). New in 0.26.0.
+    pub ip_bytes_responder: u64,
+    /// Packets from the initiator that the capture cut short (a snap
+    /// length): the source reported a cut
+    /// ([`crate::PacketView::is_truncated`]) or the IP header claims
+    /// more than was captured. Their bytes still count at their wire
+    /// length. New in 0.26.0 (#212).
+    pub packets_truncated_initiator: u64,
+    /// Truncated packets from the responder; see
+    /// [`packets_truncated_initiator`](Self::packets_truncated_initiator).
+    /// New in 0.26.0.
+    pub packets_truncated_responder: u64,
 }
 
 impl FlowStats {
-    /// `bytes_initiator + bytes_responder`. New in 0.10.0.
+    /// `bytes_initiator + bytes_responder` (wire L2 bytes). New in
+    /// 0.10.0.
     #[inline]
     pub fn total_bytes(&self) -> u64 {
         self.bytes_initiator + self.bytes_responder
+    }
+
+    /// `ip_bytes_initiator + ip_bytes_responder` — the flow's IP
+    /// octets (IPFIX `octetTotalCount`). New in 0.26.0 (#219).
+    #[inline]
+    pub fn total_ip_bytes(&self) -> u64 {
+        self.ip_bytes_initiator + self.ip_bytes_responder
+    }
+
+    /// IP octets attributed to the given side. New in 0.26.0.
+    #[inline]
+    pub fn ip_bytes_for(&self, side: FlowSide) -> u64 {
+        match side {
+            FlowSide::Initiator => self.ip_bytes_initiator,
+            FlowSide::Responder => self.ip_bytes_responder,
+        }
+    }
+
+    /// `packets_truncated_initiator + packets_truncated_responder`.
+    /// New in 0.26.0.
+    #[inline]
+    pub fn total_packets_truncated(&self) -> u64 {
+        self.packets_truncated_initiator + self.packets_truncated_responder
     }
 
     /// `packets_initiator + packets_responder`. New in 0.10.0.
@@ -753,7 +808,7 @@ impl FlowStats {
         }
     }
 
-    /// Bytes attributed to the given side. Sugar over the
+    /// Bytes (wire L2) attributed to the given side. Sugar over the
     /// `bytes_initiator` / `bytes_responder` fields for
     /// `FlowSide`-keyed report code.
     ///
@@ -1219,12 +1274,21 @@ bitflags! {
     /// [`Self::PACKET`], [`Self::ESTABLISHED`], [`Self::STATE_CHANGE`],
     /// [`Self::ENDED`]); [`Self::TICK`], [`Self::FLOW_ANOMALY`] and
     /// [`Self::TRACKER_ANOMALY`] are produced by the drivers, which honour
-    /// the same mask where they emit them (today: `TICK`).
+    /// the same mask wherever they emit them.
+    ///
+    /// The session engines (`Driver`, `SessionDriver`, `DatagramDriver`)
+    /// apply it to the parser lifecycle as well (0.26, #204): the
+    /// typed driver's flow-end `ParserClosed` rides with its flow's
+    /// `Ended` and is shed with [`Self::ENDED`]; a `SessionParseError`
+    /// is a flow anomaly and is shed with [`Self::FLOW_ANOMALY`]. Early
+    /// `ParserClosed` / `ParserSideStopped` have no bit — only a pause
+    /// sheds them.
     ///
     /// For a *total* shed over the duration of an overload episode use
     /// [`FlowTracker::pause_events`](crate::FlowTracker::pause_events) /
     /// [`resume_events`](crate::FlowTracker::resume_events) instead, which
-    /// gate every variant regardless of the mask.
+    /// gate every variant regardless of the mask (and, in the session
+    /// engines, every parser-lifecycle event).
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
     pub struct EventMask: u8 {
         /// [`FlowEvent::Started`].
@@ -1307,6 +1371,9 @@ pub enum FlowEvent<K> {
         /// [`FlowStats::initiator_orientation`] this recovers `side`
         /// deterministically. See [`Orientation`] vs [`FlowSide`].
         orientation: Orientation,
+        /// The packet's wire length: the frame plus what a snap
+        /// length cut (see [`FlowStats::bytes_initiator`]; the
+        /// captured length before 0.26).
         len: usize,
         ts: Timestamp,
         /// Physical capture leg this packet arrived on

@@ -29,7 +29,7 @@ The default features cover the core stack (`extractors`,
 and observability piecemeal:
 
 ```toml
-flowscope = { version = "0.25", features = ["l7", "pcap", "metrics", "tracing", "emit-eve"] }
+flowscope = { version = "0.26", features = ["l7", "pcap", "metrics", "tracing", "emit-eve"] }
 ```
 
 | Feature | What it adds |

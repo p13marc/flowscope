@@ -3,6 +3,8 @@
 //!
 //! Issue #19 (Release A).
 
+#![cfg(feature = "tracker")]
+
 use std::time::Duration;
 
 use flowscope::Timestamp;

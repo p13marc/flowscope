@@ -1,5 +1,225 @@
 # Changelog
 
+## 0.26.0 — unreleased
+
+Truncation, orientation & bounded tables (milestone "0.26 — truncation,
+orientation & bounded tables"). A breaking release; migration guide:
+[`docs/migration-0.25-to-0.26.md`](docs/migration-0.25-to-0.26.md).
+
+### Breaking
+
+- **Outputs and detectors read flows from the initiator** (#217). A
+  bidirectional key is address-sorted, and every writer and detector
+  read its `src_*` as the flow's source: a scanner whose address sorts
+  above its targets was reported as each target, Zeek's `id.orig_h`
+  was the lower address, an EVE `bytes_toserver` could be the server's.
+  Now the Zeek / CSV / EVE writers (`flow`, `stats` and analyzed-flow
+  records), `FlowRecord::from_key_fields` (IPFIX source/destination)
+  and every shipped detector read the key through the new `Directed`
+  adapter from the flow's initiator. `Detector::on_flow_start` gains
+  an `initiator: Orientation` argument and `Detector::on_dns_query` /
+  `DetectorRegistry::observe_dns` a `sender: Orientation` (the DNS
+  slot message's `orientation`); flow-end detectors use
+  `stats.initiator_orientation`. Community ID and `stable_hash` are
+  unchanged (direction-independent).
+- **Byte counts are wire lengths** (#219): `FlowStats::bytes_initiator`
+  / `bytes_responder` (and `total_bytes()`, `bytes_for()`, the rates
+  built on them, `flowscope_bytes_total`), `FlowEvent::Packet.len`, the
+  typed `Event::Packet.len` and `PacketContext::len` count each packet's
+  wire L2 length — the frame plus what a snap length cut, as the source
+  reported it (`PacketView::snap_cut`) or, when it did not, as the IP
+  header claims it. They were the captured length. Unchanged for a
+  capture without a snap length. The TCP history's data flag (`D` /
+  `d`) follows the segment's wire payload too.
+- **Exported octet counts are IP octets** (#219): `FlowRecord`'s IE 1
+  / 85 (`octet_delta_count_*`, `octet_total_count`, and so the IPFIX wire
+  export) carry `FlowStats::ip_bytes_*` — IP header and payload, as RFC
+  7012 defines `octetDeltaCount` — instead of the captured L2 frame
+  bytes. The wire L2 bytes move to the new IE 352 / 353 fields
+  (`layer2_octet_delta_count_*`, `layer2_octet_total_count`, not encoded
+  by the wire builder; `layer2_octets_initiator()` /
+  `layer2_octets_responder()` fall back to IE 1 when they are absent).
+  Zeek rows gain `orig_ip_bytes` / `resp_ip_bytes` in Zeek's column
+  order (after `orig_pkts` / `resp_pkts`; `orig_bytes` stays the wire
+  L2 bytes), EVE `flow` / `stats` objects gain
+  `ip_bytes_toserver` / `ip_bytes_toclient` (`bytes_to*` stay wire L2,
+  Suricata's convention), CSV rows gain trailing `ip_bytes_init` /
+  `ip_bytes_resp` columns. `CicFlowFeatures` keeps wire L2 bytes.
+- **`Event::Started.orientation` is the initiator's** (#218): with
+  `infer_tcp_initiator`, a flow whose first packet was the responder's
+  SYN+ACK reported that packet's orientation, contradicting its own
+  docs and `FlowStats::initiator_orientation`.
+
+### Added
+
+- **`PacketView::snap_cut`** (#219): the number of bytes a snap length
+  cut from the end of the frame (0 = complete or unknown), with
+  `with_wire_len(len)`, `with_snap_cut(n)`, `wire_len()` and
+  `is_truncated()`; the same on `OwnedPacketView` (`as_view()` carries
+  it). Counted from the end because every frame rewrite (decap
+  combinators, link-header normalisation, netring's VLAN re-insertion)
+  changes only the front, so `with_frame` keeps it. `PcapFlowSource`
+  sets it from each record's original length. `wire_len_known()` says
+  whether the source reported the wire length (the two builders set
+  it): then `snap_cut == 0` means "complete", an IP header claiming more
+  than such a frame holds is treated as a lie — the packet is skipped,
+  as receivers drop it — and a reported cut bounds what the headers may
+  claim was cut. Without a reported length the IP header is trusted.
+- **`Reassembler::missing(seq, len, ts)`** (#212): bytes of a direction
+  that were on the wire but not in the capture (cut by a snap length).
+  They never arrive, so `SegmentBufferReassembler` and
+  `BufferedReassembler` skip them as a gap at once when the stream has
+  reached them (delivering any held out-of-order data that falls inside
+  them), and otherwise take them as proof that the stream reaches
+  `seq + len`, like an acknowledgement. Cut bytes more than
+  `reassembly_max_ahead` past the stream position are held like a far
+  stray segment until an independent segment, cut range or ACK
+  corroborates them — the captured part of their own packet never does,
+  so one stale or forged truncated segment cannot move the stream.
+  Defaulted to a no-op. Property tests (`tests/sbr_model.rs`) hold both
+  reassemblers to per-byte models (cut bytes, ACKs, FINs, sequence
+  wrap) and, with ACK grace and reorder deadlines running out, strays,
+  resyncs and passthrough, check that each byte lands at its stream
+  offset and that the gap counters match the gap marks.
+- **Wire lengths from the extractors** (#212): `TcpInfo::wire_payload_len`
+  (`#[serde(default)]`), `TcpInfo::is_truncated()` / `wire_len()`;
+  `L4Meta::wire_payload_len`, `with_wire_payload_len()`,
+  `is_truncated()` (`L4Meta::new` keeps its three arguments: wire =
+  captured); `Extracted::l3_len` (the IP datagram's length on the wire —
+  IPv4 total length / IPv6 40 + payload length; the inner datagram's
+  behind a decap combinator; `None` for `MacPair`), `with_l3_len()`,
+  `is_truncated()`. `payload_len` stays the captured length.
+- **`Directed<'_, K>`** (#217, also in the prelude): a `KeyFields`
+  adapter reading a key from one endpoint — `Directed::new(key,
+  orientation)`, `Directed::initiator(key, &stats)`, `key()`, `from()`;
+  swaps `src_*` / `dest_*` for `Reverse`, delegates the protocol
+  accessors, `stable_hash`, `shard_index` and `community_id`.
+  `FiveTupleKey::oriented(o)` (the endpoints as `(source, destination)`
+  of orientation `o`) and `FiveTupleKey::canonical()` (a directional key
+  to its bidirectional form plus orientation).
+  `OwnedAnomaly::with_flow(key, initiator)`.
+- **Bounded `RollingRate` / `BandwidthByKey`** (#220): `new(window,
+  bucket_width, max_keys)` holds at most `max_keys` keys per time bucket
+  (per direction for `BandwidthByKey`); values of further keys sum into
+  the bucket's overflow total — `other_rate()` / `other_sum()`,
+  `BandwidthByKey::other_tx_bps()` / `other_rx_bps()` — and are counted
+  by `overflowed()`. Also `max_keys()`, `RollingRate::stored_entries()`,
+  `BandwidthByKey::with_byte_semantics()`. `new_unbounded` is the
+  uncapped form. `top_k` selects the top `n` in linear time and sorts
+  only those (in a total order, NaN included). Timestamps may go
+  backwards: a record lands in the bucket of its own time (one bucket
+  per start) and evicts the buckets outside a window either side of it,
+  so the table holds at most `window / bucket_width + 1` buckets for
+  time that moves forward and `2 × window / bucket_width + 1` in any
+  order, and one wild future timestamp cannot hold the window (0.25
+  opened a new bucket on every call whose time went back).
+- **`flowscope_datagrams_truncated_total`** (`obs::METRIC_DATAGRAMS_TRUNCATED`):
+  datagrams a session engine did not parse because the capture cut them.
+- **IP octets and truncated-packet counts on `FlowStats`** (#219):
+  `ip_bytes_initiator` / `ip_bytes_responder` (the packets' IP datagram
+  lengths — IPFIX `octetDeltaCount`, Zeek `*_ip_bytes`; a packet whose
+  extractor reports no IP length adds its wire length, and none adds
+  more than its wire length),
+  `packets_truncated_initiator` / `packets_truncated_responder`,
+  `total_ip_bytes()`, `ip_bytes_for(side)`, `total_packets_truncated()`.
+  `PacketContext` gains `captured_len` and `truncated`.
+
+### Changed
+
+- **The extractors parse laxly** (#212): `etherparse::LaxSlicedPacket`
+  instead of `SlicedPacket`. A packet the capture cut short (its IP
+  header claims more bytes than were captured) is extracted as far as
+  its headers go. Everything else the strict parse rejected is still
+  skipped — a malformed header or body in a packet that was *not* cut
+  (bad TCP data offset, a short IGMP message, a short ARP body, a broken
+  MACsec header), IP extension headers cut by the snap length, and a
+  packet cut inside its TCP / UDP header (no ports, no key) — and so are
+  the length fields lax slicing would overrule, which receivers drop: an
+  IPv4 total length below the header's own length, a UDP length below 8
+  or beyond the IP payload, an IP version that does not match the
+  EtherType. A property test checks that, on a frame the capture did not
+  cut, the extractors read exactly what 0.25's strict parse did. The one
+  addition: an IPv4 total length of 0 on a datagram longer than 65 535
+  bytes (IPv4 BIG TCP on the sending host's capture) takes its length
+  from the frame.
+- `InnerGtpU` / `InnerGre` / `StripMpls` hand their inner extractor
+  `view.with_frame(..)`, keeping the snap cut (they built a fresh view);
+  `InnerVxlan` / `InnerGtpU` read the outer ports from the one parse
+  instead of slicing the frame a second time.
+
+### Fixed
+
+- **Parser lifecycle output ignored `EventMask` and pause** (#204): the
+  session engines emitted `ParserClosed`, `ParserSideStopped` and the
+  `SessionParseError` anomaly whatever the mask or a pause said — the
+  typed `Driver` even showed a flow-end `ParserClosed` for a flow whose
+  `Ended` was masked. Now a flow-end `ParserClosed` rides with its
+  `Ended` (shown exactly when the `Ended` is); early `ParserClosed` /
+  `ParserSideStopped` (no mask bit of their own — `EventMask` stays
+  `u8`) are dropped while events are paused; `SessionParseError` needs
+  anomalies on, `FLOW_ANOMALY` unmasked and no pause. Parsers are still
+  closed, their state released and every close counted in
+  `flowscope_parser_closed_total`; with anomalies on, every parse error
+  is counted in `flowscope_anomalies_total{kind="parse_error"}` whether
+  or not its event is shown, as the reassembly anomalies are.
+- **Packets cut by a capture snap length were skipped** (#212): the
+  extractors sliced strictly, so a `tcpdump -s 96` capture, or a live
+  ring whose frames are smaller than the packets, produced no flow for
+  any packet longer than the snap length — and a stream that silently
+  lost those segments. Now such a packet is tracked; `FlowDriver` feeds
+  its captured bytes to the reassembler (never through the passthrough)
+  and reports the rest with `Reassembler::missing`, so the session
+  parsers see the bytes and a gap of the right size right away, a FIN
+  in the segment ends the stream after its wire length, and a
+  header-only capture (`-s 54`) yields one gap per segment instead of a
+  stall. A cut datagram (UDP payload, ICMP message) is tracked but not
+  handed to datagram parsers — judged by UDP's own length, so bytes cut
+  after a datagram do not count, also when the engine parses the frame
+  itself for an extractor without `L4Meta`.
+- **A reassembler could underflow on evidence past a passed FIN**: once
+  a side's stream had gone past its own FIN (data after the FIN, a
+  resync), a peer ACK beyond it — or, new in 0.26, a cut segment — made
+  the evidence bookkeeping subtract below zero: a panic in debug builds,
+  and in release a wrapped distance that could skip open holes early.
+  Such evidence is now ignored.
+- **`InnerGtpU` panicked on a short GTP-U header with the E flag set**
+  (index 11 of an 8–11-byte payload). It now rejects it. The panic
+  predates 0.26 for malformed frames; lax parsing would also have let
+  GTP-U frames cut by a snap length reach it.
+- **`cargo test` failed to compile with default features** (and with
+  `--no-default-features`): `tests/orientation_axis.rs`, `auto_sweep.rs`
+  and `memcap_enforcement.rs` used the `test-helpers` frame builders,
+  `error_chain.rs` and `pcap_pulses.rs` the `pcap` feature,
+  `quick_wins.rs`, `correlate_mergeable.rs`, `encap_payload.rs`,
+  `sbr_model.rs` and the `well_known` unit tests default features,
+  without gating on them. They are gated now (per file, or per test where
+  the rest applies), and `error_chain.rs` gains a default-feature test.
+- **Single-feature builds warned about a dead function**: the
+  no-op `obs::record_packet_deduplicated` hook is only compiled with
+  `reassembler` (the only caller, `FlowDriver`); `cargo hack check
+  --each-feature` is warning-free, also under `RUSTFLAGS=-D warnings`.
+- **`--features ipfix,tracker` without `extractors` did not compile**:
+  `FlowRecord::from_parts` takes a `FiveTupleKey` and now requires
+  `extractors` too (`from_key_fields` works without it).
+- **`LayerStack::ipv6()` was short by the extension headers**: the
+  fast-path parser sized the IPv6 layer as 40 bytes plus the payload
+  after the extension headers, so the slice (and its `payload()`) ended
+  that many bytes early. It now spans the extension headers, like
+  `Layers::ipv6()`.
+- **IPv4 layers were short by an Authentication Header**: `Layers::ipv4()`
+  and `LayerStack::ipv4()` ended the layer at the header plus the payload
+  after the AH, so with an AH the slice (and its `payload()`) missed
+  that many bytes (90 of a 106-byte datagram). Both span the AH now.
+- The `http2` fuzz target no longer warns about a doc comment on a
+  macro invocation.
+- **pcapng records could report fewer bytes on the wire than they
+  captured** (#219): an EPB with a smaller `original_len` than its data
+  now reports the captured length, as classic pcap records already did.
+  A Simple Packet Block's frame no longer carries the block's 0–3 bytes
+  of 32-bit padding (an SPB has no captured-length field; its data is
+  min(original length, the interface's snap length), so a cut SPB
+  reports its whole cut).
+
 ## 0.25.3 (2026-10-17)
 
 Dependency refresh (#215): every direct dependency onto its latest

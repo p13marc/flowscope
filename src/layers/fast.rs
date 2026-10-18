@@ -263,16 +263,22 @@ impl LayerParser {
                 etherparse::NetSlice::Ipv4(v4) if want(LayerKind::Ipv4) => {
                     let header_slice = v4.header().slice();
                     let header_len = header_slice.len();
+                    // `.payload()` starts after an Authentication
+                    // Header: the layer spans it too.
+                    let ah_len = v4.extensions().auth.map_or(0, |a| a.slice().len());
                     let payload_len = v4.payload().payload.len();
                     // Reconstruct contiguous slice from header pointer.
-                    let total = header_len + payload_len;
+                    let total = header_len + ah_len + payload_len;
                     let bytes = unsafe { std::slice::from_raw_parts(header_slice.as_ptr(), total) };
                     out.store_ipv4(bytes, header_len);
                 }
                 etherparse::NetSlice::Ipv6(v6) if want(LayerKind::Ipv6) => {
                     let header_slice = v6.header().slice();
+                    // The layer spans the extension headers too (as
+                    // `Layers` does): `.payload()` starts after them.
+                    let ext_len = v6.extensions().slice().len();
                     let payload_len = v6.payload().payload.len();
-                    let total = 40 + payload_len;
+                    let total = 40 + ext_len + payload_len;
                     let bytes = unsafe { std::slice::from_raw_parts(header_slice.as_ptr(), total) };
                     out.store_ipv6(bytes, 40);
                 }
@@ -413,6 +419,88 @@ mod tests {
         parser.parse_ethernet(&f, &mut stack).unwrap();
         assert!(stack.ipv6().is_some());
         assert!(stack.ipv4().is_none());
+    }
+
+    /// An IPv4 layer spans its Authentication Header too: the whole
+    /// `total_length`, in `LayerStack` and `Layers` alike.
+    #[test]
+    fn ipv4_layer_includes_the_authentication_header() {
+        use etherparse::{
+            EtherType, Ethernet2Header, IpAuthHeader, IpNumber, Ipv4Header, TcpHeader,
+        };
+        let tcp = TcpHeader::new(1, 2, 3, 100);
+        let ah = IpAuthHeader::new(IpNumber::TCP, 7, 1, &[0; 4]).unwrap();
+        let total = 20 + ah.header_len() + tcp.header_len() + 50;
+        let ip = Ipv4Header::new(
+            (ah.header_len() + tcp.header_len() + 50) as u16,
+            64,
+            IpNumber::AUTHENTICATION_HEADER,
+            [10, 0, 0, 1],
+            [10, 0, 0, 2],
+        )
+        .unwrap();
+        let mut f = Vec::new();
+        Ethernet2Header {
+            source: [0; 6],
+            destination: [0; 6],
+            ether_type: EtherType::IPV4,
+        }
+        .write(&mut f)
+        .unwrap();
+        ip.write(&mut f).unwrap();
+        ah.write(&mut f).unwrap();
+        tcp.write(&mut f).unwrap();
+        f.extend_from_slice(&[9; 50]);
+
+        let parser = LayerParser::new();
+        let mut stack = LayerStack::new();
+        parser.parse_ethernet(&f, &mut stack).unwrap();
+        assert_eq!(stack.ipv4().unwrap().bytes().len(), total);
+        assert!(stack.tcp().is_some());
+        let layers = super::super::Layers::parse_ethernet(&f).unwrap();
+        assert_eq!(layers.ipv4().unwrap().bytes().len(), total);
+    }
+
+    /// An IPv6 layer spans its extension headers too (as
+    /// `Layers::ipv6` does): `40 + payload_length` bytes.
+    #[test]
+    fn ipv6_layer_includes_extension_headers() {
+        use etherparse::{
+            EtherType, Ethernet2Header, IpNumber, Ipv6FlowLabel, Ipv6Header, Ipv6RawExtHeader,
+            TcpHeader,
+        };
+        let tcp = TcpHeader::new(1, 2, 3, 100);
+        let hbh = Ipv6RawExtHeader::new_raw(IpNumber::TCP, &[0; 6]).unwrap();
+        let ip = Ipv6Header {
+            traffic_class: 0,
+            flow_label: Ipv6FlowLabel::ZERO,
+            payload_length: (hbh.header_len() + tcp.header_len() + 100) as u16,
+            next_header: IpNumber::IPV6_HEADER_HOP_BY_HOP,
+            hop_limit: 1,
+            source: [1; 16],
+            destination: [2; 16],
+        };
+        let mut f = Vec::new();
+        Ethernet2Header {
+            source: [0; 6],
+            destination: [0; 6],
+            ether_type: EtherType::IPV6,
+        }
+        .write(&mut f)
+        .unwrap();
+        ip.write(&mut f).unwrap();
+        hbh.write(&mut f).unwrap();
+        tcp.write(&mut f).unwrap();
+        f.extend_from_slice(&[9; 100]);
+
+        let parser = LayerParser::new();
+        let mut stack = LayerStack::new();
+        parser.parse_ethernet(&f, &mut stack).unwrap();
+        let v6 = stack.ipv6().unwrap();
+        assert_eq!(v6.bytes().len(), 40 + 8 + 20 + 100);
+        assert_eq!(v6.payload().len(), 8 + 20 + 100);
+        let layers = super::super::Layers::parse_ethernet(&f).unwrap();
+        assert_eq!(layers.ipv6().unwrap().bytes(), v6.bytes());
     }
 
     #[test]

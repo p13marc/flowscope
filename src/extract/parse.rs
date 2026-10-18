@@ -19,10 +19,21 @@ pub(crate) struct ParsedIp<'a> {
     pub proto: u8,
     /// Slice of L4 payload (for inspection or hashing). Lifetime
     /// borrowed from the original frame. Consumed by the GRE
-    /// decap combinator and any future inspection paths.
+    /// decap combinator and any future inspection paths. Only the
+    /// captured bytes: shorter than [`Self::l4_wire_len`] when the
+    /// capture cut the packet.
     pub l4_payload: &'a [u8],
     /// Offset of `l4_payload` in the parsed frame.
     pub l4_offset: usize,
+    /// Length of the IP packet on the wire, header included: the
+    /// IPv4 total length / 40 + the IPv6 payload length. When the
+    /// header gives no usable length (an IPv4 total length of 0 on a
+    /// BIG TCP datagram over 65 535 bytes, an IPv6 jumbogram), the
+    /// captured IP length.
+    pub l3_len: u32,
+    /// Length of the L4 region (header + payload) on the wire, as the
+    /// IP header claims it; never less than `l4_payload.len()`.
+    pub l4_wire_len: usize,
 }
 
 pub(crate) enum ParsedL4 {
@@ -39,7 +50,11 @@ pub(crate) struct ParsedTcp {
     pub ack: u32,
     /// Offset into the original frame where the TCP payload starts.
     pub payload_offset: usize,
+    /// Captured payload bytes.
     pub payload_len: usize,
+    /// Payload bytes on the wire (≥ `payload_len`; larger when the
+    /// capture cut the segment).
+    pub wire_payload_len: usize,
     pub window: u16,
 }
 
@@ -48,52 +63,139 @@ pub(crate) struct ParsedUdp {
     pub dst_port: u16,
     /// Offset into the original frame where the UDP payload starts.
     pub payload_offset: usize,
+    /// Captured payload bytes.
     pub payload_len: usize,
+    /// Payload bytes on the wire (≥ `payload_len`).
+    pub wire_payload_len: usize,
 }
 
 /// Parse an L2 Ethernet frame (with optional VLAN/MACsec link
 /// extensions handled by `etherparse`).
+///
+/// Lax about the one thing a capture does to a packet: cutting its
+/// end (a snap length, #212). A packet whose IP header claims more
+/// bytes than were captured is parsed as far as its headers go, and
+/// the lengths the headers claim are reported next to the captured
+/// ones (`l3_len`, `l4_wire_len`, `wire_payload_len`). Everything
+/// else that `etherparse` rejects — a malformed header or body in a
+/// packet that is *not* cut short (bad TCP data offset, a short IGMP
+/// message, an ARP body shorter than its address lengths, a broken
+/// MACsec header, IP extension headers cut by the snap length) —
+/// still skips the packet, as the strict parse did, and so do the
+/// length fields etherparse's lax slicing would otherwise overrule: an
+/// IPv4 total length below the header's own length (except 0 on a
+/// datagram longer than 65 535 bytes, IPv4 BIG TCP), a UDP length below
+/// 8 or beyond the IP payload. So does a packet cut inside its TCP /
+/// UDP header: without ports there is no flow key.
 pub(crate) fn parse_eth(frame: &[u8]) -> Option<ParsedFrame<'_>> {
-    let sp = etherparse::SlicedPacket::from_ethernet(frame).ok()?;
-    parse_from_sliced(&sp, frame)
+    let sp = etherparse::LaxSlicedPacket::from_ethernet(frame).ok()?;
+    parse_from_lax(&sp, frame)
 }
 
-fn parse_from_sliced<'a>(
-    sp: &etherparse::SlicedPacket<'a>,
+fn parse_from_lax<'a>(
+    sp: &etherparse::LaxSlicedPacket<'a>,
     frame: &'a [u8],
 ) -> Option<ParsedFrame<'a>> {
+    use etherparse::{IpNumber, LaxNetSlice, LenSource, err::Layer, err::packet::SliceError};
+
     let net = sp.net.as_ref()?;
-    let (src, dst, proto) = match net {
-        etherparse::NetSlice::Ipv4(v4) => {
+    // (src, dst, protocol, start of the IP header, length the header
+    // claims, payload, IPv4 total length below the header's own length)
+    let (src, dst, proto, l3_start, claimed, payload, v4_short) = match net {
+        LaxNetSlice::Ipv4(v4) => {
             let h = v4.header();
             (
                 IpAddr::V4(h.source_addr()),
                 IpAddr::V4(h.destination_addr()),
-                h.protocol().into(),
+                u8::from(h.protocol()),
+                h.slice().as_ptr(),
+                usize::from(h.total_len()),
+                v4.payload(),
+                usize::from(h.total_len()) < h.slice().len(),
             )
         }
-        etherparse::NetSlice::Ipv6(v6) => {
+        LaxNetSlice::Ipv6(v6) => {
             let h = v6.header();
             (
                 IpAddr::V6(h.source_addr()),
                 IpAddr::V6(h.destination_addr()),
                 // After any IPv6 extensions, this is the L4 proto.
-                v6.payload().ip_number.into(),
+                u8::from(v6.payload().ip_number),
+                h.slice().as_ptr(),
+                40 + usize::from(h.payload_length()),
+                v6.payload(),
+                false,
             )
         }
         // ARP has no IP endpoints, so no flow (etherparse >= 0.17 parses it).
-        etherparse::NetSlice::Arp(_) => return None,
+        LaxNetSlice::Arp(_) => return None,
     };
-
-    let l4_payload_slice: &[u8] = match net {
-        etherparse::NetSlice::Ipv4(v4) => v4.payload().payload,
-        etherparse::NetSlice::Ipv6(v6) => v6.payload().payload,
-        etherparse::NetSlice::Arp(_) => return None,
+    // The lax slicer picks IPv4 / IPv6 by the version nibble; a
+    // receiver goes by the EtherType and drops a mismatch (as the
+    // strict parse did).
+    let ether_type = sp.ether_payload()?.ether_type;
+    let version_ok = match net {
+        LaxNetSlice::Ipv4(_) => ether_type == etherparse::EtherType::IPV4,
+        LaxNetSlice::Ipv6(_) => ether_type == etherparse::EtherType::IPV6,
+        LaxNetSlice::Arp(_) => false,
     };
+    if !version_ok {
+        return None;
+    }
 
+    // The only stop tolerated is the capture running out inside the
+    // transport layer of a packet whose IP header claims more bytes.
+    if let Some((err, layer)) = &sp.stop_err {
+        let cut = matches!(err, SliceError::Len(_))
+            && payload.incomplete
+            && matches!(
+                layer,
+                Layer::TcpHeader | Layer::UdpHeader | Layer::Icmpv4 | Layer::Icmpv6 | Layer::Igmp
+            );
+        if !cut {
+            return None;
+        }
+    }
+    // A TCP / UDP header the capture cut: no ports, no flow key.
+    if sp.transport.is_none()
+        && !payload.fragmented
+        && (payload.ip_number == IpNumber::TCP || payload.ip_number == IpNumber::UDP)
+    {
+        return None;
+    }
+
+    let l4_payload_slice: &[u8] = payload.payload;
     // Offset of the L4 payload region (header + body for TCP/UDP)
     // relative to the original frame.
     let l4_region_offset = byte_offset(frame, l4_payload_slice)?;
+    let l3_offset = (l3_start as usize).checked_sub(frame.as_ptr() as usize)?;
+    let l3_header = l4_region_offset.checked_sub(l3_offset)?;
+    let captured_l3 = l3_header + l4_payload_slice.len();
+    // An IPv4 total length below the header's own length is malformed —
+    // receivers drop the packet, so accepting it would let an injected
+    // segment stand in for real bytes. etherparse's lax slicing falls
+    // back to the frame length; flowscope keeps that only where the
+    // field cannot hold the length: 0 on a datagram longer than 65 535
+    // bytes (IPv4 BIG TCP, seen on the sending host's own capture).
+    if v4_short && !(claimed == 0 && captured_l3 > usize::from(u16::MAX)) {
+        return None;
+    }
+    // The header's own length, unless it gave none (BIG TCP total
+    // length 0, IPv6 jumbogram) and etherparse fell back to the slice.
+    let l3_wire = if payload.incomplete || payload.len_source != LenSource::Slice {
+        claimed.max(captured_l3)
+    } else {
+        captured_l3
+    };
+    let incomplete = payload.incomplete;
+    let l4_wire_len = if incomplete {
+        l3_wire
+            .saturating_sub(l3_header)
+            .max(l4_payload_slice.len())
+    } else {
+        l4_payload_slice.len()
+    };
+    let l3_len = u32::try_from(l3_wire).unwrap_or(u32::MAX);
 
     let l4 = match sp.transport.as_ref() {
         Some(etherparse::TransportSlice::Tcp(tcp)) => {
@@ -132,17 +234,39 @@ fn parse_from_sliced<'a>(
                 ack: tcp.acknowledgment_number(),
                 payload_offset,
                 payload_len: payload.len(),
+                wire_payload_len: l4_wire_len
+                    .saturating_sub(tcp.header_slice().len())
+                    .max(payload.len()),
                 window: tcp.window_size(),
             }))
         }
         Some(etherparse::TransportSlice::Udp(udp)) => {
             let payload = udp.payload();
             let payload_offset = byte_offset(frame, payload).unwrap_or(l4_region_offset);
+            // UDP's length is 0 (a jumbogram: the IP payload) or covers
+            // its header and fits the IP payload — the IP header's
+            // claim for a cut packet. Anything else is malformed and
+            // dropped by receivers, as the strict parse did. etherparse's
+            // lax slicing would fall back to the captured length.
+            let udp_len = usize::from(udp.length());
+            if udp_len != 0 && !(8..=l4_wire_len).contains(&udp_len) {
+                return None;
+            }
+            // A complete datagram is what UDP's length field delimits
+            // (bytes after it in the IP payload — UDP options, trailing
+            // data — are no truncation). A cut one is as long as that
+            // field says, or as the IP header says for a jumbogram.
+            let wire_payload_len = match (incomplete, udp_len) {
+                (false, _) => payload.len(),
+                (true, 0) => l4_wire_len.saturating_sub(8),
+                (true, n) => n - 8,
+            };
             Some(ParsedL4::Udp(ParsedUdp {
                 src_port: udp.source_port(),
                 dst_port: udp.destination_port(),
                 payload_offset,
                 payload_len: payload.len(),
+                wire_payload_len: wire_payload_len.max(payload.len()),
             }))
         }
         Some(_) => Some(ParsedL4::Other),
@@ -156,6 +280,8 @@ fn parse_from_sliced<'a>(
             proto,
             l4_payload: l4_payload_slice,
             l4_offset: l4_region_offset,
+            l3_len,
+            l4_wire_len,
         }),
         l4,
     })
@@ -444,6 +570,369 @@ mod tests {
     fn parse_truncated_returns_none() {
         let f = [0u8; 5];
         assert!(parse_eth(&f).is_none());
+    }
+
+    // ── #212: lax parsing of frames a snap length cut ──────────
+
+    fn tcp_frame(payload: &[u8]) -> Vec<u8> {
+        ipv4_tcp(
+            [0; 6],
+            [0; 6],
+            [10, 0, 0, 1],
+            [10, 0, 0, 2],
+            40000,
+            80,
+            1000,
+            0,
+            0x18,
+            payload,
+        )
+    }
+
+    #[test]
+    fn lax_tcp_reports_wire_payload_len() {
+        let mut f = tcp_frame(&[b'x'; 100]);
+        // Ethernet (14) + IP (20) + TCP (20) + 10 payload bytes kept.
+        f.truncate(64);
+        let parsed = parse_eth(&f).expect("a cut segment is parsed");
+        let ip = parsed.ip.unwrap();
+        assert_eq!(ip.l3_len, 140, "IP total length from the header");
+        assert_eq!(ip.l4_wire_len, 120);
+        assert_eq!(ip.l4_payload.len(), 30, "captured L4 bytes");
+        let ParsedL4::Tcp(t) = parsed.l4.unwrap() else {
+            panic!("expected tcp")
+        };
+        assert_eq!((t.src_port, t.dst_port, t.seq), (40000, 80, 1000));
+        assert_eq!((t.payload_offset, t.payload_len), (54, 10));
+        assert_eq!(t.wire_payload_len, 100);
+    }
+
+    #[test]
+    fn complete_tcp_has_equal_wire_and_captured_lengths() {
+        let f = tcp_frame(&[b'x'; 100]);
+        let parsed = parse_eth(&f).unwrap();
+        assert_eq!(parsed.ip.as_ref().unwrap().l3_len, 140);
+        let ParsedL4::Tcp(t) = parsed.l4.unwrap() else {
+            panic!("expected tcp")
+        };
+        assert_eq!((t.payload_len, t.wire_payload_len), (100, 100));
+    }
+
+    #[test]
+    fn lax_udp_reports_wire_payload_len() {
+        let mut f = ipv4_udp([10, 0, 0, 1], [10, 0, 0, 2], 5353, 53, &[7; 200]);
+        f.truncate(14 + 20 + 8 + 20);
+        let parsed = parse_eth(&f).expect("a cut datagram is parsed");
+        assert_eq!(parsed.ip.as_ref().unwrap().l3_len, 228);
+        let ParsedL4::Udp(u) = parsed.l4.unwrap() else {
+            panic!("expected udp")
+        };
+        assert_eq!((u.payload_len, u.wire_payload_len), (20, 200));
+    }
+
+    #[test]
+    fn tcp_header_cut_is_skipped() {
+        let mut f = tcp_frame(&[b'x'; 100]);
+        // Cut inside the TCP header: ports present, header incomplete.
+        f.truncate(14 + 20 + 10);
+        assert!(parse_eth(&f).is_none(), "no complete L4 header, no key");
+        // Cut inside the IP header.
+        f.truncate(14 + 10);
+        assert!(parse_eth(&f).is_none());
+    }
+
+    #[test]
+    fn malformed_igmp_content_still_skipped() {
+        // A complete IPv4 packet carrying a 4-byte IGMP message (IGMP
+        // needs 8): malformed, not cut — skipped as in 0.25.3.
+        use etherparse::{Ethernet2Header, IpNumber, Ipv4Header};
+        let ip = Ipv4Header::new(4, 1, IpNumber::IGMP, [10, 0, 0, 1], [224, 0, 0, 1]).unwrap();
+        let mut f = Vec::new();
+        Ethernet2Header {
+            destination: [0; 6],
+            source: [0; 6],
+            ether_type: etherparse::EtherType::IPV4,
+        }
+        .write(&mut f)
+        .unwrap();
+        ip.write(&mut f).unwrap();
+        f.extend_from_slice(&[0x11, 0, 0, 0]);
+        assert!(parse_eth(&f).is_none());
+        // A malformed TCP header (data offset beyond the segment) in a
+        // complete packet: skipped too.
+        let mut f = tcp_frame(b"");
+        f[14 + 20 + 12] = 0xf0; // data offset 15 words = 60 bytes
+        assert!(parse_eth(&f).is_none());
+    }
+
+    #[test]
+    fn big_tcp_zero_total_len_is_tracked() {
+        // IPv4 BIG TCP hands a capture on the sending host a
+        // super-segment longer than 65 535 bytes, whose total length
+        // field cannot say so and is 0: the frame is the length.
+        let mut f = tcp_frame(&[b'x'; 1000]);
+        f.resize(14 + 70_000, b'x');
+        f[16] = 0;
+        f[17] = 0;
+        let parsed = parse_eth(&f).expect("BIG TCP frame parsed");
+        let ip = parsed.ip.unwrap();
+        assert_eq!(ip.l3_len as usize, 70_000, "captured IP length");
+        let ParsedL4::Tcp(t) = parsed.l4.unwrap() else {
+            panic!("expected tcp")
+        };
+        assert_eq!(
+            (t.payload_len, t.wire_payload_len),
+            (70_000 - 40, 70_000 - 40)
+        );
+    }
+
+    #[test]
+    fn ipv4_total_len_below_its_header_is_skipped() {
+        // Receivers drop such a packet (0.25 skipped it): accepting it
+        // would let an injected segment replace real stream bytes.
+        for total_len in [0u16, 1, 19] {
+            let mut f = tcp_frame(&[b'x'; 3000]);
+            f[16..18].copy_from_slice(&total_len.to_be_bytes());
+            assert!(parse_eth(&f).is_none(), "total length {total_len}");
+        }
+    }
+
+    #[test]
+    fn udp_length_must_fit_the_ip_payload() {
+        // Strict UDP rule for a complete packet: 0 (jumbogram) or
+        // 8 ..= the IP payload length.
+        for (udp_len, ok) in [
+            (0u16, true),
+            (8, true),
+            (48, true),
+            (49, false),
+            (900, false),
+            (5, false),
+        ] {
+            let mut f = ipv4_udp([10, 0, 0, 1], [10, 0, 0, 2], 53, 5000, &[0x42; 40]);
+            f[14 + 20 + 4..14 + 20 + 6].copy_from_slice(&udp_len.to_be_bytes());
+            assert_eq!(parse_eth(&f).is_some(), ok, "UDP length {udp_len}");
+        }
+        // A cut datagram: its length may exceed what was captured, not
+        // what the IP header claims.
+        for (udp_len, ok) in [(48u16, true), (900, false), (5, false)] {
+            let mut f = ipv4_udp([10, 0, 0, 1], [10, 0, 0, 2], 53, 5000, &[0x42; 40]);
+            f[14 + 20 + 4..14 + 20 + 6].copy_from_slice(&udp_len.to_be_bytes());
+            f.truncate(14 + 20 + 8 + 10);
+            assert_eq!(parse_eth(&f).is_some(), ok, "cut, UDP length {udp_len}");
+        }
+    }
+
+    /// What 0.25's strict parse extracted from a frame: endpoints,
+    /// protocol, and the TCP / UDP ports and payload span.
+    type Summary = (IpAddr, IpAddr, u8, Option<(u16, u16, usize, usize)>);
+
+    fn strict_summary(frame: &[u8]) -> Option<Summary> {
+        let sp = etherparse::SlicedPacket::from_ethernet(frame).ok()?;
+        let (src, dst, proto) = match sp.net.as_ref()? {
+            etherparse::NetSlice::Ipv4(v4) => (
+                IpAddr::V4(v4.header().source_addr()),
+                IpAddr::V4(v4.header().destination_addr()),
+                u8::from(v4.header().protocol()),
+            ),
+            etherparse::NetSlice::Ipv6(v6) => (
+                IpAddr::V6(v6.header().source_addr()),
+                IpAddr::V6(v6.header().destination_addr()),
+                u8::from(v6.payload().ip_number),
+            ),
+            etherparse::NetSlice::Arp(_) => return None,
+        };
+        let l4 = match sp.transport.as_ref() {
+            Some(etherparse::TransportSlice::Tcp(t)) => Some((
+                t.source_port(),
+                t.destination_port(),
+                byte_offset(frame, t.payload())?,
+                t.payload().len(),
+            )),
+            Some(etherparse::TransportSlice::Udp(u)) => Some((
+                u.source_port(),
+                u.destination_port(),
+                byte_offset(frame, u.payload())?,
+                u.payload().len(),
+            )),
+            _ => None,
+        };
+        Some((src, dst, proto, l4))
+    }
+
+    fn lax_summary(frame: &[u8]) -> Option<(Summary, bool)> {
+        let p = parse_eth(frame)?;
+        let ip = p.ip?;
+        let (l4, cut) = match p.l4 {
+            Some(ParsedL4::Tcp(t)) => (
+                Some((t.src_port, t.dst_port, t.payload_offset, t.payload_len)),
+                t.wire_payload_len != t.payload_len,
+            ),
+            Some(ParsedL4::Udp(u)) => (
+                Some((u.src_port, u.dst_port, u.payload_offset, u.payload_len)),
+                u.wire_payload_len != u.payload_len,
+            ),
+            _ => (None, false),
+        };
+        Some(((ip.src, ip.dst, ip.proto, l4), cut))
+    }
+
+    fn incomplete(frame: &[u8]) -> bool {
+        etherparse::LaxSlicedPacket::from_ethernet(frame)
+            .ok()
+            .and_then(|sp| {
+                sp.net
+                    .and_then(|n| n.ip_payload_ref().map(|p| p.incomplete))
+            })
+            .unwrap_or(false)
+    }
+
+    fn base_frames() -> Vec<Vec<u8>> {
+        use etherparse::{
+            EtherType, Ethernet2Header, IpNumber, Ipv4Header, Ipv4Options, Ipv6FlowLabel,
+            Ipv6Header, Ipv6RawExtHeader, PacketBuilder, UdpHeader,
+        };
+        let eth = |t: EtherType| Ethernet2Header {
+            source: [0; 6],
+            destination: [0; 6],
+            ether_type: t,
+        };
+        // IPv4 with 4 bytes of options, carrying UDP.
+        let mut opts = {
+            let mut ip =
+                Ipv4Header::new(8 + 20 + 4, 64, IpNumber::UDP, [10, 0, 0, 5], [10, 0, 0, 6])
+                    .unwrap();
+            ip.options = Ipv4Options::try_from(&[1u8, 1, 1, 0][..]).unwrap();
+            ip.total_len = ip.header_len() as u16 + 8 + 20;
+            let mut f = Vec::new();
+            eth(EtherType::IPV4).write(&mut f).unwrap();
+            ip.write(&mut f).unwrap();
+            UdpHeader::without_ipv4_checksum(7, 9, 20)
+                .unwrap()
+                .write(&mut f)
+                .unwrap();
+            f
+        };
+        opts.extend_from_slice(&[3; 20]);
+        // IPv6 with a hop-by-hop header, carrying UDP.
+        let mut hbh = {
+            let ext = Ipv6RawExtHeader::new_raw(IpNumber::UDP, &[0; 6]).unwrap();
+            let ip = Ipv6Header {
+                traffic_class: 0,
+                flow_label: Ipv6FlowLabel::ZERO,
+                payload_length: (ext.header_len() + 8 + 16) as u16,
+                next_header: IpNumber::IPV6_HEADER_HOP_BY_HOP,
+                hop_limit: 1,
+                source: [1; 16],
+                destination: [2; 16],
+            };
+            let mut f = Vec::new();
+            eth(EtherType::IPV6).write(&mut f).unwrap();
+            ip.write(&mut f).unwrap();
+            ext.write(&mut f).unwrap();
+            UdpHeader::without_ipv4_checksum(11, 12, 16)
+                .unwrap()
+                .write(&mut f)
+                .unwrap();
+            f
+        };
+        hbh.extend_from_slice(&[4; 16]);
+        let icmp = {
+            let mut f = Vec::new();
+            PacketBuilder::ethernet2([0; 6], [0; 6])
+                .ipv4([10, 0, 0, 7], [10, 0, 0, 8], 64)
+                .icmpv4_echo_request(1, 2)
+                .write(&mut f, &[5; 24])
+                .unwrap();
+            f
+        };
+        vec![
+            tcp_frame(&[b'x'; 30]),
+            ipv4_udp([10, 0, 0, 1], [10, 0, 0, 2], 53, 5000, &[0x42; 40]),
+            ipv6_tcp([1; 16], [2; 16], 1234, 443, 7, 0x10, &[b'y'; 25]),
+            with_vlan_tags(
+                &ipv4_udp([10, 0, 0, 3], [10, 0, 0, 4], 123, 123, &[1; 48]),
+                &[(0x8100, 7)],
+            ),
+            with_vlan_tags(&tcp_frame(&[b'z'; 10]), &[(0x88a8, 1), (0x8100, 2)]),
+            opts,
+            hbh,
+            icmp,
+        ]
+    }
+
+    proptest::proptest! {
+        #![proptest_config(proptest::prelude::ProptestConfig::with_cases(20_000))]
+
+        /// On a frame the capture did not cut, the lax parse extracts
+        /// exactly what 0.25's strict parse did — malformed packets
+        /// (that receivers drop) stay skipped.
+        #[test]
+        fn lax_parse_matches_strict_on_complete_frames(
+            base in 0usize..8,
+            edits in proptest::collection::vec((0usize..80, proptest::prelude::any::<u8>()), 1..4),
+            cut in proptest::prelude::any::<bool>(),
+            keep in 30usize..120,
+        ) {
+            let mut f = base_frames().swap_remove(base);
+            for (at, v) in edits {
+                if at < f.len() {
+                    f[at] = v;
+                }
+            }
+            if cut {
+                f.truncate(keep.min(f.len()));
+            }
+            if !incomplete(&f) {
+                let lax = lax_summary(&f);
+                proptest::prop_assert_eq!(lax.as_ref().map(|l| l.0), strict_summary(&f));
+                proptest::prop_assert!(lax.is_none_or(|l| !l.1), "complete frame read as cut");
+            }
+        }
+    }
+
+    #[test]
+    fn ethernet_padding_is_not_payload() {
+        // A minimum-size frame: 2 UDP payload bytes, then padding.
+        let mut f = ipv4_udp([10, 0, 0, 1], [10, 0, 0, 2], 1, 2, b"hi");
+        f.resize(60, 0);
+        let parsed = parse_eth(&f).unwrap();
+        assert_eq!(parsed.ip.as_ref().unwrap().l3_len, 30);
+        let ParsedL4::Udp(u) = parsed.l4.unwrap() else {
+            panic!("expected udp")
+        };
+        assert_eq!((u.payload_len, u.wire_payload_len), (2, 2));
+    }
+
+    #[test]
+    fn udp_surplus_area_is_not_a_truncation() {
+        // UDP length 38 (30-byte payload) inside a 48-byte IP payload:
+        // 10 bytes after the datagram (UDP options / trailing data).
+        let mut f = ipv4_udp([10, 0, 0, 1], [10, 0, 0, 2], 5353, 53, &[1; 40]);
+        f[14 + 20 + 4..14 + 20 + 6].copy_from_slice(&38u16.to_be_bytes());
+        let parsed = parse_eth(&f).unwrap();
+        let ParsedL4::Udp(u) = parsed.l4.unwrap() else {
+            panic!("expected udp")
+        };
+        assert_eq!((u.payload_len, u.wire_payload_len), (30, 30));
+        // Cut: the UDP length field gives the datagram's wire size.
+        f.truncate(14 + 20 + 8 + 5);
+        let ParsedL4::Udp(u) = parse_eth(&f).unwrap().l4.unwrap() else {
+            panic!("expected udp")
+        };
+        assert_eq!((u.payload_len, u.wire_payload_len), (5, 30));
+    }
+
+    #[test]
+    fn lax_ipv6_tcp_reports_wire_payload_len() {
+        let mut f = ipv6_tcp([1; 16], [2; 16], 1234, 443, 7, 0x10, &[b'y'; 500]);
+        f.truncate(14 + 40 + 20 + 30);
+        let parsed = parse_eth(&f).expect("a cut IPv6 segment is parsed");
+        assert_eq!(parsed.ip.as_ref().unwrap().l3_len, 40 + 20 + 500);
+        let ParsedL4::Tcp(t) = parsed.l4.unwrap() else {
+            panic!("expected tcp")
+        };
+        assert_eq!((t.payload_len, t.wire_payload_len), (30, 500));
     }
 
     #[test]

@@ -5,11 +5,11 @@ use flowscope::http2::{Http2Config, Http2Parser, Http2Session, PREFACE};
 use flowscope::{FlowSide, SessionParser, Timestamp};
 use libfuzzer_sys::fuzz_target;
 
-/// HPACK is stateful across the whole connection, so the invariants
-/// worth fuzzing are about that state surviving hostile input: the
-/// parser must not panic, must not keep accepting bytes once it has
-/// failed, and must stay inside its buffer cap however the input is
-/// split.
+// HPACK is stateful across the whole connection, so the invariants
+// worth fuzzing are about that state surviving hostile input: the
+// parser must not panic, must not keep accepting bytes once it has
+// failed, and must stay inside its buffer cap however the input is
+// split.
 fuzz_target!(|data: &[u8]| {
     if data.is_empty() {
         return;

@@ -21,6 +21,7 @@
 //! | `flowscope_flows_active` | gauge | — |
 //! | `flowscope_packets_unmatched_total` | counter | — |
 //! | `flowscope_packets_deduplicated_total` | counter | — |
+//! | `flowscope_datagrams_truncated_total` | counter | — |
 //! | `flowscope_bytes_total` | counter | `side` (`initiator`/`responder`) |
 //! | `flowscope_flow_duration_seconds` | histogram | — |
 //! | `flowscope_flow_packets` | histogram | — |
@@ -68,8 +69,16 @@ pub const METRIC_PACKETS_UNMATCHED: &str = "flowscope_packets_unmatched_total";
 /// same count as `Dedup::dropped()`, summed over every driver in the
 /// process). New in 0.25.1.
 pub const METRIC_PACKETS_DEDUPLICATED: &str = "flowscope_packets_deduplicated_total";
+/// `flowscope_datagrams_truncated_total` — datagrams (UDP payloads,
+/// ICMP messages) a session engine did not hand its datagram parsers
+/// because the capture cut them short (snap length): a parser would
+/// see a damaged message. The packet is still tracked. New in 0.26.0
+/// (#212).
+pub const METRIC_DATAGRAMS_TRUNCATED: &str = "flowscope_datagrams_truncated_total";
 /// `flowscope_bytes_total{side=...}` — total bytes per side
-/// (cumulative across all ended flows).
+/// (cumulative across all ended flows): wire L2 bytes,
+/// [`FlowStats::bytes_initiator`](crate::FlowStats::bytes_initiator)
+/// (the captured length before 0.26).
 pub const METRIC_BYTES: &str = "flowscope_bytes_total";
 /// `flowscope_flow_duration_seconds` — histogram of per-flow
 /// durations.
@@ -263,10 +272,30 @@ pub(crate) fn record_packet_unmatched() {
     metrics::counter!(METRIC_PACKETS_UNMATCHED).increment(1);
 }
 
-#[cfg(feature = "metrics")]
+// Only `FlowDriver` (the `reassembler` feature) deduplicates.
+#[cfg(all(feature = "metrics", feature = "reassembler"))]
 pub(crate) fn record_packet_deduplicated() {
     metrics::counter!(METRIC_PACKETS_DEDUPLICATED).increment(1);
 }
+
+#[cfg(all(
+    feature = "metrics",
+    feature = "session",
+    feature = "extractors",
+    feature = "reassembler"
+))]
+pub(crate) fn record_datagram_truncated() {
+    metrics::counter!(METRIC_DATAGRAMS_TRUNCATED).increment(1);
+}
+
+#[cfg(all(
+    not(feature = "metrics"),
+    feature = "session",
+    feature = "extractors",
+    feature = "reassembler"
+))]
+#[inline(always)]
+pub(crate) fn record_datagram_truncated() {}
 
 #[cfg(all(
     feature = "metrics",
@@ -353,7 +382,7 @@ pub(crate) fn record_flow_ended(_reason: EndReason, _stats: &FlowStats) {}
 #[inline(always)]
 pub(crate) fn record_packet_unmatched() {}
 
-#[cfg(not(feature = "metrics"))]
+#[cfg(all(not(feature = "metrics"), feature = "reassembler"))]
 #[inline(always)]
 pub(crate) fn record_packet_deduplicated() {}
 

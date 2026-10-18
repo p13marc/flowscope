@@ -68,6 +68,40 @@ impl FiveTupleKey {
         Self { proto, a, b }
     }
 
+    /// The endpoints as `(source, destination)` of a packet with
+    /// orientation `o`: `Forward` → `(a, b)`, `Reverse` → `(b, a)`.
+    /// With the flow's [`crate::FlowStats::initiator_orientation`] it
+    /// gives `(initiator, responder)` — the order to report a flow
+    /// in (the key itself is address-sorted). New in 0.26.0 (#217).
+    #[inline]
+    pub fn oriented(&self, o: Orientation) -> (SocketAddr, SocketAddr) {
+        match o {
+            Orientation::Forward => (self.a, self.b),
+            Orientation::Reverse => (self.b, self.a),
+        }
+    }
+
+    /// The canonical (bidirectional) form of a key whose `a` / `b`
+    /// are a packet's source / destination, and that packet's
+    /// orientation relative to it — the same `src > dst` swap
+    /// [`FiveTuple::bidirectional`] applies. `canonical` of
+    /// `oriented(o)` round-trips. New in 0.26.0 (#217).
+    #[inline]
+    pub fn canonical(self) -> (Self, Orientation) {
+        if self.a > self.b {
+            (
+                Self {
+                    proto: self.proto,
+                    a: self.b,
+                    b: self.a,
+                },
+                Orientation::Reverse,
+            )
+        } else {
+            (self, Orientation::Forward)
+        }
+    }
+
     /// Convenience: matches either endpoint's port.
     ///
     /// Useful in idle-timeout predicates (see
@@ -369,12 +403,14 @@ pub(crate) fn extract_from_parsed(
                 payload_offset: t.payload_offset,
                 payload_len: t.payload_len,
                 window: t.window,
+                wire_payload_len: t.wire_payload_len,
             }),
             L4Meta::new(
                 Some((t.src_port, t.dst_port)),
                 t.payload_offset,
                 t.payload_len,
-            ),
+            )
+            .with_wire_payload_len(t.wire_payload_len),
         ),
         Some(ParsedL4::Udp(u)) => (
             u.src_port,
@@ -385,7 +421,8 @@ pub(crate) fn extract_from_parsed(
                 Some((u.src_port, u.dst_port)),
                 u.payload_offset,
                 u.payload_len,
-            ),
+            )
+            .with_wire_payload_len(u.wire_payload_len),
         ),
         Some(ParsedL4::Other) | None => {
             // ICMP / ICMPv6 / SCTP / unknown — keep the flow but
@@ -397,7 +434,8 @@ pub(crate) fn extract_from_parsed(
                 132 => L4Proto::Sctp,
                 p => L4Proto::Other(p),
             };
-            let meta = L4Meta::new(None, ip.l4_offset, ip.l4_payload.len());
+            let meta = L4Meta::new(None, ip.l4_offset, ip.l4_payload.len())
+                .with_wire_payload_len(ip.l4_wire_len);
             (0u16, 0u16, l4, None, meta)
         }
     };
@@ -417,6 +455,7 @@ pub(crate) fn extract_from_parsed(
         l4: Some(l4),
         tcp: tcp_info,
         l4_meta: Some(meta),
+        l3_len: Some(ip.l3_len),
     })
 }
 
@@ -424,6 +463,36 @@ pub(crate) fn extract_from_parsed(
 mod tests {
     use super::*;
     use crate::{Timestamp, extract::parse::test_frames::*, extractor::TcpFlags};
+
+    #[test]
+    fn oriented_and_canonical_round_trip() {
+        let hi: SocketAddr = "10.0.0.9:40000".parse().unwrap();
+        let lo: SocketAddr = "10.0.0.1:80".parse().unwrap();
+        // A packet hi → lo, as a directional key.
+        let (key, o) = FiveTupleKey::new(L4Proto::Tcp, hi, lo).canonical();
+        assert_eq!((key.a, key.b, o), (lo, hi, Orientation::Reverse));
+        assert_eq!(key.oriented(o), (hi, lo));
+        assert_eq!(key.oriented(Orientation::Forward), (lo, hi));
+        // The extractor agrees.
+        let f = ipv4_tcp(
+            [0; 6],
+            [0; 6],
+            [10, 0, 0, 9],
+            [10, 0, 0, 1],
+            40000,
+            80,
+            1,
+            0,
+            0x02,
+            b"",
+        );
+        let e = FiveTuple::bidirectional()
+            .extract(PacketView::new(&f, Timestamp::default()))
+            .unwrap();
+        assert_eq!((e.key, e.orientation), (key, o));
+        let (same, fwd) = key.canonical();
+        assert_eq!((same, fwd), (key, Orientation::Forward));
+    }
 
     #[test]
     fn syn_packet_forward() {

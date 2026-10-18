@@ -15,10 +15,10 @@ use flowscope::Timestamp;
 use flowscope::correlate::{Attribution, BandwidthByKey, ByteSemantics};
 
 fn main() {
-    let mut bw = BandwidthByKey::<Attribution>::new_unbounded(
-        Duration::from_secs(10),
-        Duration::from_secs(1),
-    );
+    // At most 10 000 owners per one-second bucket; the bytes of any
+    // further owner land in the overflow total (`other_tx_bps`).
+    let mut bw =
+        BandwidthByKey::<Attribution>::new(Duration::from_secs(10), Duration::from_secs(1), 10_000);
 
     // Simulate 10 seconds of traffic for three owners (PIDs).
     for s in 0..10 {

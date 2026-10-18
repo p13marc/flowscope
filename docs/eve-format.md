@@ -64,7 +64,7 @@ Every emitted record carries:
 | `flow_id`    | u64                   | monotonic counter on the writer (one writer = one stream)             |
 | `event_type` | string                | `"flow"` / `"anomaly"` / `"stats"`                                    |
 | `in_iface`   | string (optional)     | `EveOptions::in_iface`; field is omitted when the option is empty     |
-| `src_ip` / `src_port` / `dest_ip` / `dest_port` | string / u16 | `KeyFields` accessors on the key (each field omitted if `None`) |
+| `src_ip` / `src_port` / `dest_ip` / `dest_port` | string / u16 | `KeyFields` accessors on the key (each field omitted if `None`). On `flow` / `stats` records the key is read from the flow's **initiator** (`Directed::initiator(key, stats)`), so `src_*` is the initiator and `*_toserver` its direction — Suricata's meaning; before 0.26 the key's address-sorted order. `anomaly` records carry the key as stored |
 | `proto`      | string (optional)     | `KeyFields::proto_str` — uppercase EVE convention                 |
 | `app_proto`  | string (optional)     | `KeyFields::app_proto_str` — well-known port label                |
 | `community_id` | string (`"1:"`+base64) | Corelight Community ID v1 — the canonical cross-tool flow id |
@@ -149,6 +149,8 @@ Emitted on `FlowEvent::Ended`:
     "pkts_toclient": 5,
     "bytes_toserver": 2400,
     "bytes_toclient": 14000,
+    "ip_bytes_toserver": 2302,
+    "ip_bytes_toclient": 13930,
     "start": "2026-06-10T12:34:50.000000000Z",
     "end":   "2026-06-10T12:34:56.789012345Z",
     "age": 6,
@@ -157,6 +159,12 @@ Emitted on `FlowEvent::Ended`:
   }
 }
 ```
+
+`bytes_to*` count each packet's wire L2 length (the frame plus what a
+snap length cut — Suricata's packet-length convention);
+`ip_bytes_to*` (0.26) count IP octets, header included — what NetFlow /
+IPFIX and Zeek's `*_ip_bytes` report. `*_toserver` is the initiator's
+direction.
 
 `flow.reason` mapping (matches `EndReason::as_str`):
 
@@ -192,7 +200,9 @@ via `EveOptions::include_stats = true`:
     "pkts_toserver": 7,
     "pkts_toclient": 5,
     "bytes_toserver": 2400,
-    "bytes_toclient": 14000
+    "bytes_toclient": 14000,
+    "ip_bytes_toserver": 2302,
+    "ip_bytes_toclient": 13930
   }
 }
 ```

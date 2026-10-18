@@ -11,7 +11,7 @@ use crate::flow_driver::FlowDriver;
 use crate::parser_kind::ParserKind;
 use crate::reassembler::StreamChunks;
 use crate::segment_reassembler::SegmentBufferReassemblerFactory;
-use crate::session::core::{Ctx, DatagramCore, Output, Ports, Selector, SessionCore, Stream};
+use crate::session::core::{Ctx, DatagramCore, Emit, Output, Ports, Selector, SessionCore, Stream};
 use crate::session::engine::{Dispatch, Engine};
 use crate::session::{
     DatagramParser, DatagramParserFactory, SessionEvent, SessionParser, SessionParserFactory,
@@ -81,8 +81,6 @@ impl<K: Clone, M: std::fmt::Debug> Output<K, M> for Vec<SessionEvent<K, M>> {
     }
 
     fn anomaly(&mut self, key: &K, kind: AnomalyKind, ts: Timestamp) {
-        crate::obs::record_anomaly(&kind);
-        crate::obs::trace_anomaly(&kind);
         self.push(SessionEvent::FlowAnomaly {
             key: key.clone(),
             kind,
@@ -139,20 +137,20 @@ where
         stats: &FlowStats,
         finals: [&StreamChunks; 2],
         ports: Ports,
-        anomalies: bool,
+        emit: Emit,
         out: &mut Self::Out,
     ) {
-        SessionCore::on_flow_end(self, key, reason, stats, finals, ports, anomalies, out);
+        SessionCore::on_flow_end(self, key, reason, stats, finals, ports, emit, out);
     }
     fn on_tick(
         &mut self,
         now: Timestamp,
         stamp: Timestamp,
         orientation_of: &dyn Fn(&K) -> Orientation,
-        anomalies: bool,
+        emit: Emit,
         out: &mut Self::Out,
     ) {
-        SessionCore::on_tick(self, now, stamp, orientation_of, anomalies, out);
+        SessionCore::on_tick(self, now, stamp, orientation_of, emit, out);
     }
     fn retain(&mut self, alive: &dyn Fn(&K) -> bool) {
         SessionCore::retain(self, alive);
@@ -199,20 +197,20 @@ where
         stats: &FlowStats,
         _finals: [&StreamChunks; 2],
         _ports: Ports,
-        _anomalies: bool,
+        emit: Emit,
         out: &mut Self::Out,
     ) {
-        DatagramCore::on_flow_end(self, key, reason, stats, out);
+        DatagramCore::on_flow_end(self, key, reason, stats, emit, out);
     }
     fn on_tick(
         &mut self,
         now: Timestamp,
         stamp: Timestamp,
         orientation_of: &dyn Fn(&K) -> Orientation,
-        anomalies: bool,
+        emit: Emit,
         out: &mut Self::Out,
     ) {
-        DatagramCore::on_tick(self, now, stamp, orientation_of, anomalies, out);
+        DatagramCore::on_tick(self, now, stamp, orientation_of, emit, out);
     }
     fn retain(&mut self, alive: &dyn Fn(&K) -> bool) {
         DatagramCore::retain(self, alive);

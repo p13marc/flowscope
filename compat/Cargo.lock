@@ -94,7 +94,7 @@ dependencies = [
 
 [[package]]
 name = "flowscope"
-version = "0.25.3"
+version = "0.26.0"
 dependencies = [
  "ahash",
  "arrayvec",
@@ -110,7 +110,7 @@ name = "flowscope-compat"
 version = "0.0.0"
 dependencies = [
  "flowscope 0.24.1",
- "flowscope 0.25.3",
+ "flowscope 0.26.0",
 ]
 
 [[package]]

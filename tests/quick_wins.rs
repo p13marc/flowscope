@@ -14,7 +14,9 @@
 
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use flowscope::{EndReason, FlowStats, Timestamp};
+use flowscope::Timestamp;
+#[cfg(feature = "tracker")]
+use flowscope::{EndReason, FlowStats};
 
 // ── Timestamp ──────────────────────────────────────────────────────
 
@@ -74,6 +76,7 @@ fn timestamp_display_already_zeek_compatible() {
 
 // ── FlowStats ──────────────────────────────────────────────────────
 
+#[cfg(feature = "tracker")]
 fn stats_with(
     pkts_i: u64,
     pkts_r: u64,
@@ -94,6 +97,7 @@ fn stats_with(
     s
 }
 
+#[cfg(feature = "tracker")]
 #[test]
 fn flow_stats_total_helpers() {
     let s = stats_with(10, 20, 1_000, 2_000, 1, 2);
@@ -102,18 +106,21 @@ fn flow_stats_total_helpers() {
     assert_eq!(s.total_retransmits(), 3);
 }
 
+#[cfg(feature = "tracker")]
 #[test]
 fn flow_stats_retransmit_rate() {
     let s = stats_with(10, 10, 0, 0, 1, 1);
     assert!((s.retransmit_rate() - 0.1).abs() < 1e-9);
 }
 
+#[cfg(feature = "tracker")]
 #[test]
 fn flow_stats_retransmit_rate_zero_packets_is_zero() {
     let s = FlowStats::default();
     assert_eq!(s.retransmit_rate(), 0.0);
 }
 
+#[cfg(feature = "tracker")]
 #[test]
 fn flow_stats_duration_and_secs() {
     let s = stats_with(0, 0, 0, 0, 0, 0);
@@ -121,6 +128,7 @@ fn flow_stats_duration_and_secs() {
     assert!((s.duration_secs() - 5.5).abs() < 1e-9);
 }
 
+#[cfg(feature = "tracker")]
 #[test]
 fn flow_stats_duration_saturates_when_last_before_started() {
     let mut s = FlowStats::default();
@@ -132,6 +140,7 @@ fn flow_stats_duration_saturates_when_last_before_started() {
 
 // ── EndReason ──────────────────────────────────────────────────────
 
+#[cfg(feature = "tracker")]
 #[test]
 fn end_reason_as_str_vocabulary() {
     assert_eq!(EndReason::Fin.as_str(), "fin");
@@ -144,6 +153,7 @@ fn end_reason_as_str_vocabulary() {
     assert_eq!(EndReason::ForceClosed.as_str(), "force_closed");
 }
 
+#[cfg(feature = "tracker")]
 #[test]
 fn end_reason_display_matches_as_str() {
     for r in [
@@ -162,6 +172,7 @@ fn end_reason_display_matches_as_str() {
 
 // ── LayerKind predicates ──────────────────────────────────────────
 
+#[cfg(feature = "extractors")]
 #[test]
 fn layer_kind_groups() {
     use flowscope::layers::LayerKind;
@@ -204,6 +215,7 @@ fn layer_kind_groups() {
 
 // ── KeyIndexed::peek ──────────────────────────────────────────────
 
+#[cfg(feature = "tracker")]
 #[test]
 fn key_indexed_peek_does_not_bump_lru() {
     use flowscope::correlate::KeyIndexed;
@@ -228,6 +240,7 @@ fn key_indexed_peek_does_not_bump_lru() {
     assert!(q.peek(&3, Timestamp::new(3, 0)).is_some());
 }
 
+#[cfg(feature = "tracker")]
 #[test]
 fn key_indexed_peek_respects_ttl() {
     use flowscope::correlate::KeyIndexed;

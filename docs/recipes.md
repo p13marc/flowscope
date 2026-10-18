@@ -750,26 +750,29 @@ flushes and recovers the sink.
 
 ```toml
 # CSV + Zeek conn.log writers — no extra deps.
-flowscope = { version = "0.23", features = ["emit"] }
+flowscope = { version = "0.26", features = ["emit"] }
 
 # NDJSON writer — adds serde_json.
-flowscope = { version = "0.23", features = ["emit-ndjson"] }
+flowscope = { version = "0.26", features = ["emit-ndjson"] }
 
 # Suricata 7.x EVE JSON — adds serde_json (0.12).
-flowscope = { version = "0.23", features = ["emit-eve"] }
+flowscope = { version = "0.26", features = ["emit-eve"] }
 ```
 
 ```rust,ignore
 use flowscope::emit::{FlowEventCsvWriter, ZeekConnLogWriter};
 
-// CSV — `start_sec, end_sec, duration_sec, proto, src_ip, …, end_reason`
+// CSV — `start_sec, end_sec, duration_sec, proto, src_ip, …, end_reason,
+// ip_bytes_init, ip_bytes_resp`. `src_*` is the flow's initiator; `bytes_*`
+// are wire L2 bytes, `ip_bytes_*` IP octets (0.26).
 let mut csv = FlowEventCsvWriter::new(file)?;
 for ev in driver.track(view) {
     csv.write_event(&ev)?;
 }
 csv.finish()?;
 
-// Zeek conn.log — tab-separated, `zeek-cut`-compatible
+// Zeek conn.log — tab-separated, `zeek-cut`-compatible; `id.orig_*` is the
+// initiator, `orig_ip_bytes` / `resp_ip_bytes` are IP octets (0.26)
 let mut zeek = ZeekConnLogWriter::new(file)?;
 for ev in driver.track(view) { zeek.write_event(&ev)?; }
 zeek.finish()?;
@@ -1107,7 +1110,7 @@ feature — `Histogram` for explicit-bucket distributions
 reads on unbounded streams.
 
 ```toml
-flowscope = { version = "0.23", features = ["aggregate"] }
+flowscope = { version = "0.26", features = ["aggregate"] }
 ```
 
 ```rust,ignore

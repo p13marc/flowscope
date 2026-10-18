@@ -53,6 +53,8 @@ fn build_finalised_record() -> (FlowRecord, FlowEvent<flowscope::extract::FiveTu
     stats.packets_responder = 12;
     stats.bytes_initiator = 1500;
     stats.bytes_responder = 2100;
+    stats.ip_bytes_initiator = 1360;
+    stats.ip_bytes_responder = 1932;
     stats.retransmits_initiator = 1;
     stats.retransmits_responder = 0;
     stats.started = Timestamp::new(1700000000, 0);
@@ -128,8 +130,8 @@ fn zeek_write_flow_record_emits_well_formed_row() {
     let cols: Vec<_> = row.split('\t').collect();
     // Schema: ts uid orig_h orig_p resp_h resp_p proto
     //         duration orig_bytes resp_bytes conn_state
-    //         history orig_pkts resp_pkts
-    assert_eq!(cols.len(), 14);
+    //         history orig_pkts orig_ip_bytes resp_pkts resp_ip_bytes
+    assert_eq!(cols.len(), 16);
     assert_eq!(cols[2], "10.0.0.1");
     assert_eq!(cols[4], "10.0.0.2");
     assert_eq!(cols[6], "tcp");
@@ -138,7 +140,9 @@ fn zeek_write_flow_record_emits_well_formed_row() {
     assert_eq!(cols[10], "SF", "conn_state from EndOfFlowDetected");
     assert_eq!(cols[11], "-", "history unset for record path");
     assert_eq!(cols[12], "10", "orig_pkts");
-    assert_eq!(cols[13], "12", "resp_pkts");
+    assert_eq!(cols[13], "1360", "orig_ip_bytes");
+    assert_eq!(cols[14], "12", "resp_pkts");
+    assert_eq!(cols[15], "1932", "resp_ip_bytes");
 }
 
 #[cfg(feature = "emit-ndjson")]
@@ -221,6 +225,16 @@ fn eve_write_flow_record_matches_event_shape() {
         ev_value["flow"]["pkts_toserver"],
         rec_value["flow"]["pkts_toserver"]
     );
+    assert_eq!(rec_value["flow"]["bytes_toserver"], 1500);
+    assert_eq!(rec_value["flow"]["ip_bytes_toserver"], 1360);
+    assert_eq!(
+        ev_value["flow"]["ip_bytes_toserver"],
+        rec_value["flow"]["ip_bytes_toserver"]
+    );
+    assert_eq!(
+        ev_value["flow"]["ip_bytes_toclient"],
+        rec_value["flow"]["ip_bytes_toclient"]
+    );
     assert_eq!(ev_value["proto"], rec_value["proto"]);
     assert_eq!(ev_value["src_ip"], rec_value["src_ip"]);
     assert_eq!(ev_value["dest_ip"], rec_value["dest_ip"]);
@@ -271,7 +285,8 @@ fn csv_routed_through_flow_record_preserves_all_end_reasons() {
         let s = std::str::from_utf8(&buf).unwrap();
         let row = s.lines().nth(1).expect("data row");
         let cols: Vec<_> = row.split(',').collect();
-        let got = cols.last().unwrap().trim();
+        // end_reason is column 15 (0.26 appended ip_bytes_init/resp).
+        let got = cols[14].trim();
         assert_eq!(
             got, want,
             "EndReason::{:?} should serialize as {:?}, got {:?}",
@@ -382,6 +397,8 @@ fn from_key_fields_handles_minimal_key() {
     let mut stats = FlowStats::default();
     stats.bytes_initiator = 100;
     stats.bytes_responder = 200;
+    stats.ip_bytes_initiator = 86;
+    stats.ip_bytes_responder = 172;
     stats.packets_initiator = 1;
     stats.packets_responder = 2;
     stats.started = Timestamp::new(1700000000, 0);
@@ -400,6 +417,45 @@ fn from_key_fields_handles_minimal_key() {
     assert_eq!(rec.source_transport_port, 0);
     assert_eq!(rec.destination_transport_port, 0);
     assert!(rec.application_name.is_none(), "no app_proto_str hint");
-    assert_eq!(rec.octet_total_count, 300);
+    assert_eq!(rec.octet_total_count, 258, "IP octets (#219)");
+    assert_eq!(rec.layer2_octet_total_count, Some(300));
     assert_eq!(rec.packet_total_count, 3);
+}
+
+/// #219 + #217: a flow of two 60-byte frames whose IP datagrams are 46
+/// bytes reports IE 1 `octetDeltaCount` = 92 (IP octets, not the 120
+/// frame bytes), and its source is the initiator even though that
+/// endpoint has the higher address.
+#[test]
+fn flow_record_counts_ip_octets_from_the_initiator() {
+    use flowscope::extract::parse::test_frames::ipv4_udp;
+    use std::net::Ipv4Addr;
+
+    // 10.0.0.9:5000 → 10.0.0.1:53, 18-byte payload: IP 20 + UDP 8 + 18.
+    let frame = ipv4_udp([10, 0, 0, 9], [10, 0, 0, 1], 5000, 53, &[7; 18]);
+    assert_eq!(frame.len(), 60);
+    let mut t: FlowTracker<FiveTuple, ()> = FlowTracker::new(FiveTuple::bidirectional());
+    t.track(PacketView::new(&frame, Timestamp::new(1_700_000_000, 0)));
+    t.track(PacketView::new(&frame, Timestamp::new(1_700_000_001, 0)));
+    let ended = t
+        .finish()
+        .into_iter()
+        .find_map(|e| match e {
+            FlowEvent::Ended { key, stats, .. } => Some((key, stats)),
+            _ => None,
+        })
+        .expect("Ended");
+    let (key, stats) = ended;
+    assert_eq!(stats.bytes_initiator, 120, "wire L2 bytes");
+    let rec = FlowRecord::from_key_fields(&stats, &key, Some(EndReason::IdleTimeout));
+    assert_eq!(rec.octet_delta_count_initiator, 92, "IE 1: IP octets");
+    assert_eq!(rec.octet_total_count, 92, "IE 85");
+    assert_eq!(rec.layer2_octet_delta_count_initiator, Some(120), "IE 352");
+    assert_eq!(rec.source_ipv4_address, Some(Ipv4Addr::new(10, 0, 0, 9)));
+    assert_eq!(rec.source_transport_port, 5000);
+    assert_eq!(
+        rec.destination_ipv4_address,
+        Some(Ipv4Addr::new(10, 0, 0, 1))
+    );
+    assert_eq!(rec.destination_transport_port, 53);
 }

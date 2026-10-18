@@ -238,6 +238,7 @@ pub use crate::tracker::{FlowTracker, FlowTrackerConfig};
 #[cfg(feature = "extractors")]
 pub use crate::well_known::LabelTable;
 pub use crate::{
-    AnomalyFields, AsPacketView, ChecksumStatus, Error, ErrorCode, ErrorKind, KeyFields, MacAddr,
-    Module, PacketView, Result, RssHashType, RxHash, RxMetadata, Timestamp, VlanProto, VlanTag,
+    AnomalyFields, AsPacketView, ChecksumStatus, Directed, Error, ErrorCode, ErrorKind, KeyFields,
+    MacAddr, Module, PacketView, Result, RssHashType, RxHash, RxMetadata, Timestamp, VlanProto,
+    VlanTag,
 };

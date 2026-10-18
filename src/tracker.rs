@@ -51,13 +51,24 @@ pub struct PacketContext<'a, K> {
     pub l4_payload: Option<&'a [u8]>,
     /// Packet timestamp (after any driver-side clamping).
     pub ts: Timestamp,
-    /// Frame length in bytes.
+    /// The packet's wire length in bytes: the frame plus what a snap
+    /// length cut — as the source reported it
+    /// ([`PacketView::wire_len`]) or, when it did not, as the IP header
+    /// claims it. The frame's length before 0.26 — that is
+    /// [`captured_len`](Self::captured_len) now.
     pub len: usize,
     /// `true` when this packet created the flow.
     pub is_new: bool,
     /// The extractor's [`crate::L4Meta`], offsets into the tracked
     /// frame. New in 0.25.0.
     pub l4_meta: Option<crate::L4Meta>,
+    /// Bytes of the frame actually captured (`view.frame.len()`).
+    /// New in 0.26.0.
+    pub captured_len: usize,
+    /// `true` when the capture cut this packet short: the source
+    /// reported a snap cut, or its TCP / L4 payload is shorter than
+    /// the IP header says. New in 0.26.0 (#212).
+    pub truncated: bool,
 }
 
 /// Snapshot of one live flow returned by [`FlowTracker::iter_active`].
@@ -596,6 +607,12 @@ impl<E: FlowExtractor, S: Send + 'static> FlowTracker<E, S> {
     ///
     /// `payload_cb` is called at most once per packet (TCP only). See
     /// [`Self::track_with`] for a hook that fires for every packet.
+    ///
+    /// `payload` is the **captured** payload. For a segment a snap
+    /// length cut, the bytes after it were on the wire but are not
+    /// passed (nor reported): use [`Self::track_with`] and
+    /// [`PacketContext::truncated`] / [`TcpInfo::wire_payload_len`] to
+    /// see the cut, as [`crate::FlowDriver`] does.
     pub fn track_with_payload<'v, F>(
         &mut self,
         view: impl Into<PacketView<'v>>,
@@ -641,14 +658,51 @@ impl<E: FlowExtractor, S: Send + 'static> FlowTracker<E, S> {
                 return events;
             }
         };
+        let mut extracted = extracted;
+        if view.snap_cut > 0 {
+            // A reported cut bounds what the headers may claim was cut.
+            let cut = view.snap_cut as usize;
+            if let Some(t) = extracted.tcp.as_mut() {
+                t.wire_payload_len = t.wire_payload_len.min(t.payload_len.saturating_add(cut));
+            }
+            if let Some(m) = extracted.l4_meta.as_mut() {
+                m.wire_payload_len = m.wire_payload_len.min(m.payload_len.saturating_add(cut));
+            }
+        } else if view.wire_len_known() && extracted.is_truncated() {
+            // The source knows the frame is complete, yet its IP header
+            // claims more: a lying header (receivers drop the packet),
+            // not a capture cut. Skip it, as before 0.26.
+            self.stats.packets_unmatched += 1;
+            crate::obs::record_packet_unmatched();
+            return events;
+        }
+        let truncated = view.is_truncated() || extracted.is_truncated();
+        // Bytes the headers say were cut from the payload — what a
+        // source that does not report its snap cut still lets us see.
+        let header_cut = extracted
+            .tcp
+            .map_or(0, |t| t.wire_len() - t.payload_len)
+            .max(
+                extracted
+                    .l4_meta
+                    .map_or(0, |m| m.wire_payload_len.saturating_sub(m.payload_len)),
+            );
         let Extracted {
             key,
             orientation,
             l4,
             tcp,
             l4_meta,
+            l3_len,
         } = extracted;
-        let len = view.frame.len();
+        // Wire length (#219): what a snap length cut counts too — as
+        // the source reported it, or as the headers claim it.
+        let captured_len = view.frame.len();
+        let len = view.wire_len().max(captured_len.saturating_add(header_cut));
+        // IP octets: the datagram's own length when the extractor
+        // knows it, else the wire length — never more than the wire
+        // length (a forged total length on a cut frame).
+        let ip_len = l3_len.map_or(len as u64, |l| u64::from(l).min(len as u64));
         let ts = view.timestamp;
         // Physical capture leg (issue #120). `0` is the documented
         // "unused" sentinel (`RxMetadata::source_idx`), so a zero here
@@ -819,6 +873,8 @@ impl<E: FlowExtractor, S: Send + 'static> FlowTracker<E, S> {
             ts,
             len,
             is_new,
+            captured_len,
+            truncated,
         });
 
         // ── update stats ─────────────────────────────────────────
@@ -867,6 +923,8 @@ impl<E: FlowExtractor, S: Send + 'static> FlowTracker<E, S> {
                 }
                 entry.stats.packets_initiator += 1;
                 entry.stats.bytes_initiator += len as u64;
+                entry.stats.ip_bytes_initiator += ip_len;
+                entry.stats.packets_truncated_initiator += u64::from(truncated);
                 entry.stats.last_seen_initiator = ts;
             }
             FlowSide::Responder => {
@@ -878,6 +936,8 @@ impl<E: FlowExtractor, S: Send + 'static> FlowTracker<E, S> {
                 }
                 entry.stats.packets_responder += 1;
                 entry.stats.bytes_responder += len as u64;
+                entry.stats.ip_bytes_responder += ip_len;
+                entry.stats.packets_truncated_responder += u64::from(truncated);
                 entry.stats.last_seen_responder = ts;
             }
         }
@@ -886,11 +946,13 @@ impl<E: FlowExtractor, S: Send + 'static> FlowTracker<E, S> {
         // ── TCP state machine ────────────────────────────────────
         if let Some(tcp_info) = tcp {
             // History string update.
+            // A segment carries data if it did on the wire, captured
+            // or not (#212).
             push_for_flags(
                 &mut entry.history,
                 tcp_info.flags,
                 side,
-                tcp_info.payload_len > 0,
+                tcp_info.wire_len() > 0,
             );
             let prev_state = entry.state;
             let other_side_fin = match side {

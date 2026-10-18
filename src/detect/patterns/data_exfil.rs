@@ -50,7 +50,9 @@ pub struct DataExfilDetector {
 pub struct ExfilScore {
     /// Exfiltrating source.
     pub src: IpAddr,
-    /// Initiator-sent bytes on the flagged flow.
+    /// Initiator-sent bytes on the flagged flow (wire L2 bytes,
+    /// [`FlowStats::bytes_initiator`](crate::FlowStats::bytes_initiator)
+    /// when fed from the registry).
     pub bytes: u64,
     /// Source's EWMA baseline mean at the time of the flow.
     pub mean: f64,
@@ -214,7 +216,8 @@ impl<K: KeyFields + Send> crate::detect::Detector<K> for DataExfilDetector {
         ts: Timestamp,
         out: &mut Vec<OwnedAnomaly>,
     ) {
-        let Some(src) = key.src_ip() else {
+        // The initiator sent `bytes_initiator`.
+        let Some(src) = crate::Directed::initiator(key, stats).src_ip() else {
             return;
         };
         if let Some(score) = self.observe(src, stats.bytes_initiator, ts) {

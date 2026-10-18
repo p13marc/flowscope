@@ -62,6 +62,7 @@ impl FlowExtractor for MacPair {
             l4: None,
             tcp: None,
             l4_meta: None,
+            l3_len: None,
         })
     }
 }

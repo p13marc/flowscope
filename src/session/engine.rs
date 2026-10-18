@@ -27,7 +27,12 @@
 //! `FlowEvent::Packet`, so shedding `Packet` events with
 //! [`crate::EventMask`] does not stop L7 parsing. The event mask and
 //! pause only affect what reaches the consumer: parsers still see
-//! every flow end.
+//! every flow end. They apply to the parser lifecycle too (#204): a
+//! flow-end `ParserClosed` is emitted with its flow's `Ended` or not
+//! at all; early `ParserClosed` / `ParserSideStopped` are dropped while
+//! events are paused; a `SessionParseError` anomaly needs anomalies on,
+//! `FLOW_ANOMALY` unmasked and no pause. Parser state is released and
+//! closes are counted either way.
 
 use std::hash::Hash;
 
@@ -38,7 +43,7 @@ use crate::extractor::{FlowExtractor, L4Proto, Orientation};
 use crate::flow_driver::{FlowDriver, PacketInfo};
 use crate::reassembler::StreamChunks;
 use crate::segment_reassembler::SegmentBufferReassemblerFactory;
-use crate::session::core::{Ctx, Ports, Stream};
+use crate::session::core::{Ctx, Emit, Ports, Stream};
 use crate::tracker::{FlowTracker, FlowTrackerConfig};
 use crate::view::PacketView;
 
@@ -76,6 +81,9 @@ pub(crate) trait Dispatch<K> {
 
     fn on_datagram(&mut self, cx: &Ctx<'_, K>, ports: Ports, payload: &[u8], out: &mut Self::Out);
 
+    /// The flow ended. `emit.flow_end_closes` says whether its
+    /// `Ended` reaches the consumer (the flow-end `ParserClosed` rides
+    /// with it).
     #[allow(clippy::too_many_arguments)]
     fn on_flow_end(
         &mut self,
@@ -84,7 +92,7 @@ pub(crate) trait Dispatch<K> {
         stats: &FlowStats,
         finals: [&StreamChunks; 2],
         ports: Ports,
-        anomalies: bool,
+        emit: Emit,
         out: &mut Self::Out,
     );
 
@@ -95,7 +103,7 @@ pub(crate) trait Dispatch<K> {
         now: Timestamp,
         stamp: Timestamp,
         orientation_of: &dyn Fn(&K) -> Orientation,
-        anomalies: bool,
+        emit: Emit,
         out: &mut Self::Out,
     );
 
@@ -125,14 +133,27 @@ pub(crate) fn ports_of(frame: &[u8]) -> Ports {
 /// The payload a datagram parser receives: the UDP payload, or the
 /// whole ICMPv4 / ICMPv6 message (0.14.1: ICMP parsers ride the
 /// datagram path). Fallback for extractors that report no
-/// [`crate::L4Meta`].
-fn datagram_payload(frame: &[u8]) -> Option<&[u8]> {
-    let sp = etherparse::SlicedPacket::from_ethernet(frame).ok()?;
-    match sp.transport? {
-        etherparse::TransportSlice::Udp(udp) => Some(udp.payload()),
-        etherparse::TransportSlice::Icmpv4(icmp) => Some(icmp.slice()),
-        etherparse::TransportSlice::Icmpv6(icmp) => Some(icmp.slice()),
-        _ => None,
+/// [`crate::L4Meta`]: the extractors' own parse, so the same rules
+/// apply. `Err(())` when the capture cut the datagram itself short
+/// (bytes cut after a UDP datagram's length do not count).
+fn datagram_payload(frame: &[u8]) -> Result<Option<&[u8]>, ()> {
+    let Some(parsed) = parse::parse_eth(frame) else {
+        return Ok(None);
+    };
+    let Some(ip) = parsed.ip else {
+        return Ok(None);
+    };
+    let icmp = ip.proto == 1 || ip.proto == 58;
+    match parsed.l4 {
+        Some(ParsedL4::Udp(u)) if u.wire_payload_len > u.payload_len => Err(()),
+        Some(ParsedL4::Udp(u)) => Ok(u
+            .payload_offset
+            .checked_add(u.payload_len)
+            .and_then(|end| frame.get(u.payload_offset..end))),
+        // An ICMP message, cut inside or after its header.
+        Some(ParsedL4::Other) | None if icmp && ip.l4_wire_len > ip.l4_payload.len() => Err(()),
+        Some(ParsedL4::Other) if icmp => Ok(Some(ip.l4_payload)),
+        _ => Ok(None),
     }
 }
 
@@ -191,7 +212,7 @@ where
             None if needs_ports && packet.is_some() => ports_of(frame),
             None => None,
         };
-        let anomalies = self.flow.emits_anomalies();
+        let gate = self.flow.emit_gate();
 
         let mut data_pending = packet.is_some();
         let mut packet_tcp = packet.as_ref().and_then(|p| p.tcp);
@@ -199,13 +220,13 @@ where
             if let (true, Some(p), FlowEvent::Ended { key, .. }) = (data_pending, &packet, &ev)
                 && key == &p.key
             {
-                self.dispatch_packet(p, view, ports, anomalies, dispatch, out);
+                self.dispatch_packet(p, view, ports, gate, dispatch, out);
                 data_pending = false;
             }
-            self.forward(ev, &mut packet_tcp, anomalies, dispatch, out);
+            self.forward(ev, &mut packet_tcp, gate, dispatch, out);
         }
         if data_pending && let Some(p) = &packet {
-            self.dispatch_packet(p, view, ports, anomalies, dispatch, out);
+            self.dispatch_packet(p, view, ports, gate, dispatch, out);
         }
         if let Some(p) = &packet
             && self.flow.auto_sweep_due(p.ts)
@@ -221,10 +242,10 @@ where
         out: &mut D::Out,
     ) {
         let now = self.flow.clamp_now(now);
-        let anomalies = self.flow.emits_anomalies();
+        let gate = self.flow.emit_gate();
         // 1. Ticks: a flow this sweep closes still gets its final
         //    tick, and the tick's messages land ahead of its end.
-        self.tick(now, now, anomalies, dispatch, out);
+        self.tick(now, now, gate, dispatch, out);
         // 2. Holes past their deadline release data — on flows that
         //    are still tracked.
         let emit_flow_anomalies = self.flow.emits_mask(EventMask::FLOW_ANOMALY);
@@ -244,7 +265,7 @@ where
                         side: r.side,
                         orientation: r.orientation,
                         ts: now,
-                        anomalies,
+                        emit: gate,
                     };
                     dispatch.on_stream(&cx, r.ports, &Stream::Chunks(data), out);
                 }
@@ -253,7 +274,7 @@ where
         let events = self.flow.sweep_raw(now);
         let mut none = None;
         for ev in events {
-            self.forward(ev, &mut none, anomalies, dispatch, out);
+            self.forward(ev, &mut none, gate, dispatch, out);
         }
         let tracker = self.flow.tracker();
         dispatch.retain(&|k| tracker.get(k).is_some());
@@ -264,12 +285,12 @@ where
     /// time, and the monotonic clock is left alone.
     pub(crate) fn finish<D: Dispatch<E::Key>>(&mut self, dispatch: &mut D, out: &mut D::Out) {
         let stamp = self.flow.max_timestamp();
-        let anomalies = self.flow.emits_anomalies();
-        self.tick(Timestamp::MAX, stamp, anomalies, dispatch, out);
+        let gate = self.flow.emit_gate();
+        self.tick(Timestamp::MAX, stamp, gate, dispatch, out);
         let events = self.flow.finish_raw();
         let mut none = None;
         for ev in events {
-            self.forward(ev, &mut none, anomalies, dispatch, out);
+            self.forward(ev, &mut none, gate, dispatch, out);
         }
     }
 
@@ -277,7 +298,7 @@ where
         &mut self,
         now: Timestamp,
         stamp: Timestamp,
-        anomalies: bool,
+        gate: Emit,
         dispatch: &mut D,
         out: &mut D::Out,
     ) {
@@ -288,7 +309,7 @@ where
                 .map(|e| e.initiator_orientation())
                 .unwrap_or_default()
         };
-        dispatch.on_tick(now, stamp, &orientation_of, anomalies, out);
+        dispatch.on_tick(now, stamp, &orientation_of, gate, out);
     }
 
     pub(crate) fn force_close<D: Dispatch<E::Key>>(
@@ -298,11 +319,11 @@ where
         dispatch: &mut D,
         out: &mut D::Out,
     ) {
-        let anomalies = self.flow.emits_anomalies();
+        let gate = self.flow.emit_gate();
         let events = self.flow.force_close_raw(key, now);
         let mut none = None;
         for ev in events {
-            self.forward(ev, &mut none, anomalies, dispatch, out);
+            self.forward(ev, &mut none, gate, dispatch, out);
         }
     }
 
@@ -312,7 +333,7 @@ where
         p: &PacketInfo<E::Key>,
         view: PacketView<'_>,
         ports: Ports,
-        anomalies: bool,
+        gate: Emit,
         dispatch: &mut D,
         out: &mut D::Out,
     ) {
@@ -322,7 +343,7 @@ where
             side: p.side,
             orientation: p.orientation,
             ts: p.ts,
-            anomalies,
+            emit: gate,
         };
         match p.l4 {
             Some(L4Proto::Tcp) => {
@@ -348,12 +369,17 @@ where
                 }
             }
             _ if dispatch.wants_datagram(ports, p.l4) => {
+                // A datagram the capture cut short is not parsed: the
+                // parser would read a damaged message (#212).
                 let payload = match p.l4_meta {
-                    Some(m) => Some(m.payload(view.frame)),
+                    Some(m) if m.is_truncated() => Err(()),
+                    Some(m) => Ok(Some(m.payload(view.frame))),
                     None => datagram_payload(view.frame),
                 };
-                if let Some(payload) = payload {
-                    dispatch.on_datagram(&cx, ports, payload, out);
+                match payload {
+                    Ok(Some(payload)) => dispatch.on_datagram(&cx, ports, payload, out),
+                    Ok(None) => {}
+                    Err(()) => crate::obs::record_datagram_truncated(),
                 }
             }
             _ => {}
@@ -367,10 +393,13 @@ where
         &mut self,
         mut ev: FlowEvent<E::Key>,
         packet_tcp: &mut Option<crate::extractor::TcpInfo>,
-        anomalies: bool,
+        gate: Emit,
         dispatch: &mut D,
         out: &mut D::Out,
     ) {
+        // Decided before the flow is closed: a flow-end parser close
+        // is shown exactly when its `Ended` is (#204).
+        let visible = self.flow.emits(&ev);
         if let FlowEvent::Ended {
             key, reason, stats, ..
         } = &mut ev
@@ -388,10 +417,14 @@ where
             self.flow.drain_stream(key, FlowSide::Initiator, init);
             self.flow.drain_stream(key, FlowSide::Responder, resp);
             let ports = self.flow.stream_ports(key);
-            dispatch.on_flow_end(key, *reason, stats, [&*init, &*resp], ports, anomalies, out);
+            let emit = Emit {
+                flow_end_closes: visible,
+                ..gate
+            };
+            dispatch.on_flow_end(key, *reason, stats, [&*init, &*resp], ports, emit, out);
             self.flow.finalize_flow(key, *reason);
         }
-        if !self.flow.emits(&ev) {
+        if !visible {
             return;
         }
         let tcp = if matches!(ev, FlowEvent::Packet { .. }) {

@@ -713,6 +713,9 @@ impl SegmentBufferReassembler {
         self.skip_to(c.off, ts);
         let seq = self.track.seq_of(c.off);
         self.feed(seq, &c.data, ts, false);
+        if self.stop.is_none() {
+            self.skip_to(c.end(), ts);
+        }
     }
 
     fn feed(&mut self, seq: u32, payload: &[u8], ts: Timestamp, pass: bool) -> SegmentOutcome {
@@ -820,6 +823,53 @@ impl Reassembler for SegmentBufferReassembler {
         if let Some(c) = self.track.fin(end, ts, self.rules.max_ahead) {
             self.resync(&c, ts);
         }
+    }
+
+    fn missing(&mut self, seq: u32, len: u32, ts: Timestamp) {
+        if self.stop.is_some() || len == 0 {
+            return;
+        }
+        self.track.anchor(seq, ts);
+        let start = self.track.offset_of(seq);
+        let end = start + i64::from(len);
+        if end <= self.track.next_off as i64 {
+            return;
+        }
+        if start - self.track.next_off as i64 > self.rules.max_ahead as i64 {
+            // Far ahead: held like a far segment until corroborated.
+            if let Some(c) =
+                self.track
+                    .far_missing(start as u64, u64::from(len), ts, self.rules.max_ahead)
+            {
+                self.resync(&c, ts);
+                return self.missing(seq, len, ts);
+            }
+            self.check_timers(ts);
+            return;
+        }
+        if start <= self.track.next_off as i64 {
+            // The stream has reached the cut bytes: skip them now,
+            // delivering whatever out-of-order data falls inside them.
+            let end = end as u64;
+            while self.stop.is_none() && self.track.next_off < end {
+                let to = self
+                    .ooo
+                    .as_ref()
+                    .and_then(|o| o.first_start())
+                    .map_or(end, |f| f.min(end));
+                self.skip_to(to, ts);
+                while self.deliver_first(ts) {}
+            }
+            self.update_watermark();
+        } else if let Some(c) = self
+            .track
+            .evidence(seq.wrapping_add(len), ts, self.rules.max_ahead)
+        {
+            // A hole before them: they prove the stream reaches
+            // `seq + len`, like an acknowledgement would.
+            self.resync(&c, ts);
+        }
+        self.check_timers(ts);
     }
 
     fn drain_into(&mut self, out: &mut StreamChunks) {
@@ -1469,5 +1519,190 @@ mod tests {
         assert_eq!(r.segment_into(10, b"x", ts(0)), SegmentOutcome::Buffered);
         assert_eq!(r.segment_into(5, b"fghij", ts(0)), SegmentOutcome::Buffered);
         assert_eq!(r.take(), b"fghijx");
+    }
+
+    // ── #212: bytes a snap length cut ───────────────────────────
+
+    fn parts(c: &StreamChunks) -> Vec<Chunk<'_>> {
+        c.iter().collect()
+    }
+
+    #[test]
+    fn missing_at_the_stream_position_is_an_immediate_gap() {
+        let mut r = SegmentBufferReassembler::new();
+        r.set_origin(1000);
+        r.segment(1000, b"0123456789", ts(0));
+        r.missing(1010, 90, ts(0));
+        let out = drain(&mut r);
+        assert_eq!(
+            parts(&out),
+            vec![Chunk::Data(b"0123456789"), Chunk::Gap(90)]
+        );
+        assert_eq!((r.gaps(), r.gap_bytes()), (1, 90));
+        // The next segment continues the stream: nothing waits.
+        r.segment(1100, b"bbbb", ts(0));
+        assert_eq!(parts(&drain(&mut r)), vec![Chunk::Data(b"bbbb")]);
+        assert_eq!(r.buffered_ooo_bytes(), 0);
+    }
+
+    #[test]
+    fn missing_on_an_unanchored_stream_anchors_it() {
+        // A header-only capture: no byte of the payload was kept.
+        let mut r = SegmentBufferReassembler::new();
+        r.missing(5000, 1448, ts(0));
+        r.missing(6448, 1448, ts(0));
+        let out = drain(&mut r);
+        assert_eq!(parts(&out), vec![Chunk::Gap(2896)]);
+        assert_eq!(r.gap_bytes(), 2896);
+    }
+
+    #[test]
+    fn missing_skips_around_held_data() {
+        let mut r = SegmentBufferReassembler::new();
+        r.set_origin(0);
+        // Held out of order: [50, 60) and [70, 80).
+        r.segment(50, b"FFFFFFFFFF", ts(0));
+        r.segment(70, b"SSSSSSSSSS", ts(0));
+        assert!(drain(&mut r).is_empty());
+        r.missing(0, 100, ts(0));
+        let out = drain(&mut r);
+        assert_eq!(
+            parts(&out),
+            vec![
+                Chunk::Gap(50),
+                Chunk::Data(b"FFFFFFFFFF"),
+                Chunk::Gap(10),
+                Chunk::Data(b"SSSSSSSSSS"),
+                Chunk::Gap(20),
+            ]
+        );
+        assert_eq!(r.ooo_pieces(), 0);
+    }
+
+    #[test]
+    fn missing_behind_a_hole_waits_like_an_acknowledgement() {
+        let mut r = SegmentBufferReassembler::new().with_ack_grace(Duration::from_millis(10));
+        r.set_origin(0);
+        r.segment(100, b"0123456789", ts(0)); // hole [0, 100)
+        r.missing(110, 90, ts(0));
+        assert!(drain(&mut r).is_empty(), "the hole may still fill");
+        r.segment(0, &[b'a'; 100], ts(0));
+        let out = drain(&mut r);
+        assert_eq!(out.len(), 110);
+        assert_eq!(out.gap_bytes(), 0);
+        // The cut bytes are skipped once the evidence is due.
+        r.advance_time(Timestamp::new(0, 20_000_000));
+        assert_eq!(parts(&drain(&mut r)), vec![Chunk::Gap(90)]);
+    }
+
+    #[test]
+    fn missing_already_delivered_or_empty_is_ignored() {
+        let mut r = SegmentBufferReassembler::new();
+        r.segment(0, b"abcdef", ts(0));
+        r.missing(0, 6, ts(0));
+        r.missing(6, 0, ts(0));
+        let out = drain(&mut r);
+        assert_eq!(parts(&out), vec![Chunk::Data(b"abcdef")]);
+        assert_eq!(r.gaps(), 0);
+        // Partly delivered: only the part past the stream position.
+        r.missing(4, 6, ts(0));
+        assert_eq!(parts(&drain(&mut r)), vec![Chunk::Gap(4)]);
+    }
+
+    #[test]
+    fn missing_after_a_stop_is_ignored() {
+        let mut r = SegmentBufferReassembler::new();
+        r.segment(0, b"ab", ts(0));
+        r.release();
+        r.missing(2, 10, ts(0));
+        assert_eq!(r.gaps(), 0);
+    }
+
+    // Review findings: far-ahead truncated segments.
+
+    #[test]
+    fn a_truncated_stray_does_not_vouch_for_itself() {
+        let mut r = SegmentBufferReassembler::new();
+        r.set_origin(0);
+        r.segment(0, &[b'a'; 10], ts(0));
+        // One stray packet far ahead: 10 bytes captured, 1400 cut.
+        r.segment(50_000_000, &[b's'; 10], ts(0));
+        r.missing(50_000_010, 1400, ts(0));
+        r.segment(10, &[b'b'; 10], ts(0));
+        let out = drain(&mut r);
+        assert_eq!(out.data(), [[b'a'; 10], [b'b'; 10]].concat());
+        assert_eq!(out.gap_count(), 0, "the stream keeps its position");
+        assert_eq!(r.gaps(), 0);
+        assert_eq!(r.out_of_window_segments(), 1);
+    }
+
+    #[test]
+    fn a_header_only_jump_past_max_ahead_resyncs_on_the_next_packet() {
+        let mut r = SegmentBufferReassembler::new();
+        r.set_origin(0);
+        r.missing(0, 1000, ts(0));
+        // Capture loss of ~5 MB, then header-only packets again.
+        r.missing(5_000_000, 1000, ts(1));
+        r.missing(5_001_000, 1000, ts(1));
+        r.missing(5_002_000, 1000, ts(2));
+        let out = drain(&mut r);
+        assert_eq!(out.gap_bytes(), 5_003_000, "nothing is left waiting");
+        assert_eq!(r.gap_bytes(), 5_003_000);
+        assert_eq!(r.origin_resets(), 1);
+    }
+
+    #[test]
+    fn an_ack_corroborates_a_far_missing_range() {
+        let mut r = SegmentBufferReassembler::new().with_ack_grace(Duration::from_millis(10));
+        r.set_origin(0);
+        r.missing(5_000_000, 1000, ts(0));
+        r.peer_ack(5_001_000, ts(0));
+        assert_eq!(drain(&mut r).gap_bytes(), 5_001_000);
+    }
+
+    #[test]
+    fn a_corroborated_truncated_stray_keeps_its_cut() {
+        let mut r = SegmentBufferReassembler::new();
+        r.set_origin(0);
+        r.segment(50_000_000, &[b'x'; 10], ts(0));
+        r.missing(50_000_010, 1390, ts(0));
+        // The next packet of the far stream corroborates the first.
+        r.segment(50_001_400, &[b'y'; 10], ts(1));
+        let out = drain(&mut r);
+        assert_eq!(
+            parts(&out),
+            vec![
+                Chunk::Gap(50_000_000),
+                Chunk::Data(&[b'x'; 10]),
+                Chunk::Gap(1390),
+                Chunk::Data(&[b'y'; 10]),
+            ]
+        );
+    }
+
+    /// Evidence past this side's FIN once the stream already went past
+    /// the FIN (data after it): no underflow, nothing skipped — through
+    /// a cut segment (`missing`) …
+    #[test]
+    fn evidence_behind_a_passed_fin_via_missing_is_ignored() {
+        let mut r = SegmentBufferReassembler::new();
+        r.segment(1000, b"x", ts(0));
+        r.fin_seen(1001, ts(0));
+        r.segment(1000, b"xy", ts(0)); // data after the FIN
+        r.missing(2000, 1, ts(0));
+        r.advance_time(ts(10));
+        assert_eq!(r.gaps(), 0);
+    }
+
+    /// … and through the peer's ACK (reachable in 0.25 too).
+    #[test]
+    fn evidence_behind_a_passed_fin_via_ack_is_ignored() {
+        let mut r = SegmentBufferReassembler::new();
+        r.segment(1000, b"x", ts(0));
+        r.fin_seen(1001, ts(0));
+        r.segment(1000, b"xy", ts(0));
+        r.peer_ack(1100, ts(0));
+        r.advance_time(ts(10));
+        assert_eq!(r.gaps(), 0);
     }
 }

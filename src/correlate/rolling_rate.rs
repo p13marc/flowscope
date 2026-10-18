@@ -71,12 +71,72 @@ macro_rules! impl_rate_value {
 
 impl_rate_value!(u64, u32, i64, i32, f64, f32);
 
+/// One time bucket: per-key sums, and the sum of the keys that did
+/// not fit under the key cap.
+#[derive(Debug)]
+struct Bucket<K, V> {
+    start: Timestamp,
+    sums: HashMap<K, V>,
+    /// Values of keys refused by the cap (`None` until one was).
+    other: Option<V>,
+}
+
+impl<K: Hash + Eq, V: RateValue> Bucket<K, V> {
+    fn new(start: Timestamp) -> Self {
+        Self {
+            start,
+            sums: HashMap::new(),
+            other: None,
+        }
+    }
+
+    /// Add `v` for `k`, or to `other` when `k` is new and the bucket
+    /// already holds `max_keys` keys. Returns whether it overflowed.
+    fn add(&mut self, k: K, v: V, max_keys: usize) -> bool {
+        if let Some(sum) = self.sums.get_mut(&k) {
+            *sum += v;
+            return false;
+        }
+        if self.sums.len() < max_keys {
+            self.sums.insert(k, v);
+            return false;
+        }
+        *self.other.get_or_insert_with(V::default) += v;
+        true
+    }
+}
+
 /// Per-key rolling rate over a sliding time window.
 ///
 /// See the module-level documentation
 /// (`flowscope::correlate::rolling_rate`) for the design
 /// shape — sibling to [`super::TimeBucketedCounter`] but
 /// generic over the value type `V`.
+///
+/// # Bounded memory
+///
+/// Keyed by whatever the caller records — often attacker-influenced
+/// (addresses, ports, owners). [`Self::new`] caps the number of keys
+/// each time bucket holds: once a bucket has `max_keys` keys, the
+/// values of further new keys are summed into that bucket's
+/// **overflow** total ([`Self::other_rate`] / [`Self::other_sum`]) and
+/// counted in [`Self::overflowed`], so the table holds at most
+/// `max_keys × buckets` entries, where `buckets` is at most
+/// `window / bucket_width + 1` (see below for out-of-order time). A
+/// key folded into the overflow total in a
+/// bucket is missing from that bucket in [`Self::rate`],
+/// [`Self::sum`], [`Self::snapshot`] and [`Self::top_k`].
+/// [`Self::new_unbounded`] keeps every key. New in 0.26.0 (#220).
+///
+/// Timestamps may go backwards (several capture queues, a replay): a
+/// record goes to the bucket of its own time, and evicts the buckets
+/// before the window ending at its time *and* those more than a window
+/// after it. The table therefore holds at most
+/// `window / bucket_width + 1` buckets for time that only moves
+/// forward, `2 × window / bucket_width + 1` in any order, and one wild
+/// future timestamp is gone as soon as a record more than a window
+/// earlier arrives (before 0.26 a timestamp that went back opened a
+/// new bucket on every call).
 #[derive(Debug)]
 pub struct RollingRate<K, V>
 where
@@ -85,10 +145,13 @@ where
 {
     window: Duration,
     bucket_width: Duration,
-    /// Oldest-first deque of buckets — each is
-    /// `(bucket_start_ts, per_key_sums)`. Same shape as
+    /// Oldest-first deque of buckets. Same shape as
     /// [`crate::correlate::TimeBucketedCounter`].
-    buckets: VecDeque<(Timestamp, HashMap<K, V>)>,
+    buckets: VecDeque<Bucket<K, V>>,
+    /// Most keys one bucket holds.
+    max_keys: usize,
+    /// `record` calls whose key went to a bucket's overflow total.
+    overflowed: u64,
 }
 
 impl<K, V> RollingRate<K, V>
@@ -96,66 +159,173 @@ where
     K: Hash + Eq + Clone,
     V: RateValue,
 {
-    /// Unbounded `RollingRate` with the given `window` and
-    /// `bucket_width`. Common values: `window = 60s`,
-    /// `bucket_width = 1s` (matches Prometheus' `rate(…)`
-    /// default).
+    /// `RollingRate` with the given `window` and `bucket_width`,
+    /// holding at most `max_keys` keys per time bucket (see
+    /// [Bounded memory](Self#bounded-memory)). Common values:
+    /// `window = 60s`, `bucket_width = 1s` (matches Prometheus'
+    /// `rate(…)` default).
     ///
     /// `bucket_width` must be > 0 and `window` should be
-    /// `>= bucket_width`.
-    pub fn new_unbounded(window: Duration, bucket_width: Duration) -> Self {
+    /// `>= bucket_width`. `max_keys == 0` sends every value to the
+    /// overflow total.
+    ///
+    /// ```
+    /// use std::time::Duration;
+    /// use flowscope::Timestamp;
+    /// use flowscope::correlate::RollingRate;
+    ///
+    /// let mut r: RollingRate<u32, u64> =
+    ///     RollingRate::new(Duration::from_secs(10), Duration::from_secs(1), 2);
+    /// let now = Timestamp::new(0, 0);
+    /// r.record(1, 100, now);
+    /// r.record(2, 100, now);
+    /// r.record(3, 50, now); // a third key: folded into the overflow total
+    /// assert_eq!(r.sum(&3, now), 0);
+    /// assert_eq!(r.other_sum(now), 50);
+    /// assert_eq!(r.overflowed(), 1);
+    /// ```
+    ///
+    /// New in 0.26.0 (#220).
+    pub fn new(window: Duration, bucket_width: Duration, max_keys: usize) -> Self {
         assert!(!bucket_width.is_zero(), "bucket_width must be > 0");
         assert!(window >= bucket_width, "window must be >= bucket_width");
         Self {
             window,
             bucket_width,
             buckets: VecDeque::new(),
+            max_keys,
+            overflowed: 0,
         }
     }
 
-    /// Add `v` to the current bucket for `k` at `now`.
+    /// Unbounded `RollingRate`: [`Self::new`] with no key cap
+    /// (`max_keys = usize::MAX`). Only for key spaces the caller
+    /// controls.
+    pub fn new_unbounded(window: Duration, bucket_width: Duration) -> Self {
+        Self::new(window, bucket_width, usize::MAX)
+    }
+
+    /// Add `v` to the current bucket for `k` at `now` — or to the
+    /// bucket's overflow total when `k` is new to a bucket that
+    /// already holds [`Self::max_keys`] keys.
     ///
     /// **Zero-allocation** when `now` falls in the same
     /// bucket as the previous `record` call and `k` already
     /// exists in that bucket — the same trick
     /// [`crate::correlate::TimeBucketedCounter`] uses.
     pub fn record(&mut self, k: K, v: V, now: Timestamp) {
+        // Timestamps may go backwards (several capture queues, a
+        // replayed file, a corrupt record): a record lands in the
+        // bucket of its own start — one bucket per start — and the
+        // window ends at its own time. Buckets before that window
+        // expire; buckets more than a window after it (time went back
+        // further than a window, or an earlier record carried a wild
+        // future timestamp) belong to no window ending here and go
+        // too. So at most two windows' worth of buckets are held, and
+        // one wild timestamp never holds the window.
         self.evict_expired(now);
+        let future = now.to_duration().saturating_add(self.window);
+        while self
+            .buckets
+            .back()
+            .is_some_and(|b| b.start.to_duration() > future)
+        {
+            self.buckets.pop_back();
+        }
         let bucket_start = self.bucket_start_for(now);
 
-        if let Some((ts, last)) = self.buckets.back_mut()
-            && *ts == bucket_start
-        {
-            *last.entry(k).or_default() += v;
-            return;
+        let pos = match self.buckets.back() {
+            // The common case: the newest bucket.
+            Some(b) if b.start == bucket_start => self.buckets.len() - 1,
+            Some(b) if b.start < bucket_start => {
+                self.buckets.push_back(Bucket::new(bucket_start));
+                self.buckets.len() - 1
+            }
+            None => {
+                self.buckets.push_back(Bucket::new(bucket_start));
+                0
+            }
+            // Out of order: find or insert its bucket.
+            Some(_) => match self.buckets.iter().rposition(|b| b.start <= bucket_start) {
+                Some(i) if self.buckets[i].start == bucket_start => i,
+                Some(i) => {
+                    self.buckets.insert(i + 1, Bucket::new(bucket_start));
+                    i + 1
+                }
+                None => {
+                    self.buckets.push_front(Bucket::new(bucket_start));
+                    0
+                }
+            },
+        };
+        if self.buckets[pos].add(k, v, self.max_keys) {
+            self.overflowed = self.overflowed.saturating_add(1);
         }
-
-        let mut bucket = HashMap::new();
-        bucket.insert(k, v);
-        self.buckets.push_back((bucket_start, bucket));
     }
 
     /// `sum(V over last window) / window_secs` — per-second
     /// rate for `k`. Returns `0.0` if `k` has no samples in
     /// the window.
     pub fn rate(&self, k: &K, now: Timestamp) -> f64 {
+        // Buckets add in `f64`: their sum may not fit `V`.
         let cutoff = self.cutoff_for(now);
-        let mut sum: f64 = 0.0;
-        for (ts, bucket) in &self.buckets {
-            if *ts < cutoff {
-                continue;
-            }
-            if let Some(v) = bucket.get(k) {
-                sum += v.as_f64();
+        let total: f64 = self
+            .buckets
+            .iter()
+            .filter(|b| b.start >= cutoff)
+            .filter_map(|b| b.sums.get(k))
+            .map(|v| v.as_f64())
+            .sum();
+        total / self.window.as_secs_f64()
+    }
+
+    /// Per-second rate of the values folded into the overflow total
+    /// over the window — the keys the cap refused, summed. `0.0`
+    /// when nothing overflowed. New in 0.26.0.
+    pub fn other_rate(&self, now: Timestamp) -> f64 {
+        let cutoff = self.cutoff_for(now);
+        let total: f64 = self
+            .buckets
+            .iter()
+            .filter(|b| b.start >= cutoff)
+            .filter_map(|b| b.other)
+            .map(|v| v.as_f64())
+            .sum();
+        total / self.window.as_secs_f64()
+    }
+
+    /// Raw sum of the overflow total over the window (see
+    /// [`Self::other_rate`]). New in 0.26.0.
+    pub fn other_sum(&self, now: Timestamp) -> V {
+        let cutoff = self.cutoff_for(now);
+        let mut total = V::default();
+        for b in self.buckets.iter().filter(|b| b.start >= cutoff) {
+            if let Some(v) = b.other {
+                total += v;
             }
         }
-        sum / self.window.as_secs_f64()
+        total
+    }
+
+    /// Number of `record` calls whose key was folded into a bucket's
+    /// overflow total because the bucket was full. Cumulative since
+    /// construction (or [`Self::clear`]). New in 0.26.0.
+    pub fn overflowed(&self) -> u64 {
+        self.overflowed
+    }
+
+    /// The per-bucket key cap ([`Self::new`]; `usize::MAX` when
+    /// unbounded). New in 0.26.0.
+    pub fn max_keys(&self) -> usize {
+        self.max_keys
     }
 
     /// Snapshot every key with a non-zero rate over the
     /// active window. Yields `(K, rate_per_sec)` pairs in
     /// arbitrary order — pair with
     /// [`crate::correlate::TopK`] to get a top-N report.
+    /// The overflow total is not a key and is not included (see
+    /// [`Self::other_rate`]).
     ///
     /// Returns owned `K` clones (since one key can appear in
     /// multiple buckets and the iterator yields a single
@@ -168,11 +338,8 @@ where
         let cutoff = self.cutoff_for(now);
         let window_secs = self.window.as_secs_f64();
         let mut totals: HashMap<K, V> = HashMap::new();
-        for (ts, bucket) in &self.buckets {
-            if *ts < cutoff {
-                continue;
-            }
-            for (k, v) in bucket {
+        for b in self.buckets.iter().filter(|b| b.start >= cutoff) {
+            for (k, v) in &b.sums {
                 let entry = totals.entry(k.clone()).or_default();
                 *entry += *v;
             }
@@ -198,11 +365,8 @@ where
         F: FnMut(&K, V),
     {
         let cutoff = self.cutoff_for(now);
-        for (ts, bucket) in &self.buckets {
-            if *ts < cutoff {
-                continue;
-            }
-            for (k, v) in bucket {
+        for b in self.buckets.iter().filter(|b| b.start >= cutoff) {
+            for (k, v) in &b.sums {
                 f(k, *v);
             }
         }
@@ -211,12 +375,8 @@ where
     /// Drop buckets older than `now - window`. Idempotent.
     pub fn evict_expired(&mut self, now: Timestamp) {
         let cutoff = self.cutoff_for(now);
-        while let Some((ts, _)) = self.buckets.front() {
-            if *ts < cutoff {
-                self.buckets.pop_front();
-            } else {
-                break;
-            }
+        while self.buckets.front().is_some_and(|b| b.start < cutoff) {
+            self.buckets.pop_front();
         }
     }
 
@@ -230,46 +390,38 @@ where
     pub fn sum(&self, k: &K, now: Timestamp) -> V {
         let cutoff = self.cutoff_for(now);
         let mut total = V::default();
-        for (ts, bucket) in &self.buckets {
-            if *ts < cutoff {
-                continue;
-            }
-            if let Some(v) = bucket.get(k) {
+        for b in self.buckets.iter().filter(|b| b.start >= cutoff) {
+            if let Some(v) = b.sums.get(k) {
                 total += *v;
             }
         }
         total
     }
 
-    /// Sorted top-N entries by rate (descending). Ties broken
-    /// by insertion order in the underlying snapshot. Returns
-    /// at most `n` entries; fewer if the in-window key count
-    /// is smaller. `top_k(0)` returns an empty `Vec`.
+    /// Sorted top-N entries by rate (descending). Ties are broken
+    /// arbitrarily. Returns at most `n` entries; fewer if the
+    /// in-window key count is smaller. `top_k(0)` returns an empty
+    /// `Vec`.
     ///
     /// Lighter-weight than maintaining a separate
-    /// [`super::TopK`] — `top_k` sorts at query time,
-    /// [`super::TopK`] sorts at update time. Pick the latter
-    /// for hot paths.
+    /// [`super::TopK`] — `top_k` selects at query time
+    /// (`O(keys + n log n)`), [`super::TopK`] sorts at update
+    /// time. Pick the latter for hot paths.
     ///
     /// Plan 171 (0.14).
     pub fn top_k(&self, n: usize, now: Timestamp) -> Vec<(K, f64)> {
-        if n == 0 {
-            return Vec::new();
-        }
-        let mut snap: Vec<(K, f64)> = self.snapshot(now).collect();
-        snap.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-        snap.truncate(n);
-        snap
+        top_n(self.snapshot(now).collect(), n)
     }
 
-    /// Drop every recorded bucket. After this call,
-    /// [`Self::is_empty`] is `true`, [`Self::bucket_count`] is
-    /// `0`, every [`Self::rate`] returns `0.0`, every
-    /// [`Self::sum`] returns `V::default()`.
+    /// Drop every recorded bucket and reset [`Self::overflowed`].
+    /// After this call, [`Self::is_empty`] is `true`,
+    /// [`Self::bucket_count`] is `0`, every [`Self::rate`] returns
+    /// `0.0`, every [`Self::sum`] returns `V::default()`.
     ///
     /// Plan 171 (0.14).
     pub fn clear(&mut self) {
         self.buckets.clear();
+        self.overflowed = 0;
     }
 
     /// True if no buckets are tracked at all. This is a
@@ -278,7 +430,9 @@ where
     ///
     /// For an in-window count, use [`Self::len`].
     pub fn is_empty(&self) -> bool {
-        self.buckets.is_empty() || self.buckets.iter().all(|(_, m)| m.is_empty())
+        self.buckets
+            .iter()
+            .all(|b| b.sums.is_empty() && b.other.is_none())
     }
 
     /// Number of unique keys observed in the active window at
@@ -291,21 +445,26 @@ where
     pub fn len(&self, now: Timestamp) -> usize {
         let cutoff = self.cutoff_for(now);
         let mut seen: std::collections::HashSet<&K> = std::collections::HashSet::new();
-        for (ts, bucket) in &self.buckets {
-            if *ts < cutoff {
-                continue;
-            }
-            for k in bucket.keys() {
+        for b in self.buckets.iter().filter(|b| b.start >= cutoff) {
+            for k in b.sums.keys() {
                 seen.insert(k);
             }
         }
         seen.len()
     }
 
-    /// Number of active buckets currently tracked. Bounded
-    /// to `ceil(window / bucket_width)` once the window fills.
+    /// Number of active buckets currently tracked: at most
+    /// `window / bucket_width + 1` for time that only moves forward,
+    /// `2 × window / bucket_width + 1` in any order.
     pub fn bucket_count(&self) -> usize {
         self.buckets.len()
+    }
+
+    /// Keys stored across every tracked bucket (a key held by two
+    /// buckets counts twice) — the table's size, at most
+    /// `max_keys × bucket_count()`. New in 0.26.0.
+    pub fn stored_entries(&self) -> usize {
+        self.buckets.iter().map(|b| b.sums.len()).sum()
     }
 
     fn bucket_start_for(&self, ts: Timestamp) -> Timestamp {
@@ -323,12 +482,32 @@ where
     }
 }
 
+/// The `n` largest entries by rate, descending: a linear-time
+/// selection of the top `n`, then a sort of those `n` only.
+pub(crate) fn top_n<K>(mut v: Vec<(K, f64)>, n: usize) -> Vec<(K, f64)> {
+    if n == 0 {
+        return Vec::new();
+    }
+    // `total_cmp`: a total order even with NaN rates (an inconsistent
+    // comparator may make the std sort and select functions panic).
+    let desc = |a: &(K, f64), b: &(K, f64)| b.1.total_cmp(&a.1);
+    if n < v.len() {
+        v.select_nth_unstable_by(n - 1, desc);
+        v.truncate(n);
+    }
+    v.sort_unstable_by(desc);
+    v
+}
+
 impl<K, V> crate::correlate::Mergeable for RollingRate<K, V>
 where
     K: Hash + Eq + Clone,
     V: RateValue,
 {
-    /// Sum values across aligned buckets.
+    /// Sum values across aligned buckets. Keys beyond this table's
+    /// [`RollingRate::max_keys`] in a bucket fold into its overflow
+    /// total (and count in [`RollingRate::overflowed`], with `other`'s
+    /// own count); overflow totals add.
     ///
     /// **Panics** if `window` / `bucket_width` don't match —
     /// silent realignment would mask config bugs.
@@ -343,22 +522,28 @@ where
             self.bucket_width, other.bucket_width,
             "RollingRate::merge requires matching bucket_width",
         );
-        for (ts, vs) in other.buckets {
-            match self.buckets.iter_mut().find(|(t, _)| *t == ts) {
-                Some((_, my_vs)) => {
-                    for (k, v) in vs {
-                        let entry = my_vs.entry(k).or_default();
-                        *entry += v;
-                    }
+        self.overflowed = self.overflowed.saturating_add(other.overflowed);
+        let max_keys = self.max_keys;
+        for b in other.buckets {
+            let pos = match self.buckets.iter().position(|mine| mine.start >= b.start) {
+                Some(i) if self.buckets[i].start == b.start => i,
+                Some(i) => {
+                    self.buckets.insert(i, Bucket::new(b.start));
+                    i
                 }
                 None => {
-                    let pos = self
-                        .buckets
-                        .iter()
-                        .position(|(t, _)| *t > ts)
-                        .unwrap_or(self.buckets.len());
-                    self.buckets.insert(pos, (ts, vs));
+                    self.buckets.push_back(Bucket::new(b.start));
+                    self.buckets.len() - 1
                 }
+            };
+            let mine = &mut self.buckets[pos];
+            for (k, v) in b.sums {
+                if mine.add(k, v, max_keys) {
+                    self.overflowed = self.overflowed.saturating_add(1);
+                }
+            }
+            if let Some(v) = b.other {
+                *mine.other.get_or_insert_with(V::default) += v;
             }
         }
     }
@@ -620,5 +805,197 @@ mod tests {
     fn len_empty_on_fresh_instance() {
         let r = rr_bytes();
         assert_eq!(r.len(Timestamp::new(0, 0)), 0);
+    }
+
+    // ── #220: bounded keys ─────────────────────────────────
+
+    #[test]
+    fn key_cap_bounds_the_table_and_counts_overflow() {
+        let mut r: RollingRate<u32, u64> =
+            RollingRate::new(Duration::from_secs(10), Duration::from_secs(1), 100);
+        // 10 000 distinct keys, all in one bucket.
+        for k in 0..10_000u32 {
+            r.record(k, 10, Timestamp::new(0, k));
+        }
+        let now = Timestamp::new(0, 999_999_999);
+        assert_eq!(r.bucket_count(), 1);
+        assert!(r.stored_entries() <= 100 * r.bucket_count());
+        assert_eq!(r.overflowed(), 9_900);
+        assert_eq!(r.other_sum(now), 99_000);
+        assert!(r.other_rate(now) > 0.0);
+        assert_eq!(r.len(now), 100);
+        // A stored key keeps accumulating; a refused one stays out.
+        r.record(5, 1, now);
+        assert_eq!(r.sum(&5, now), 11);
+        r.record(9_999, 1, now);
+        assert_eq!(r.sum(&9_999, now), 0);
+        assert_eq!(r.overflowed(), 9_901);
+        assert_eq!(r.max_keys(), 100);
+    }
+
+    #[test]
+    fn key_cap_applies_per_bucket_and_bounds_every_bucket() {
+        let mut r: RollingRate<u32, u64> =
+            RollingRate::new(Duration::from_secs(5), Duration::from_secs(1), 10);
+        for sec in 0..20u32 {
+            for k in 0..1_000u32 {
+                r.record(sec * 1_000 + k, 1, Timestamp::new(sec, k));
+            }
+            assert!(r.bucket_count() <= 6);
+            assert!(r.stored_entries() <= 10 * r.bucket_count());
+        }
+        assert_eq!(r.overflowed(), 20 * 990);
+        // Expired buckets take their overflow totals with them.
+        assert_eq!(r.other_sum(Timestamp::new(100, 0)), 0);
+        r.clear();
+        assert!(r.is_empty());
+        assert_eq!(r.overflowed(), 0);
+    }
+
+    #[test]
+    fn unbounded_never_overflows() {
+        let mut r = rr_bytes();
+        assert_eq!(r.max_keys(), usize::MAX);
+        r.record("a", 1, Timestamp::new(0, 0));
+        assert_eq!((r.overflowed(), r.other_sum(Timestamp::new(0, 1))), (0, 0));
+    }
+
+    #[test]
+    fn zero_cap_sends_everything_to_other() {
+        let mut r: RollingRate<&'static str, u64> =
+            RollingRate::new(Duration::from_secs(60), Duration::from_secs(1), 0);
+        r.record("a", 7, Timestamp::new(0, 0));
+        assert!(!r.is_empty(), "the overflow total is stored");
+        assert_eq!(r.other_sum(Timestamp::new(0, 1)), 7);
+        assert_eq!(r.len(Timestamp::new(0, 1)), 0);
+    }
+
+    #[test]
+    fn merge_respects_the_cap() {
+        use crate::correlate::Mergeable;
+        let mut a: RollingRate<u32, u64> =
+            RollingRate::new(Duration::from_secs(10), Duration::from_secs(1), 3);
+        let mut b: RollingRate<u32, u64> =
+            RollingRate::new(Duration::from_secs(10), Duration::from_secs(1), 3);
+        let t = Timestamp::new(0, 0);
+        for k in 0..3 {
+            a.record(k, 1, t);
+        }
+        for k in 2..6 {
+            b.record(k, 1, t); // key 5 overflows in b
+        }
+        a.merge(b);
+        let now = Timestamp::new(0, 1);
+        assert_eq!(a.sum(&2, now), 2, "shared key adds");
+        assert_eq!(a.stored_entries(), 3);
+        // b's overflow (1) + keys 3 and 4 refused by a's cap (2).
+        assert_eq!(a.other_sum(now), 3);
+        assert_eq!(a.overflowed(), 3);
+    }
+
+    proptest::proptest! {
+        /// `top_k` (selection + partial sort) agrees with sorting
+        /// every key.
+        #[test]
+        fn top_k_matches_a_full_sort(
+            values in proptest::collection::vec((0u32..64, 1u64..1_000), 0..300),
+            n in 0usize..80,
+        ) {
+            let mut r: RollingRate<u32, u64> =
+                RollingRate::new_unbounded(Duration::from_secs(60), Duration::from_secs(1));
+            for (i, (k, v)) in values.iter().enumerate() {
+                r.record(*k, *v, Timestamp::new((i / 50) as u32, 0));
+            }
+            let now = Timestamp::new(10, 0);
+            let got = r.top_k(n, now);
+            let mut all: Vec<(u32, f64)> = r.snapshot(now).collect();
+            all.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+            proptest::prop_assert_eq!(got.len(), n.min(all.len()));
+            // Same rates in the same order (keys may differ on ties).
+            let got_rates: Vec<f64> = got.iter().map(|e| e.1).collect();
+            let want_rates: Vec<f64> = all.iter().take(n).map(|e| e.1).collect();
+            proptest::prop_assert_eq!(got_rates, want_rates);
+            for (k, rate) in &got {
+                proptest::prop_assert_eq!(r.rate(k, now), *rate);
+            }
+        }
+    }
+
+    // Review findings: timestamps that go backwards.
+
+    #[test]
+    fn out_of_order_timestamps_reuse_their_bucket() {
+        let mut r: RollingRate<u32, u64> =
+            RollingRate::new(Duration::from_secs(60), Duration::from_secs(1), 10);
+        // Two capture queues interleaving across a bucket boundary.
+        for i in 0..1_000u32 {
+            let now = if i % 2 == 0 {
+                Timestamp::new(10, 0)
+            } else {
+                Timestamp::new(9, 999_000_000)
+            };
+            r.record(i % 20, 1, now);
+        }
+        assert_eq!(r.bucket_count(), 2, "one bucket per start");
+        assert!(r.stored_entries() <= 2 * 10);
+        let now = Timestamp::new(10, 1);
+        assert_eq!(r.sum(&0, now) + r.sum(&1, now), 100);
+    }
+
+    #[test]
+    fn backwards_timestamps_stay_within_the_window() {
+        let mut r: RollingRate<u32, u64> =
+            RollingRate::new(Duration::from_secs(10), Duration::from_secs(1), 10);
+        r.record(1, 1, Timestamp::new(1_000, 0));
+        for back in 1..500u32 {
+            r.record(1, 1, Timestamp::new(1_000 - back, 0));
+            // At most two windows around the latest record.
+            assert!(r.bucket_count() <= 21, "{} buckets", r.bucket_count());
+        }
+        // The window ending at the last record (501) holds 501 ..= 511.
+        assert_eq!(r.sum(&1, Timestamp::new(511, 0)), 11);
+    }
+
+    #[test]
+    fn top_k_with_nan_rates_does_not_panic() {
+        let mut r: RollingRate<u32, f64> =
+            RollingRate::new_unbounded(Duration::from_secs(1), Duration::from_secs(1));
+        for k in 0..200u32 {
+            let v = if k % 7 == 0 { f64::NAN } else { f64::from(k) };
+            r.record(k, v, Timestamp::new(0, k));
+        }
+        let top = r.top_k(10, Timestamp::new(0, 999));
+        assert_eq!(top.len(), 10);
+    }
+
+    /// Rates add the buckets in `f64` (as 0.25 did): two buckets whose
+    /// sum overflows `V` still give the right rate.
+    #[test]
+    fn rates_do_not_overflow_the_value_type() {
+        let mut r: RollingRate<&'static str, u32> =
+            RollingRate::new(Duration::from_secs(10), Duration::from_secs(1), 1);
+        for s in 0..2 {
+            r.record("a", 3_000_000_000, Timestamp::new(s, 0));
+            r.record("b", 3_000_000_000, Timestamp::new(s, 0)); // overflow total
+        }
+        let now = Timestamp::new(1, 0);
+        assert!((r.rate(&"a", now) - 6e8).abs() < 1e-3);
+        assert!((r.other_rate(now) - 6e8).abs() < 1e-3);
+    }
+
+    /// One record far in the future (a corrupt timestamp) does not
+    /// blind the table: the next record more than a window before it
+    /// evicts its bucket, and later records count.
+    #[test]
+    fn a_far_future_record_does_not_drop_later_ones() {
+        let mut r: RollingRate<u32, u64> =
+            RollingRate::new(Duration::from_secs(10), Duration::from_secs(1), 10);
+        r.record(1, 1, Timestamp::new(1_000_000, 0));
+        for s in 0..20u32 {
+            r.record(1, 1, Timestamp::new(s, 0));
+        }
+        let now = Timestamp::new(19, 0);
+        assert_eq!(r.sum(&1, now), 11, "records at 9 ..= 19");
+        assert!(r.bucket_count() <= 21);
     }
 }

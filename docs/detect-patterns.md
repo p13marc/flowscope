@@ -279,8 +279,9 @@ registry
 
 // per flow event (from FlowTracker or the typed Driver):
 registry.observe(&flow_event, &mut anomalies);      // or observe_event(&driver_event, …)
-// per DNS query name (from a DNS slot drain):
-registry.observe_dns(&key, qname, ts, &mut anomalies);
+// per DNS query name (from a DNS slot drain) — the message's orientation
+// says which endpoint sent the query:
+registry.observe_dns(&msg.key, msg.orientation, qname, ts, &mut anomalies);
 // periodically:
 registry.evict_expired(now);
 ```
@@ -291,6 +292,18 @@ defaulted, no-op **lifecycle hooks** (`on_flow_start`,
 the feeds it consumes. Anomalies append to a caller-owned
 `Vec<OwnedAnomaly>` (the `track_into` idiom — zero per-event
 allocation, no unbounded internal queues).
+
+**Who is the source?** A bidirectional flow key is address-sorted
+(`FiveTupleKey` keeps `a < b`), so `key.src_ip()` is the *lower
+address*, not the host that opened the flow. The hooks say which
+endpoint acted: `on_flow_start(key, initiator, ..)` gets the
+initiator's orientation, `on_dns_query(key, sender, ..)` the query
+sender's, and flow-end / tick hooks have `stats.initiator_orientation`.
+Read the key through [`Directed`](crate::Directed) —
+`Directed::new(key, initiator)` / `Directed::initiator(key, stats)` —
+to get the acting host as the source. Every shipped detector does
+(since 0.26; before, a scanner with a higher address than its targets
+was reported as each target).
 
 **Derived aggregation keys.** Registry detectors see the *flow*
 key `K`, but beaconing and scanning aggregate *across* flows

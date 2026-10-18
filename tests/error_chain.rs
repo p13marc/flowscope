@@ -2,9 +2,14 @@
 //! chains, supports `match`-by-`(module, code)`, and is
 //! `Send + Sync + 'static`.
 
-use std::error::Error as _;
-
-use flowscope::{Error, ErrorCode, Module};
+use flowscope::Error;
+#[cfg(any(
+    feature = "pcap",
+    feature = "dns",
+    feature = "icmp",
+    feature = "extractors"
+))]
+use flowscope::{ErrorCode, Module};
 
 #[test]
 fn send_sync_static() {
@@ -12,6 +17,7 @@ fn send_sync_static() {
     assert_traits::<Error>();
 }
 
+#[cfg(feature = "pcap")]
 #[test]
 fn match_on_module_and_code() {
     // Build an error via the public helper that the pcap source
@@ -25,13 +31,12 @@ fn match_on_module_and_code() {
     }
 }
 
+#[cfg(feature = "pcap")]
 #[test]
 fn io_error_carries_source() {
     let r = flowscope::pcap::PcapFlowSource::open("/no/such/path.pcap");
     let err = r.err().unwrap();
-    let src = err
-        .source()
-        .expect("io error should chain to std::io::Error");
+    let src = std::error::Error::source(&err).expect("io error should chain to std::io::Error");
     let s = src.to_string();
     assert!(!s.is_empty(), "source must display non-empty");
     let io = src
@@ -75,9 +80,13 @@ fn icmp_parse_error_carries_source() {
     let err = r.err().unwrap();
     assert_eq!(err.module(), Module::Icmp);
     assert_eq!(err.code(), ErrorCode::Parse);
-    assert!(err.source().is_some(), "etherparse error should chain");
+    assert!(
+        std::error::Error::source(&err).is_some(),
+        "etherparse error should chain"
+    );
 }
 
+#[cfg(feature = "pcap")]
 #[test]
 fn display_format_stable_shape() {
     // Display format is "module: code: message".
@@ -85,4 +94,21 @@ fn display_format_stable_shape() {
     let err = r.err().unwrap();
     let s = err.to_string();
     assert!(s.starts_with("pcap: io: "), "got {s:?}");
+}
+
+#[cfg(feature = "extractors")]
+#[test]
+fn layers_parse_error_routes_and_chains() {
+    // A frame too short for an Ethernet header: etherparse's length
+    // error, wrapped with Module::Layers + ErrorCode::Parse.
+    let err = flowscope::layers::Layers::parse_ethernet(&[0u8; 4])
+        .expect_err("a 4-byte frame does not parse");
+    assert_eq!(
+        (err.module(), err.code()),
+        (Module::Layers, ErrorCode::Parse)
+    );
+    assert!(
+        std::error::Error::source(&err).is_some(),
+        "etherparse error should chain"
+    );
 }

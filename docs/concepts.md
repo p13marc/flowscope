@@ -185,6 +185,21 @@ match ev {
 let side = stats.side_for(Orientation::Forward); // a→b half
 ```
 
+### Reporting a flow: initiator first
+
+A bidirectional key is address-sorted, so its `a` / `src_ip()` is the
+lower address — not the host that opened the flow. Everything that
+reports a flow as *source → destination* reads the key from the
+initiator through [`Directed`] (since 0.26, #217):
+`Directed::initiator(key, &stats)` (or `Directed::new(key,
+orientation)` with an event's orientation; `FiveTupleKey::oriented(o)`
+for the raw socket addresses). The Zeek, CSV and EVE writers, the
+IPFIX `FlowRecord` and every shipped detector do this, so a scanner
+whose address sorts above its targets is reported as the scanner, and
+Zeek's `id.orig_h` is the originator. The typed `Event::Started`
+carries the initiator's orientation, also when initiator inference
+decided the first packet came from the responder (#218).
+
 ### Standards mapping
 
 Each axis lines up with an established wire/standard concept:
@@ -214,6 +229,7 @@ separately (issue #121).
 [`RxMetadata::source_idx`]: https://docs.rs/flowscope/latest/flowscope/struct.RxMetadata.html
 [`FlowStats::initiator_orientation`]: https://docs.rs/flowscope/latest/flowscope/struct.FlowStats.html
 [`PacketView::with_source_idx`]: https://docs.rs/flowscope/latest/flowscope/struct.PacketView.html
+[`Directed`]: https://docs.rs/flowscope/latest/flowscope/struct.Directed.html
 
 ## Layer 2 — `FlowTracker<E, S>`
 
@@ -558,6 +574,14 @@ the typed parser messages drained from each protocol's `SlotHandle`.
 | `FlowAnomaly { key, kind, ts }` | Per-flow anomaly (opt-in) |
 | `TrackerAnomaly { kind, ts }` | Tracker-global anomaly (opt-in) |
 | `Tick { key, stats, ts }` | Periodic snapshot (opt-in) |
+
+The event mask and pause cover the parser lifecycle too (0.26): a
+flow-end `ParserClosed` is shown exactly when its `Ended` is (masked
+with `EventMask::ENDED`), a `SessionParseError` anomaly is a
+`FlowAnomaly` (`EventMask::FLOW_ANOMALY`), and early `ParserClosed` /
+`ParserSideStopped` — no mask bit of their own — are dropped only while
+events are paused. Parsers are closed and their state released either
+way.
 
 Typed messages arrive as `SlotMessage { key, side, orientation,
 message, ts, lifecycle_pos, seq }` from the per-parser `SlotHandle` returned at

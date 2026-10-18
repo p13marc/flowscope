@@ -5,8 +5,15 @@
 //!
 //! ```text
 //! ts uid id.orig_h id.orig_p id.resp_h id.resp_p proto duration
-//! orig_bytes resp_bytes conn_state history orig_pkts resp_pkts
+//! orig_bytes resp_bytes conn_state history orig_pkts orig_ip_bytes
+//! resp_pkts resp_ip_bytes
 //! ```
+//!
+//! `id.orig_*` is the flow's initiator (0.26, #217).
+//! `orig_ip_bytes` / `resp_ip_bytes` (0.26, #219) are IP octets, as in
+//! Zeek. `orig_bytes` / `resp_bytes` are flowscope's wire L2 byte
+//! counts ([`FlowStats::bytes_initiator`](crate::FlowStats::bytes_initiator)),
+//! not Zeek's TCP-payload bytes.
 //!
 //! Compatible with `zeek-cut` and downstream pipelines that
 //! already consume Zeek logs. UIDs are auto-generated as
@@ -91,11 +98,11 @@ impl<W: Write> ZeekConnLogWriter<W> {
         writeln!(self.sink, "#path\tconn")?;
         writeln!(
             self.sink,
-            "#fields\tts\tuid\tid.orig_h\tid.orig_p\tid.resp_h\tid.resp_p\tproto\tduration\torig_bytes\tresp_bytes\tconn_state\thistory\torig_pkts\tresp_pkts"
+            "#fields\tts\tuid\tid.orig_h\tid.orig_p\tid.resp_h\tid.resp_p\tproto\tduration\torig_bytes\tresp_bytes\tconn_state\thistory\torig_pkts\torig_ip_bytes\tresp_pkts\tresp_ip_bytes"
         )?;
         writeln!(
             self.sink,
-            "#types\ttime\tstring\taddr\tport\taddr\tport\tenum\tinterval\tcount\tcount\tstring\tstring\tcount\tcount"
+            "#types\ttime\tstring\taddr\tport\taddr\tport\tenum\tinterval\tcount\tcount\tstring\tstring\tcount\tcount\tcount\tcount"
         )?;
         Ok(())
     }
@@ -119,6 +126,12 @@ impl<W: Write> ZeekConnLogWriter<W> {
 
     /// Write one event. Only `FlowEvent::Ended` emits a row; all
     /// other variants are skipped silently.
+    ///
+    /// `id.orig_*` is the flow's initiator and `id.resp_*` its
+    /// responder (the key read through
+    /// [`Directed::initiator`](crate::Directed::initiator)) — Zeek's
+    /// meaning. Before 0.26 they were the key's address-sorted
+    /// endpoints (#217).
     pub fn write_event<K>(&mut self, ev: &FlowEvent<K>) -> io::Result<()>
     where
         K: KeyFields,
@@ -133,6 +146,7 @@ impl<W: Write> ZeekConnLogWriter<W> {
         else {
             return Ok(());
         };
+        let key = &crate::Directed::initiator(key, stats);
 
         self.uid_seq += 1;
         let uid = format!("{}{:016x}", self.options.uid_prefix, self.uid_seq);
@@ -147,12 +161,14 @@ impl<W: Write> ZeekConnLogWriter<W> {
 
         writeln!(
             self.sink,
-            "{ts:.6}\t{uid}\t{src_ip}\t{src_port}\t{dst_ip}\t{dst_port}\t{proto}\t{duration:.6}\t{}\t{}\t{conn_state}\t{}\t{}\t{}",
+            "{ts:.6}\t{uid}\t{src_ip}\t{src_port}\t{dst_ip}\t{dst_port}\t{proto}\t{duration:.6}\t{}\t{}\t{conn_state}\t{}\t{}\t{}\t{}\t{}",
             stats.bytes_initiator,
             stats.bytes_responder,
             history.as_str(),
             stats.packets_initiator,
+            stats.ip_bytes_initiator,
             stats.packets_responder,
+            stats.ip_bytes_responder,
         )?;
         Ok(())
     }
@@ -186,11 +202,13 @@ impl<W: Write> ZeekConnLogWriter<W> {
 
         writeln!(
             self.sink,
-            "{ts:.6}\t{uid}\t{src_ip}\t{src_port}\t{dst_ip}\t{dst_port}\t{proto}\t{duration:.6}\t{}\t{}\t{conn_state}\t-\t{}\t{}",
-            rec.octet_delta_count_initiator,
-            rec.octet_delta_count_responder,
+            "{ts:.6}\t{uid}\t{src_ip}\t{src_port}\t{dst_ip}\t{dst_port}\t{proto}\t{duration:.6}\t{}\t{}\t{conn_state}\t-\t{}\t{}\t{}\t{}",
+            rec.layer2_octets_initiator(),
+            rec.layer2_octets_responder(),
             rec.packet_delta_count_initiator,
+            rec.octet_delta_count_initiator,
             rec.packet_delta_count_responder,
+            rec.octet_delta_count_responder,
         )?;
         Ok(())
     }

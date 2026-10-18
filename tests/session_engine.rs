@@ -1283,3 +1283,161 @@ fn broadcast_handle_wakes_a_pending_receiver() {
     assert!(flag.0.load(Ordering::SeqCst), "woken by the push");
     assert!(matches!(sub.poll_recv(&mut cx), Poll::Ready(_)));
 }
+
+// ── #204: parser lifecycle output follows the event gates ───────
+
+fn typed_events(
+    mut d: Driver<FiveTuple>,
+    frames: &[(Timestamp, Vec<u8>)],
+) -> Vec<Event<FiveTupleKey>> {
+    let mut events = Vec::new();
+    for (t, f) in frames {
+        d.track_into(PacketView::new(f, *t), &mut events);
+    }
+    d.finish_into(&mut events);
+    events
+}
+
+/// A flow-end `ParserClosed` rides with its flow's `Ended`: masking
+/// `ENDED` drops both. The parser is still closed (it got its `fin_*`).
+#[test]
+fn ended_mask_drops_flow_end_parser_closed() {
+    let frames = flow(&[(0, b"ping".to_vec())]);
+    let mut b = Driver::builder(FiveTuple::bidirectional());
+    b.config(FlowTrackerConfig::default().with_event_filter(EventMask::ENDED));
+    let mut slot = b.session_broadcast(Collect::default());
+    let events = typed_events(b.build(), &frames);
+    assert!(
+        !events.iter().any(|e| matches!(e, Event::Ended { .. })),
+        "{events:?}"
+    );
+    assert!(
+        !events
+            .iter()
+            .any(|e| matches!(e, Event::ParserClosed { .. })),
+        "a flow-end close is not shown without its Ended: {events:?}"
+    );
+    let mut msgs = Vec::new();
+    slot.drain(&mut msgs);
+    assert!(
+        msgs.iter()
+            .any(|m| m.message == Piece::Fin(FlowSide::Initiator)),
+        "the parser still saw the flow end"
+    );
+}
+
+/// A pause sheds the whole parser lifecycle — early closes, side stops,
+/// parse errors and flow-end closes — while parsing goes on and closed
+/// parsers stay closed.
+#[test]
+fn pause_drops_all_parser_lifecycle() {
+    // Segment 2 starts 10 bytes after segment 1 ends: a gap.
+    let frames = flow(&[(0, vec![b'a'; 10]), (20, vec![b'b'; 10])]);
+    let mut cfg = FlowTrackerConfig::default();
+    cfg.reassembly_ooo_buffer = 0; // skip holes at once
+    let mut b = Driver::builder(FiveTuple::bidirectional());
+    b.config(cfg).emit_anomalies(true);
+    let poison = PoisonAfterFirstFeed::default();
+    let feeds = poison.feeds.clone();
+    let _p = b.session_broadcast(poison);
+    let mut bytes = b.session_broadcast(CountBytes::default());
+    let mut d = b.build();
+    d.pause_events();
+    let events = typed_events(d, &frames);
+    let lifecycle: Vec<_> = events
+        .iter()
+        .filter(|e| {
+            matches!(
+                e,
+                Event::ParserClosed { .. }
+                    | Event::ParserSideStopped { .. }
+                    | Event::FlowAnomaly { .. }
+                    | Event::Ended { .. }
+            )
+        })
+        .collect();
+    assert!(lifecycle.is_empty(), "paused: {lifecycle:?}");
+    assert_eq!(
+        feeds.load(Ordering::SeqCst),
+        1,
+        "a closed parser stays closed"
+    );
+    let mut msgs = Vec::new();
+    bytes.drain(&mut msgs);
+    assert!(msgs.is_empty(), "CountBytes emits nothing");
+}
+
+/// Masking `FLOW_ANOMALY` drops the `SessionParseError` anomaly (it is
+/// one), not the early `ParserClosed` (no mask bit of its own).
+#[test]
+fn flow_anomaly_mask_drops_parse_error_keeps_early_close() {
+    let frames = flow(&[(0, vec![b'a'; 10])]);
+    let mut b = Driver::builder(FiveTuple::bidirectional());
+    b.config(FlowTrackerConfig::default().with_event_filter(EventMask::FLOW_ANOMALY))
+        .emit_anomalies(true);
+    let _p = b.session_broadcast(PoisonAfterFirstFeed::default());
+    let events = typed_events(b.build(), &frames);
+    assert!(
+        !events.iter().any(|e| matches!(
+            e,
+            Event::FlowAnomaly {
+                kind: AnomalyKind::SessionParseError { .. },
+                ..
+            }
+        )),
+        "FLOW_ANOMALY is masked: {events:?}"
+    );
+    let closes: Vec<_> = events
+        .iter()
+        .filter_map(|e| match e {
+            Event::ParserClosed { reason, .. } => Some(*reason),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(closes, vec![EndReason::ParseError]);
+}
+
+/// Masking `ENDED` keeps an early close (the flow goes on, so it is not
+/// part of the flow's end) and drops only the flow-end one.
+#[test]
+fn early_close_survives_ended_mask() {
+    let frames = flow(&[(0, b"a".to_vec()), (1, b"b".to_vec())]);
+    let mut b = Driver::builder(FiveTuple::bidirectional());
+    b.config(FlowTrackerConfig::default().with_event_filter(EventMask::ENDED));
+    let one_shot = b.session_broadcast(OneShot::default());
+    let _c = b.session_broadcast(Collect::default());
+    let events = typed_events(b.build(), &frames);
+    let closes: Vec<_> = events
+        .iter()
+        .filter_map(|e| match e {
+            Event::ParserClosed { slot, reason, .. } => Some((*slot, *reason)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(closes, vec![(one_shot.slot_id(), EndReason::ParserDone)]);
+}
+
+/// The session drivers apply the pause to early closes and side stops
+/// too.
+#[test]
+fn session_driver_pause_drops_early_parser_closed() {
+    let frames = flow(&[(0, b"a".to_vec()), (1, b"b".to_vec())]);
+    let mut d = SessionDriver::new(FiveTuple::bidirectional(), OneShot::default());
+    d.pause_events();
+    let events = session_events(&mut d, &frames);
+    assert!(
+        !events.iter().any(|e| matches!(
+            e,
+            SessionEvent::ParserClosed { .. } | SessionEvent::ParserSideStopped { .. }
+        )),
+        "{events:?}"
+    );
+    let messages = events
+        .iter()
+        .filter(|e| matches!(e, SessionEvent::Application { .. }))
+        .count();
+    assert_eq!(
+        messages, 1,
+        "parsing goes on; the closed parser is not fed again"
+    );
+}

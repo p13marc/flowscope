@@ -52,9 +52,9 @@ impl<E: FlowExtractor> FlowExtractor for InnerGtpU<E> {
     fn extract(&self, view: PacketView<'_>) -> Option<Extracted<E::Key>> {
         let inner_ip = peel_gtp_u(view.frame, self.udp_port)?;
         let synthetic = synthesize_eth_for_ip(inner_ip)?;
-        let e = self.extractor.extract(
-            PacketView::new(&synthetic, view.timestamp).with_rx_metadata(view.rx_metadata),
-        )?;
+        // `with_frame` keeps the timestamp, rx metadata and snap cut
+        // (the inner datagram ends where the outer frame ends).
+        let e = self.extractor.extract(view.with_frame(&synthetic))?;
         Some(super::rebase(e, view.frame, inner_ip, 14))
     }
 }
@@ -66,13 +66,7 @@ fn peel_gtp_u(frame: &[u8], expected_port: u16) -> Option<&[u8]> {
         parse::ParsedL4::Udp(u) => u,
         _ => return None,
     };
-    // Re-parse via etherparse for ports.
-    let sp = etherparse::SlicedPacket::from_ethernet(frame).ok()?;
-    let udp_slice = match sp.transport {
-        Some(etherparse::TransportSlice::Udp(u)) => u,
-        _ => return None,
-    };
-    if udp_slice.destination_port() != expected_port && udp_slice.source_port() != expected_port {
+    if udp.dst_port != expected_port && udp.src_port != expected_port {
         return None;
     }
 
@@ -93,7 +87,9 @@ fn peel_gtp_u(frame: &[u8], expected_port: u16) -> Option<&[u8]> {
         // If E flag set, walk extension headers.
         if flags & 0b0000_0100 != 0 {
             // Last byte of optional fields is "next extension type".
-            let mut ext_type = payload[11];
+            // (The E flag needs the 4 optional bytes: a shorter
+            // payload is malformed, or cut by the capture.)
+            let mut ext_type = *payload.get(11)?;
             let mut offset = header_len;
             while ext_type != 0 {
                 if payload.len() < offset + 1 {
@@ -247,5 +243,18 @@ mod tests {
                 .extract(PacketView::new(&f, Timestamp::default()))
                 .is_none()
         );
+    }
+
+    /// A GTP-U header with the E flag set but no room for its optional
+    /// fields (malformed, or cut by a snap length) is not decapsulated —
+    /// it used to index past the payload and panic.
+    #[test]
+    fn short_extension_header_is_rejected_not_a_panic() {
+        use crate::extract::parse::test_frames::ipv4_udp;
+        let gtp = [0x34, 0xff, 0x00, 0x02, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00];
+        let f = ipv4_udp([10, 0, 0, 1], [10, 0, 0, 2], 2152, 2152, &gtp);
+        let e = InnerGtpU::new(crate::extract::FiveTuple::bidirectional())
+            .extract(PacketView::new(&f, crate::Timestamp::default()));
+        assert!(e.is_none());
     }
 }

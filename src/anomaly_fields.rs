@@ -18,6 +18,8 @@
 
 use std::net::IpAddr;
 
+use crate::extractor::Orientation;
+
 /// Structured access to flow-key fields for emit writers.
 ///
 /// All methods default to `None` so implementors override only
@@ -175,6 +177,141 @@ pub trait KeyFields {
     }
 }
 
+/// A flow key read **from one endpoint to the other**: `src_*` is
+/// the endpoint that sends packets of orientation `from`, `dest_*`
+/// the other one.
+///
+/// A bidirectional key is stored address-sorted
+/// ([`crate::extract::FiveTupleKey`] keeps `a < b`), so its own
+/// [`KeyFields::src_ip`] is simply the lower address — not the
+/// endpoint that opened the connection. Wrap the key to read it from
+/// the side that matters, usually the flow's **initiator**
+/// ([`Self::initiator`], from [`crate::FlowStats::initiator_orientation`]):
+///
+/// ```
+/// # #[cfg(feature = "extractors")] {
+/// use std::net::SocketAddr;
+/// use flowscope::{Directed, KeyFields, L4Proto, Orientation};
+/// use flowscope::extract::FiveTupleKey;
+///
+/// // 10.0.0.9:40000 called 10.0.0.1:80; the key sorts the server first.
+/// let key = FiveTupleKey::new(
+///     L4Proto::Tcp,
+///     "10.0.0.1:80".parse::<SocketAddr>().unwrap(),
+///     "10.0.0.9:40000".parse::<SocketAddr>().unwrap(),
+/// );
+/// let from_client = Directed::new(&key, Orientation::Reverse);
+/// assert_eq!(from_client.src_ip(), Some("10.0.0.9".parse().unwrap()));
+/// assert_eq!(from_client.dest_port(), Some(80));
+/// // Flow identifiers stay direction-independent.
+/// assert_eq!(from_client.stable_hash(), Some(key.stable_hash()));
+/// # }
+/// ```
+///
+/// Every emit writer and shipped detector orients flows this way
+/// since 0.26 (#217). The protocol accessors, [`KeyFields::stable_hash`],
+/// [`KeyFields::shard_index`] and [`KeyFields::community_id`] delegate
+/// to the key unchanged.
+#[derive(Debug)]
+pub struct Directed<'a, K: ?Sized> {
+    key: &'a K,
+    from: Orientation,
+}
+
+impl<K: ?Sized> Clone for Directed<'_, K> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<K: ?Sized> Copy for Directed<'_, K> {}
+
+impl<'a, K: ?Sized> Directed<'a, K> {
+    /// Read `key` from the endpoint that sends packets of orientation
+    /// `from` (`Forward`: the key as stored; `Reverse`: swapped).
+    #[inline]
+    pub fn new(key: &'a K, from: Orientation) -> Self {
+        Self { key, from }
+    }
+
+    /// Read `key` from the flow's initiator
+    /// ([`crate::FlowStats::initiator_orientation`]).
+    #[cfg(feature = "tracker")]
+    #[inline]
+    pub fn initiator(key: &'a K, stats: &crate::FlowStats) -> Self {
+        Self::new(key, stats.initiator_orientation)
+    }
+
+    /// The wrapped key.
+    #[inline]
+    pub fn key(&self) -> &'a K {
+        self.key
+    }
+
+    /// The orientation read as source → destination.
+    #[inline]
+    pub fn from(&self) -> Orientation {
+        self.from
+    }
+
+    #[inline]
+    fn reversed(&self) -> bool {
+        self.from == Orientation::Reverse
+    }
+}
+
+impl<K: KeyFields + ?Sized> KeyFields for Directed<'_, K> {
+    fn src_ip(&self) -> Option<IpAddr> {
+        if self.reversed() {
+            self.key.dest_ip()
+        } else {
+            self.key.src_ip()
+        }
+    }
+    fn src_port(&self) -> Option<u16> {
+        if self.reversed() {
+            self.key.dest_port()
+        } else {
+            self.key.src_port()
+        }
+    }
+    fn dest_ip(&self) -> Option<IpAddr> {
+        if self.reversed() {
+            self.key.src_ip()
+        } else {
+            self.key.dest_ip()
+        }
+    }
+    fn dest_port(&self) -> Option<u16> {
+        if self.reversed() {
+            self.key.src_port()
+        } else {
+            self.key.dest_port()
+        }
+    }
+    fn proto_str(&self) -> Option<&'static str> {
+        self.key.proto_str()
+    }
+    fn protocol_identifier(&self) -> Option<u8> {
+        self.key.protocol_identifier()
+    }
+    fn app_proto_str(&self) -> Option<&'static str> {
+        self.key.app_proto_str()
+    }
+    fn stable_hash(&self) -> Option<u64> {
+        self.key.stable_hash()
+    }
+    fn shard_index(&self, n: usize) -> Option<usize> {
+        self.key.shard_index(n)
+    }
+    fn community_id(&self) -> Option<String> {
+        self.key.community_id()
+    }
+    fn community_id_seeded(&self, seed: u16) -> Option<String> {
+        self.key.community_id_seeded(seed)
+    }
+}
+
 /// FNV-1a over the canonical 5-tuple: `proto.as_bytes() ‖ lo_ip
 /// ‖ lo_port_be ‖ hi_ip ‖ hi_port_be`, where `(lo_ip, lo_port)`
 /// is the lexicographically smaller endpoint. Direction- and
@@ -291,6 +428,45 @@ mod tests {
         let e = Empty;
         assert!(e.anomaly_type().is_none());
         assert!(e.anomaly_event().is_none());
+    }
+
+    #[test]
+    fn directed_swaps_endpoints_and_keeps_identity() {
+        struct Full;
+        impl KeyFields for Full {
+            fn src_ip(&self) -> Option<IpAddr> {
+                Some("10.0.0.1".parse().unwrap())
+            }
+            fn src_port(&self) -> Option<u16> {
+                Some(80)
+            }
+            fn dest_ip(&self) -> Option<IpAddr> {
+                Some("10.0.0.9".parse().unwrap())
+            }
+            fn dest_port(&self) -> Option<u16> {
+                Some(40000)
+            }
+            fn proto_str(&self) -> Option<&'static str> {
+                Some("TCP")
+            }
+        }
+        let fwd = Directed::new(&Full, Orientation::Forward);
+        assert_eq!(fwd.src_ip(), Full.src_ip());
+        assert_eq!(fwd.dest_port(), Some(40000));
+        let rev = Directed::new(&Full, Orientation::Reverse);
+        assert_eq!(rev.src_ip(), Full.dest_ip());
+        assert_eq!(rev.src_port(), Some(40000));
+        assert_eq!(rev.dest_ip(), Full.src_ip());
+        assert_eq!(rev.dest_port(), Some(80));
+        assert_eq!(rev.proto_str(), Some("TCP"));
+        assert_eq!(rev.stable_hash(), Full.stable_hash());
+        assert_eq!(rev.from(), Orientation::Reverse);
+        // Unsized keys work too.
+        let dynkey: &dyn KeyFields = &Full;
+        assert_eq!(
+            Directed::new(dynkey, Orientation::Reverse).src_port(),
+            Some(40000)
+        );
     }
 
     #[test]

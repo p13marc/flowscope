@@ -126,14 +126,20 @@ impl CicFlowFeatures {
     /// [`FlowRecord::from_parts`] (which fills in
     /// `flow_start_milliseconds` / `flow_end_milliseconds` /
     /// `*_delta_count_*` / `*_total_count` / `tcp_control_bits_*`
-    /// / `flow_end_reason`).
+    /// / `flow_end_reason`). Byte features count wire L2 bytes
+    /// (`layer2_octet_*`, IE 352 / 353), falling back to the IP
+    /// octets for a record without them.
     pub fn from_flow_record(rec: &FlowRecord) -> Self {
         let fwd_pkts = rec.packet_delta_count_initiator;
         let bwd_pkts = rec.packet_delta_count_responder;
-        let fwd_bytes = rec.octet_delta_count_initiator;
-        let bwd_bytes = rec.octet_delta_count_responder;
+        // Wire L2 bytes, as before 0.26 (IE 352 / 353 when the record
+        // carries them; IE 1 / 85 hold IP octets since 0.26).
+        let fwd_bytes = rec.layer2_octets_initiator();
+        let bwd_bytes = rec.layer2_octets_responder();
         let total_pkts = rec.packet_total_count;
-        let total_bytes = rec.octet_total_count;
+        let total_bytes = rec
+            .layer2_octet_total_count
+            .unwrap_or(rec.octet_total_count);
 
         let duration_us = rec
             .flow_end_milliseconds

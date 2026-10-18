@@ -187,7 +187,9 @@ pub use crate::view::OwnedPacketView;
 /// ([`CapturedPacket::into_ethernet`](super::CapturedPacket::into_ethernet)):
 /// Linux cooked, raw-IP and loopback captures work like Ethernet
 /// ones. Packets of other link types are skipped and counted
-/// ([`Self::unsupported`]).
+/// ([`Self::unsupported`]). A record cut by the capture's snap length
+/// carries the number of missing bytes in
+/// [`OwnedPacketView::snap_cut`] (0.26.0).
 pub struct ViewIter<R: Read> {
     reader: CaptureReader<R>,
     unsupported: u64,
@@ -202,14 +204,18 @@ impl<R: Read> Iterator for ViewIter<R> {
     type Item = crate::Result<OwnedPacketView>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let (timestamp, frame) = loop {
+        let (timestamp, frame, cut) = loop {
             let p = match self.reader.next_packet()? {
                 Ok(p) => p,
                 Err(e) => return Some(Err(e)),
             };
             let timestamp = p.timestamp;
+            // The bytes the snap length cut, counted on the captured
+            // link-layer record: `into_ethernet` rewrites only the
+            // front of the frame, so the cut is the same after it.
+            let cut = (p.original_len as usize).saturating_sub(p.data.len());
             match p.into_ethernet() {
-                Ok(frame) => break (timestamp, frame),
+                Ok(frame) => break (timestamp, frame, cut),
                 Err(_) => self.unsupported += 1,
             }
         };
@@ -228,7 +234,9 @@ impl<R: Read> Iterator for ViewIter<R> {
             self.prev_pcap_ts = Some(timestamp);
         }
         let ts = Timestamp::new(timestamp.as_secs() as u32, timestamp.subsec_nanos());
-        Some(Ok(OwnedPacketView::new(frame, ts)))
+        Some(Ok(
+            OwnedPacketView::new(frame, ts).with_snap_cut(u32::try_from(cut).unwrap_or(u32::MAX))
+        ))
     }
 }
 

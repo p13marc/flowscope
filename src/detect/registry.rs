@@ -13,7 +13,7 @@
 //!
 //! ```text
 //! tracker/driver events ─▶ registry.observe(&evt, &mut out) ─▶ Vec<OwnedAnomaly> ─▶ EVE/NDJSON
-//! DNS slot drain ────────▶ registry.observe_dns(key, qname, ts, &mut out) ──┘
+//! DNS slot drain ────────▶ registry.observe_dns(key, sender, qname, ts, &mut out) ──┘
 //! ```
 //!
 //! # Design notes
@@ -36,6 +36,13 @@
 //!   `Vec<OwnedAnomaly>` (the `track_into` idiom): zero
 //!   per-event allocation in steady state, no unbounded
 //!   internal queues.
+//! - **Oriented by the initiator** (0.26, #217). A bidirectional
+//!   flow key is address-sorted, so its `src_ip()` is the lower
+//!   address, not the host that acted. Hooks therefore receive the
+//!   orientation to read the key from — the flow's initiator
+//!   (`on_flow_start`; `stats.initiator_orientation` at flow end /
+//!   tick) or the DNS query's sender (`on_dns_query`) — and the
+//!   shipped detectors read keys through [`crate::Directed`].
 //! - **Actionable-only emission.** The shipped impls gate on
 //!   per-detector thresholds + cooldowns
 //!   (`with_anomaly_threshold` / `with_cooldown` /
@@ -49,10 +56,10 @@ use lru::LruCache;
 
 use crate::{
     DetectorKind, OwnedAnomaly, Timestamp,
-    anomaly_fields::KeyFields,
+    anomaly_fields::{Directed, KeyFields},
     detect::patterns::{BeaconDetector, DgaScorer, PortScanDetector, RitaBeaconDetector},
-    event::{FlowEvent, FlowStats},
-    extractor::L4Proto,
+    event::{FlowEvent, FlowSide, FlowStats},
+    extractor::{L4Proto, Orientation},
     history::HistoryString,
 };
 
@@ -70,14 +77,26 @@ pub trait Detector<K>: Send {
     /// emits and drives metric labels / ATT&CK tagging.
     fn kind(&self) -> DetectorKind;
 
-    /// New flow observed ([`FlowEvent::Started`]).
-    fn on_flow_start(&mut self, _key: &K, _ts: Timestamp, _out: &mut Vec<OwnedAnomaly>) {}
+    /// New flow observed ([`FlowEvent::Started`]). `initiator` is the
+    /// orientation of the flow's initiator: read the key with
+    /// [`Directed::new`]`(key, initiator)` to get the initiator as the
+    /// source (a bidirectional key is address-sorted).
+    fn on_flow_start(
+        &mut self,
+        _key: &K,
+        _initiator: Orientation,
+        _ts: Timestamp,
+        _out: &mut Vec<OwnedAnomaly>,
+    ) {
+    }
 
     /// TCP 3-way handshake completed ([`FlowEvent::Established`]).
     fn on_flow_established(&mut self, _key: &K, _ts: Timestamp, _out: &mut Vec<OwnedAnomaly>) {}
 
     /// Flow ended ([`FlowEvent::Ended`]) — the natural
     /// per-connection observation (RITA's unit of analysis).
+    /// [`Directed::initiator`]`(key, stats)` reads the key from the
+    /// flow's initiator.
     ///
     /// `ts` is the flow's last activity: the tracker-level
     /// `Ended` carries no timestamp of its own, so the registry
@@ -107,13 +126,16 @@ pub trait Detector<K>: Send {
     ) {
     }
 
-    /// DNS query name observed on flow `key`. Pre-extracted
+    /// DNS query name observed on flow `key`, sent by the endpoint
+    /// of orientation `sender` (the querying host:
+    /// [`Directed::new`]`(key, sender).src_ip()`). Pre-extracted
     /// `&str` (e.g. from a `DnsMessage::Query`'s first question)
     /// — feed it via [`DetectorRegistry::observe_dns`] from your
     /// DNS slot drain, resolver log, or any other name source.
     fn on_dns_query(
         &mut self,
         _key: &K,
+        _sender: Orientation,
         _qname: &str,
         _ts: Timestamp,
         _out: &mut Vec<OwnedAnomaly>,
@@ -152,7 +174,7 @@ pub trait Detector<K>: Send {
 /// assert_eq!(registry.len(), 2);
 ///
 /// // per event: registry.observe(&flow_event, &mut anomalies);
-/// // per DNS query: registry.observe_dns(&key, qname, ts, &mut anomalies);
+/// // per DNS query: registry.observe_dns(&key, msg.orientation, qname, ts, &mut anomalies);
 /// ```
 #[must_use = "a registry does nothing until driven via observe/observe_dns"]
 pub struct DetectorRegistry<K> {
@@ -178,9 +200,22 @@ impl<K: KeyFields> DetectorRegistry<K> {
     /// across calls (`out.clear()` per drain).
     pub fn observe(&mut self, event: &FlowEvent<K>, out: &mut Vec<OwnedAnomaly>) {
         match event {
-            FlowEvent::Started { key, ts, .. } => {
+            FlowEvent::Started {
+                key,
+                side,
+                orientation,
+                ts,
+                ..
+            } => {
+                // The first packet may be the responder's (initiator
+                // inference): hand the detectors the initiator's
+                // orientation.
+                let initiator = match side {
+                    FlowSide::Initiator => *orientation,
+                    FlowSide::Responder => orientation.flipped(),
+                };
                 for d in &mut self.detectors {
-                    d.on_flow_start(key, *ts, out);
+                    d.on_flow_start(key, initiator, *ts, out);
                 }
             }
             FlowEvent::Established { key, ts, .. } => {
@@ -218,9 +253,15 @@ impl<K: KeyFields> DetectorRegistry<K> {
     pub fn observe_event(&mut self, event: &crate::driver::Event<K>, out: &mut Vec<OwnedAnomaly>) {
         use crate::driver::Event;
         match event {
-            Event::Started { key, ts, .. } => {
+            // `Event::Started.orientation` is the initiator's (#218).
+            Event::Started {
+                key,
+                orientation,
+                ts,
+                ..
+            } => {
                 for d in &mut self.detectors {
-                    d.on_flow_start(key, *ts, out);
+                    d.on_flow_start(key, *orientation, *ts, out);
                 }
             }
             Event::Established { key, ts, .. } => {
@@ -250,16 +291,20 @@ impl<K: KeyFields> DetectorRegistry<K> {
     }
 
     /// Feed one DNS query name (from a DNS slot drain / resolver
-    /// log) to every registered detector.
+    /// log) to every registered detector. `sender` is the orientation
+    /// of the packet that carried the query — a slot message's
+    /// `orientation` — so detectors attribute it to the querying
+    /// host, not to the key's lower address.
     pub fn observe_dns(
         &mut self,
         key: &K,
+        sender: Orientation,
         qname: &str,
         ts: Timestamp,
         out: &mut Vec<OwnedAnomaly>,
     ) {
         for d in &mut self.detectors {
-            d.on_dns_query(key, qname, ts, out);
+            d.on_dns_query(key, sender, qname, ts, out);
         }
     }
 
@@ -377,10 +422,10 @@ impl<K: KeyFields + Send> Detector<K> for BeaconDetector<HostPair> {
     }
 
     /// One observation per finished flow, keyed by
-    /// [`HostPair`]: `(ts = last activity, bytes =
-    /// initiator-sent bytes)`. Emits when the gated observe
-    /// (threshold + cooldown) fires. No-op for keys without
-    /// both IPs.
+    /// [`HostPair`] from the initiator to the responder: `(ts =
+    /// last activity, bytes = initiator-sent bytes)`. Emits when
+    /// the gated observe (threshold + cooldown) fires. No-op for
+    /// keys without both IPs.
     fn on_flow_end(
         &mut self,
         key: &K,
@@ -390,7 +435,7 @@ impl<K: KeyFields + Send> Detector<K> for BeaconDetector<HostPair> {
         ts: Timestamp,
         out: &mut Vec<OwnedAnomaly>,
     ) {
-        let Some(pair) = HostPair::from_key(key) else {
+        let Some(pair) = HostPair::from_key(&Directed::initiator(key, stats)) else {
             return;
         };
         if let Some(score) = self.observe_gated(pair, ts, stats.bytes_initiator) {
@@ -425,7 +470,7 @@ impl<K: KeyFields + Send> Detector<K> for RitaBeaconDetector<HostPair> {
         ts: Timestamp,
         out: &mut Vec<OwnedAnomaly>,
     ) {
-        let Some(pair) = HostPair::from_key(key) else {
+        let Some(pair) = HostPair::from_key(&Directed::initiator(key, stats)) else {
             return;
         };
         if let Some(score) = self.observe_gated(pair, ts, stats.bytes_initiator) {
@@ -447,8 +492,8 @@ impl<K: KeyFields + Send> Detector<K> for PortScanDetector<SrcHost> {
         DetectorKind::PortScanTrw
     }
 
-    /// One TRW observation per finished flow, keyed by
-    /// [`SrcHost`]. Success derives statelessly from the flow
+    /// One TRW observation per finished flow, keyed by the
+    /// initiator's [`SrcHost`]. Success derives statelessly from the flow
     /// record (see the module-private `flow_succeeded`). Emits
     /// only on a `Scanner` verdict — TRW resets the key's state
     /// at every terminal verdict, which is natural
@@ -462,7 +507,7 @@ impl<K: KeyFields + Send> Detector<K> for PortScanDetector<SrcHost> {
         ts: Timestamp,
         out: &mut Vec<OwnedAnomaly>,
     ) {
-        let Some(src) = SrcHost::from_key(key) else {
+        let Some(src) = SrcHost::from_key(&Directed::initiator(key, stats)) else {
             return;
         };
         let success = flow_succeeded(history, stats, l4);
@@ -556,14 +601,22 @@ impl<K: KeyFields + Send> Detector<K> for DgaDetector {
         DetectorKind::Dga
     }
 
-    fn on_dns_query(&mut self, key: &K, qname: &str, ts: Timestamp, out: &mut Vec<OwnedAnomaly>) {
+    fn on_dns_query(
+        &mut self,
+        key: &K,
+        sender: Orientation,
+        qname: &str,
+        ts: Timestamp,
+        out: &mut Vec<OwnedAnomaly>,
+    ) {
         let Some(sld) = Self::sld(qname) else {
             return;
         };
         if !self.scorer.is_dga_with_threshold(&sld, self.threshold) {
             return;
         }
-        let suppress_key = (key.src_ip(), sld.clone());
+        let from_sender = Directed::new(key, sender);
+        let suppress_key = (from_sender.src_ip(), sld.clone());
         if self.seen.contains(&suppress_key) {
             return;
         }
@@ -571,7 +624,7 @@ impl<K: KeyFields + Send> Detector<K> for DgaDetector {
         out.push(
             self.scorer
                 .score(&sld)
-                .into_anomaly(ts, Some(key as &dyn KeyFields))
+                .into_anomaly(ts, Some(&from_sender as &dyn KeyFields))
                 .with_observation("qname", qname.to_string())
                 .with_observation("sld", sld),
         );
@@ -619,6 +672,7 @@ mod tests {
         <DgaDetector as Detector<SrcHost>>::on_dns_query(
             &mut d,
             &key,
+            Orientation::Forward,
             "kq3v9z7xj2wq.com",
             Timestamp::new(0, 0),
             &mut out,
@@ -629,6 +683,7 @@ mod tests {
         <DgaDetector as Detector<SrcHost>>::on_dns_query(
             &mut d,
             &key,
+            Orientation::Forward,
             "www.kq3v9z7xj2wq.com",
             Timestamp::new(1, 0),
             &mut out,
@@ -638,6 +693,7 @@ mod tests {
         <DgaDetector as Detector<SrcHost>>::on_dns_query(
             &mut d,
             &key,
+            Orientation::Forward,
             "www.google.com",
             Timestamp::new(2, 0),
             &mut out,

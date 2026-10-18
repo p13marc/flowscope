@@ -181,6 +181,7 @@ where
             l4: inner.l4,
             tcp: inner.tcp,
             l4_meta: inner.l4_meta,
+            l3_len: inner.l3_len,
         })
     }
 }
