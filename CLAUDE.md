@@ -22,8 +22,8 @@ the core.
 
 ## Implementation Status
 
-**0.26.0** (in progress on branch `release-0.26`, milestone "0.26 — truncation,
-orientation & bounded tables"; CHANGELOG `## 0.26.0 — unreleased`,
+**0.26.0** (published to crates.io 2026-10-18, tag `0.26.0`, PR #221; milestone "0.26 — truncation,
+orientation & bounded tables"; CHANGELOG `## 0.26.0`,
 `docs/migration-0.25-to-0.26.md`). Issues #212, #204, #217, #218, #219, #220.
 
 - **Wire length** (#219): `PacketView::snap_cut` (bytes missing from the

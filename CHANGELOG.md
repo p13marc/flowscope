@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.26.0 — unreleased
+## 0.26.0 (2026-10-18)
 
 Truncation, orientation & bounded tables (milestone "0.26 — truncation,
 orientation & bounded tables"). A breaking release; migration guide:
