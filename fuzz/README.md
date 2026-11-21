@@ -58,7 +58,7 @@ mkdir -p corpus/http
 
 ## CI integration
 
-`.github/workflows/fuzz-smoke.yml` runs each target for a short
-time-boxed window on every push / PR — designed to catch
+The `fuzz-smoke` job in `.forgejo/workflows/ci.yml` runs each target
+for a short time-boxed window on every PR — designed to catch
 regressions cheap, not to find new bugs. A separate scheduled
 job is the right home for longer hunts.
