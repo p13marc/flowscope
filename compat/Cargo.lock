@@ -15,12 +15,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "allocator-api2"
-version = "0.2.21"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "683d7910e743518b0e34f1186f92494becacb047c7b6bf616c96772180fef923"
-
-[[package]]
 name = "arrayvec"
 version = "0.7.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -54,21 +48,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a31eee39dddec8330830986fcd7625edb5a24ec90ea038215273bbc3adb08ac6"
 
 [[package]]
-name = "equivalent"
-version = "1.0.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "00d174d5400e5e8fd687ad1049e2f578285fa914201b1af7e8b112a4546bd826"
-
-[[package]]
-name = "etherparse"
-version = "0.16.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b8d8a704b617484e9d867a0423cd45f7577f008c4068e2e33378f8d3860a6d73"
-dependencies = [
- "arrayvec",
-]
-
-[[package]]
 name = "etherparse"
 version = "0.21.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -79,28 +58,28 @@ dependencies = [
 
 [[package]]
 name = "flowscope"
-version = "0.24.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1a011d3ef67b6a7ab93f2220098ae1e5758d6db5441a914aeebc7190cd810e7c"
-dependencies = [
- "ahash",
- "arrayvec",
- "bitflags",
- "crossbeam-queue",
- "etherparse 0.16.0",
- "lru 0.16.4",
- "smallvec",
-]
-
-[[package]]
-name = "flowscope"
 version = "0.26.0"
 dependencies = [
  "ahash",
  "arrayvec",
  "bitflags",
  "crossbeam-queue",
- "etherparse 0.21.0",
+ "etherparse",
+ "lru 0.19.1",
+ "smallvec",
+]
+
+[[package]]
+name = "flowscope"
+version = "0.26.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a544f6b8ccb487e6a759d2f2ce108562df597498becd6fb11aeb72cdfb6671d7"
+dependencies = [
+ "ahash",
+ "arrayvec",
+ "bitflags",
+ "crossbeam-queue",
+ "etherparse",
  "lru 0.18.5",
  "smallvec",
 ]
@@ -109,8 +88,8 @@ dependencies = [
 name = "flowscope-compat"
 version = "0.0.0"
 dependencies = [
- "flowscope 0.24.1",
  "flowscope 0.26.0",
+ "flowscope 0.26.0 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]
@@ -118,17 +97,6 @@ name = "foldhash"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "77ce24cb58228fbb8aa041425bb1050850ac19177686ea6e0f41a70416f56fdb"
-
-[[package]]
-name = "hashbrown"
-version = "0.16.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "841d1cc9bed7f9236f321df977030373f4a4163ae1a7dbfe1a51a2c1a51d9100"
-dependencies = [
- "allocator-api2",
- "equivalent",
- "foldhash",
-]
 
 [[package]]
 name = "hashbrown"
@@ -141,20 +109,20 @@ dependencies = [
 
 [[package]]
 name = "lru"
-version = "0.16.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7f66e8d5d03f609abc3a39e6f08e4164ebf1447a732906d39eb9b99b7919ef39"
-dependencies = [
- "hashbrown 0.16.1",
-]
-
-[[package]]
-name = "lru"
 version = "0.18.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ef9ac18847474e638e3702b76c65d4eb93428471a74778ef0f1be711717f89b5"
 dependencies = [
- "hashbrown 0.17.1",
+ "hashbrown",
+]
+
+[[package]]
+name = "lru"
+version = "0.19.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "83be4da409554841af087163ad187608824ad8ca8713d8e124c8e0f704a2f92f"
+dependencies = [
+ "hashbrown",
 ]
 
 [[package]]

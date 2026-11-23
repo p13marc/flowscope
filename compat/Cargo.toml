@@ -12,7 +12,7 @@ description = "Comparison harness: this tree's flowscope against the released 0.
 
 [dependencies]
 new = { package = "flowscope", path = "..", default-features = false, features = ["extractors", "tracker", "reassembler", "session"] }
-old = { package = "flowscope", version = "=0.24.1", default-features = false, features = ["extractors", "tracker", "reassembler", "session"] }
+old = { package = "flowscope", version = "=0.26.0", default-features = false, features = ["extractors", "tracker", "reassembler", "session"] }
 
 [profile.release]
 debug = 1

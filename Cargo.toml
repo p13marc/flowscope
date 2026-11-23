@@ -31,7 +31,7 @@ etherparse = { version = "0.21", optional = true }
 ahash = { version = "0.8", default-features = false, optional = true }
 smallvec = { version = "1", optional = true }
 arrayvec = { version = "0.7", optional = true }
-lru = { version = "0.18", optional = true }
+lru = { version = "0.19", optional = true }
 
 # `http` feature
 httparse = { version = "1.10", optional = true }
@@ -82,7 +82,7 @@ hex = { version = "0.4", optional = true }
 sha2 = { version = "0.11", optional = true }
 
 # `dns` feature
-simple-dns = { version = "0.12", optional = true }
+simple-dns = { version = "0.13", optional = true }
 
 # `pcap` feature
 pcap-file = { version = "2", optional = true }
