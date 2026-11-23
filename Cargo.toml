@@ -85,7 +85,7 @@ sha2 = { version = "0.11", optional = true }
 simple-dns = { version = "0.12", optional = true }
 
 # `pcap` feature
-pcap-file = { version = "2", optional = true }
+pcap-file = { version = "3", optional = true }
 
 # `metrics` feature
 metrics = { version = "0.24", optional = true }
@@ -112,7 +112,7 @@ chrono = { version = "0.4", default-features = false, features = ["alloc"], opti
 proptest = "1"
 # Tests drive the streaming HTTP parser, whose `push` takes `Bytes`.
 bytes = "1"
-pcap-file = "2"
+pcap-file = "3"
 metrics-util = "0.20"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 criterion = { version = "0.8", features = ["html_reports"] }
